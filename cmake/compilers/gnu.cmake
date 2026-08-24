@@ -43,8 +43,10 @@ list(APPEND SERVER_LIBRARIES m)
 if(COMPILER_OUTPUT MATCHES "musl|freebsd|openbsd|netbsd")
     list(APPEND CLIENT_LIBRARIES execinfo)
     list(APPEND SERVER_LIBRARIES execinfo)
-elseif (NOT APPLE)
+elseif (NOT APPLE AND NOT WIN32)
     # For when using GLIBC versions older than 2.34
+    # Fixed in OPM: librt does not exist on Windows, so it must not be
+    # linked when building with MinGW
     list(APPEND CLIENT_LIBRARIES rt)
     list(APPEND SERVER_LIBRARIES rt)
 endif()

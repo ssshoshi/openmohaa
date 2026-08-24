@@ -40,6 +40,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #   include <dirent.h>
 #endif
 
+// Fixed in OPM
+//  MSVC declares stat() and struct stat through io.h below, MinGW does not
+//  and needs the POSIX headers even for a Windows build.
+#if defined(__MINGW32__)
+#   include <sys/types.h>
+#   include <sys/stat.h>
+#   include <errno.h>
+#endif
+
 #ifdef _MSC_VER
 #   include <io.h>
 #else

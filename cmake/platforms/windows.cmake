@@ -26,6 +26,13 @@ list(APPEND COMMON_LIBRARIES
 
 if(MINGW)
     list(APPEND COMMON_LIBRARIES mingw32)
+
+    # Added in OPM
+    #  The MinGW branch of win_resource.rc refers to the icons relative to
+    #  the repository root, because windres resolves resource paths against
+    #  its include path rather than against the directory the .rc file lives
+    #  in, the way the Microsoft resource compiler does.
+    string(APPEND CMAKE_RC_FLAGS " -I \"${CMAKE_SOURCE_DIR}\"")
 endif()
 
 list(APPEND CLIENT_DEFINITIONS USE_ICON)

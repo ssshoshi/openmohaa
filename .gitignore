@@ -1,4 +1,7 @@
 build*
+# CMake build trees, as used by the compiling documentation
+/.cmake/
+/.cmake-win/
 *.swp
 *tags
 *~

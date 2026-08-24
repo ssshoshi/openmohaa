@@ -95,7 +95,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #endif
 
 // alloca
-#ifdef _MSC_VER
+// Fixed in OPM
+//  Windows has no alloca.h, MinGW declares alloca in malloc.h just as
+//  MSVC does, so it must not fall through to the generic case below.
+#if defined(_MSC_VER) || defined(__MINGW32__)
 #  include <malloc.h>
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #  include <stdlib.h>

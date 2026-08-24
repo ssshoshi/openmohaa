@@ -93,7 +93,11 @@ static void* MEM_MANAGER_CALL _gsi_realloc(void* ptr, size_t size)
 		return memalign(boundary, size);
 	}
 #elif defined (_WIN32)
-	#if (_MSC_VER < 1300)
+	// Fixed in OPM
+	//  _MSC_VER is undefined outside MSVC, so this VC6 compatibility
+	//  declaration would otherwise be emitted on MinGW too, where it
+	//  conflicts with the _aligned_malloc in the CRT headers.
+	#if defined(_MSC_VER) && (_MSC_VER < 1300)
 		//extern added for vc6 compatability.
 		extern void* __cdecl _aligned_malloc(size_t size, int boundary);
 	#endif
