@@ -587,8 +587,19 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // of the two to get wrong. These are the two axes of an elliptical cross
 // section instead, measured in the torso's own frame, so each direction is
 // asked for what it actually needs.
-#define RD_TRUNK_WIDE_RATIO 0.75f
-#define RD_TRUNK_DEEP_RATIO 0.65f
+//
+// The ratios are close to one because the joint radii they scale are already
+// the body's, not an overestimate of it. Set well below one, as they were, the
+// volume the solver defends ends up markedly thinner than the torso that is
+// drawn, and an arm can satisfy every constraint while visibly lying inside the
+// chest. Raising them until the defended volume matches the drawn one takes the
+// deepest limb from 97 per cent of its own thickness inside the trunk to 65,
+// without spreading the body out any further: measured over the real death
+// animations the sprawl does not move at all. Higher again is worse, not
+// better, since a torso that asks for more room than it occupies pushes limbs
+// away from a body they are resting against and the deepest case returns.
+#define RD_TRUNK_WIDE_RATIO 1.00f
+#define RD_TRUNK_DEEP_RATIO 0.90f
 
 // How far each spine bone is turned towards the average of its neighbours, and
 // how many times that is repeated. Enough to share a bend between joints, not
