@@ -1,0 +1,248 @@
+# Ragdoll physics — handoff
+
+## Who you are
+
+You are a ragdoll physics specialist. Your background is character physics in
+shipped games: constrained rigid-body and position-based dynamics solvers, joint
+modelling against real anatomy, skinning artifacts, and the practical business of
+making a dead body look dead rather than look like a simulation that has stopped.
+
+You have seen every failure mode in this document before in other engines. You
+are not impressed by a solver that satisfies its own constraints; you care
+whether the corpse reads correctly to a player standing over it.
+
+Two things matter about how you work here:
+
+- **The previous session's principal failure was tuning symptoms instead of
+  modelling joints.** Read "The pattern" below before touching a constant.
+- **The previous session was repeatedly misled by its own metrics.** Every
+  measurement in the harness has been wrong at least once, usually by measuring
+  something adjacent to what mattered. Distrust the numbers until you have
+  confirmed the metric actually observes the defect you are chasing.
+
+The user is the project owner, plays the result in multiplayer against bots, and
+reports defects with screenshots. Screenshots have found three bugs the harness
+could not see. Take them as primary evidence.
+
+---
+
+## State
+
+Branch `feat/client-ragdoll`, 8 commits ahead of `main`, working tree clean.
+
+```
+2f0331c7 fix(cgame): limit how far the legs may open at the hip
+6e019517 fix(cgame): let the knee's bend plane roll with the hip
+6432589b fix(cgame): lower the shot impulse, which was throwing limbs about
+9af8bec2 fix(cgame): correct sideways knee travel gently, not at full rate
+20deb90f fix(cgame): defend the torso the player can see, not a thinner one
+37d0daea fix(cgame): smooth only the bend of the spine, not its roll
+072ee1e5 feat(cgame): client-side ragdoll physics for dead bodies
+2ecc02cb build: support cross-compiling for Windows with mingw-w64
+```
+
+`code/cgame/cg_ragdoll.cpp` is ~3670 lines and contains the whole subsystem.
+The commit messages are written to carry the reasoning, including what was
+measured and rejected. Read them; they are the densest source of context here.
+
+### Build and deploy
+
+```sh
+ninja -C .cmake cgame                 # native, for the harness
+ninja -C .cmake-win cgame             # MinGW cross-build (toolchain in cmake/toolchains/)
+cp .cmake-win/RelWithDebInfo/cgame.dll "/mnt/d/Medal of Honor/openmohaa-ragdoll/cgame.dll"
+```
+
+The DLL is locked while the game runs — the copy fails with permission denied,
+which is the signal to ask the user to close it. Screenshots arrive in
+`/mnt/c/Users/xxsch/AppData/Roaming/openmohaa/main/screenshots`.
+
+---
+
+## Design constraints (do not relitigate)
+
+- **Client-side only.** The server has five networked bone controllers and the
+  `msg.cpp` field tables are positional, so a protocol change is out. Everything
+  is computed in cgame and emitted as bone overrides.
+- **23 particles, position Verlet, Gauss-Seidel relaxation.** Particles carry no
+  orientation. Every rotational quantity is inferred from particle positions,
+  which is the source of an entire class of bug (see "Reconstruction" below).
+- **The death animation still plays** and drives the particles for the first
+  200 ms (`cg_ragdoll_blendtime`), then the solver takes over.
+- **The killing shot pushes the body.** Impact position and direction are
+  recovered from the flesh-impact messages the client already parses for hit
+  sounds (`cg_parsemsg.cpp`, `CGM_BULLET_8`), so this needs nothing on the wire.
+
+Tuning is exposed through `cg_ragdoll*` cvars; `cg_ragdoll 0` restores stock
+behaviour entirely. `cg_ragdoll_debug 1` draws the constraint web and prints
+impact/impulse diagnostics.
+
+---
+
+## The pattern (most important section)
+
+**Three separate bugs, one cause: a constraint that memorised the death pose
+instead of modelling the joint.**
+
+| bug | what was stored at death | consequence |
+|---|---|---|
+| torso twist | Spine2's roll reference | chest rotated away from the shoulders, ~35° |
+| shin standing vertical | the knee's bend *plane*, in torso coordinates | body on its back could not lower its leg; foot 21 units up, stable, asleep |
+| legs splayed in a V | the hip cone axis + foot-to-foot span | a man shot mid-stride keeps his stride forever |
+
+In each case the constraint was correct on the frame it was seeded and wrong
+forever after, because the body's orientation relative to the world changed and
+the stored quantity did not. In each case the fix was to model the actual joint
+(a knee bends in a plane the *hip may rotate*; a hip abducts ~45°) rather than
+to tune the stored value.
+
+**Assume more of these exist.** Grep for anything captured in `CG_RagdollSeed`
+and ask whether it is a property of the joint or a property of that one pose.
+Candidates not yet examined: `spineRest` (the seeded spine curvature),
+`twistRest`, `segTrunkScale`, `selfPair[].minLen`.
+
+---
+
+## The harness
+
+`/home/shoshi/projects/openmohaa-ragdoll-harness/` — **preserved out of `/tmp`,
+which is where it previously lived and would have been lost.**
+
+```sh
+cd ~/projects/openmohaa-ragdoll-harness
+./build.sh                              # builds ./rdsim against the working-tree solver
+./build.sh /path/to/variant.cpp         # or against a variant
+./rdsim                                 # all 49 scenarios
+RD_ONLY="anim death_run03" ./rdsim      # one
+```
+
+It links the real solver against stubbed `cgi` imports and runs it over a floor
+plane, an optional box (platform or wall), and **24 real death animations**
+extracted from the retail `Pak0.pk3` by `skcdump.py` and run through forward
+kinematics. It is fast (whole suite in seconds), deterministic, and it is the
+only reason any of this was tractable.
+
+### Its blind spots — read this before trusting a number
+
+Every one of these produced a wrong conclusion that was acted on:
+
+- **`limb held up by nothing` counts the body itself as support.** A foot 21
+  units in the air beside the pelvis scored **+1.2**. This is why sweeps kept
+  reporting the legs were fine while the user was photographing legs in the air.
+  Not fixed.
+- **Only 11 animations until very late, all deaths from a standing start.** The
+  animations that splay are the *running* and *prone* deaths. Adding
+  `death_run01/02/03`, `death_twist`, `death_knockedup`, `death_prone1`
+  immediately reproduced a defect that had been invisible for the whole session.
+  The retail pak has dozens more (`death_mortar_*`, `death_grenade`,
+  `death_fire`, the `*_pain_*todeath` family) that are still not in.
+- **No leg-splay metric existed at all** until the last hour.
+- **No vertical wall** in the world model until the last hour, though bodies die
+  against walls constantly. A wall increases splay by 3–8°.
+- **Aggregate means buried the failures.** 25 synthetic scenarios diluted 13 real
+  ones 2:1; a change that was neutral overall was a disaster on real deaths.
+  **Score real animations separately.** They are the rows beginning `anim `.
+- Historic metric bugs, since fixed, that each caused a wrong shipped change:
+  self-intersection baselined before the animation window; bone-roll mixing in
+  joint bend and reporting phantom 180° flips; torso twist measured absolutely so
+  a body dying mid-turn read as twisted.
+
+### Useful technique
+
+Ablation. Disabling one constraint pass at a time (`CG_RagdollHinges`,
+`CG_RagdollCones`, `CG_RagdollSelfCollide`, `CG_RagdollSegmentCollide`) and
+tracing one joint's position over time found both leg bugs in minutes after
+weeks of parameter sweeps found nothing. Add a `printf` behind a `getenv` in a
+scratch copy of the solver; do not add debug code to the repo file.
+
+---
+
+## Rejected experiments — do not repeat
+
+With numbers, because several of these look obviously correct.
+
+| tried | result |
+|---|---|
+| Spine2 roll referenced to the shoulder line | real-animation twist **15° → 35°**. Shipped, then reverted. This was the session's worst regression. |
+| Scaling hinge lateral slop by body scale | looks like an oversight; measured worse (selfX p90 40 → 55) |
+| Velocity-neutral correction for levitation | far worse (fidget 0.448 → 3.24, passes 14 → 3). Wrong theory. |
+| Sprawl fade | shipped with no sprawl metric, user reported worse, reverted |
+| Seed-timing fix | net negative once isolated; removed entirely |
+| Raising knee/elbow extension limits (0.985 → 1.0) | legs are not pressed against the limit; no effect, real passes 6 → 3 |
+| Limb-vs-limb segment collision | genuinely missing (shins *can* pass through each other) but trades legs for arms at every rate: worst arm-in-trunk 57% → 96% |
+| Distributing the hinge correction across the joint chain | the "principled" momentum-conserving fix; worse than either alternative (sprawl 2.65 → 2.82, floating limbs 6 → 9) |
+| Fading the hinge in as the body settles | knee leaves its plane during the fall and nothing can undo it afterwards; out-of-plane ~6.0 at every threshold |
+| Widening the hip cone (30° → 90°) | no effect on knee fold; the cone constrains the hip, the fold is the knee |
+| Tightening the foot-to-foot span | never binds; legs reach only 23–28° in the scenarios that have it |
+| Disabling spine smoothing entirely | mean twist better, worst case 94° → 162° |
+
+Also worth knowing: **bend-only spine smoothing failed the first time** (a 166°
+flip in `death_back1`) and succeeded later unchanged, because the flip was caused
+by an unrelated bug — two bone-table rows sharing the pelvis particle, so it was
+driven twice per substep. A cloud code review flagged that as a *nit*. If an
+experiment fails on one scenario with a wild outlier, suspect a second bug rather
+than the experiment.
+
+---
+
+## Open problems, ranked
+
+### 1. Mesh tearing and pelvis/torso twist — untouched, probably worst
+
+Screenshot 63 shows the lower body rotated ~90° from the torso with flat grey
+sheets at the thigh and knee. Those sheets are **linear-blend-skinning failure**:
+vertices weighted between two bones that ended at wildly different orientations.
+
+This is in the reconstruction path, not the simulation. It is established that
+the drawn bones can carry twist the particles do not: measured **0.0° in the
+particles against 23.3° in the drawn bones**. `CG_RagdollSmoothSpine` was the
+cause of that instance and is fixed; the pelvis-to-spine relationship is *not*
+covered by the existing twist metric, which only looks at spine bones.
+
+Start here. Extend the twist metric to cover pelvis-relative-to-chest, confirm it
+reproduces, then work the reconstruction (`CG_RagdollBoneFrame`, the parallel
+transport of roll references, `CG_RagdollUntwist`).
+
+### 2. Arms clipping into the chest
+
+Worst limb sits 57–92% of its own thickness inside the trunk depending on
+scenario. The trunk is modelled as a chain of capsules with an elliptical cross
+section (`RD_TRUNK_WIDE_RATIO` / `RD_TRUNK_DEEP_RATIO`, now 1.00/0.90 after
+raising them from 0.75/0.65 — the solver was defending a volume much thinner than
+the torso being drawn). Raising further is worse, not better.
+
+Note the interaction: the Spine2 change that fixed clipping *caused* the torso
+twist. These two are coupled through the reconstruction, so a real fix for (1)
+may move this on its own.
+
+### 3. Knees out of plane
+
+Worst 12–14 units on the newly added running/prone animations, against a gate of
+5. This is the cost of the two leg fixes and has not been paid down.
+
+### 4. Only 4 of 24 real animations pass their full quality gate
+
+The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
+Treat it as a screen, not a score, and look at the individual metrics.
+
+---
+
+## Working agreements with the user
+
+- **Twist bothers them more than self-intersection.** Stated explicitly. The
+  previous session traded the wrong way once and it was the worst regression.
+- They test in multiplayer against bots and send screenshots. Ask for one when
+  stuck — it has been more informative than any sweep.
+- They will tell you when the game is closed so the DLL can be replaced.
+- `run-openmohaa.sh` in the repo root is their launcher, deliberately untracked.
+- Do not chase "shootable/explodable corpses" — explicitly descoped.
+
+## One honest note to carry forward
+
+Progress in this session came almost entirely from three things: **ablation**
+(disable one pass, see what changes), **tracing a single joint over time**, and
+**the user's screenshots**. It came almost not at all from parameter sweeps, which
+consumed most of the effort and produced most of the wrong turns.
+
+If you find yourself sweeping a constant, stop and ask what the joint is
+physically supposed to do instead.
