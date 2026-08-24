@@ -552,6 +552,15 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // as well. Sharing the correction with the two ends instead, so the group's
 // centre is preserved, is worse than either: it drags the hip and the foot
 // around and the whole body spreads out.
+
+// How far the plane a knee swings in may follow the leg round, which is the
+// rotation the hip itself has: a hip turns about the length of the thigh, and
+// that is what lets a bent leg roll flat instead of standing its shin upright.
+#define RD_HINGE_ROLL_LIMIT 20.0f
+
+// Slowly, so the plane still holds the joint steady from frame to frame and
+// only gives way to a leg that stays turned.
+#define RD_HINGE_ROLL_RATE 0.01f
 #define RD_HINGE_LATERAL_RATE 0.06f
 
 #define RD_HINGE_RATE 0.85f
@@ -734,6 +743,10 @@ typedef struct {
 
     // Hinge bend directions, in torso-frame coordinates.
     vec3_t hingeBend[RD_NUM_HINGES];
+
+    // The plane each hinge was seeded with, so the roll the hip is allowed can
+    // be measured against where the joint started rather than drifting freely.
+    vec3_t hingeBendRest[RD_NUM_HINGES];
 
     boneOverride_t overrides[RD_NUM_BONES];
     int            numOverrides;
@@ -1391,6 +1404,7 @@ static qboolean CG_RagdollMeasureHinges(cg_ragdoll_t *rd)
         const rdHingeDef_t *h = &rd_hinges[i];
         vec3_t              chord, offset;
         float               len;
+        int                 b;
 
         VectorSubtract(rd->part[h->b].p, rd->part[h->a].p, chord);
         len = VectorNormalize(chord);
@@ -1407,6 +1421,10 @@ static qboolean CG_RagdollMeasureHinges(cg_ragdoll_t *rd)
 
         for (k = 0; k < 3; k++) {
             rd->hingeBend[i][k] = DotProduct(offset, torso[k]);
+        }
+
+        for (b = 0; b < 3; b++) {
+            rd->hingeBendRest[i][b] = rd->hingeBend[i][b];
         }
     }
 
@@ -2002,6 +2020,56 @@ static void CG_RagdollHinges(cg_ragdoll_t *rd)
                     * RD_HINGE_LATERAL_RATE;
 
                 VectorMA(rd->part[h->mid].p, pull, lateral, rd->part[h->mid].p);
+            }
+        }
+
+        // A knee is a hinge, but the thigh it hangs from can rotate at the hip,
+        // so the plane the knee swings in is not fixed to the body: a leg lying
+        // on the ground rolls until the bent knee points out to the side and
+        // the whole leg lies flat. Held in the torso's frame the leg cannot
+        // roll at all, and a body that died on its feet goes on bending its
+        // knee the way it bent then, which once the body is on its back means
+        // straight upward. That is what leaves a shin standing vertical with
+        // the foot in the air, and it is stable, so the corpse sleeps like it.
+        //
+        // Letting the stored plane follow where the knee has actually gone,
+        // slowly, gives back the roll the hip should have had while still
+        // holding the joint steady from one frame to the next.
+        {
+            vec3_t local;
+            int    b;
+
+            for (b = 0; b < 3; b++) {
+                local[b] = DotProduct(offset, torso[b]);
+            }
+
+            for (b = 0; b < 3; b++) {
+                rd->hingeBend[i][b] += (local[b] - rd->hingeBend[i][b]) * RD_HINGE_ROLL_RATE;
+            }
+
+            VectorNormalize(rd->hingeBend[i]);
+
+            // A hip rotates about the length of the thigh only so far, so the
+            // plane is allowed to follow the leg that far and no further.
+            {
+                const float dot = DotProduct(rd->hingeBend[i], rd->hingeBendRest[i]);
+                const float lim = (float)cos(RD_HINGE_ROLL_LIMIT * M_PI / 180.0);
+
+                if (dot < lim) {
+                    vec3_t across;
+                    float  acrossLen;
+
+                    VectorMA(rd->hingeBend[i], -dot, rd->hingeBendRest[i], across);
+                    acrossLen = VectorNormalize(across);
+
+                    if (acrossLen > 0.001f) {
+                        const float s2 = (float)sqrt(1.0 - (double)lim * lim);
+
+                        for (b = 0; b < 3; b++) {
+                            rd->hingeBend[i][b] = rd->hingeBendRest[i][b] * lim + across[b] * s2;
+                        }
+                    }
+                }
             }
         }
 
