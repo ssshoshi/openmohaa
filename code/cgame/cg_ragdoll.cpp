@@ -3088,10 +3088,16 @@ void CG_InitRagdoll(void)
     cg_ragdoll_maxcount  = cgi.Cvar_Get("cg_ragdoll_maxcount", "8", CVAR_ARCHIVE);
     cg_ragdoll_blendtime = cgi.Cvar_Get("cg_ragdoll_blendtime", "200", CVAR_ARCHIVE);
     // Scale on the push the killing shot gives the body. 0 disables it and
-    // restores the purely animation-driven fall. 1 is about what a rifle round
-    // really does to a body, which is far too little to read as anything on
-    // screen, so the default is deliberately exaggerated.
-    cg_ragdoll_impulse   = cgi.Cvar_Get("cg_ragdoll_impulse", "2.0", CVAR_ARCHIVE);
+    // restores the purely animation-driven fall.
+    //
+    // 1 is roughly what a rifle round really does to a body. Higher reads more
+    // dramatically for a moment and then costs the pose: measured over the real
+    // death animations, at 2 the energy has to go somewhere and it goes into
+    // the limbs, nearly doubling how far a limb is left hanging unsupported and
+    // taking the worst case from five units to twelve. A little is better than
+    // none, though, since a body given a small push finds a resting pose
+    // instead of landing rigidly in the one it died in.
+    cg_ragdoll_impulse   = cgi.Cvar_Get("cg_ragdoll_impulse", "0.75", CVAR_ARCHIVE);
     cg_ragdoll_duration  = cgi.Cvar_Get("cg_ragdoll_duration", "5000", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_maxcount, 0, MAX_RAGDOLLS, qtrue);
     cgi.Cvar_CheckRange(cg_ragdoll_blendtime, 0, 2000, qtrue);
