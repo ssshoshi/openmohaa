@@ -438,6 +438,7 @@ skelBone_Base::skelBone_Base()
     m_parent     = NULL;
     m_isDirty    = true;
     m_controller = NULL;
+    m_override   = NULL;
 }
 
 skelBone_Base::~skelBone_Base() {}
@@ -473,6 +474,20 @@ int skelBone_Base::GetNumBoneRefs(boneType_t boneType)
 
 SkelMat4& skelBone_Base::GetTransform(const skelAnimStoreFrameList_c *frames)
 {
+    // Added in OPM
+    //  A model-space override replaces the evaluated transform entirely.
+    //  Because m_cachedValue is already model-space, every descendant that is
+    //  not itself overridden concatenates against it through the usual parent
+    //  lookup, so overriding a handful of bones moves the whole sub-tree.
+    if (m_override) {
+        if (m_isDirty) {
+            m_cachedValue = *m_override;
+            m_isDirty     = false;
+        }
+
+        return m_cachedValue;
+    }
+
     if (m_isDirty) {
         return GetDirtyTransform(frames);
     } else {

@@ -131,7 +131,19 @@ public:
     qboolean                         LoadSKB(const char *);
     float                            GetRadius();
     float                            GetCentroidRadius(float *centroid);
-    void SetPose(const frameInfo_t *frameInfo, const int *contIndices, const vec4_t *contValues, float actionWeight);
+    // Changed in OPM
+    //  Takes an optional set of model-space bone overrides. They are bound as
+    //  part of the pose rather than latched onto the skeletor, because a listen
+    //  server shares one skeletor_c between the game and the renderer, and the
+    //  server must never evaluate the client's ragdoll pose.
+    void SetPose(
+        const frameInfo_t    *frameInfo,
+        const int            *contIndices,
+        const vec4_t         *contValues,
+        float                 actionWeight,
+        const boneOverride_t *overrides    = NULL,
+        int                   numOverrides = 0
+    );
     void SetEyeTargetPos(const float *pEyeTargetPos);
     int  GetBoneParent(int boneIndex);
     static class ChannelNameTable *ChannelNames();

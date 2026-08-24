@@ -1611,7 +1611,9 @@ void R_UpdatePoseInternal(refEntity_t *model)
         model->frameInfo,
         model->bone_tag,
         model->bone_quat,
-        model->actionWeight
+        model->actionWeight,
+        model->bone_override,
+        model->num_bone_overrides
     );
 }
 
@@ -1631,7 +1633,9 @@ void RE_ForceUpdatePose(refEntity_t *model)
         model->frameInfo,
         model->bone_tag,
         model->bone_quat,
-        model->actionWeight
+        model->actionWeight,
+        model->bone_override,
+        model->num_bone_overrides
     );
 }
 

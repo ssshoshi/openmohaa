@@ -11871,6 +11871,11 @@ void Actor::BecomeCorpse(void)
 {
     AddToBodyQue();
 
+    // Added in OPM
+    //  Normally already set by Begin_Killed, but actors can reach this without
+    //  going through the killed think state.
+    edict->s.eFlags |= EF_DEAD;
+
     setContents(CONTENTS_TRIGGER);
     edict->r.svFlags &= ~SVF_MONSTER;
     setSolidType(SOLID_NOT);

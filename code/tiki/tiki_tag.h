@@ -34,7 +34,8 @@ extern "C" {
     qboolean      TIKI_IsOnGroundInternal(dtiki_t *tiki, int entnum, int tagnum, float threshold);
     orientation_t TIKI_OrientationInternal(dtiki_t *tiki, int entnum, int tagnum, float scale);
     void          TIKI_SetPoseInternal(
-                 void *skeletor, const frameInfo_t *frameInfo, const int *bone_tag, const vec4_t *bone_quat, float actionWeight
+                 void *skeletor, const frameInfo_t *frameInfo, const int *bone_tag, const vec4_t *bone_quat,
+                 float actionWeight, const boneOverride_t *overrides, int numOverrides
              );
     float TIKI_GetRadiusInternal(dtiki_t *tiki, int entnum, float scale);
     float TIKI_GetCentroidRadiusInternal(dtiki_t *tiki, int entnum, float scale, float *centroid);

@@ -355,7 +355,12 @@ void AddToBounds(SkelVec3 *bounds, SkelVec3 *newBounds)
 }
 
 void skeletor_c::SetPose(
-    const frameInfo_t *frameInfo, const int *contIndices, const vec4_t *contValues, float actionWeight
+    const frameInfo_t    *frameInfo,
+    const int            *contIndices,
+    const vec4_t         *contValues,
+    float                 actionWeight,
+    const boneOverride_t *overrides,
+    int                   numOverrides
 )
 {
     skelAnimDataGameHeader_t *animData;
@@ -379,7 +384,27 @@ void skeletor_c::SetPose(
 
     for (i = 0; i < m_Tiki->m_boneList.NumChannels(); i++) {
         m_bone[i]->m_controller = NULL;
-        m_bone[i]->m_isDirty    = true;
+        // Added in OPM
+        m_bone[i]->m_override = NULL;
+        m_bone[i]->m_isDirty  = true;
+    }
+
+    // Added in OPM
+    //  Bind the model-space bone overrides. Note the controller loop below is
+    //  bounded by a literal 5 rather than by NUM_BONE_CONTROLLERS, so it must
+    //  not be reused here.
+    if (overrides) {
+        const int numChannels = m_Tiki->m_boneList.NumChannels();
+
+        for (i = 0; i < numOverrides; i++) {
+            const int boneNum = overrides[i].boneIndex;
+
+            if (boneNum < 0 || boneNum >= numChannels) {
+                continue;
+            }
+
+            m_bone[boneNum]->m_override = (const SkelMat4 *)overrides[i].matrix;
+        }
     }
 
     if (contIndices && contValues) {

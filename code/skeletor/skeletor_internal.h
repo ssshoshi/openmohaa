@@ -40,6 +40,12 @@ protected:
 public:
     float *m_controller;
 
+    // Added in OPM
+    //  Model-space transform replacing this bone's evaluated transform.
+    //  Borrowed pointer, always cleared by skeletor_c::SetPose so it can never
+    //  outlive the pose it was supplied with.
+    const SkelMat4 *m_override;
+
 public:
     skelBone_Base();
     virtual ~skelBone_Base();

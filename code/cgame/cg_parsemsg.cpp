@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // CGM buffer parser
 
 #include "cg_local.h"
+#include "cg_ragdoll.h"
 #include "cg_parsemsg.h"
 #include "cg_specialfx.h"
 #include "cg_radar.h"
@@ -1389,6 +1390,7 @@ void CG_ParseCGMessage_ver_15()
                     VectorCopy(vEnd, flesh_impact_norm[flesh_impact_count]);
                     flesh_impact_large[flesh_impact_count] = iLarge;
                     flesh_impact_count++;
+                    CG_RagdollNoteFleshImpact(vStart, vEnd, iLarge);
                 }
                 break;
             case CGM_BULLET_9:
@@ -1399,6 +1401,7 @@ void CG_ParseCGMessage_ver_15()
                     VectorCopy(vEnd, flesh_impact_norm[flesh_impact_count]);
                     flesh_impact_large[flesh_impact_count] = iLarge;
                     flesh_impact_count++;
+                    CG_RagdollNoteFleshImpact(vStart, vEnd, iLarge);
                 }
                 break;
             case CGM_BULLET_10:
@@ -1802,6 +1805,7 @@ void CG_ParseCGMessage_ver_6()
                     VectorCopy(vEnd, flesh_impact_norm[flesh_impact_count]);
                     flesh_impact_large[flesh_impact_count] = iLarge;
                     flesh_impact_count++;
+                    CG_RagdollNoteFleshImpact(vStart, vEnd, iLarge);
                 }
                 break;
             case CGM6_BULLET_8:
@@ -1812,6 +1816,7 @@ void CG_ParseCGMessage_ver_6()
                     VectorCopy(vEnd, flesh_impact_norm[flesh_impact_count]);
                     flesh_impact_large[flesh_impact_count] = iLarge;
                     flesh_impact_count++;
+                    CG_RagdollNoteFleshImpact(vStart, vEnd, iLarge);
                 }
                 break;
             case CGM6_BULLET_9:

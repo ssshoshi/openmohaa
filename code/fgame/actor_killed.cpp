@@ -42,6 +42,11 @@ void Actor::Begin_Killed(void)
     ClearPath();
     ResetBoneControllers();
 
+    // Added in OPM
+    //  Mark the actor as a corpse right away rather than when the death
+    //  animation finishes, so the client can start its ragdoll on time.
+    edict->s.eFlags |= EF_DEAD;
+
     PostEvent(EV_Actor_DeathEmbalm, 0.05f);
     TransitionState(ACTOR_STATE_KILLED_BEGIN, 0);
 }

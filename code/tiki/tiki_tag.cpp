@@ -119,11 +119,17 @@ TIKI_SetPoseInternal
 ===============
 */
 void TIKI_SetPoseInternal(
-    void *skeletor, const frameInfo_t *frameInfo, const int *bone_tag, const vec4_t *bone_quat, float actionWeight
+    void                 *skeletor,
+    const frameInfo_t    *frameInfo,
+    const int            *bone_tag,
+    const vec4_t         *bone_quat,
+    float                 actionWeight,
+    const boneOverride_t *overrides,
+    int                   numOverrides
 )
 {
     skeletor_c *skel = (skeletor_c *)skeletor;
-    skel->SetPose(frameInfo, bone_tag, bone_quat, actionWeight);
+    skel->SetPose(frameInfo, bone_tag, bone_quat, actionWeight, overrides, numOverrides);
 }
 
 /*

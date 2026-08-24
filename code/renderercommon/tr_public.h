@@ -28,7 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 extern "C" {
 #endif
 
-#define	REF_API_VERSION		14
+#define	REF_API_VERSION		15
 
 typedef struct dtiki_s dtiki_t;
 typedef struct skelAnimFrame_s skelAnimFrame_t;
@@ -298,7 +298,8 @@ typedef struct {
     orientation_t (*TIKI_OrientationInternal)(dtiki_t *tiki, int entNum, int tagNum, float scale);
     qboolean (*TIKI_IsOnGroundInternal)(dtiki_t *tiki, int entNum, int tagNum, float thresHold);
     void (*TIKI_SetPoseInternal)(
-        void *skeletor, const frameInfo_t *frameInfo, const int *boneTag, const vec4_t *boneQuat, float actionWeight
+        void *skeletor, const frameInfo_t *frameInfo, const int *boneTag, const vec4_t *boneQuat, float actionWeight,
+        const boneOverride_t *overrides, int numOverrides
     );
     void *(*TIKI_Alloc)(size_t size);
     float (*GetRadiusInternal)(dtiki_t *tiki, int entNum, float scale);

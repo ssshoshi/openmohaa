@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Functions for doing model animation and attachments
 
 #include "cg_local.h"
+#include "cg_ragdoll.h"
 #include "../corepp/tiki.h"
 
 static qboolean cg_forceModelAllowed = qfalse;
@@ -1133,7 +1134,16 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     model.hOldModel = 0;
     model.tiki      = cgi.R_Model_GetHandle(cgs.model_draw[s1->modelindex]);
 
-    if (s1->number != cg.snap->ps.clientNum && (s1->eType == ET_PLAYER || (s1->eFlags & EF_DEAD))) {
+    // Changed in OPM
+    //  Only substitute actual player models. AI corpses now carry EF_DEAD too,
+    //  and they have no team flag, so they would otherwise fall through to the
+    //  allied player model. cg_forceModelAllowed cannot be relied on to catch
+    //  this, because it is only recomputed when dm_playermodel changes and so
+    //  can still be set from a previous multiplayer session.
+    if (s1->number != cg.snap->ps.clientNum
+        && (s1->eType == ET_PLAYER
+            || ((s1->eFlags & EF_DEAD) && model.tiki && model.tiki->a
+                && !Q_stricmpn(model.tiki->a->name, "models/player/", 14)))) {
         if (cg_forceModel->integer && cg_forceModelAllowed) {
             //CG_UpdateForceModels();
 
@@ -1181,6 +1191,12 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     cgi.TIKI_SetEyeTargetPos(model.tiki, model.entityNumber, s1->eyeVector);
 
     CG_InterpolateAnimParms(s1, sNext, &model);
+
+    // Added in OPM
+    //  Drive dead characters with the client-side ragdoll. This has to happen
+    //  after the animation parameters are final and before anything queries a
+    //  tag, so that attached entities and the shadow follow the simulated pose.
+    CG_RagdollUpdateEntity(cent, &model);
 
     if (cent->currentState.parent != ENTITYNUM_NONE) {
         int          iTagNum;

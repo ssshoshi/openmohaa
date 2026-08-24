@@ -145,6 +145,13 @@ typedef struct {
 	
 	int         *bone_tag;
 	vec4_t      *bone_quat;
+
+	// Added in OPM
+	//  Model-space transforms replacing the evaluated transform of individual
+	//  bones. Borrowed pointer owned by the caller, it must stay valid for the
+	//  whole frame, exactly like bone_quat above.
+	const boneOverride_t *bone_override;
+	int         num_bone_overrides;
 	
 	// renderer use only
 	struct tikiFrame_s   *of,
