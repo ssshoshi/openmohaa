@@ -389,6 +389,24 @@ static const rdConstraintDef_t rd_constraints[] = {
     {RD_SPINE2, RD_LHAND,    RD_LFARM,  0.25f, 1.05f,  0.07f, 0.0f },
     {RD_SPINE2, RD_RHAND,    RD_RFARM,  0.25f, 1.05f,  0.07f, 0.0f },
     {RD_LFOOT,  RD_RFOOT,    -1,        0.60f, 6.0f,   0.08f, 0.0f },
+
+    // Hip abduction. Measured through the pelvis, the distance between the two
+    // knees over the length of the two thighs is the sine of half the angle the
+    // legs make with one another, so a ceiling on it is a ceiling on that
+    // angle. 0.42 is fifty degrees, a little past what a hip really gives.
+    //
+    // Nothing else limited this. The cone at each hip is measured from the
+    // direction that leg happened to be pointing at the moment of death, so it
+    // constrains how far a leg may move from where it died rather than how far
+    // it may open, and a man shot in mid stride keeps his stride: the running
+    // deaths settle with their legs sixty degrees apart, death_prone1 at
+    // seventy, and neither ever closes. Capped, those come back to forty and
+    // fifty, and the deaths that were never splayed are left alone.
+    //
+    // It also settles them. Legs held open that far go on working against the
+    // constraints that want them shut, and residual movement across the real
+    // animations falls to a third of what it was.
+    {RD_LCALF,  RD_RCALF,    RD_PELVIS, 0.0f,  0.42f,  0.12f, 0.0f },
     {RD_LHAND,  RD_RHAND,    -1,        0.30f, 6.0f,   0.06f, 0.0f },
     {RD_LCALF,  RD_RCALF,    -1,        0.50f, 6.0f,   0.08f, 0.0f }
 };
