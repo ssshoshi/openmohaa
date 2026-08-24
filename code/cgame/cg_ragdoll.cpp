@@ -2706,6 +2706,26 @@ static void CG_RagdollSmoothSpine(cg_ragdoll_t *rd)
                 smoothed[n][j][k] = m[j][k];
             }
         }
+
+        // Slerping whole orientations toward the neighbour average blends the
+        // roll along with the bend, and the bones of the back do not agree
+        // about roll, so the average of them turns the drawn chest away from
+        // where the shoulders actually are. That is where the twist in the
+        // drawn torso comes from: the particles carry none of it. Only the bend
+        // is wanted here, so the bone's own roll is put back afterwards.
+        {
+            const float roll =
+                CG_RagdollTwistBetween(rd->boneAxis[cur][0], rd->boneAxis[cur][1], smoothed[n][0], smoothed[n][1]);
+
+            if (roll > 0.01f || roll < -0.01f) {
+                vec3_t ry, rz;
+
+                RotatePointAroundVector(ry, smoothed[n][0], smoothed[n][1], -roll);
+                RotatePointAroundVector(rz, smoothed[n][0], smoothed[n][2], -roll);
+                VectorCopy(ry, smoothed[n][1]);
+                VectorCopy(rz, smoothed[n][2]);
+            }
+        }
     }
 
     for (n = 0; n < RD_NUM_SPINE_CHAIN; n++) {
