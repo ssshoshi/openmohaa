@@ -542,6 +542,18 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 #define RD_HINGE_LATERAL_SLOP 0.04f
 
 // Fraction of the way a wrongly-bent hinge is pushed back per iteration.
+// Sideways travel is corrected far more gently than bend direction is. The
+// correction moves the middle joint alone while the bone lengths either side
+// hold it, so at anything like the rate below it and they fight each other
+// every iteration and the argument feeds the limb energy: a straight leg gets
+// levered up out of its own fall and lands propped on the knee, with the foot
+// as much as eleven units off the ground. Applied gently it still holds a knee
+// in its plane, and rather better, since the worst out of plane case improves
+// as well. Sharing the correction with the two ends instead, so the group's
+// centre is preserved, is worse than either: it drags the hip and the foot
+// around and the whole body spreads out.
+#define RD_HINGE_LATERAL_RATE 0.06f
+
 #define RD_HINGE_RATE 0.85f
 
 // How much of its velocity a grounded particle keeps each step, and the speed
@@ -1986,7 +1998,8 @@ static void CG_RagdollHinges(cg_ragdoll_t *rd)
 
             if (fabs(outOfPlane) > rd->hingeLateralSlop) {
                 const float pull =
-                    (outOfPlane > 0.0f ? -1.0f : 1.0f) * (fabs(outOfPlane) - rd->hingeLateralSlop) * RD_HINGE_RATE;
+                    (outOfPlane > 0.0f ? -1.0f : 1.0f) * (fabs(outOfPlane) - rd->hingeLateralSlop)
+                    * RD_HINGE_LATERAL_RATE;
 
                 VectorMA(rd->part[h->mid].p, pull, lateral, rd->part[h->mid].p);
             }
