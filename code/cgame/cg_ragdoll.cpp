@@ -56,6 +56,7 @@ cvar_t *cg_ragdoll_blastimpulse;
 cvar_t *cg_ragdoll_limbpush;
 cvar_t *cg_ragdoll_armfree;
 cvar_t *cg_ragdoll_legfree;
+cvar_t *cg_ragdoll_dumplabel;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -901,6 +902,11 @@ typedef struct {
     // is what the memset in CG_RagdollFree leaves behind.
     fileHandle_t dumpFile;
     char         dumpName[64];
+
+    // Which ragdoll_dump_N.txt this body is being written to, so the number can
+    // be drawn over it. Kept after the file closes: the corpse outlives the
+    // trace, and a screenshot taken late is exactly the one worth matching.
+    int          dumpSeq;
 
     // When the body this trace follows went to sleep, so the file can be let go
     // shortly after rather than held for the corpse's whole life.
@@ -3926,6 +3932,90 @@ static qboolean CG_RagdollDebugReady(void)
     return qtrue;
 }
 
+// A digit as strokes on a 4x7 grid, one bit per segment of the outline below.
+// There is no way to draw text in the world from here -- R_DrawString is flat
+// against the screen and would have to be deferred to the 2D pass -- and a
+// number floating over the body is the whole point, so the digits are drawn as
+// debug lines like everything else.
+//
+//   --0--        Numbered clockwise from the top bar, with 6 across the middle,
+//  |     |       which is the ordinary seven segment layout.
+//  5     1
+//  |     |
+//   --6--
+//  |     |
+//  4     2
+//  |     |
+//   --3--
+static const unsigned char rd_digitSegments[10] = {
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+};
+
+// Endpoints of each segment on a unit cell, x right and y up.
+static const float rd_digitStroke[7][4] = {
+    {0.0f, 1.0f, 1.0f, 1.0f},
+    {1.0f, 1.0f, 1.0f, 0.5f},
+    {1.0f, 0.5f, 1.0f, 0.0f},
+    {0.0f, 0.0f, 1.0f, 0.0f},
+    {0.0f, 0.5f, 0.0f, 0.0f},
+    {0.0f, 1.0f, 0.0f, 0.5f},
+    {0.0f, 0.5f, 1.0f, 0.5f}
+};
+
+// Writes the trace number in the air above the corpse, facing whoever is
+// looking, so a screenshot carries the name of the file that explains it.
+static void CG_RagdollDrawNumber(const cg_ragdoll_t *rd)
+{
+    vec3_t right, up, at;
+    char   text[16];
+    float  size, span;
+    int    len, i, k;
+
+    if (rd->dumpSeq <= 0) {
+        return;
+    }
+
+    Com_sprintf(text, sizeof(text), "%d", rd->dumpSeq);
+    len = (int)strlen(text);
+
+    // Billboarded. viewaxis[1] runs to the left, so the sign is flipped to get
+    // digits that read the right way round rather than mirrored.
+    VectorScale(cg.refdef.viewaxis[1], -1.0f, right);
+    VectorCopy(cg.refdef.viewaxis[2], up);
+
+    size = 6.0f;
+    span = (float)len * size * 0.8f;
+
+    // Over the head if there is one, and clear of it.
+    VectorCopy(rd->part[RD_HEAD].p, at);
+    VectorMA(at, 12.0f, up, at);
+    VectorMA(at, span * -0.5f, right, at);
+
+    for (i = 0; i < len; i++) {
+        const unsigned char segs = rd_digitSegments[text[i] - '0'];
+
+        for (k = 0; k < 7; k++) {
+            vec3_t a, b;
+
+            if (!(segs & (1 << k))) {
+                continue;
+            }
+
+            VectorCopy(at, a);
+            VectorMA(a, rd_digitStroke[k][0] * size * 0.6f, right, a);
+            VectorMA(a, rd_digitStroke[k][1] * size, up, a);
+
+            VectorCopy(at, b);
+            VectorMA(b, rd_digitStroke[k][2] * size * 0.6f, right, b);
+            VectorMA(b, rd_digitStroke[k][3] * size, up, b);
+
+            cgi.R_DebugLine(a, b, 0.2f, 0.9f, 1.0f, 1.0f);
+        }
+
+        VectorMA(at, size * 0.8f, right, at);
+    }
+}
+
 static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 {
     int i;
@@ -4007,7 +4097,9 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         return qfalse;
     }
 
-    Com_sprintf(rd->dumpName, sizeof(rd->dumpName), "ragdoll_dump_%d.txt", ++rd_dumpSeq);
+    rd->dumpSeq = ++rd_dumpSeq;
+
+    Com_sprintf(rd->dumpName, sizeof(rd->dumpName), "ragdoll_dump_%d.txt", rd->dumpSeq);
 
     rd->dumpFile = cgi.FS_FOpenFileWrite(rd->dumpName);
 
@@ -4337,6 +4429,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_limbpush  = cgi.Cvar_Get("cg_ragdoll_limbpush", "0", CVAR_ARCHIVE);
     cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "0.5", CVAR_ARCHIVE);
     cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
+    cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
@@ -4858,8 +4951,21 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // the ragdoll rather than the animation.
     cgi.ForceUpdatePose(model);
 
-    if (cg_ragdoll_debug->integer && CG_RagdollDebugReady()) {
-        CG_RagdollDebugDraw(rd);
+    // Deliberately not behind cg_ragdoll_debug: that draws a spike at every
+    // joint and, at level 2, the whole constraint web, which is the last thing
+    // wanted in a screenshot of how the body looks.
+    {
+        const qboolean label = (qboolean)(cg_ragdoll_dumplabel->integer && rd->dumpSeq > 0);
+
+        if ((cg_ragdoll_debug->integer || label) && CG_RagdollDebugReady()) {
+            if (label) {
+                CG_RagdollDrawNumber(rd);
+            }
+
+            if (cg_ragdoll_debug->integer) {
+                CG_RagdollDebugDraw(rd);
+            }
+        }
     }
 }
 
