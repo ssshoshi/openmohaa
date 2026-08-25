@@ -437,9 +437,19 @@ Still open: **`cg_ragdoll_solvegain` trades against twist.** Mean drawn twist is
 3.0° at gain 1 and 4.1° at 0.7, while worst-case twist goes the other way, 17° →
 15°. If twist starts reading badly, raise the gain before touching anything else.
 
-**Practical note:** `cg_ragdoll_sleepvel 0` disables sleeping, so any residual
-motion runs for the corpse's whole life instead of freezing. At the default 0.25
-three of five corpses traced from the game would have slept.
+**Sleeping is what arrests the last of it, and it must be left on.** The residual
+that survives the velocity rewrite is not velocity at all: it is Gauss-Seidel
+drift, the solver nudging a position a little the same way each step. The
+settling pass zeroes the particle's velocity correctly and the drift continues
+regardless, so no velocity fix reaches it. Sleeping does.
+
+Confirmed in the game. With `cg_ragdoll_sleepvel 0` a corpse crept about ten
+units over three seconds, walked its own arms off the step propping it up, lost
+those two contact planes and collapsed — a jump of 11.06 units a step, nearly
+five seconds after death. With the default 0.25 the same class of body sleeps at
+1.8–4.4 s and holds; over five traced corpses the worst late movement fell from
+11.06 to 1.41 and four of the five froze and stayed frozen for the rest of their
+lives. The fifth was removed by the server while still legitimately sliding.
 
 ### 10. The gate now disagrees with what corpses are supposed to do
 
