@@ -154,10 +154,37 @@ static const rdJointDef_t rd_joints[RD_NUM_JOINTS] = {
 // How much of a bone's spurious twist is taken out each frame.
 #define RD_UNTWIST_RATE 1.0f
 
+// How nearly opposite two bones may run before the twist between them stops
+// meaning anything.
+//
+// The twist is measured by carrying the parent's roll onto the child along the
+// shortest rotation between the two bone directions, and when the two run
+// exactly opposite there is no shortest rotation: every axis across the parent
+// turns one onto the other, and each gives an answer half a turn from the last.
+// This is not a corner case. A thigh runs down the leg while the pelvis runs up
+// the spine, so a body lying with its legs out has both thighs sitting exactly
+// on the singularity, where the measurement reads plus ninety on one frame and
+// minus ninety on the next while nothing whatever has moved. Taken out at full
+// rate that is a half turn in the drawn thigh: the leg snapping inside out at
+// the hip, and the mesh with it.
+//
+// So the correction is faded off as the two approach opposite. Where the twist
+// cannot be measured, none is invented.
+#define RD_UNTWIST_FLIP_LO 0.95f
+#define RD_UNTWIST_FLIP_HI 0.995f
+
 // How closely a roll reference may run to the bone it is orienting before it is
 // given up on. At one it is parallel and there is nothing left of it across the
 // bone to build a frame from.
-#define RD_TWIST_PARALLEL 0.94f
+//
+// Given up on over a band rather than at a single value. A thigh takes its roll
+// from the shin below it, and a corpse's legs straighten, so the two run into
+// line constantly; switching outright the moment they do steps the drawn bone
+// by however far the two references happen to disagree, which at the hip and
+// the knee is where the mesh tears. Between the two the references are mixed,
+// so the handover is continuous however close to the boundary a leg sits.
+#define RD_TWIST_PARALLEL_LO 0.88f
+#define RD_TWIST_PARALLEL_HI 0.97f
 
 typedef struct {
     const char *boneName;
@@ -983,6 +1010,8 @@ static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3]
     }
 
     if (def->helperA >= 0) {
+        float len, par;
+
         VectorSubtract(rd->part[def->helperB].p, rd->part[def->helperA].p, helper);
 
         // A limb bone takes its roll from the next bone down, so its Y follows
@@ -992,11 +1021,41 @@ static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3]
         // across the bone: what little remains is noise, and the frame it gives
         // turns with that noise. The bones below inherit it, so a whole leg
         // ends up twisted about itself.
-        if (VectorNormalize(helper) < 0.001f || fabs(DotProduct(helper, x)) > RD_TWIST_PARALLEL) {
+        len = VectorNormalize(helper);
+        par = len < 0.001f ? 1.0f : (float)fabs(DotProduct(helper, x));
+
+        if (par > RD_TWIST_PARALLEL_LO) {
+            vec3_t fallback, hy, fy, side;
+            float  t;
+
             if (haveCarried) {
-                VectorCopy(carried, helper);
+                VectorCopy(carried, fallback);
             } else {
-                VectorCopy(rd->transportY[boneNum], helper);
+                VectorCopy(rd->transportY[boneNum], fallback);
+            }
+
+            t = (par - RD_TWIST_PARALLEL_LO) / (RD_TWIST_PARALLEL_HI - RD_TWIST_PARALLEL_LO);
+            if (t > 1.0f) {
+                t = 1.0f;
+            }
+
+            // Mixed as a turn about the bone rather than as two directions
+            // added together. The two references can point opposite ways, and
+            // averaging those passes through nothing at all; turning one toward
+            // the other the short way round is continuous whatever they do.
+            VectorMA(helper, -DotProduct(helper, x), x, hy);
+            VectorMA(fallback, -DotProduct(fallback, x), x, fy);
+
+            if (VectorNormalize(hy) < 0.001f || VectorNormalize(fy) < 0.001f) {
+                VectorCopy(fallback, helper);
+            } else {
+                CrossProduct(x, hy, side);
+                RotatePointAroundVector(
+                    helper,
+                    x,
+                    hy,
+                    (float)(atan2(DotProduct(fy, side), DotProduct(fy, hy)) * 180.0 / M_PI) * t
+                );
             }
         }
     } else if (def->helperA == RD_TWIST_PARENT && haveCarried) {
