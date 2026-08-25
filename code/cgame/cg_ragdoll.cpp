@@ -2644,6 +2644,15 @@ static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
             // chest, so the solver holds the capsules apart correctly and the
             // mesh still overlaps.
             //
+            // Doubled once the labelled screenshots came in. Eight of eighteen
+            // bodies photographed as wrong were an arm inside the torso, and
+            // one of them settles it: an officer in a leather greatcoat, whose
+            // arm leaves his body at the waist rather than at a shoulder. The
+            // bone is outside the capsule and the sleeve is inside the coat.
+            // The capsule is not the body a player sees, so clearing it is not
+            // enough and holding the arm a little beyond it is right rather
+            // than excessive.
+            //
             // So ask these two segments to keep more room than they need, and
             // ramp it in on the limpness clock rather than applying it at once,
             // which would lift the hands off the chest on the first frame in
@@ -4545,7 +4554,7 @@ void CG_InitRagdoll(void)
     // So it is here to be judged by eye rather than settled by measurement. 0.1
     // is the balanced setting; 0.2 buys more clearance for more twist.
     cg_ragdoll_limbpush  = cgi.Cvar_Get("cg_ragdoll_limbpush", "0", CVAR_ARCHIVE);
-    cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "0.5", CVAR_ARCHIVE);
+    cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
     cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
