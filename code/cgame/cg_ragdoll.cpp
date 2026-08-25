@@ -788,6 +788,12 @@ typedef struct {
     vec3_t   impulseVel;
     int      impulseJoint;
 
+    // Which particles were buried in solid geometry on the last step. A trace
+    // that starts inside a brush cannot say which way is out, so such a
+    // particle is dropped back where it was, and if it stays buried it is
+    // dropped back again every step. Only the trace can show that happening.
+    int      buriedMask;
+
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
     // and which one it is cannot be worked out from the pose.
@@ -2507,9 +2513,12 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 
     const int   mask     = RD_CLIPMASK;
     const float friction = cg_ragdoll_friction->value;
+
     const float bounce   = cg_ragdoll_bounce->value;
     int         moved    = 0;
     int         i, k;
+
+    rd->buriedMask = 0;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
@@ -2535,10 +2544,52 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         CG_Trace(&trace, part->pPrev, rd_mins, rd_maxs, part->p, skipEntity, mask, qfalse, qtrue, "CG_RagdollCollide");
 
         if (trace.startsolid || trace.allsolid) {
-            // Already buried. Moving it now is how corpses get flung across
-            // the map, so drop it back onto its previous position, which also
-            // zeroes its velocity.
+            // Buried in the world. Dropping it back where it was and leaving
+            // it there is what this used to do, and it makes the particle an
+            // anchor: gravity nudges it, the trace starts buried again, it is
+            // dropped back again, and it goes on being dropped back every step
+            // for the rest of the corpse's life while the body hangs off it.
+            // That is the corpse left standing in mid air beside a wall, and
+            // measured over the suite a joint is buried on almost every frame
+            // of almost every scenario, so this is not a rare case.
+            //
+            // A trace that starts inside a brush cannot say which way is out.
+            // So the way out is taken from the body instead: the joint this one
+            // hangs from is nearly always in open space, and it is both a
+            // direction that certainly exists and a short distance away. The
+            // move is small and is made without velocity, so a buried limb
+            // walks itself out over a few steps rather than being flung, which
+            // is what the old comment here was rightly afraid of.
+            const int toward = rd_joints[i].parent >= 0 ? rd_joints[i].parent : RD_SPINE;
+            trace_t   out;
+
             VectorCopy(part->pPrev, part->p);
+            rd->buriedMask |= 1 << i;
+
+            // Traced from the joint this one hangs from, back toward it. That
+            // joint is nearly always in open space, so the trace starts outside
+            // the brush and stops on the face the particle is behind, which is
+            // the one place it can be put that is both out of the solid and
+            // still where the limb should be. Shoving it a fixed distance each
+            // step instead does get it out, and costs the corpse its stillness:
+            // residual movement over the real deaths went up five times.
+            //
+            // If the parent is buried too the trace starts solid as well and
+            // nothing is done this step. The chain unburies from the body
+            // outward over the next few, which is the right order anyway.
+            CG_Trace(
+                &out, rd->part[toward].p, rd_mins, rd_maxs, part->p, skipEntity, mask, qfalse, qtrue, "CG_RagdollUnbury"
+            );
+
+            if (!out.startsolid && !out.allsolid && out.fraction < 1.0f) {
+                VectorCopy(out.endpos, part->p);
+                VectorMA(part->p, RD_SURFACE_GAP, out.plane.normal, part->p);
+
+                // Placed, not thrown: Verlet reads velocity as the gap between
+                // these two, so leaving it open would hand the limb a kick.
+                VectorCopy(part->p, part->pPrev);
+            }
+
             moved++;
             continue;
         }
@@ -3338,6 +3389,7 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
+        "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
         "# P <joint> <x> <y> <z>\n"
         "# A <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   animation pose\n"
         "# B <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   drawn pose\n",
@@ -3442,6 +3494,22 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
 
     Com_sprintf(line, sizeof(line), "E %.3f %.3f %.3f\n", rd->entOrigin[0], rd->entOrigin[1], rd->entOrigin[2]);
     CG_RagdollDumpLine(rd, line);
+
+    {
+        int contact = 0, ground = 0;
+
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            if (rd->part[i].hasContact) {
+                contact |= 1 << i;
+            }
+            if (rd->part[i].onGround) {
+                ground |= 1 << i;
+            }
+        }
+
+        Com_sprintf(line, sizeof(line), "C %d %d %d\n", contact, ground, rd->buriedMask);
+        CG_RagdollDumpLine(rd, line);
+    }
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         Com_sprintf(line, sizeof(line), "P %d %.3f %.3f %.3f\n", i, rd->part[i].p[0], rd->part[i].p[1], rd->part[i].p[2]);
