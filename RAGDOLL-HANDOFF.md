@@ -419,7 +419,19 @@ had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 ro
 decision *last*: `37d0daea` records that squaring it against the shoulders doubled
 torso twist, but that was measured with the 90° shear present.
 
-### 9. Fidget, and why the obvious fixes for it fail
+### 9. Two rules about a contact plane must agree about distance
+
+A plane is kept until the particle drifts `RD_CONTACT_FORGET` (16 units) clear of
+it, and the probe that asks whether the surface is still there must reach at
+least that far. It used to trace a fixed short distance, so anything drifting
+between the two numbers was reported as a vanished surface and dropped
+(`b0ac9e1`-era bug, fixed). The symptom was a corpse that never slept: a hand
+lost its plane every 250 ms, fell, caught the step again, and the four frames of
+movement reset the quiet timer just short of the 400 ms it needed.
+
+If either constant is ever changed, change the other with it.
+
+### 10. Fidget, and why the obvious fixes for it fail
 
 A Verlet integrator cannot tell a position correction from a velocity, so every
 constraint the solver satisfies hands the body a little motion it never had.
@@ -467,7 +479,7 @@ five seconds after death. With the default 0.25 the same class of body sleeps at
 11.06 to 1.41 and four of the five froze and stayed frozen for the rest of their
 lives. The fifth was removed by the server while still legitimately sliding.
 
-### 10. The gate now disagrees with what corpses are supposed to do
+### 11. The gate now disagrees with what corpses are supposed to do
 
 `lateMove < 0.5` requires a body to have stopped by frame 150. Since `24897ebf`
 a corpse on a slope steeper than its friction angle correctly keeps sliding, so
@@ -476,7 +488,7 @@ where it used to travel 11. Three of the gate's lost passes are this, not
 regressions. Either exempt scenarios with a sloped floor, or measure late
 movement as *acceleration* rather than speed.
 
-### 11. Only 8 of 24 real animations pass their full quality gate
+### 12. Only 9 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
