@@ -797,6 +797,7 @@ typedef struct {
     // Open while this corpse is being traced to a file. Zero is no file, which
     // is what the memset in CG_RagdollFree leaves behind.
     fileHandle_t dumpFile;
+    char         dumpName[64];
 } cg_ragdoll_t;
 
 static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
@@ -3290,7 +3291,12 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 // Lifecycle
 //=============================================================
 
-#define RD_DUMP_FILE "ragdoll_dump.txt"
+// Traces are numbered rather than sharing one name. Set cg_ragdoll_dump to more
+// than one and that many bodies are caught, each to its own file, because the
+// body worth looking at is often not the next one to fall: a corpse left
+// hanging on a wall was photographed while the trace ran on a different man who
+// died correctly on the floor a few yards away.
+static int rd_dumpSeq;
 
 // Writes one line, whatever its length, without needing the caller to know how
 // long it came out.
@@ -3310,10 +3316,12 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
     char line[512];
     int  i;
 
-    rd->dumpFile = cgi.FS_FOpenFileWrite(RD_DUMP_FILE);
+    Com_sprintf(rd->dumpName, sizeof(rd->dumpName), "ragdoll_dump_%d.txt", ++rd_dumpSeq);
+
+    rd->dumpFile = cgi.FS_FOpenFileWrite(rd->dumpName);
 
     if (!rd->dumpFile) {
-        cgi.Printf("ragdoll: could not open " RD_DUMP_FILE " for writing\n");
+        cgi.Printf("ragdoll: could not open %s for writing\n", rd->dumpName);
         return;
     }
 
@@ -3321,15 +3329,28 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         line,
         sizeof(line),
         "# openmohaa ragdoll trace v1\n"
-        "# entity %d  bodyscale %.4f  blendtime %d  impulse %.2f\n"
+        "# entity %d  bodyscale %.4f\n"
+        // Every tuning value that changes what this body does. Read them before
+        // reading anything into the trace: six corpses once looked like they
+        // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
+        // zero, which switches sleeping off by design.
+        "# blendtime %d  impulse %.2f  stiffness %.2f  limptime %d\n"
+        "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
+        "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
         "# P <joint> <x> <y> <z>\n"
         "# A <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   animation pose\n"
         "# B <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   drawn pose\n",
         rd->entityNum,
         CG_RagdollModelScale(model),
         cg_ragdoll_blendtime->integer,
-        cg_ragdoll_impulse->value
+        cg_ragdoll_impulse->value,
+        cg_ragdoll_stiffness->value,
+        cg_ragdoll_limptime->integer,
+        cg_ragdoll_sleepvel->value,
+        cg_ragdoll_sleeptime->integer,
+        cg_ragdoll_duration->integer,
+        CG_RagdollGravity()
     );
     CG_RagdollDumpLine(rd, line);
 
@@ -3356,6 +3377,30 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
     }
 }
 
+// The entity alone, once the body has stopped being solved. Written every frame
+// the corpse is asleep, which is the window the pose can no longer explain.
+static void CG_RagdollDumpSleeping(cg_ragdoll_t *rd)
+{
+    char line[256];
+
+    if (!rd->dumpFile) {
+        return;
+    }
+
+    Com_sprintf(
+        line,
+        sizeof(line),
+        "F %d 1.0000 %d %d 0.0000 0 0\nE %.3f %.3f %.3f\n",
+        cg.time,
+        (int)rd->state,
+        CG_RagdollSupportCount(rd),
+        rd->entOrigin[0],
+        rd->entOrigin[1],
+        rd->entOrigin[2]
+    );
+    CG_RagdollDumpLine(rd, line);
+}
+
 static void CG_RagdollDumpClose(cg_ragdoll_t *rd)
 {
     if (!rd->dumpFile) {
@@ -3364,7 +3409,7 @@ static void CG_RagdollDumpClose(cg_ragdoll_t *rd)
 
     cgi.FS_FCloseFile(rd->dumpFile);
     rd->dumpFile = 0;
-    cgi.Printf("ragdoll: trace written to " RD_DUMP_FILE "\n");
+    cgi.Printf("ragdoll: trace written to %s\n", rd->dumpName);
 }
 
 // One frame of the corpse: where the simulation has its particles, what the
@@ -3393,6 +3438,9 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         rd->lastSteps,
         cg.time - rd->quietSince
     );
+    CG_RagdollDumpLine(rd, line);
+
+    Com_sprintf(line, sizeof(line), "E %.3f %.3f %.3f\n", rd->entOrigin[0], rd->entOrigin[1], rd->entOrigin[2]);
     CG_RagdollDumpLine(rd, line);
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
@@ -3802,9 +3850,12 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // and cannot be left running to fill the disk. Opened after the state
         // and the entity number are set, so the header describes the corpse
         // rather than the empty slot it came from.
-        if (cg_ragdoll_dump->integer) {
+        if (cg_ragdoll_dump->integer > 0) {
+            char left[16];
+
             CG_RagdollDumpOpen(rd, model);
-            cgi.Cvar_Set("cg_ragdoll_dump", "0");
+            Com_sprintf(left, sizeof(left), "%d", cg_ragdoll_dump->integer - 1);
+            cgi.Cvar_Set("cg_ragdoll_dump", left);
         }
     }
 
@@ -3947,11 +3998,13 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         }
     }
 
-    // Nothing is built for a sleeping corpse, so there is nothing further to
-    // trace: close the file there rather than leaving it open for the minutes
-    // the body then lies about.
+    // A sleeping corpse is still worth following, in one respect. Its matrices
+    // are frozen in model space, so from here on the drawn body rides the
+    // entity rather than the simulation, and a corpse that settled correctly on
+    // the floor can still end up drawn somewhere else entirely if the entity
+    // goes there. Nothing is being solved, so only the entity is recorded.
     if (rd->state == RD_SLEEPING) {
-        CG_RagdollDumpClose(rd);
+        CG_RagdollDumpSleeping(rd);
     }
 
     // A sleeping ragdoll keeps emitting the matrices it settled on. That is
