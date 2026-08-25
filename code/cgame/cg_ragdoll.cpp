@@ -1434,13 +1434,19 @@ static qboolean CG_RagdollMeasureHinges(cg_ragdoll_t *rd)
             // The limb died straight, so there is no bend to measure. Use the
             // direction this joint anatomically folds toward instead.
             VectorCopy(rd_hinges[i].defaultBend, rd->hingeBend[i]);
-            continue;
+        } else {
+            for (k = 0; k < 3; k++) {
+                rd->hingeBend[i][k] = DotProduct(offset, torso[k]);
+            }
         }
 
-        for (k = 0; k < 3; k++) {
-            rd->hingeBend[i][k] = DotProduct(offset, torso[k]);
-        }
-
+        // Written on both paths, and it used not to be. The straight limb case
+        // returned early, so the rest kept the zero it was allocated with, and
+        // the roll limit in CG_RagdollHinges is measured against it: a dot
+        // product against zero is zero on every frame, so the limit never binds
+        // and the bend plane is free to follow the knee wherever it wanders. A
+        // leg that dies straight is the common case, which left the limit inert
+        // in exactly the deaths it was written for.
         for (b = 0; b < 3; b++) {
             rd->hingeBendRest[i][b] = rd->hingeBend[i][b];
         }
