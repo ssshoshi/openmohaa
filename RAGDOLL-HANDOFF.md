@@ -416,15 +416,26 @@ Tried and rejected, with numbers:
 
 | tried | result |
 |---|---|
+| Holding velocity explicitly, and choosing how much of a solve counts as motion | **worked**, `76b38c00`. See above |
 | Coulomb friction (fixed speed off per step) instead of multiplicative | **runaway.** A fixed subtraction cannot bound a solver that adds every step; a corpse on flat ground span up like a turntable, a toe sweeping 5–6 units a step and *rising*. Shipped as `24897ebf`, reverted as `4c3e01e5` |
 | Coulomb plus a viscous term to bound it | at every strength that stops the runaway the body slides *less* than with no change at all: 0.90 gives fidget 3.65 / travel 68, against 2.77 / 100 for leaving it alone |
 | Damping only the motion that disagrees with the rest of the body, keeping the shared slide | fidget 0.436, travel 808. The premise is wrong: a *spinning* body is coherent too, so this cannot tell a slide from a spin |
 | Making `CG_RagdollProjectContacts` velocity-neutral | fidget 0.50 → 0.71 and particle distortion worst 15% → 98%. The handoff already recorded this once; it fails the same way |
 | Recording the contact plane in the push-out pass | halves fidget (0.23 → 0.13) and costs twist (3.0° → 4.3°) and self-intersection. Parked: twist reads worse than fidget |
 
-The real fix is to stop constraint corrections counting as velocity — a proper
-position-based velocity update rather than raw Verlet. That is a rewrite of the
-integrator's contract with the solver, not a tuning change.
+**Done, in `76b38c00`.** Each particle now carries its velocity in units per
+second; `pPrev` means only where it was when the step began, and nothing writes
+to either to mean something else. How much of the solver's correction counts as
+motion is `cg_ragdoll_solvegain`, default 0.7.
+
+Worst residual movement in a settled corpse 2.77 units a step → 0.99, average
+0.23 → 0.06, and the sweep is well behaved from 0.9 down to 0.6 rather than one
+lucky value. At 0 the body cannot learn it has been corrected and falls apart,
+so the useful range is the top of the scale.
+
+Still open: **`cg_ragdoll_solvegain` trades against twist.** Mean drawn twist is
+3.0° at gain 1 and 4.1° at 0.7, while worst-case twist goes the other way, 17° →
+15°. If twist starts reading badly, raise the gain before touching anything else.
 
 **Practical note:** `cg_ragdoll_sleepvel 0` disables sleeping, so any residual
 motion runs for the corpse's whole life instead of freezing. At the default 0.25
