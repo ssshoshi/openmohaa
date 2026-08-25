@@ -403,7 +403,34 @@ had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 ro
 decision *last*: `37d0daea` records that squaring it against the shoulders doubled
 torso twist, but that was measured with the 90° shear present.
 
-### 9. The gate now disagrees with what corpses are supposed to do
+### 9. Fidget, and why the obvious fixes for it fail
+
+A Verlet integrator cannot tell a position correction from a velocity, so every
+constraint the solver satisfies hands the body a little motion it never had.
+The damping that takes that back out is the same damping that stops a corpse
+sliding, which is why fidget and the "corpses stop dead on stairs" complaint are
+one problem and not two. Measured over the suite, worst late movement is 2.77
+units a step, on `anim wall, right` and `anim death_prone1`.
+
+Tried and rejected, with numbers:
+
+| tried | result |
+|---|---|
+| Coulomb friction (fixed speed off per step) instead of multiplicative | **runaway.** A fixed subtraction cannot bound a solver that adds every step; a corpse on flat ground span up like a turntable, a toe sweeping 5–6 units a step and *rising*. Shipped as `24897ebf`, reverted as `4c3e01e5` |
+| Coulomb plus a viscous term to bound it | at every strength that stops the runaway the body slides *less* than with no change at all: 0.90 gives fidget 3.65 / travel 68, against 2.77 / 100 for leaving it alone |
+| Damping only the motion that disagrees with the rest of the body, keeping the shared slide | fidget 0.436, travel 808. The premise is wrong: a *spinning* body is coherent too, so this cannot tell a slide from a spin |
+| Making `CG_RagdollProjectContacts` velocity-neutral | fidget 0.50 → 0.71 and particle distortion worst 15% → 98%. The handoff already recorded this once; it fails the same way |
+| Recording the contact plane in the push-out pass | halves fidget (0.23 → 0.13) and costs twist (3.0° → 4.3°) and self-intersection. Parked: twist reads worse than fidget |
+
+The real fix is to stop constraint corrections counting as velocity — a proper
+position-based velocity update rather than raw Verlet. That is a rewrite of the
+integrator's contract with the solver, not a tuning change.
+
+**Practical note:** `cg_ragdoll_sleepvel 0` disables sleeping, so any residual
+motion runs for the corpse's whole life instead of freezing. At the default 0.25
+three of five corpses traced from the game would have slept.
+
+### 10. The gate now disagrees with what corpses are supposed to do
 
 `lateMove < 0.5` requires a body to have stopped by frame 150. Since `24897ebf`
 a corpse on a slope steeper than its friction angle correctly keeps sliding, so
@@ -412,7 +439,7 @@ where it used to travel 11. Three of the gate's lost passes are this, not
 regressions. Either exempt scenarios with a sloped floor, or measure late
 movement as *acceleration* rather than speed.
 
-### 10. Only 5 of 24 real animations pass their full quality gate
+### 11. Only 8 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
