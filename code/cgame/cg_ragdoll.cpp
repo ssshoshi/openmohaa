@@ -876,6 +876,10 @@ typedef struct {
     // is what the memset in CG_RagdollFree leaves behind.
     fileHandle_t dumpFile;
     char         dumpName[64];
+
+    // When the body this trace follows went to sleep, so the file can be let go
+    // shortly after rather than held for the corpse's whole life.
+    int dumpSleepAt;
 } cg_ragdoll_t;
 
 static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
@@ -3745,6 +3749,22 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 // died correctly on the floor a few yards away.
 static int rd_dumpSeq;
 
+// How many traces may be open at once.
+//
+// A trace holds an engine file handle for as long as the corpse it follows
+// exists, and the engine has few of them. Capturing many bodies in a busy round
+// took every one and the game went down with "FS_HandleForFile: none free",
+// taking the server with it. A handful at a time is all anyone reads anyway,
+// and the ones that cannot be opened are simply not taken.
+#define RD_MAX_OPEN_TRACES 4
+
+// How long a trace goes on following a corpse that has gone to sleep. Long
+// enough to show the entity wandering off underneath a frozen body, short
+// enough that the handle comes back.
+#define RD_DUMP_SLEEP_TAIL 3000
+
+static int rd_openTraces;
+
 // Writes one line, whatever its length, without needing the caller to know how
 // long it came out.
 static void CG_RagdollDumpLine(cg_ragdoll_t *rd, const char *line)
@@ -3758,12 +3778,16 @@ static void CG_RagdollDumpLine(cg_ragdoll_t *rd, const char *line)
 
 // Starts a trace of this corpse. The header names every joint and every drawn
 // bone, so the file can be read without a copy of this table to hand.
-static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
+static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
 {
     // Comfortably over the header block below, which is written in one go and
     // was silently truncated mid-word when it outgrew a smaller buffer.
     char line[1024];
     int  i;
+
+    if (rd_openTraces >= RD_MAX_OPEN_TRACES) {
+        return qfalse;
+    }
 
     Com_sprintf(rd->dumpName, sizeof(rd->dumpName), "ragdoll_dump_%d.txt", ++rd_dumpSeq);
 
@@ -3771,8 +3795,11 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
 
     if (!rd->dumpFile) {
         cgi.Printf("ragdoll: could not open %s for writing\n", rd->dumpName);
-        return;
+        return qfalse;
     }
+
+    rd_openTraces++;
+    rd->dumpSleepAt = 0;
 
     Com_sprintf(
         line,
@@ -3827,7 +3854,11 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         );
         CG_RagdollDumpLine(rd, line);
     }
+
+    return qtrue;
 }
+
+static void CG_RagdollDumpClose(cg_ragdoll_t *rd);
 
 // The entity alone, once the body has stopped being solved. Written every frame
 // the corpse is asleep, which is the window the pose can no longer explain.
@@ -3836,6 +3867,18 @@ static void CG_RagdollDumpSleeping(cg_ragdoll_t *rd)
     char line[256];
 
     if (!rd->dumpFile) {
+        return;
+    }
+
+    if (!rd->dumpSleepAt) {
+        rd->dumpSleepAt = cg.time;
+    }
+
+    // Enough of the sleeping tail to show the entity moving out from under a
+    // frozen body, and then the handle goes back. Holding it until the corpse
+    // is finally freed is what ran the engine out of them.
+    if (cg.time - rd->dumpSleepAt > RD_DUMP_SLEEP_TAIL) {
+        CG_RagdollDumpClose(rd);
         return;
     }
 
@@ -3861,6 +3904,11 @@ static void CG_RagdollDumpClose(cg_ragdoll_t *rd)
 
     cgi.FS_FCloseFile(rd->dumpFile);
     rd->dumpFile = 0;
+
+    if (rd_openTraces > 0) {
+        rd_openTraces--;
+    }
+
     cgi.Printf("ragdoll: trace written to %s\n", rd->dumpName);
 }
 
@@ -3969,6 +4017,7 @@ void CG_InitRagdoll(void)
     }
 
     memset(rd_evictedAt, 0, sizeof(rd_evictedAt));
+    rd_openTraces = 0;
 
     // cgs is zeroed on init, so this has to be turned on explicitly: a server
     // that never sends sv_ragdoll must not read as having disabled it.
@@ -4391,10 +4440,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // and cannot be left running to fill the disk. Opened after the state
         // and the entity number are set, so the header describes the corpse
         // rather than the empty slot it came from.
-        if (cg_ragdoll_dump->integer > 0) {
+        if (cg_ragdoll_dump->integer > 0 && CG_RagdollDumpOpen(rd, model)) {
             char left[16];
 
-            CG_RagdollDumpOpen(rd, model);
             Com_sprintf(left, sizeof(left), "%d", cg_ragdoll_dump->integer - 1);
             cgi.Cvar_Set("cg_ragdoll_dump", left);
         }
