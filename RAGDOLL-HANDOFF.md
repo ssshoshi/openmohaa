@@ -28,9 +28,13 @@ could not see. Take them as primary evidence.
 
 ## State
 
-Branch `feat/client-ragdoll`, 9 commits ahead of `main`, working tree clean.
+Branch `feat/client-ragdoll`, 12 commits ahead of `main`, working tree clean.
 
 ```
+8545b4f6 fix(cgame): stop the untwist pass turning legs inside out at the hip
+33dd18be fix(cgame): hand a limb's roll reference over gradually, not at a stroke
+ef3a95dd fix(cgame): write down the knee's bend plane when the leg dies straight
+38a7c708 docs: record the pelvis shear, and what the harness could not see
 7140cd97 fix(cgame): give the root bone its own orientation, not the pelvis's
 2f0331c7 fix(cgame): limit how far the legs may open at the hip
 6e019517 fix(cgame): let the knee's bend plane roll with the hip
@@ -148,7 +152,18 @@ Every one of these produced a wrong conclusion that was acted on:
 - **`backBends`, the "knee back" column, was never incremented.** It was declared,
   printed and gated on, so `backBends == 0` passed vacuously. Now wired to the
   knee's offset from the hip-to-foot chord. It is not zero.
-- **`limb held up by nothing` counts the body itself as support.** A foot 21
+- **`limb held up by nothing` counted anything nearby as support, not anything
+  underneath.** A foot floating level with the pelvis scored as resting on the hip.
+  It now requires the support to lie below the limb, within 60° of straight down.
+  The honest numbers are much worse than the old ones: worst over the real
+  animations went from 10.1 units to 17.7, mean 2.7 to 4.3. Treat the pre-fix
+  history of this metric as meaningless.
+- **`worst roll step in one frame`** was added to catch a bone snapping about its
+  own length while nothing moves. It reports the worst step and, separately, the
+  worst once the body has settled — the settled figure is the one that matters, as
+  large steps during a tumble are usually real motion. It found the hip
+  singularity in minutes.
+- **(historic, now fixed) `limb held up by nothing` counted the body itself.** A foot 21
   units in the air beside the pelvis scored **+1.2**. This is why sweeps kept
   reporting the legs were fine while the user was photographing legs in the air.
   Not fixed.
@@ -242,25 +257,22 @@ may move this on its own.
 Worst 12–14 units on the newly added running/prone animations, against a gate of
 5. This is the cost of the two leg fixes and has not been paid down.
 
-### 4. Two defects found while chasing the shear, both still open
+### 4. Folded elbows still flip, same cause as the hip did
 
-Neither has a design trade-off; both were left out so the shear fix could be
-judged on its own.
+`CG_RagdollTwistBetween` carries the parent's roll onto the child along the
+shortest rotation between their directions, and that rotation does not exist when
+the two run opposite: every axis across the parent turns one onto the other and
+each answer is half a turn from the last. `8545b4f6` took the thighs and upper
+arms out of the untwist pass because their roll is already decided geometrically
+and they sit on that singularity permanently — a thigh runs down the leg while
+the pelvis runs up the spine.
 
-- **`hingeBendRest` is never written when a leg dies straight.**
-  `CG_RagdollMeasureHinges` takes the `defaultBend` branch and `continue`s before
-  the copy, so the field keeps its memset zero. In `CG_RagdollHinges` that makes
-  the dot product against it zero every frame and the clamp degenerate — so the
-  20° hip-roll limit added by `6e019517` is **entirely inert for straight-dying
-  legs**, which is the common case. One line.
-- **`CG_RagdollBoneFrame` switches a roll reference on a hard threshold.** The
-  thigh and upper arm take their roll from the limb below, except within ~20° of
-  parallel (`RD_TWIST_PARALLEL` 0.94) where it silently falls back to the
-  transported parent roll. `correction[]` and `twistRest[]` were calibrated
-  against whichever branch was live at death. A corpse's legs straighten, the
-  reference flips, and the drawn thigh roll steps — at the hip and the knee, which
-  is where the tearing was photographed. Blend across the band rather than
-  switching, and add a max-frame-to-frame-roll metric to see it.
+The forearms are still in the pass, and a fully folded elbow puts the forearm
+opposite the upper arm, which is the same singularity. Worst settled flip over the
+real animations is 75° on `Bip01 L Forearm` in `anim wall, collapse`. Fading the
+correction near the singularity was tried for the hip case and measured *worse*
+than doing nothing (mean step 66.8 → 70.6); don't reach for it again without a
+better reason than it being the obvious move.
 
 ### 5. The rest of the death pose is still memorised
 
