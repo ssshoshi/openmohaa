@@ -274,6 +274,36 @@ is full the corpse has settled and friction holds the legs crossed. Applied
 instantly it stretches the body past standing height. Grid: crossing 6/6, passes
 +3/−0 at every limptime > 0. Regresses at `limptime 0`.
 
+### The world was never tested against a bone, only against a joint
+
+`CG_RagdollCollide` boxes each **particle** from `pPrev` to `p`. Nothing tested the
+bone *between* two joints, so a forearm sits inside a beam with the elbow out one
+side and the hand out the other and no trace objects — the identical blind spot
+self-collision had. `CG_RagdollLimbPushOut` (`9f6ab87a`) samples each limb bone at
+0.35 and 0.65 and puts it back on the surface.
+
+**This is a structural gap, not a metric result** — the suite is unmoved because its
+world is a floor and a few walls, where a joint catches whatever the bone would.
+The new trace `L` line names which bones were found inside the world; the drawn
+pose cannot show it, since the bone is put back before anything reads it.
+
+Labelled screenshots (`cg_ragdoll_dumplabel`, `daa6d9b2`) made this findable: 3 of 7
+were an arm sunk into ground or timber, and every skeleton measure scored those
+bodies clean.
+
+### Twist is confirmed as what "bent all weird" means
+
+dump192, labelled *"body bent all weird"* by the user, carries **48.2°** pelvis-to-chest
+twist — 4th of 295. The torso faces one way and the pelvis is wrung the other.
+**38 of 295 exceed 30°, 10 exceed 40°.** This is the strongest validated link between
+a number and the user's eye. Next target; see the untwist-decay plan below.
+
+### DO NOT use "lowest joint below origin" as a penetration measure
+
+It conflates a body underground with a body that fell a long way from its entity
+origin. Dumps 203/208/137 read −313/−193/−93 while resting on 19–21 contacts with
+zero sink. Use the solver's own `buried` mask and the new `L` line instead.
+
 ### DANGER: do not grade the solver with the solver's own ruler
 
 The in-game metrics took their radii from `rd_joints[]` — **the solver's own
