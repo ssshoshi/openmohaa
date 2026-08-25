@@ -158,6 +158,13 @@ Every one of these produced a wrong conclusion that was acted on:
   The honest numbers are much worse than the old ones: worst over the real
   animations went from 10.1 units to 17.7, mean 2.7 to 4.3. Treat the pre-fix
   history of this metric as meaningless.
+- **`bone rolled about itself` reads 0.00 on all 49 scenarios**, and always did.
+  It baselines on the pose the ragdoll was handed and then reports drift from it,
+  but `CG_RagdollUntwist` pins that exact quantity to the value it was handed, so
+  the metric is zero by construction. It is the metric that ought to catch a boot
+  drawn with its sole facing the wrong way, and it cannot. Still unfixed: the
+  obvious repair, comparing against the animation instead, is the rejected
+  experiment recorded above.
 - **`worst roll step in one frame`** was added to catch a bone snapping about its
   own length while nothing moves. It reports the worst step and, separately, the
   worst once the body has settled — the settled figure is the one that matters, as
@@ -212,6 +219,7 @@ With numbers, because several of these look obviously correct.
 | Widening the hip cone (30° → 90°) | no effect on knee fold; the cone constrains the hip, the fold is the knee |
 | Tightening the foot-to-foot span | never binds; legs reach only 23–28° in the scenarios that have it |
 | Disabling spine smoothing entirely | mean twist better, worst case 94° → 162° |
+| Measuring drawn limb roll against the animation's current pose | looks like a defect metric and is not one. The foot topped every scenario at up to 69°, which turned out to be the animation's *own* ankle roll between the frame the ragdoll took over and the frame it ends on: `death_prone1` rolls its ankle −69.2° by itself, `death_collapse` +31.6°. The drawn foot was holding its handoff value faithfully. Removed. |
 
 Also worth knowing: **bend-only spine smoothing failed the first time** (a 166°
 flip in `death_back1`) and succeeded later unchanged, because the flip was caused
