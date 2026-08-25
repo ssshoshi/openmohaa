@@ -2822,6 +2822,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // coming down a staircase, robs it of the motion it should be carrying and
     // leaves it stuck partway.
     const qboolean supported = (CG_RagdollSupportCount(rd) >= RD_MIN_SUPPORT) ? qtrue : qfalse;
+    const float    friction  = cg_ragdoll_friction->value;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
@@ -2836,8 +2837,50 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
                 VectorCopy(part->p, part->pPrev);
                 len = 0.0f;
             } else {
-                VectorMA(part->p, -(1.0f - RD_GROUND_DAMPING), d, part->pPrev);
-                len *= RD_GROUND_DAMPING;
+                vec3_t vn, vt;
+                float  dot;
+
+                // Only the motion into the surface is taken out here. Damping
+                // the whole of it, which is what this did, charges the body for
+                // friction a second time and takes its slide with it: a corpse
+                // on a staircase is touching something on every step, so it was
+                // losing two thirds of its speed every step in every direction
+                // and stopping dead where it landed. The guard above was meant
+                // to prevent exactly that and cannot: a body sprawled across
+                // steps has three upward contacts without difficulty.
+                //
+                // Landing is inelastic and should lose its downward speed. What
+                // it carries along the surface is friction's business, and
+                // friction has already had its turn in CG_RagdollCollide.
+                dot = DotProduct(d, part->contactNormal);
+                VectorScale(part->contactNormal, dot, vn);
+                VectorSubtract(d, vn, vt);
+
+                VectorScale(vn, RD_GROUND_DAMPING, vn);
+
+                // Friction along the surface, taken off as a fixed amount of
+                // speed per step rather than as a fraction of it. That is what
+                // friction actually does: it decelerates at a rate set by the
+                // weight on the surface and not by how fast the thing is
+                // already going. Scaled instead, as this used to be, a fast
+                // body loses a lot and a slow one never quite stops, which is
+                // both a corpse that will not slide and a corpse that creeps.
+                // Taken this way it slides, slows evenly and stops dead.
+                {
+                    const float drop = friction * gravity * dt * dt;
+                    const float vtLen = VectorLength(vt);
+
+                    if (vtLen <= drop) {
+                        VectorClear(vt);
+                    } else {
+                        VectorScale(vt, (vtLen - drop) / vtLen, vt);
+                    }
+                }
+
+                VectorAdd(vn, vt, d);
+
+                VectorSubtract(part->p, d, part->pPrev);
+                len = VectorLength(d);
             }
         }
 
