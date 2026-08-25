@@ -644,6 +644,17 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // supported, and so before it is allowed to damp down and fall asleep.
 #define RD_MIN_SUPPORT 3
 
+// Or this many touching anything at all, whichever way it faces.
+//
+// The support test only counts faces within about forty five degrees of level,
+// because what it is really asking is whether the body is still falling. A
+// corpse wedged in a corner or lying against a steep slope answers no: traced
+// from the game, bodies held by fourteen and fifteen contact planes with only
+// one of them level went on being solved for twelve seconds and more, because
+// they could never qualify to sleep. A body touching this many things is not
+// in free fall whichever way those things face.
+#define RD_MIN_SUPPORT_ANY 8
+
 // How far past the lifetime cap a corpse with nothing under it is allowed to
 // keep falling before it is frozen anyway. Only reached by a body that has left
 // the map or wedged somewhere it can never rest.
@@ -2927,6 +2938,30 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 // How many joints are resting on a surface that could hold the body up. A
 // corpse draped over a ledge with only its middle touching is not supported,
 // however slowly it happens to be moving at that instant.
+// Whether the body has stopped falling, which is what the sleep test needs to
+// know. Level faces are the usual answer; being pressed against enough of
+// anything is the other one.
+static qboolean CG_RagdollSupported(const cg_ragdoll_t *rd)
+{
+    int level = 0;
+    int any   = 0;
+    int i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        if (!rd->part[i].hasContact) {
+            continue;
+        }
+
+        any++;
+
+        if (rd->part[i].contactNormal[2] > 0.7f) {
+            level++;
+        }
+    }
+
+    return (level >= RD_MIN_SUPPORT || any >= RD_MIN_SUPPORT_ANY) ? qtrue : qfalse;
+}
+
 static int CG_RagdollSupportCount(const cg_ragdoll_t *rd)
 {
     int n = 0;
@@ -4565,7 +4600,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             // what leaves a corpse hooked on an edge and dangling in mid air
             // instead of dropping. So it has to be resting on something before
             // it is allowed to sleep at all.
-            const qboolean supported = (CG_RagdollSupportCount(rd) >= RD_MIN_SUPPORT) ? qtrue : qfalse;
+            const qboolean supported = CG_RagdollSupported(rd);
 
             if (!supported) {
                 rd->quietSince = cg.time;
