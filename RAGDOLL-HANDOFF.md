@@ -152,6 +152,10 @@ Every one of these produced a wrong conclusion that was acted on:
 - **`backBends`, the "knee back" column, was never incremented.** It was declared,
   printed and gated on, so `backBends == 0` passed vacuously. Now wired to the
   knee's offset from the hip-to-foot chord. It is not zero.
+- **Nothing measured particles buried in the world until `bb26b744`.** The
+  answer to "why is this corpse in the air" was in the collision code the whole
+  time and no metric could see it. The trace's `C` record carries the contact,
+  ground and buried masks now.
 - **Corpses not sleeping is a cvar, not a bug.** Six traces all ran their full
   budget; the seventh showed why. `cg_ragdoll_sleepvel 0` disables sleeping by
   design, and with it set the quiet timer is reset on every frame that runs a
@@ -305,7 +309,21 @@ correction near the singularity was tried for the hip case and measured *worse*
 than doing nothing (mean step 66.8 → 70.6); don't reach for it again without a
 better reason than it being the obvious move.
 
-### 5. Shape memory: found in the game, fade added, value not settled
+### 5. Joints buried in world geometry — fixed, but still frequent
+
+A particle whose trace starts inside a brush used to be dropped back where it
+was, i.e. back inside, every step for ever, anchoring the corpse in mid air.
+`bb26b744` places it on the surface instead, traced from the joint it hangs
+from. Worst floating limb over the real deaths 17.7 → 8.7 units, and the deaths
+against a wall 17.7 → 5.5.
+
+**Burial itself is still constant** — a joint is buried on most frames of most
+scenarios, including a body flat on open ground. It is now transient rather than
+permanent, but the rate says the particles are routinely being driven into the
+world by the constraint solve, and nothing has looked at why. `rdtrace.py`
+reports it from the `C` record.
+
+### 6. Shape memory: found in the game, fade added, value not settled
 
 `CG_RagdollSolveConstraints` pulls every soft constraint back to the distance it
 had at death, for ever. Traced from the game (`ragdoll_dump6`), a corpse on a
@@ -331,7 +349,7 @@ thing the user says reads worst. Settle it by eye, in the game, and do not sweep
 it: 3000 is *worse than off* for floating limbs, so the curve is not monotonic
 and a sweep will mislead.
 
-### 6. The rest of the death pose is still memorised
+### 7. The rest of the death pose is still memorised
 
 The shear was one instance of a pattern that is still everywhere. Every rotational
 quantity in the drawn pose is a constant captured at death — `twistRest`,
@@ -347,7 +365,7 @@ had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 ro
 decision *last*: `37d0daea` records that squaring it against the shoulders doubled
 torso twist, but that was measured with the 90° shear present.
 
-### 7. Only 5 of 24 real animations pass their full quality gate
+### 8. Only 6 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
