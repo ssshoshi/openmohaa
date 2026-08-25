@@ -77,6 +77,12 @@ which is the signal to ask the user to close it. Screenshots arrive in
 - **The killing shot pushes the body.** Impact position and direction are
   recovered from the flesh-impact messages the client already parses for hit
   sounds (`cg_parsemsg.cpp`, `CGM_BULLET_8`), so this needs nothing on the wire.
+- **Explosions push it too, and differently** (`befc4f51`). A blast has no
+  direction of its own, so `CG_RagdollNoteExplosion` keeps the *place* and each
+  particle is pushed along its own line from it, falling off with distance. That
+  falloff is what turns the body over — near side harder than far side — where
+  the shot's push is mostly one velocity for the whole body. Sizes come from the
+  effect the message already resolves, so both protocols share one mapping.
 
 Tuning is exposed through `cg_ragdoll*` cvars; `cg_ragdoll 0` restores stock
 behaviour entirely. `cg_ragdoll_debug 1` draws the constraint web and prints
@@ -129,6 +135,12 @@ kinematics. It is fast (whole suite in seconds), deterministic, and it is the
 only reason any of this was tractable.
 
 ### Its blind spots — read this before trusting a number
+
+- **`cg.time` is 0 on every harness run and never 0 in a game.** The impact ring
+  buffer treats a zero timestamp as an empty slot, so anything recorded on the
+  first frame is silently discarded. The blast buffer keeps a `used` flag
+  instead; the impact one still does not. It cost half an hour of a blast that
+  measurably did nothing at all.
 
 Every one of these produced a wrong conclusion that was acted on:
 
