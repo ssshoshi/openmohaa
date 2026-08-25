@@ -661,15 +661,7 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 #define RD_SLEEP_BACKSTOP 4
 
 // Fraction of a limb-versus-body overlap resolved per iteration.
-//
-// Lowered when the volume being defended was widened below, and the two belong
-// together: a bigger target reached at the old rate shoves harder every
-// iteration, and what that buys in clearance it spends on distorting the
-// particle cloud. Taken gently against the larger target the limb ends up
-// further out of the body *and* the cloud holds its shape, which neither the
-// old rate nor a raised one manages. Raising it was measured at 0.5 and 0.7 and
-// is worse on both counts.
-#define RD_SEGMENT_RATE 0.25f
+#define RD_SEGMENT_RATE 0.35f
 
 // The least clearance a limb bone must keep from the trunk, as a fraction of
 // the full body thickness, however close the two were when the body fell.
@@ -708,17 +700,8 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // animations the sprawl does not move at all. Higher again is worse, not
 // better, since a torso that asks for more room than it occupies pushes limbs
 // away from a body they are resting against and the deepest case returns.
-//
-// The shallow axis is now one as well. It was the last place where the defended
-// volume was still smaller than the joint radii it is built from, and a limb
-// coming at the chest from the front met a body thinner than the one on screen.
-// Both at one is a circle of the joint's own thickness, which is the honest
-// shape to defend and the point past which more is being asked for than the
-// body occupies. Wide 1.10 and 1.20 were measured and do reduce the average
-// further, at the cost of the worst case: 68 per cent of a limb's thickness
-// inside the trunk becomes 99.
 #define RD_TRUNK_WIDE_RATIO 1.00f
-#define RD_TRUNK_DEEP_RATIO 1.00f
+#define RD_TRUNK_DEEP_RATIO 0.90f
 
 // How far each spine bone is turned towards the average of its neighbours, and
 // how many times that is repeated. Enough to share a bend between joints, not
@@ -2148,18 +2131,11 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
 
     // A bone is about as thick as the thinner of the two joints it runs
     // between, which is the wrist end of a forearm or the ankle end of a shin.
-    //
-    // Taken at that thickness and no less. It used to be shaved to 85 per cent
-    // of it, which is the same mistake the trunk ratios once made in the other
-    // direction: the joint radii are already the body's own rather than an
-    // overestimate, so thinning them defends an arm narrower than the one being
-    // drawn and lets it lie inside the chest while every constraint is
-    // satisfied.
     for (i = 0; i < RD_NUM_LIMB_SEGMENTS; i++) {
         const float ra = rd->jointRadius[rd_limbSegments[i].a];
         const float rb = rd->jointRadius[rd_limbSegments[i].b];
 
-        rd->limbRadius[i] = ra < rb ? ra : rb;
+        rd->limbRadius[i] = (ra < rb ? ra : rb) * 0.85f;
     }
 
     // The trunk capsules are sized to the thinner of their two ends, then
