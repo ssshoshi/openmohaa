@@ -246,14 +246,24 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
-### Arms in the chest: what worked and what did not
+### Arms in the chest: nothing has moved it yet
 
-Three numbers decide it. `limbRadius` (was 0.85 of the joint), `RD_TRUNK_DEEP_RATIO`
-(was 0.90) and `RD_SEGMENT_RATE` (was 0.35). The first two were smaller than the
-body they stand for; the third has to come *down* when they go up, or the
-clearance is paid for in particle-cloud distortion. Together (`a73de289`): deepest
-limb 18.0% → 16.8%, worst 68 → 61, selfX 22.1 → 20.7, and one more real death
-passing its whole gate.
+**Measure any change here over a grid of `stiffness` × `limptime` before
+believing it.** The metric is the mean over scenarios of each scenario's *worst*
+case; it swings between 18 and 39 across ordinary settings, and an effect of 3
+does not survive that. A change validated at one or two settings means nothing.
+
+That is not hypothetical. `a73de289` raised `limbRadius` from 0.85 of the joint
+to 1.0, `RD_TRUNK_DEEP_RATIO` from 0.90 to 1.0 and lowered `RD_SEGMENT_RATE` to
+0.25 to match, and measured well at the two settings it was tried on. Over nine
+combinations it reduced the limb in the trunk in four and raised it in five,
+and made twist worse in eight. Reverted in `2eecab16`. A thousand corpses from
+the game put the median at 0.33 either side of it.
+
+The reasoning still looks right — defending an arm thinner than the arm being
+drawn ought to be wrong — which is worth remembering as a warning about
+reasoning: whatever it is worth is smaller than the noise, and the twist it costs
+is not.
 
 Measured and rejected:
 
@@ -262,6 +272,7 @@ Measured and rejected:
 | Letting the seeded trunk clearance recover as the shape memory fades | **catastrophic.** Every scenario fails: the solver shoves limbs out of a body that has already settled. arm 32 → 42, particle distortion 14 → 44, twist 5.6 → 17. The concession is not only about the first frame |
 | Raising `RD_SEGMENT_MIN_FRACTION` 0.70 → 0.80, or the 0.85 in the clearance seeding → 0.95 | **no effect whatever, byte for byte.** Arms are not touching the chest at the instant of death, so the seeded fraction is already 1.0 and neither path is reached. The penetration is *acquired* during the fall, at full asked clearance |
 | `RD_SEGMENT_RATE` 0.5 and 0.7 | worse on clearance *and* on gate passes |
+| `limbRadius` 0.85 → 1.0 with `RD_TRUNK_DEEP_RATIO` → 1.0 and rate → 0.25 | wins on 4 of 9 settings, loses on 5, worse twist on 8. Shipped and reverted |
 | `RD_TRUNK_WIDE_RATIO` 1.10 and 1.20 | lower average, worse worst case: 68 → 99. Past 1.0 the torso asks for more room than it occupies |
 | `cg_ragdoll_iterations` 10 → 14 | worse (passes 9 → 5) |
 
