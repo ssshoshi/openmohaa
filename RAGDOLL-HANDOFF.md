@@ -246,6 +246,34 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### Hands in the chest — found, and it was not shape memory
+
+`cg_ragdoll_armfree` (`61ed311f`), default **0.5**.
+
+1000 in-game corpses: the deepest limb in the body is a **hand in Spine2** in
+**26%** of them (median arm depth 0.10, p90 0.35 of a hand's thickness).
+
+The seeded `segTrunkScale` for forearm-to-hand is **already 1.0** — letting it
+"recover" is byte-identical across the suite, and the branch does run. The
+nominal clearance is simply too small: the collision radius is the bone's, the
+visible hand is a fist in a sleeve. So those two segments now ask for `1 + armfree`
+times their clearance, ramped in on the limpness clock.
+
+Gridded over limptime × stiffness: where active, limb-in-trunk 4/4, limb-in-limb
+4/4, selfX 4/4; twist within a degree either way. **Not a trade.**
+
+**It is inert at `cg_ragdoll_limptime 0`** — the ramp has no clock.
+
+### Two metrics that were measuring nothing
+
+- **In-game "limb in trunk" was junk.** It swept all 8 limb segments and was
+  dominated by calf-near-pelvis, which is geometric: p10 0.26 → p90 0.36, a
+  constant, not a defect. It could never respond to any lever, which is why the
+  reverted radius change read "0.33 either side". Split it: **arms** (median 0.10,
+  spans 0→0.47, discriminates) and legs (median 0.27, still pinned).
+- The harness `armInTorso` was right all along — forearm/hand vs trunk at *full*
+  radii, the visual bar, not the solver's allowance. Trust it over the in-game one.
+
 ### Limb inside limb — real, was invisible, now optional
 
 Self collision works on joint distances, so two bones crossing at their middles
