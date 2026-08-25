@@ -246,6 +246,27 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### Stress tested: 100 corpses, sleeping switched off
+
+A busy round at `sleepvel 0`, so nothing was frozen and every corpse simulated
+its full budget:
+
+| | p10 | median | p90 |
+|---|---|---|---|
+| residual movement | 0.01 | **0.03** | 0.16 |
+| joints in contact at rest | 16 | **20** of 23 | 22 |
+| turned (deg) | 24 | 67 | 86 |
+| sink over the settled half | 0.00 | **0.00** | +0.50 |
+
+96 of 100 settled. The four that did not are traces of 10 and 25 frames — 81 ms
+and 144 ms — where the entity was removed before the body had finished blending;
+their large numbers are a corpse still in mid-flight, not a fault.
+
+The churn fix holds: re-seeds within 3 s of a trace ending went from **143 to 4**,
+and median trace length from 993 ms to 8002 ms. Whole-body burial still happens
+(one corpse in a hundred had its pelvis and both thighs inside geometry for the
+whole trace) but it no longer sinks, which is the upward fallback doing its job.
+
 ### A corpse gets one ragdoll, and losing it is final
 
 Recycling a slot does not end the story for the body it was taken from: that
