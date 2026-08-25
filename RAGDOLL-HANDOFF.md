@@ -264,7 +264,39 @@ Gridded over limptime × stiffness: where active, limb-in-trunk 4/4, limb-in-lim
 
 **It is inert at `cg_ragdoll_limptime 0`** — the ramp has no clock.
 
-### Two metrics that were measuring nothing
+### The legs — confirmed in game, fixed
+
+`cg_ragdoll_legfree` (`edc974ca`), default **0.4**. Of 295 corpses, 18 had a limb
+well inside another limb and **16 were leg-against-leg**. Same diagnosis as the
+hands (target too small, not enforcement: the push rate flattens above 0.2), but it
+needs a **fast ramp (250 ms)**, not the limpness clock — by the time the slow ramp
+is full the corpse has settled and friction holds the legs crossed. Applied
+instantly it stretches the body past standing height. Grid: crossing 6/6, passes
++3/−0 at every limptime > 0. Regresses at `limptime 0`.
+
+### DANGER: do not grade the solver with the solver's own ruler
+
+The in-game metrics took their radii from `rd_joints[]` — **the solver's own
+table**, whose comment says the trunk values are *"deliberately smaller than half a
+torso's width."* So the metric cannot report an arm inside the visible chest: it
+agrees with the solver about where the chest is. Shoulder-to-shoulder measures
+**18 units**; the table's chest radius is 4.8.
+
+Compounding it, the `ATTACH` rule excuses limb-vs-trunk pairs at the attachment
+joint — correct for a shoulder resting on the chest, and it excuses an arm driven
+*through* the chest along with it.
+
+**Screenshots showed arms through the torso that every skeleton metric scored
+clean**, including a from-the-shoulder-down sample against a realistic chest
+radius. Remaining hypotheses, in order:
+1. **Skinning, not the skeleton.** Twist p90 is 32.5°, worst 47.5°; linear-blend
+   skinning collapses at that and produces exactly the fused/through-the-body look.
+   The bones can be correct while the mesh is not. **This is the lead.**
+2. **Sampling.** `RD_MAX_OPEN_TRACES` is 4, so in a busy round most deaths are
+   never traced. The dumped corpses are a biased sample: the ones that died when a
+   slot was free.
+
+### Two more metrics that were measuring nothing
 
 - **In-game "limb in trunk" was junk.** It swept all 8 limb segments and was
   dominated by calf-near-pelvis, which is geometric: p10 0.26 → p90 0.36, a
