@@ -55,6 +55,7 @@ cvar_t *cg_ragdoll_solvegain;
 cvar_t *cg_ragdoll_blastimpulse;
 cvar_t *cg_ragdoll_limbpush;
 cvar_t *cg_ragdoll_armfree;
+cvar_t *cg_ragdoll_legfree;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -511,6 +512,12 @@ static const rdLimbSegment_t rd_limbSegments[] = {
 };
 
 #define RD_NUM_LIMB_SEGMENTS ((int)(sizeof(rd_limbSegments) / sizeof(rd_limbSegments[0])))
+
+// The arms occupy the first four rows above, the legs the last four.
+#define RD_FIRST_LEG_SEGMENT 4
+
+// How long the legs take to claim the extra room they are given.
+#define RD_LEG_OPEN_MS 250.0f
 
 // The trunk, as the segments between consecutive spine joints rather than as a
 // sphere at each one. The real player skeleton is very unevenly divided: of the
@@ -2505,6 +2512,8 @@ static void CG_RagdollHinges(cg_ragdoll_t *rd)
 // The joint-to-joint pairs in CG_RagdollSelfCollide cannot see this: two bones
 // can cross at their middles with all four of their ends comfortably apart, so
 // a shin passes through the other shin and nothing objects.
+static float CG_RagdollLimpness(const cg_ragdoll_t *rd);
+
 static void CG_RagdollLimbCollide(cg_ragdoll_t *rd)
 {
     const float rate = cg_ragdoll_limbpush->value;
@@ -2522,7 +2531,7 @@ static void CG_RagdollLimbCollide(cg_ragdoll_t *rd)
             rdParticle_t *pc = &rd->part[rd_limbSegments[m].a];
             rdParticle_t *pd = &rd->part[rd_limbSegments[m].b];
             vec3_t        dir, push;
-            float         ta, tb, dist, scale, want;
+            float         ta, tb, dist, scale, want, keep;
 
             if (rd->segLimbScale[n][m] <= 0.0f) {
                 continue;
@@ -2534,7 +2543,40 @@ static void CG_RagdollLimbCollide(cg_ragdoll_t *rd)
                 continue;
             }
 
-            want = (rd->limbRadius[n] + rd->limbRadius[m]) * rd->segLimbScale[n][m] - rd->collisionSlop;
+            keep = rd->segLimbScale[n][m];
+
+            // The legs are what a player actually catches crossing. Of the
+            // corpses with a limb well inside another limb, sixteen in
+            // eighteen were a calf or a foot against the other leg, and the
+            // worst of them had the two shins very nearly coincident. Raising
+            // the push rate does not reach it: it flattens off above 0.2 with
+            // the crossing still at thirty per cent, which says the room the
+            // two are asked to keep is too small rather than that they are
+            // pushed apart too gently. Trouser and boot are wider than the
+            // bone.
+            //
+            // Ramped, but over a quarter of a second rather than over the
+            // limpness clock the hands use. Applied at once it stretches the
+            // body past its own standing height and turns the ankles over,
+            // since a leg is heavy and shoving one sideways drags the pelvis
+            // with it. Applied as slowly as the hands it does almost nothing:
+            // the corpse has come to rest by the time the room is asked for,
+            // and friction holds the legs where they crossed. The separating
+            // has to happen while the body is still moving.
+            if (cg_ragdoll_legfree->value > 0.0f && n >= RD_FIRST_LEG_SEGMENT && m >= RD_FIRST_LEG_SEGMENT) {
+                const float room = 1.0f + cg_ragdoll_legfree->value;
+                float       open = (float)(cg.time - rd->startTime) / (float)RD_LEG_OPEN_MS;
+
+                if (open > 1.0f) {
+                    open = 1.0f;
+                }
+
+                if (open > 0.0f && room > keep) {
+                    keep += (room - keep) * open;
+                }
+            }
+
+            want = (rd->limbRadius[n] + rd->limbRadius[m]) * keep - rd->collisionSlop;
 
             if (want <= 0.0f || dist >= want) {
                 continue;
@@ -2554,8 +2596,6 @@ static void CG_RagdollLimbCollide(cg_ragdoll_t *rd)
         }
     }
 }
-
-static float CG_RagdollLimpness(const cg_ragdoll_t *rd);
 
 static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
 {
@@ -3988,7 +4028,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // reading anything into the trace: six corpses once looked like they
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
-        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f\n"
+        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
@@ -4006,6 +4046,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_solvegain->value,
         cg_ragdoll_limbpush->value,
         cg_ragdoll_armfree->value,
+        cg_ragdoll_legfree->value,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
@@ -4295,6 +4336,7 @@ void CG_InitRagdoll(void)
     // is the balanced setting; 0.2 buys more clearance for more twist.
     cg_ragdoll_limbpush  = cgi.Cvar_Get("cg_ragdoll_limbpush", "0", CVAR_ARCHIVE);
     cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "0.5", CVAR_ARCHIVE);
+    cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
