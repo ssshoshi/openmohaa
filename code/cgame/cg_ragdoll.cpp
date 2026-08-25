@@ -51,6 +51,7 @@ cvar_t *cg_ragdoll_sleeptime;
 cvar_t *cg_ragdoll_debug;
 cvar_t *cg_ragdoll_dump;
 cvar_t *cg_ragdoll_limptime;
+cvar_t *cg_ragdoll_solvegain;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -616,6 +617,11 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 #define RD_GROUND_DAMPING 0.35f
 #define RD_REST_SPEED     0.40f
 
+// Below this, in units per second along the surface, a resting particle is
+// held rather than allowed to creep. Was written as half a unit of Verlet
+// displacement per step, which is the same thing at sixty steps a second.
+#define RD_STATIC_FRICTION 30.0f
+
 // How many joints must be resting on a surface before the body counts as
 // supported, and so before it is allowed to damp down and fall asleep.
 #define RD_MIN_SUPPORT 3
@@ -682,8 +688,25 @@ typedef enum {
 } rdState_t;
 
 typedef struct {
-    vec3_t   p;
-    vec3_t   pPrev;
+    vec3_t p;
+
+    // Where it was when this step began. Only ever that: it is what collision
+    // sweeps from, and nothing writes to it to mean something else.
+    vec3_t pPrev;
+
+    // How fast it is going, in units per second, kept rather than inferred.
+    //
+    // Verlet reads velocity as the gap between the two positions above, which
+    // makes every correction the constraint solver applies indistinguishable
+    // from motion: satisfying a bone length hands the body speed it never had,
+    // and the damping needed to take that back out is the same damping that
+    // stops a corpse sliding. Held separately, a correction can be applied to
+    // where the particle is without lying about how fast it is going.
+    vec3_t v;
+
+    // How far the constraint solve alone moved it this step, so that its
+    // contribution to the velocity above can be chosen rather than assumed.
+    vec3_t solved;
     float    invMass;
     qboolean onGround;
 
@@ -1782,7 +1805,6 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
-        float         dt   = 1.0f / 60.0f;
         vec3_t        vel;
 
         VectorCopy(worldPos[i], part->p);
@@ -1798,7 +1820,8 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
             vel[k] += crandom() * 6.0f;
         }
 
-        VectorMA(part->p, -dt, vel, part->pPrev);
+        VectorCopy(vel, part->v);
+        VectorCopy(part->p, part->pPrev);
     }
 
     // Constraint rest lengths, measured from the seeded pose so they adapt to
@@ -2527,6 +2550,33 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
     }
 }
 
+// The constraint solve, with a note kept of how far it moved each particle.
+//
+// That displacement is the whole difficulty with a Verlet ragdoll: it is
+// indistinguishable from motion, so satisfying a bone length or a joint limit
+// hands the body speed out of nowhere, and the damping that takes the speed
+// back out is the same damping that stops a corpse sliding. Recorded here, how
+// much of it counts as motion becomes a number that can be chosen and measured
+// rather than a property of the integrator.
+static void CG_RagdollSolveTracked(cg_ragdoll_t *rd, int iterations)
+{
+    vec3_t before[RD_NUM_JOINTS];
+    int    i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        VectorCopy(rd->part[i].p, before[i]);
+    }
+
+    CG_RagdollSolveConstraints(rd, iterations);
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        vec3_t d;
+
+        VectorSubtract(rd->part[i].p, before[i], d);
+        VectorAdd(rd->part[i].solved, d, rd->part[i].solved);
+    }
+}
+
 static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 {
     // Sized from the model, so a scaled-down character does not end up
@@ -2610,6 +2660,7 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
             trace_t   out;
 
             VectorCopy(part->pPrev, part->p);
+            VectorClear(part->v);
             rd->buriedMask |= 1 << i;
 
             // Traced from the joint this one hangs from, back toward it. That
@@ -2631,9 +2682,8 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
                 VectorCopy(out.endpos, part->p);
                 VectorMA(part->p, RD_SURFACE_GAP, out.plane.normal, part->p);
 
-                // Placed, not thrown: Verlet reads velocity as the gap between
-                // these two, so leaving it open would hand the limb a kick.
-                VectorCopy(part->p, part->pPrev);
+                // Placed, not thrown.
+                VectorClear(part->v);
             }
 
             moved++;
@@ -2652,7 +2702,10 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         VectorCopy(trace.plane.normal, part->contactNormal);
         part->contactDist = DotProduct(part->p, part->contactNormal);
 
-        VectorSubtract(part->p, part->pPrev, v);
+        // Split the velocity across the surface and reflect it there. This
+        // used to be done by moving pPrev, which said the same thing in a way
+        // that could not be told apart from the constraint solver's corrections.
+        VectorCopy(part->v, v);
         dot = DotProduct(v, trace.plane.normal);
         VectorScale(trace.plane.normal, dot, vn);
         VectorSubtract(v, vn, vt);
@@ -2661,16 +2714,14 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
             part->onGround = qtrue;
 
             // Static friction, so settled corpses stop creeping downhill.
-            if (VectorLength(vt) < 0.5f) {
+            if (VectorLength(vt) < RD_STATIC_FRICTION) {
                 VectorClear(vt);
             }
         }
 
         for (k = 0; k < 3; k++) {
-            v[k] = vt[k] * (1.0f - friction) - vn[k] * bounce;
+            part->v[k] = vt[k] * (1.0f - friction) - vn[k] * bounce;
         }
-
-        VectorSubtract(part->p, v, part->pPrev);
 
         // Only a displacement worth reconciling counts. A corpse that has come
         // to rest still registers a contact every single step, and treating
@@ -2761,37 +2812,31 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     float       maxDisp = 0.0f;
     int         i, k;
 
-    // Verlet holds velocity as the gap between p and pPrev, so handing the body
-    // the shot's push means opening that gap by one step's worth of it.
+    // The shot's push is a velocity, and is now simply handed over as one.
     if (rd->hasImpulse) {
         vec3_t whole, local;
 
-        VectorScale(rd->impulseVel, dt * (1.0f - RD_IMPULSE_LOCAL), whole);
-        VectorScale(rd->impulseVel, dt * RD_IMPULSE_LOCAL, local);
+        VectorScale(rd->impulseVel, 1.0f - RD_IMPULSE_LOCAL, whole);
+        VectorScale(rd->impulseVel, RD_IMPULSE_LOCAL, local);
 
         for (i = 0; i < RD_NUM_JOINTS; i++) {
-            VectorSubtract(rd->part[i].pPrev, whole, rd->part[i].pPrev);
+            VectorAdd(rd->part[i].v, whole, rd->part[i].v);
         }
 
-        VectorSubtract(rd->part[rd->impulseJoint].pPrev, local, rd->part[rd->impulseJoint].pPrev);
+        VectorAdd(rd->part[rd->impulseJoint].v, local, rd->part[rd->impulseJoint].v);
 
         rd->hasImpulse = qfalse;
     }
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
-        vec3_t        v, next;
 
-        VectorSubtract(part->p, part->pPrev, v);
-        VectorScale(v, damping, v);
-
-        for (k = 0; k < 3; k++) {
-            next[k] = part->p[k] + v[k];
-        }
-        next[2] -= gravity * dt * dt;
+        VectorScale(part->v, damping, part->v);
+        part->v[2] -= gravity * dt;
 
         VectorCopy(part->p, part->pPrev);
-        VectorCopy(next, part->p);
+        VectorMA(part->p, dt, part->v, part->p);
+        VectorClear(part->solved);
     }
 
     // Relax the skeleton first, against the contact planes carried over from
@@ -2799,7 +2844,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // than the merely predicted one is what makes tunnelling impossible: a
     // particle the constraints dragged into a surface is swept from a position
     // that was outside it, so the trace always catches it.
-    CG_RagdollSolveConstraints(rd, cg_ragdoll_iterations->integer);
+    CG_RagdollSolveTracked(rd, cg_ragdoll_iterations->integer);
 
     // Collision resolution moves particles with no regard for what they are
     // attached to, so if it had to move any, relax once more against the
@@ -2807,7 +2852,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // violation the impact introduced, which reads as limbs stretching on
     // impact and as a corpse that creeps instead of settling.
     if (CG_RagdollCollide(rd, skipEntity)) {
-        CG_RagdollSolveConstraints(rd, cg_ragdoll_iterations->integer);
+        CG_RagdollSolveTracked(rd, cg_ragdoll_iterations->integer);
         CG_RagdollPushOut(rd, skipEntity);
     }
 
@@ -2821,22 +2866,31 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // something. Damping a corpse that is still going over a ledge, or still
     // coming down a staircase, robs it of the motion it should be carrying and
     // leaves it stuck partway.
-    const qboolean supported = (CG_RagdollSupportCount(rd) >= RD_MIN_SUPPORT) ? qtrue : qfalse;
+    const qboolean supported  = (CG_RagdollSupportCount(rd) >= RD_MIN_SUPPORT) ? qtrue : qfalse;
+    const float    solveGain = cg_ragdoll_solvegain->value;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
         vec3_t        d;
         float         len;
 
+        // How much of what the solver moved is allowed to count as motion. At
+        // one this is an ordinary position based solver and behaves as the
+        // Verlet one did; below it, a correction moves the body without also
+        // pushing it.
+        if (solveGain > 0.0f) {
+            VectorMA(part->v, solveGain / dt, part->solved, part->v);
+        }
+
         VectorSubtract(part->p, part->pPrev, d);
         len = VectorLength(d);
 
         if (part->hasContact && supported) {
             if (len < RD_REST_SPEED) {
-                VectorCopy(part->p, part->pPrev);
+                VectorClear(part->v);
                 len = 0.0f;
             } else {
-                VectorMA(part->p, -(1.0f - RD_GROUND_DAMPING), d, part->pPrev);
+                VectorScale(part->v, RD_GROUND_DAMPING, part->v);
                 len *= RD_GROUND_DAMPING;
             }
         }
@@ -3721,6 +3775,15 @@ void CG_InitRagdoll(void)
     // stand in for it: its world is a floor and a box, and what real geometry
     // does to a corpse is precisely what it is missing.
     cg_ragdoll_dump      = cgi.Cvar_Get("cg_ragdoll_dump", "0", CVAR_CHEAT);
+
+    // How much of what the constraint solver moves counts as the body moving.
+    //
+    // At 1 this is an ordinary position based solver: everything the solve
+    // corrects becomes velocity, which is what a Verlet ragdoll does whether it
+    // means to or not, and it is why corpses shiver. Lower it and a correction
+    // still moves the body, but stops also pushing it.
+    cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
+    cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
 
     // How long a body takes to go limp, in milliseconds. 0 holds the shape
     // memory for ever, which is what it used to do.
