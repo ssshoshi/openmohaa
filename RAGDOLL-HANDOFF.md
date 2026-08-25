@@ -246,7 +246,22 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
-### Arms in the chest: nothing has moved it yet
+### Limb inside limb — real, was invisible, now optional
+
+Self collision works on joint distances, so two bones crossing at their middles
+with all four ends apart were never seen. The harness measures it now
+(`limb inside another limb`): it runs at **30–40% of a limb's own thickness**
+across the real deaths.
+
+`cg_ragdoll_limbpush` (`ff1c49a4`) is the rate; **0 is the shipped behaviour**.
+Gridded over six stiffness × limptime combinations, 0.1 improves limb-in-limb in
+5 and limb-in-trunk in 5 (once 38% → 26%), and raises twist in 5. Confining it to
+the legs keeps the twist but barely moves the crossing — most crossing is arms,
+and an arm hangs from the top of the chest, so pushing one levers the torso.
+
+That is a trade to judge by eye, which is why it is a cvar and not a default.
+
+### Arms in the chest: what else was tried
 
 **Measure any change here over a grid of `stiffness` × `limptime` before
 believing it.** The metric is the mean over scenarios of each scenario's *worst*
