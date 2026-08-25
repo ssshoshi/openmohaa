@@ -573,6 +573,10 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // How far past its own radius that question is asked.
 #define RD_CONTACT_PROBE 2.0f
 
+// How far, in particle radii, a buried particle may be moved to get it out.
+// Beyond this the exit found is not the surface it is behind.
+#define RD_UNBURY_REACH 4.0f
+
 // Collision displacement below this is treated as a resting contact rather
 // than an impact, and does not trigger the reconciling solve.
 #define RD_IMPACT_EPSILON 0.5f
@@ -2930,6 +2934,21 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
         }
 
         VectorSubtract(out.endpos, part->p, shift);
+
+        // Only if the way out is near where the particle already is. Being
+        // buried means being just inside a surface, so the face it came in
+        // through is a step away; a trace from the parent that stops much
+        // further off has found some other surface between the two, and moving
+        // the particle there is not freeing it but throwing it. Traced in the
+        // game: a foot behind a wall from its own calf was put nineteen units
+        // away in one step, arrived inside the wall, and was then walked up
+        // through it a couple of units at a time for the rest of the corpse's
+        // life. Left where it is instead, the ordinary sweep frees it on a
+        // later step once the leg has moved.
+        if (VectorLength(shift) > rd->radius * RD_UNBURY_REACH) {
+            continue;
+        }
+
         VectorMA(shift, RD_SURFACE_GAP, out.plane.normal, shift);
 
         // Carried on the previous position too, so the correction changes where
