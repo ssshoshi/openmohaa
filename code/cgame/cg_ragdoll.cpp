@@ -892,6 +892,12 @@ typedef struct {
     // dropped back again every step. Only the trace can show that happening.
     int      buriedMask;
 
+    // Which limb bones were found inside the world between their two joints on
+    // the last step. Nothing else records this, and it is invisible in the
+    // drawn pose: the bone is put back on the surface, so a trace read
+    // afterwards shows a limb that was never in trouble.
+    int      limbBuriedMask;
+
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
     // and which one it is cannot be worked out from the pose.
@@ -2962,7 +2968,8 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
     int         moved    = 0;
     int         i, k;
 
-    rd->buriedMask = 0;
+    rd->buriedMask     = 0;
+    rd->limbBuriedMask = 0;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
@@ -3172,6 +3179,112 @@ static int CG_RagdollSupportCount(const cg_ragdoll_t *rd)
 
 // The one thing a step must not end with: a particle inside the world.
 //
+// How far along a limb bone the world is sampled. The two ends are joints and
+// are traced already; these are the places in between that nothing has ever
+// looked at.
+static const float rd_limbSamples[] = {0.35f, 0.65f};
+
+#define RD_NUM_LIMB_SAMPLES ((int)(sizeof(rd_limbSamples) / sizeof(rd_limbSamples[0])))
+
+// Keeps the middle of a limb out of the world.
+//
+// Everything else here collides particles: a box at each joint, swept from
+// where it was to where it wants to be. Nothing has ever tested the bone
+// between two joints, so a forearm lies inside a beam with the elbow out one
+// side and the hand out the other and no trace objects -- the same blind spot
+// self collision had, where two bones crossed at their middles with all four
+// ends comfortably apart.
+//
+// It is what the screenshots keep showing. Of the corpses photographed as
+// wrong, the commonest complaint by far was an arm sunk into the ground or
+// into a timber, and every skeleton measure scored those bodies clean.
+//
+// Deliberately in the push out pass rather than in the solve. A sample is not
+// a particle: it has no velocity, no mass and no contact plane, and giving it
+// those would let the middle of a bone bounce and rub against the world on its
+// own account, which is a much larger change than this. Here it only puts back
+// what has already ended up inside something.
+static void CG_RagdollLimbPushOut(cg_ragdoll_t *rd, int skipEntity)
+{
+    const vec3_t rd_mins = {-rd->radius, -rd->radius, -rd->radius};
+    const vec3_t rd_maxs = {rd->radius, rd->radius, rd->radius};
+    int          n, q, k;
+
+    for (n = 0; n < RD_NUM_LIMB_SEGMENTS; n++) {
+        rdParticle_t *pa = &rd->part[rd_limbSegments[n].a];
+        rdParticle_t *pb = &rd->part[rd_limbSegments[n].b];
+
+        for (q = 0; q < RD_NUM_LIMB_SAMPLES; q++) {
+            const float u = rd_limbSamples[q];
+            trace_t     probe, out;
+            vec3_t      mid, shift;
+            qboolean    freed;
+
+            for (k = 0; k < 3; k++) {
+                mid[k] = pa->p[k] + (pb->p[k] - pa->p[k]) * u;
+            }
+
+            CG_Trace(&probe, mid, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
+
+            if (!probe.startsolid && !probe.allsolid) {
+                continue;
+            }
+
+            rd->limbBuriedMask |= 1 << n;
+
+            // Out along the bone first, towards whichever end is itself clear,
+            // because that is the way the limb went in. Straight up only as a
+            // last resort, which is where the surface is when a body has gone
+            // through a floor.
+            CG_Trace(&out, pa->p, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
+            freed = (qboolean)(!out.startsolid && !out.allsolid && out.fraction < 1.0f);
+
+            if (!freed) {
+                CG_Trace(&out, pb->p, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
+                freed = (qboolean)(!out.startsolid && !out.allsolid && out.fraction < 1.0f);
+            }
+
+            if (!freed) {
+                vec3_t above;
+
+                VectorCopy(mid, above);
+                above[2] += rd->radius * RD_UNBURY_REACH;
+
+                CG_Trace(&out, above, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
+                freed = (qboolean)(!out.startsolid && !out.allsolid && out.fraction < 1.0f);
+            }
+
+            if (!freed) {
+                continue;
+            }
+
+            VectorSubtract(out.endpos, mid, shift);
+
+            // The same limit the joints get, and for the same reason: a way out
+            // that is far away is some other surface rather than the face this
+            // limb came in through, and moving to it is throwing the limb, not
+            // freeing it.
+            if (VectorLength(shift) > rd->radius * RD_UNBURY_REACH) {
+                continue;
+            }
+
+            VectorMA(shift, RD_SURFACE_GAP, out.plane.normal, shift);
+
+            // Shared between the two ends by where along the bone the sample
+            // sits, so a bone caught near its wrist lifts the wrist. Carried on
+            // the previous positions as well, so this reads as the limb having
+            // been there all along rather than as a shove, and the corpse does
+            // not gain the speed on the next step.
+            for (k = 0; k < 3; k++) {
+                pa->p[k] += shift[k] * (1.0f - u);
+                pa->pPrev[k] += shift[k] * (1.0f - u);
+                pb->p[k] += shift[k] * u;
+                pb->pPrev[k] += shift[k] * u;
+            }
+        }
+    }
+}
+
 // The full solve knows only about planes already remembered, so a limb meeting
 // a wall for the first time is pushed straight into it and the step ends there.
 // Running the whole collision pass again to fix that costs the corpse its
@@ -3328,6 +3441,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     if (CG_RagdollCollide(rd, skipEntity)) {
         CG_RagdollSolveTracked(rd, cg_ragdoll_iterations->integer);
         CG_RagdollPushOut(rd, skipEntity);
+        CG_RagdollLimbPushOut(rd, skipEntity);
     }
 
     // Every constraint correction is a position change, and in a Verlet
@@ -4125,6 +4239,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
         "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
+        "# L <limbburied>   bitmask over the limb bones, low bit bone 0, middle found inside the world\n"
         "# P <joint> <x> <y> <z>\n"
         "# A <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   animation pose\n"
         "# B <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   drawn pose\n",
@@ -4269,6 +4384,9 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         }
 
         Com_sprintf(line, sizeof(line), "C %d %d %d\n", contact, ground, rd->buriedMask);
+        CG_RagdollDumpLine(rd, line);
+
+        Com_sprintf(line, sizeof(line), "L %d\n", rd->limbBuriedMask);
         CG_RagdollDumpLine(rd, line);
     }
 
