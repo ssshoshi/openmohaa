@@ -246,6 +246,35 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### Measured over 349 explosive deaths
+
+`impulse 1 / blastimpulse 2 / stiffness 1 / limptime 1500 / solvegain 0.7 /
+sleepvel 0.2`. 323 of 349 settled and slept, median 1.9 s, 20 of 23 joints in
+contact, residual movement median 0.10.
+
+**No hanging corpses at rest.** Seven looked like hangers and all seven were
+either draped along stairs, holding contacts down their whole length, or still
+in flight when the trace ended.
+
+Resting pose, measured properly (limb *segments* against trunk *capsules*,
+excluding limbs that grow out of the trunk segment they are tested against):
+
+| | p50 | p90 | worst |
+|---|---|---|---|
+| limb inside the trunk, as a fraction of clearance | 0.33 | 0.36 | 0.41 |
+| joint folded past its anatomical range | 0° | 0° | 4° (one corpse in 323) |
+
+The trunk figure looks worse than it is: `segTrunkScale` deliberately asks for as
+little as 70% of the ideal clearance where a pair starts close, so a steady ~33%
+shortfall is the design tolerance rather than clipping. **Measure this with
+segments and exclude attached pairs**, or it reads 0.00 (joint centres only) or
+0.53 (counting a thigh overlapping its own pelvis) — both were measured on the
+way to the number above.
+
+Of the 26 that never slept: 19 are traces under a second where the entity was
+removed, 3 were still restless, 1 fell out of the world (pelvis z 177 → −6120),
+and 2 were wedged with only one level contact — fixed in `5e1166cf`.
+
 ### Stress tested: 100 corpses, sleeping switched off
 
 A busy round at `sleepvel 0`, so nothing was frozen and every corpse simulated
