@@ -271,6 +271,15 @@ stopping, the median on the very frame it stopped. If corpses ever start
 vanishing or snapping back to their death pose again, look here first, and check
 `used` against `solving` in `CG_RagdollAlloc`.
 
+### Tracing costs file handles, and the engine has few
+
+`cg_ragdoll_dump N` holds one open file per corpse being traced. Asking for a
+hundred in a busy round took every handle the engine had and killed the server
+with `FS_HandleForFile: none free`. At most four traces are open at once now, a
+capture that cannot get a handle is not counted against N, and a trace lets go
+three seconds after its corpse sleeps. **Do not raise `RD_MAX_OPEN_TRACES`
+without knowing what the engine's handle budget actually is.**
+
 ### Tracing a corpse from the game
 
 The harness cannot reproduce a real map. `cg_ragdoll_dump 1` (cheat) captures the
