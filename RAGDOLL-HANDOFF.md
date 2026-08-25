@@ -246,6 +246,16 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### cg_ragdoll_maxcount caps *solving*, not corpses
+
+Sleeping bodies do not count against it (`c88…`, see git log). They cost nothing:
+the step is skipped and they re-emit the matrices they settled on. Counting them
+made a busy round evict corpses seconds after they settled — traced over 200
+deaths, 117 of the 167 that settled were thrown away within half a second of
+stopping, the median on the very frame it stopped. If corpses ever start
+vanishing or snapping back to their death pose again, look here first, and check
+`used` against `solving` in `CG_RagdollAlloc`.
+
 ### Tracing a corpse from the game
 
 The harness cannot reproduce a real map. `cg_ragdoll_dump 1` (cheat) captures the
