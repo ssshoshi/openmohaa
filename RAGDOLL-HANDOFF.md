@@ -216,6 +216,36 @@ Every one of these produced a wrong conclusion that was acted on:
   joint bend and reporting phantom 180° flips; torso twist measured absolutely so
   a body dying mid-turn read as twisted.
 
+### Where it stands, measured over 100 corpses
+
+Traced in the game at `impulse 1 / blastimpulse 2 / stiffness 1 / limptime 1500 /
+solvegain 0.7 / sleepvel 0.2`:
+
+| | p10 | median | p90 | worst |
+|---|---|---|---|---|
+| settles and sleeps at | 1176 ms | **1942 ms** | 3408 ms | 8797 ms |
+| residual movement, median | 0.02 | **0.10** | 0.18 | — |
+| thrown (units) | 5.9 | 29 | 212 | 320 |
+| turned (deg) | 16 | 70 | 92 | 124 |
+| joints in contact at rest | 15 | **20** of 23 | 22 | 23 |
+
+**97 of 97 corpses that lived long enough settled and slept.** The three that did
+not are the three whose traces end inside a second, because the body was removed
+that fast; they were still in mid-impact and two had not finished blending.
+
+Three things in that data look like faults and are not, so do not chase them:
+
+- **A corpse ending perfectly flat** (z extent under 1 unit). Collision uses one
+  box radius for every particle, so a body on level ground lands with every joint
+  centre at the same height. The drawn mesh still has thickness.
+- **Particle distances drifting ~5% from the seed.** The drawn skeleton does not
+  use them: `CG_RagdollBuildPose` rebuilds each bone from its parent with the
+  offset captured at seed, so drawn bone lengths are exact by construction. This
+  is the `particleCollapse` figure, not visible stretching.
+- **A tall resting pose with few "supports".** `CG_RagdollSupportCount` only
+  counts faces within 45° of level, and a staircase is mostly risers. A body
+  draped down steps reads as 3 supports while holding 18 contacts.
+
 ### Tracing a corpse from the game
 
 The harness cannot reproduce a real map. `cg_ragdoll_dump 1` (cheat) captures the
