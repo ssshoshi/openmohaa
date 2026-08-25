@@ -53,6 +53,7 @@ cvar_t *cg_ragdoll_dump;
 cvar_t *cg_ragdoll_limptime;
 cvar_t *cg_ragdoll_solvegain;
 cvar_t *cg_ragdoll_blastimpulse;
+cvar_t *cg_ragdoll_limbpush;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -832,6 +833,11 @@ typedef struct {
     // touching, 0 when the pair is not checked at all.
     float segTrunkScale[RD_NUM_LIMB_SEGMENTS][RD_NUM_TRUNK_SEGMENTS];
 
+    // The same, for one limb against another. A shin can pass clean through the
+    // other shin without this: the joint-to-joint pairs cannot see it, because
+    // two bones can cross with all four of their ends well apart.
+    float segLimbScale[RD_NUM_LIMB_SEGMENTS][RD_NUM_LIMB_SEGMENTS];
+
     // Cone axes, held in the torso's own frame so they turn with the body
     // rather than staying pinned to world directions.
     vec3_t coneAxis[RD_NUM_CONES];
@@ -1510,6 +1516,59 @@ static qboolean CG_RagdollMeasureClearances(cg_ragdoll_t *rd)
     // sinking into the chest or the legs passing through each other. Pairs that
     // legitimately overlap, neighbours in the skeleton above all, are left out.
     rd->numSelfPairs = 0;
+    // And how much each limb is asked to keep from every other limb, on the
+    // same principle: a pair that starts touching is not asked to come apart.
+    for (i = 0; i < RD_NUM_LIMB_SEGMENTS; i++) {
+        for (j = 0; j < RD_NUM_LIMB_SEGMENTS; j++) {
+            float  want, rest, ta, tb;
+            vec3_t dir;
+
+            rd->segLimbScale[i][j] = 0.0f;
+
+            // Only each unordered pair once, and never two bones that meet at a
+            // joint: an upper arm and its own forearm touch by construction.
+            if (j <= i) {
+                continue;
+            }
+
+            if (rd_limbSegments[i].a == rd_limbSegments[j].a || rd_limbSegments[i].a == rd_limbSegments[j].b
+                || rd_limbSegments[i].b == rd_limbSegments[j].a || rd_limbSegments[i].b == rd_limbSegments[j].b) {
+                continue;
+            }
+
+            rest = CG_RagdollSegmentToSegment(
+                rd->part[rd_limbSegments[i].a].p,
+                rd->part[rd_limbSegments[i].b].p,
+                rd->part[rd_limbSegments[j].a].p,
+                rd->part[rd_limbSegments[j].b].p,
+                &ta,
+                &tb,
+                dir
+            );
+
+            want = rd->limbRadius[i] + rd->limbRadius[j];
+
+            if (want < 0.0001f) {
+                continue;
+            }
+
+            if (rest >= want) {
+                rd->segLimbScale[i][j] = 1.0f;
+                continue;
+            }
+
+            rd->segLimbScale[i][j] = rest * 0.85f / want;
+
+            if (rd->segLimbScale[i][j] < RD_SEGMENT_MIN_FRACTION) {
+                rd->segLimbScale[i][j] = RD_SEGMENT_MIN_FRACTION;
+            }
+
+            if (rd->segLimbScale[i][j] * want > rest) {
+                rd->segLimbScale[i][j] = rest / want;
+            }
+        }
+    }
+
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         for (j = i + 1; j < RD_NUM_JOINTS; j++) {
             float  want = rd->jointRadius[i] + rd->jointRadius[j];
@@ -2440,6 +2499,61 @@ static void CG_RagdollHinges(cg_ragdoll_t *rd)
 // head with the elbow out one side and the wrist out the other, and every joint
 // to joint distance still perfectly satisfied. That is exactly what an arm
 // clipping through the head looks like.
+// One limb against another.
+//
+// The joint-to-joint pairs in CG_RagdollSelfCollide cannot see this: two bones
+// can cross at their middles with all four of their ends comfortably apart, so
+// a shin passes through the other shin and nothing objects.
+static void CG_RagdollLimbCollide(cg_ragdoll_t *rd)
+{
+    const float rate = cg_ragdoll_limbpush->value;
+    int         n, m, k;
+
+    if (rate <= 0.0f) {
+        return;
+    }
+
+    for (n = 0; n < RD_NUM_LIMB_SEGMENTS; n++) {
+        rdParticle_t *pa = &rd->part[rd_limbSegments[n].a];
+        rdParticle_t *pb = &rd->part[rd_limbSegments[n].b];
+
+        for (m = n + 1; m < RD_NUM_LIMB_SEGMENTS; m++) {
+            rdParticle_t *pc = &rd->part[rd_limbSegments[m].a];
+            rdParticle_t *pd = &rd->part[rd_limbSegments[m].b];
+            vec3_t        dir, push;
+            float         ta, tb, dist, scale, want;
+
+            if (rd->segLimbScale[n][m] <= 0.0f) {
+                continue;
+            }
+
+            dist = CG_RagdollSegmentToSegment(pa->p, pb->p, pc->p, pd->p, &ta, &tb, dir);
+
+            if (dist < 0.0001f) {
+                continue;
+            }
+
+            want = (rd->limbRadius[n] + rd->limbRadius[m]) * rd->segLimbScale[n][m] - rd->collisionSlop;
+
+            if (want <= 0.0f || dist >= want) {
+                continue;
+            }
+
+            VectorScale(dir, 1.0f / dist, push);
+            scale = (want - dist) * rate;
+
+            // Shared evenly between the two, and along each bone in proportion
+            // to where the contact falls, so a touch near one end moves that end.
+            for (k = 0; k < 3; k++) {
+                pa->p[k] += push[k] * scale * 0.5f * (1.0f - ta);
+                pb->p[k] += push[k] * scale * 0.5f * ta;
+                pc->p[k] -= push[k] * scale * 0.5f * (1.0f - tb);
+                pd->p[k] -= push[k] * scale * 0.5f * tb;
+            }
+        }
+    }
+}
+
 static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
 {
     int    n, m, k;
@@ -2681,6 +2795,7 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
         CG_RagdollCones(rd);
         CG_RagdollSelfCollide(rd);
         CG_RagdollSegmentCollide(rd);
+        CG_RagdollLimbCollide(rd);
         CG_RagdollProjectContacts(rd);
     }
 
@@ -2728,6 +2843,7 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
 
         CG_RagdollSelfCollide(rd);
         CG_RagdollSegmentCollide(rd);
+        CG_RagdollLimbCollide(rd);
         CG_RagdollProjectContacts(rd);
     }
 }
@@ -4128,6 +4244,28 @@ void CG_InitRagdoll(void)
     // corrects becomes velocity, which is what a Verlet ragdoll does whether it
     // means to or not, and it is why corpses shiver. Lower it and a correction
     // still moves the body, but stops also pushing it.
+    // How hard one limb pushes another out of itself, per iteration. 0 is off.
+    //
+    // Nothing else sees a limb inside a limb. The joint to joint pairs work on
+    // positions, and two bones can cross at their middles with all four of
+    // their ends comfortably apart, so a shin passes through the other shin and
+    // nothing objects. Measured over six combinations of stiffness and
+    // limptime, 0.1 takes a limb inside another limb down in five of them and a
+    // limb inside the trunk down in five, in one case from 38 per cent of its
+    // own thickness to 26.
+    //
+    // It ships off because of what it costs. Twist rises in five of those six,
+    // by a tenth of a degree at best and a degree and a half at worst, and
+    // twist is the thing that reads worst. The push is what does it: an arm
+    // hangs off the top of the chest, so shoving one sideways levers the torso
+    // round with it. Restricting this to the legs, where the pelvis absorbs the
+    // push, was measured and keeps the twist but barely moves the crossing at
+    // all, because most of the crossing is arms.
+    //
+    // So it is here to be judged by eye rather than settled by measurement. 0.1
+    // is the balanced setting; 0.2 buys more clearance for more twist.
+    cg_ragdoll_limbpush  = cgi.Cvar_Get("cg_ragdoll_limbpush", "0", CVAR_ARCHIVE);
+    cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
 
