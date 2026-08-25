@@ -1025,6 +1025,36 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
     vEnd[2] = vPos[2] - 64.0;
     fRadius = 64.0;
 
+    // Told to the ragdolls here, ahead of everything that can return early, so
+    // a body beside a blast is thrown away from it whatever the explosion
+    // happened to land on, water included. Nothing else reaches a corpse from
+    // an explosion: there is no flesh impact for one, so without this the only
+    // push a grenade gave a ragdoll was the entity's own velocity, the same for
+    // every particle, which lifts a body without turning it over.
+    {
+        int iBlastKind = 0; // grenade
+
+        if (cg_protocol >= protocol_e::PROTOCOL_MOHTA_MIN) {
+            switch (iType) {
+            case CGM_EXPLOSION_EFFECT_2:
+                iBlastKind = 1; // bazooka
+                break;
+            case CGM_EXPLOSION_EFFECT_3:
+                iBlastKind = 2; // heavy shell
+                break;
+            case CGM_EXPLOSION_EFFECT_4:
+                iBlastKind = 3; // tank
+                break;
+            default:
+                break;
+            }
+        } else if (iType == CGM6_EXPLOSION_EFFECT_2) {
+            iBlastKind = 1;
+        }
+
+        CG_RagdollNoteExplosion(vPos, iBlastKind);
+    }
+
     if ((CG_PointContents(vPos, 0)) & MASK_WATER) {
         iBaseEffect = SFX_EXP_GREN_PUDDLE;
         sfxManager.MakeEffect_Normal(iBaseEffect, vPos, Vector(0, 0, 1));

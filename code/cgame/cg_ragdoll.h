@@ -51,6 +51,7 @@ extern "C" {
     // Records a flesh hit so a body dying just after it can be pushed by the
     // shot. dir is the outward normal, as the message parser stores it.
     void CG_RagdollNoteFleshImpact(const vec3_t pos, const vec3_t dir, int large);
+    void CG_RagdollNoteExplosion(const vec3_t pos, int kind);
 
     extern cvar_t *cg_ragdoll;
     extern cvar_t *cg_ragdoll_maxcount;

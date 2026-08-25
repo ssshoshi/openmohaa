@@ -834,6 +834,14 @@ typedef struct {
     vec3_t   impulseVel;
     int      impulseJoint;
 
+    // An explosion near enough to have thrown this body, kept as the place it
+    // went off rather than as a direction, so each particle can be pushed away
+    // from it by its own distance.
+    qboolean hasBlast;
+    vec3_t   blastPos;
+    float    blastRadius;
+    float    blastSpeed;
+
     // Which particles were buried in solid geometry on the last step. A trace
     // that starts inside a brush cannot say which way is out, so such a
     // particle is dropped back where it was, and if it stays buried it is
@@ -1675,6 +1683,127 @@ typedef struct {
 
 static rdImpact_t rd_impacts[RD_MAX_IMPACTS];
 static int        rd_impactHead;
+
+// An explosion is not a bullet and cannot be treated as one.
+//
+// A shot arrives with a direction, and the body is pushed that way. A blast has
+// no direction of its own: it has a place, and which way it throws a body
+// depends entirely on where the body was standing. So the position is what is
+// kept, and the direction is worked out per particle at the moment it is
+// applied.
+//
+// That is also what makes a body turn over. Nothing here reaches the corpse
+// through a flesh hit, so before this the only thing a grenade gave a ragdoll
+// was the entity's own velocity, handed to every particle alike. A uniform
+// velocity moves a body without turning it, and the server's blast knockback is
+// mostly upward, which is why a grenade sent corpses straight into the air like
+// a lift. Pushed from a point instead, the near side of the body gets more than
+// the far side, and a body that is pushed harder at one end goes over.
+typedef struct {
+    vec3_t pos;
+    float  radius;
+    float  speed;
+    int    time;
+
+    // Whether this slot holds a blast at all. Kept apart from the time rather
+    // than inferred from it being non-zero, which is the same thing everywhere
+    // except at the one moment it is not: a blast at time zero would read as an
+    // empty slot and be ignored.
+    qboolean used;
+} rdBlast_t;
+
+static rdBlast_t rd_blasts[RD_MAX_IMPACTS];
+static int       rd_blastHead;
+
+// How far each kind of blast reaches, and how hard it pushes at the centre, in
+// units and units per second before the cvar scale. A tank shell throws a body
+// across a courtyard; a grenade rolls one over.
+static const struct {
+    float radius;
+    float speed;
+} rd_blastKinds[] = {
+    {200.0f, 260.0f}, // grenade
+    {260.0f, 340.0f}, // bazooka
+    {340.0f, 420.0f}, // heavy shell
+    {420.0f, 500.0f}  // tank
+};
+
+#define RD_NUM_BLAST_KINDS ((int)(sizeof(rd_blastKinds) / sizeof(rd_blastKinds[0])))
+
+// Called by the message parser for every explosion, whatever it hit. kind
+// indexes rd_blastKinds and is clamped, so an unknown one reads as a grenade.
+void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
+{
+    rdBlast_t *blast;
+
+    if (cg_ragdoll_impulse->value <= 0.0f) {
+        return;
+    }
+
+    if (kind < 0) {
+        kind = 0;
+    }
+    if (kind >= RD_NUM_BLAST_KINDS) {
+        kind = RD_NUM_BLAST_KINDS - 1;
+    }
+
+    blast = &rd_blasts[rd_blastHead];
+    rd_blastHead = (rd_blastHead + 1) % RD_MAX_IMPACTS;
+
+    VectorCopy(pos, blast->pos);
+    blast->radius = rd_blastKinds[kind].radius;
+    blast->speed  = rd_blastKinds[kind].speed;
+    blast->time   = cg.time;
+    blast->used   = qtrue;
+
+    if (cg_ragdoll_debug->integer) {
+        cgi.Printf(
+            "ragdoll: blast at %.0f %.0f %.0f kind %d radius %.0f t %d\n",
+            pos[0], pos[1], pos[2], kind, blast->radius, cg.time
+        );
+    }
+}
+
+// Look for an explosion close enough and recent enough to have been what killed
+// this body. The nearest one wins, since that is the one that did the throwing.
+static void CG_RagdollFindBlast(cg_ragdoll_t *rd)
+{
+    float bestDist = 0.0f;
+    int   i;
+
+    rd->hasBlast = qfalse;
+
+    for (i = 0; i < RD_MAX_IMPACTS; i++) {
+        const rdBlast_t *blast = &rd_blasts[i];
+        vec3_t           d;
+        float            dist;
+
+        if (!blast->used || cg.time - blast->time > RD_IMPACT_WINDOW) {
+            continue;
+        }
+
+        VectorSubtract(rd->part[RD_PELVIS].p, blast->pos, d);
+        dist = VectorLength(d);
+
+        if (dist > blast->radius) {
+            continue;
+        }
+
+        if (!rd->hasBlast || dist < bestDist) {
+            rd->hasBlast = qtrue;
+            bestDist     = dist;
+            VectorCopy(blast->pos, rd->blastPos);
+            rd->blastRadius = blast->radius;
+            rd->blastSpeed  = blast->speed * cg_ragdoll_impulse->value;
+        }
+    }
+
+    if (rd->hasBlast && cg_ragdoll_debug->integer) {
+        cgi.Printf(
+            "ragdoll: blast %.0f units away, radius %.0f, speed %.0f\n", bestDist, rd->blastRadius, rd->blastSpeed
+        );
+    }
+}
 
 // Called by the message parser for every flesh hit. dir is the outward normal
 // it stores, so the bullet was travelling the other way.
@@ -2826,6 +2955,35 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
         VectorAdd(rd->part[rd->impulseJoint].v, local, rd->part[rd->impulseJoint].v);
 
         rd->hasImpulse = qfalse;
+    }
+
+    // The blast, given to each particle separately and along its own line from
+    // the explosion. Falling off with distance is what makes it turn a body
+    // over: the near side is pushed harder than the far side, and the
+    // difference between the two is a rotation. Handed over as one velocity for
+    // the whole body, as the shot's push is, it would only slide the corpse.
+    if (rd->hasBlast) {
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            vec3_t away;
+            float  dist;
+
+            VectorSubtract(rd->part[i].p, rd->blastPos, away);
+            dist = VectorNormalize(away);
+
+            if (dist >= rd->blastRadius) {
+                continue;
+            }
+
+            // Right on top of it there is no direction to be thrown in, so it
+            // goes upward rather than nowhere or somewhere arbitrary.
+            if (dist < 1.0f) {
+                VectorSet(away, 0.0f, 0.0f, 1.0f);
+            }
+
+            VectorMA(rd->part[i].v, rd->blastSpeed * (1.0f - dist / rd->blastRadius), away, rd->part[i].v);
+        }
+
+        rd->hasBlast = qfalse;
     }
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
@@ -4071,6 +4229,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         }
 
         CG_RagdollFindImpulse(rd);
+        CG_RagdollFindBlast(rd);
 
         rd->state     = RD_BLENDING;
         rd->entityNum = cent->currentState.number;
