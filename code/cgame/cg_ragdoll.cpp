@@ -154,24 +154,6 @@ static const rdJointDef_t rd_joints[RD_NUM_JOINTS] = {
 // How much of a bone's spurious twist is taken out each frame.
 #define RD_UNTWIST_RATE 1.0f
 
-// How nearly opposite two bones may run before the twist between them stops
-// meaning anything.
-//
-// The twist is measured by carrying the parent's roll onto the child along the
-// shortest rotation between the two bone directions, and when the two run
-// exactly opposite there is no shortest rotation: every axis across the parent
-// turns one onto the other, and each gives an answer half a turn from the last.
-// This is not a corner case. A thigh runs down the leg while the pelvis runs up
-// the spine, so a body lying with its legs out has both thighs sitting exactly
-// on the singularity, where the measurement reads plus ninety on one frame and
-// minus ninety on the next while nothing whatever has moved. Taken out at full
-// rate that is a half turn in the drawn thigh: the leg snapping inside out at
-// the hip, and the mesh with it.
-//
-// So the correction is faded off as the two approach opposite. Where the twist
-// cannot be measured, none is invented.
-#define RD_UNTWIST_FLIP_LO 0.95f
-#define RD_UNTWIST_FLIP_HI 0.995f
 
 // How closely a roll reference may run to the bone it is orienting before it is
 // given up on. At one it is parallel and there is nothing left of it across the
@@ -2778,6 +2760,30 @@ static void CG_RagdollUntwist(cg_ragdoll_t *rd)
         AxisCopy(rd->boneAxis[i], rd->rolledAxis[i]);
 
         if (par < 0 || rd->boneIndex[par] < 0) {
+            continue;
+        }
+
+        // A bone with a geometric roll reference is left alone. Its roll has
+        // already been decided, by the plane the knee or elbow below it bends
+        // in, and that is a real measurement off the particles. Taking it again
+        // against the parent overrides physics with arithmetic.
+        //
+        // Worse, the arithmetic is undefined for precisely these bones. The
+        // twist between two bones is found by carrying the parent's roll onto
+        // the child along the shortest rotation between their directions, and
+        // when the two run exactly opposite there is no shortest rotation:
+        // every axis across the parent turns one onto the other, and each gives
+        // an answer half a turn from the last. A thigh runs down the leg while
+        // the pelvis runs up the spine, so a body lying with its legs out has
+        // both thighs sitting exactly on that singularity. Traced there, the
+        // measurement reads minus ninety degrees on one frame and plus ninety
+        // on the next with nothing moving at all, and at full rate that is the
+        // drawn leg turning inside out at the hip.
+        //
+        // What this pass was written for is the chain below, where roll is
+        // carried from bone to bone and the composition of one correction with
+        // the next leaves a twist nothing asked for.
+        if (rd_bones[i].helperA >= 0) {
             continue;
         }
 
