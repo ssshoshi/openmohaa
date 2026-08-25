@@ -49,6 +49,7 @@ cvar_t *cg_ragdoll_bounce;
 cvar_t *cg_ragdoll_sleepvel;
 cvar_t *cg_ragdoll_sleeptime;
 cvar_t *cg_ragdoll_debug;
+cvar_t *cg_ragdoll_dump;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -785,6 +786,10 @@ typedef struct {
     qboolean hasImpulse;
     vec3_t   impulseVel;
     int      impulseJoint;
+
+    // Open while this corpse is being traced to a file. Zero is no file, which
+    // is what the memset in CG_RagdollFree leaves behind.
+    fileHandle_t dumpFile;
 } cg_ragdoll_t;
 
 static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
@@ -3238,8 +3243,143 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 // Lifecycle
 //=============================================================
 
+#define RD_DUMP_FILE "ragdoll_dump.txt"
+
+// Writes one line, whatever its length, without needing the caller to know how
+// long it came out.
+static void CG_RagdollDumpLine(cg_ragdoll_t *rd, const char *line)
+{
+    if (!rd->dumpFile) {
+        return;
+    }
+
+    cgi.FS_Write(line, strlen(line), rd->dumpFile);
+}
+
+// Starts a trace of this corpse. The header names every joint and every drawn
+// bone, so the file can be read without a copy of this table to hand.
+static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
+{
+    char line[512];
+    int  i;
+
+    rd->dumpFile = cgi.FS_FOpenFileWrite(RD_DUMP_FILE);
+
+    if (!rd->dumpFile) {
+        cgi.Printf("ragdoll: could not open " RD_DUMP_FILE " for writing\n");
+        return;
+    }
+
+    Com_sprintf(
+        line,
+        sizeof(line),
+        "# openmohaa ragdoll trace v1\n"
+        "# entity %d  bodyscale %.4f  blendtime %d  impulse %.2f\n"
+        "# F <time_ms> <blendweight> <state> <supports>\n"
+        "# P <joint> <x> <y> <z>\n"
+        "# A <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   animation pose\n"
+        "# B <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   drawn pose\n",
+        rd->entityNum,
+        CG_RagdollModelScale(model),
+        cg_ragdoll_blendtime->integer,
+        cg_ragdoll_impulse->value
+    );
+    CG_RagdollDumpLine(rd, line);
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        Com_sprintf(line, sizeof(line), "# joint %d %s\n", i, rd_joints[i].boneName ? rd_joints[i].boneName : rd_joints[i].tipName);
+        CG_RagdollDumpLine(rd, line);
+    }
+
+    for (i = 0; i < RD_NUM_BONES; i++) {
+        // The parent goes in the file too, so a reader never has to keep its
+        // own copy of this table in step with the one above.
+        Com_sprintf(
+            line,
+            sizeof(line),
+            "# bone %d parent %d joint %d aim %d %s%s\n",
+            i,
+            rd_bones[i].parent,
+            rd_bones[i].joint,
+            rd_bones[i].aim,
+            rd_bones[i].boneName,
+            rd->boneIndex[i] < 0 ? " (absent)" : ""
+        );
+        CG_RagdollDumpLine(rd, line);
+    }
+}
+
+static void CG_RagdollDumpClose(cg_ragdoll_t *rd)
+{
+    if (!rd->dumpFile) {
+        return;
+    }
+
+    cgi.FS_FCloseFile(rd->dumpFile);
+    rd->dumpFile = 0;
+    cgi.Printf("ragdoll: trace written to " RD_DUMP_FILE "\n");
+}
+
+// One frame of the corpse: where the simulation has its particles, what the
+// animation would have drawn, and what was actually drawn. Having all three
+// side by side is the point. A bone that moves while its particles do not is a
+// reconstruction fault, and there is no other way to tell that apart from the
+// physics having genuinely moved something.
+static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
+{
+    char line[512];
+    int  i;
+
+    if (!rd->dumpFile) {
+        return;
+    }
+
+    Com_sprintf(
+        line, sizeof(line), "F %d %.4f %d %d\n", cg.time, weight, (int)rd->state, CG_RagdollSupportCount(rd)
+    );
+    CG_RagdollDumpLine(rd, line);
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        Com_sprintf(line, sizeof(line), "P %d %.3f %.3f %.3f\n", i, rd->part[i].p[0], rd->part[i].p[1], rd->part[i].p[2]);
+        CG_RagdollDumpLine(rd, line);
+    }
+
+    for (i = 0; i < RD_NUM_BONES; i++) {
+        if (rd->boneIndex[i] < 0) {
+            continue;
+        }
+
+        if (rd_animPose[i].valid) {
+            Com_sprintf(
+                line,
+                sizeof(line),
+                "A %d %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                i,
+                rd_animPose[i].pos[0], rd_animPose[i].pos[1], rd_animPose[i].pos[2],
+                rd_animPose[i].axis[0][0], rd_animPose[i].axis[0][1], rd_animPose[i].axis[0][2],
+                rd_animPose[i].axis[1][0], rd_animPose[i].axis[1][1], rd_animPose[i].axis[1][2],
+                rd_animPose[i].axis[2][0], rd_animPose[i].axis[2][1], rd_animPose[i].axis[2][2]
+            );
+            CG_RagdollDumpLine(rd, line);
+        }
+
+        Com_sprintf(
+            line,
+            sizeof(line),
+            "B %d %.3f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+            i,
+            rd->bonePos[i][0], rd->bonePos[i][1], rd->bonePos[i][2],
+            rd->boneAxis[i][0][0], rd->boneAxis[i][0][1], rd->boneAxis[i][0][2],
+            rd->boneAxis[i][1][0], rd->boneAxis[i][1][1], rd->boneAxis[i][1][2],
+            rd->boneAxis[i][2][0], rd->boneAxis[i][2][1], rd->boneAxis[i][2][2]
+        );
+        CG_RagdollDumpLine(rd, line);
+    }
+}
+
 static void CG_RagdollFree(cg_ragdoll_t *rd)
 {
+    CG_RagdollDumpClose(rd);
     memset(rd, 0, sizeof(*rd));
     rd->state     = RD_FREE;
     rd->entityNum = ENTITYNUM_NONE;
@@ -3303,6 +3443,14 @@ void CG_InitRagdoll(void)
     cg_ragdoll_sleepvel  = cgi.Cvar_Get("cg_ragdoll_sleepvel", "0.25", CVAR_ARCHIVE);
     cg_ragdoll_sleeptime = cgi.Cvar_Get("cg_ragdoll_sleeptime", "400", CVAR_ARCHIVE);
     cg_ragdoll_debug     = cgi.Cvar_Get("cg_ragdoll_debug", "0", CVAR_CHEAT);
+    // Set it to 1 and the next body to fall writes its whole life to
+    // ragdoll_dump.txt in the home path, then clears the cvar again, so one
+    // activation gives exactly one corpse. A screenshot shows the pose a defect
+    // ended in; this shows how it got there, which for anything that flips,
+    // drifts or props itself up is the half that matters. The harness cannot
+    // stand in for it: its world is a floor and a box, and what real geometry
+    // does to a corpse is precisely what it is missing.
+    cg_ragdoll_dump      = cgi.Cvar_Get("cg_ragdoll_dump", "0", CVAR_CHEAT);
 
     // Scales how firmly the soft constraints hold the body toward the shape it
     // died in. Lower is floppier, higher is stiffer. It is exposed because how
@@ -3577,6 +3725,16 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
         rd->state     = RD_BLENDING;
         rd->entityNum = cent->currentState.number;
+
+        // Catch the next body to fall, and only that one. Clearing the cvar
+        // here rather than making the caller do it means a trace is one command
+        // and cannot be left running to fill the disk. Opened after the state
+        // and the entity number are set, so the header describes the corpse
+        // rather than the empty slot it came from.
+        if (cg_ragdoll_dump->integer) {
+            CG_RagdollDumpOpen(rd, model);
+            cgi.Cvar_Set("cg_ragdoll_dump", "0");
+        }
     }
 
     rd->entityNum = cent->currentState.number;
@@ -3684,6 +3842,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // frozen are this frame's rather than the previous frame's.
         CG_RagdollBuildPose(rd, model, weight);
 
+        CG_RagdollDumpFrame(rd, weight);
+
         if (rd->state == RD_ACTIVE) {
             // Being slow is not the same as having come to rest. A body going
             // over a ledge, or working its way down a staircase, passes through
@@ -3711,6 +3871,13 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 }
             }
         }
+    }
+
+    // Nothing is built for a sleeping corpse, so there is nothing further to
+    // trace: close the file there rather than leaving it open for the minutes
+    // the body then lies about.
+    if (rd->state == RD_SLEEPING) {
+        CG_RagdollDumpClose(rd);
     }
 
     // A sleeping ragdoll keeps emitting the matrices it settled on. That is
