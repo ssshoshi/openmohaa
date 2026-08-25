@@ -317,11 +317,20 @@ was, i.e. back inside, every step for ever, anchoring the corpse in mid air.
 from. Worst floating limb over the real deaths 17.7 → 8.7 units, and the deaths
 against a wall 17.7 → 5.5.
 
-**Burial itself is still constant** — a joint is buried on most frames of most
-scenarios, including a body flat on open ground. It is now transient rather than
-permanent, but the rate says the particles are routinely being driven into the
-world by the constraint solve, and nothing has looked at why. `rdtrace.py`
-reports it from the `C` record.
+**Burial itself is still frequent** — now transient rather than permanent, but
+the rate says the constraint solve routinely drives particles into the world and
+nothing has looked at why. A shoulder pressed against a wall was buried on 339
+frames of 835 in one game trace: placed back out every step, all corpse long.
+`rdtrace.py` reports it from the `C` record.
+
+**The ragdoll and its entity end up far apart.** Measured in the game, the pelvis
+settles 200–224 units from the entity origin on a staircase, because the corpse
+is simulated on the client while the entity falls on the server and the two take
+different routes. What is drawn is the ragdoll, so it looks right, but the entity
+is what culling, sound and removal use, and once the body sleeps the frozen
+matrices ride it. Nothing has gone wrong from this yet — in every trace the
+entity has moved 0.0 units after sleep — but it is the mechanism behind any
+corpse that pops, vanishes early, or jumps as it is removed.
 
 ### 6. Remembered contact planes — expiry added, unproven in the harness
 
@@ -342,6 +351,10 @@ surfaces do not disappear; the probe fires a few dozen times per corpse and drop
 a plane twice in the whole suite. Every metric is unchanged within noise. The
 evidence for the fix is the game trace, not the harness — which is the shape of
 most of the remaining problems here.
+
+Confirmed in the game afterwards: four corpses traced on the map that produced
+the hanging one, all four settling and sleeping, none hanging, and burial down to
+9–88 frames of 835 from the 370-of-400 it used to run at.
 
 ### 7. Shape memory: found in the game, fade added, value not settled
 
