@@ -554,6 +554,23 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // contact is forgotten.
 #define RD_CONTACT_FORGET 16.0f
 
+// How long a remembered contact plane may go without a trace confirming it.
+//
+// Drifting off the plane is not enough on its own to notice that a surface has
+// gone. A particle hanging underneath a remembered plane never rises above it,
+// so the distance test never fires, and the plane goes on holding the particle
+// up for the life of the corpse: a body was found dangling in open air from two
+// planes remembered at its toes, its own entity long since on the floor below.
+//
+// A settled particle is not moving, so the sweep it makes each step is a point
+// and strikes nothing: going without confirmation is normal and is not on its
+// own evidence of anything. So the plane is not dropped on age. Age only says
+// when to go and ask the world whether the surface is still there.
+#define RD_CONTACT_STALE 250
+
+// How far past its own radius that question is asked.
+#define RD_CONTACT_PROBE 2.0f
+
 // Collision displacement below this is treated as a resting contact rather
 // than an impact, and does not trigger the reconciling solve.
 #define RD_IMPACT_EPSILON 0.5f
@@ -675,6 +692,12 @@ typedef struct {
     qboolean hasContact;
     vec3_t   contactNormal;
     float    contactDist;
+
+    // When that plane was last confirmed by a trace actually striking
+    // something. A remembered plane is a one sided constraint the particle can
+    // never fall through, so one that outlives the surface it came from is an
+    // invisible shelf.
+    int contactTime;
 } rdParticle_t;
 
 typedef struct {
@@ -2538,6 +2561,29 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         if (part->hasContact) {
             if (DotProduct(part->p, part->contactNormal) - part->contactDist > RD_CONTACT_FORGET) {
                 part->hasContact = qfalse;
+            } else if (cg.time - part->contactTime > RD_CONTACT_STALE) {
+                // Drifting off the plane is not enough to notice that a surface
+                // has gone, because a particle hanging under a remembered plane
+                // never rises above it and the distance test never fires. It
+                // simply hangs there, and the body hangs off it.
+                //
+                // So the world is asked directly: a short trace along the
+                // plane's own normal either still finds the surface or does
+                // not. Only for a plane nothing has confirmed for a while, so
+                // a settled corpse pays for this a handful of times a second.
+                trace_t probe;
+                vec3_t  behind;
+
+                VectorMA(part->p, -(rd->radius + RD_CONTACT_PROBE), part->contactNormal, behind);
+                CG_Trace(
+                    &probe, part->p, rd_mins, rd_maxs, behind, skipEntity, mask, qfalse, qtrue, "CG_RagdollProbe"
+                );
+
+                if (probe.fraction >= 1.0f && !probe.startsolid && !probe.allsolid) {
+                    part->hasContact = qfalse;
+                } else {
+                    part->contactTime = cg.time;
+                }
             }
         }
 
@@ -2601,7 +2647,8 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         VectorCopy(trace.endpos, part->p);
         VectorMA(part->p, RD_SURFACE_GAP, trace.plane.normal, part->p);
 
-        part->hasContact = qtrue;
+        part->hasContact  = qtrue;
+        part->contactTime = cg.time;
         VectorCopy(trace.plane.normal, part->contactNormal);
         part->contactDist = DotProduct(part->p, part->contactNormal);
 
@@ -3364,7 +3411,9 @@ static void CG_RagdollDumpLine(cg_ragdoll_t *rd, const char *line)
 // bone, so the file can be read without a copy of this table to hand.
 static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
 {
-    char line[512];
+    // Comfortably over the header block below, which is written in one go and
+    // was silently truncated mid-word when it outgrew a smaller buffer.
+    char line[1024];
     int  i;
 
     Com_sprintf(rd->dumpName, sizeof(rd->dumpName), "ragdoll_dump_%d.txt", ++rd_dumpSeq);
