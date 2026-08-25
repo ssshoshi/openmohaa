@@ -28,9 +28,10 @@ could not see. Take them as primary evidence.
 
 ## State
 
-Branch `feat/client-ragdoll`, 8 commits ahead of `main`, working tree clean.
+Branch `feat/client-ragdoll`, 9 commits ahead of `main`, working tree clean.
 
 ```
+7140cd97 fix(cgame): give the root bone its own orientation, not the pelvis's
 2f0331c7 fix(cgame): limit how far the legs may open at the hip
 6e019517 fix(cgame): let the knee's bend plane roll with the hip
 6432589b fix(cgame): lower the shot impulse, which was throwing limbs about
@@ -89,6 +90,7 @@ instead of modelling the joint.**
 | torso twist | Spine2's roll reference | chest rotated away from the shoulders, ~35° |
 | shin standing vertical | the knee's bend *plane*, in torso coordinates | body on its back could not lower its leg; foot 21 units up, stable, asleep |
 | legs splayed in a V | the hip cone axis + foot-to-foot span | a man shot mid-stride keeps his stride forever |
+| pelvis/torso shear | the root bone's orientation, taken from the pelvis | a quarter turn re-injected into the pelvis every frame, forever |
 
 In each case the constraint was correct on the frame it was seeded and wrong
 forever after, because the body's orientation relative to the world changed and
@@ -126,6 +128,26 @@ only reason any of this was tractable.
 
 Every one of these produced a wrong conclusion that was acted on:
 
+- **`seed reproduction error` read 0.0 by construction, not by correctness.** It
+  was sampled on the first frame, where the blend weight is zero and
+  `CG_RagdollBuildPose` slerps all the way back to the animation, so it handed
+  back what it was given whatever the reconstruction had done. It now gets its own
+  single frame with `cg_ragdoll_blendtime` forced to 0. It found the 90° at once.
+- **Neither twist metric could see a reconstruction defect.** `worstTwist` is built
+  from particle positions, and the particles carry no twist at all. `worstJointTwist`
+  reports the worst single step between *neighbouring* spine bones, so a turn
+  applied evenly down the whole chain leaves it undisturbed. `pelvis to chest roll
+  added` and `root adrift from pelvis` were added to cover both gaps.
+- **The harness's own skeleton has the root and the pelvis pointing the same way**,
+  so the 90° appears only on the real animations. Anything that depends on the rig
+  rather than on the pose will hide in the synthetic scenarios.
+- **Eight of the 24 animation scenarios were mislabelled** — the names encoded an
+  older ordering of `rd_anims[]`, so `anim death_choke` was running `death_crotch`
+  and seven others were similarly crossed. Names corrected; the animations run are
+  unchanged.
+- **`backBends`, the "knee back" column, was never incremented.** It was declared,
+  printed and gated on, so `backBends == 0` passed vacuously. Now wired to the
+  knee's offset from the hip-to-foot chord. It is not zero.
 - **`limb held up by nothing` counts the body itself as support.** A foot 21
   units in the air beside the pelvis scored **+1.2**. This is why sweeps kept
   reporting the legs were fine while the user was photographing legs in the air.
@@ -187,21 +209,21 @@ than the experiment.
 
 ## Open problems, ranked
 
-### 1. Mesh tearing and pelvis/torso twist — untouched, probably worst
+### 1. Pelvis/torso shear — found and fixed, worth re-checking by eye
 
-Screenshot 63 shows the lower body rotated ~90° from the torso with flat grey
-sheets at the thigh and knee. Those sheets are **linear-blend-skinning failure**:
-vertices weighted between two bones that ended at wildly different orientations.
+Screenshot 63 showed the lower body rotated ~90° from the torso with flat grey
+sheets at the thigh and knee. That was a real 90°, and the reconstruction was
+putting it there: `CG_RagdollSeed` took each bone's seed correction from its
+*joint* rather than from the bone, and `Bip01` and `Bip01 Pelvis` share a joint.
+The root was drawn with the pelvis's orientation, the quarter turn between them
+went into `twistRest`, and `CG_RagdollUntwist` re-injected it every frame. Fixed
+in `7140cd97`; `seedErr` over the real animations goes 90° → 0, drawn torso twist
+10.4° → 3.5°.
 
-This is in the reconstruction path, not the simulation. It is established that
-the drawn bones can carry twist the particles do not: measured **0.0° in the
-particles against 23.3° in the drawn bones**. `CG_RagdollSmoothSpine` was the
-cause of that instance and is fixed; the pelvis-to-spine relationship is *not*
-covered by the existing twist metric, which only looks at spine bones.
-
-Start here. Extend the twist metric to cover pelvis-relative-to-chest, confirm it
-reproduces, then work the reconstruction (`CG_RagdollBoneFrame`, the parallel
-transport of roll references, `CG_RagdollUntwist`).
+**Get a screenshot before assuming this is closed.** The harness says the shear is
+gone; whether the corpse now reads right to someone standing over it is a separate
+question, and the remaining `pelvis to chest roll added` is still 2.7° mean / 11°
+worst.
 
 ### 2. Arms clipping into the chest
 
@@ -220,7 +242,43 @@ may move this on its own.
 Worst 12–14 units on the newly added running/prone animations, against a gate of
 5. This is the cost of the two leg fixes and has not been paid down.
 
-### 4. Only 4 of 24 real animations pass their full quality gate
+### 4. Two defects found while chasing the shear, both still open
+
+Neither has a design trade-off; both were left out so the shear fix could be
+judged on its own.
+
+- **`hingeBendRest` is never written when a leg dies straight.**
+  `CG_RagdollMeasureHinges` takes the `defaultBend` branch and `continue`s before
+  the copy, so the field keeps its memset zero. In `CG_RagdollHinges` that makes
+  the dot product against it zero every frame and the clamp degenerate — so the
+  20° hip-roll limit added by `6e019517` is **entirely inert for straight-dying
+  legs**, which is the common case. One line.
+- **`CG_RagdollBoneFrame` switches a roll reference on a hard threshold.** The
+  thigh and upper arm take their roll from the limb below, except within ~20° of
+  parallel (`RD_TWIST_PARALLEL` 0.94) where it silently falls back to the
+  transported parent roll. `correction[]` and `twistRest[]` were calibrated
+  against whichever branch was live at death. A corpse's legs straighten, the
+  reference flips, and the drawn thigh roll steps — at the hip and the knee, which
+  is where the tearing was photographed. Blend across the band rather than
+  switching, and add a max-frame-to-frame-roll metric to see it.
+
+### 5. The rest of the death pose is still memorised
+
+The shear was one instance of a pattern that is still everywhere. Every rotational
+quantity in the drawn pose is a constant captured at death — `twistRest`,
+`correction`, `spineRest`, `coneAxis` (whose own comment says "how far a limb may
+swing **from the direction it died in**"), `hingeBendRest`, `selfPair[].minLen`,
+`segTrunkScale`. The particles carry no orientation, so nothing in the simulation
+can ever revise any of it: a man shot mid-stride keeps his stride, his back's arch
+and his limbs' heading for the whole five seconds.
+
+The fix shape is the one that worked for the knee and the hip — give the joint a
+range and let the value relax toward it, rather than holding what the animation
+had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 roll
+decision *last*: `37d0daea` records that squaring it against the shoulders doubled
+torso twist, but that was measured with the 90° shear present.
+
+### 6. Only 5 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
