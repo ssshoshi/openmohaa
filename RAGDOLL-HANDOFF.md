@@ -83,6 +83,10 @@ which is the signal to ask the user to close it. Screenshots arrive in
   falloff is what turns the body over — near side harder than far side — where
   the shot's push is mostly one velocity for the whole body. Sizes come from the
   effect the message already resolves, so both protocols share one mapping.
+  Scaled by `cg_ragdoll_blastimpulse`, kept apart from `cg_ragdoll_impulse`
+  because a bullet and a grenade want different numbers: the shot's energy goes
+  into the limbs, so a setting big enough to throw a body from a blast leaves
+  rifle deaths with a leg in the air.
 
 Tuning is exposed through `cg_ragdoll*` cvars; `cg_ragdoll 0` restores stock
 behaviour entirely. `cg_ragdoll_debug 1` draws the constraint web and prints
