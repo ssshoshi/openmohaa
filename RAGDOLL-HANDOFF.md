@@ -246,6 +246,29 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### Arms in the chest: what worked and what did not
+
+Three numbers decide it. `limbRadius` (was 0.85 of the joint), `RD_TRUNK_DEEP_RATIO`
+(was 0.90) and `RD_SEGMENT_RATE` (was 0.35). The first two were smaller than the
+body they stand for; the third has to come *down* when they go up, or the
+clearance is paid for in particle-cloud distortion. Together (`a73de289`): deepest
+limb 18.0% → 16.8%, worst 68 → 61, selfX 22.1 → 20.7, and one more real death
+passing its whole gate.
+
+Measured and rejected:
+
+| tried | result |
+|---|---|
+| Letting the seeded trunk clearance recover as the shape memory fades | **catastrophic.** Every scenario fails: the solver shoves limbs out of a body that has already settled. arm 32 → 42, particle distortion 14 → 44, twist 5.6 → 17. The concession is not only about the first frame |
+| Raising `RD_SEGMENT_MIN_FRACTION` 0.70 → 0.80, or the 0.85 in the clearance seeding → 0.95 | **no effect whatever, byte for byte.** Arms are not touching the chest at the instant of death, so the seeded fraction is already 1.0 and neither path is reached. The penetration is *acquired* during the fall, at full asked clearance |
+| `RD_SEGMENT_RATE` 0.5 and 0.7 | worse on clearance *and* on gate passes |
+| `RD_TRUNK_WIDE_RATIO` 1.10 and 1.20 | lower average, worse worst case: 68 → 99. Past 1.0 the torso asks for more room than it occupies |
+| `cg_ragdoll_iterations` 10 → 14 | worse (passes 9 → 5) |
+
+**The interaction worth knowing:** `limptime 1500` nearly doubles arm-in-trunk
+(18 → 32) because the shape-memory springs that were holding arms off the chest
+let go. Anything measured for this must be measured at both settings.
+
 ### Measured over 1000 corpses — the current baseline
 
 `impulse 1 / blastimpulse 2 / stiffness 1 / limptime 1500 / solvegain 0.7 /
