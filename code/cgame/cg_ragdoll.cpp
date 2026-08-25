@@ -787,6 +787,12 @@ typedef struct {
     vec3_t   impulseVel;
     int      impulseJoint;
 
+    // What the sleep test last saw, kept only so the trace can report it. A
+    // corpse that will not sleep is holding one of these above its threshold,
+    // and which one it is cannot be worked out from the pose.
+    float    lastDisp;
+    int      lastSteps;
+
     // Open while this corpse is being traced to a file. Zero is no file, which
     // is what the memset in CG_RagdollFree leaves behind.
     fileHandle_t dumpFile;
@@ -3275,7 +3281,7 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         sizeof(line),
         "# openmohaa ragdoll trace v1\n"
         "# entity %d  bodyscale %.4f  blendtime %d  impulse %.2f\n"
-        "# F <time_ms> <blendweight> <state> <supports>\n"
+        "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# P <joint> <x> <y> <z>\n"
         "# A <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   animation pose\n"
         "# B <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   drawn pose\n",
@@ -3335,7 +3341,16 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
     }
 
     Com_sprintf(
-        line, sizeof(line), "F %d %.4f %d %d\n", cg.time, weight, (int)rd->state, CG_RagdollSupportCount(rd)
+        line,
+        sizeof(line),
+        "F %d %.4f %d %d %.4f %d %d\n",
+        cg.time,
+        weight,
+        (int)rd->state,
+        CG_RagdollSupportCount(rd),
+        rd->lastDisp,
+        rd->lastSteps,
+        cg.time - rd->quietSince
     );
     CG_RagdollDumpLine(rd, line);
 
@@ -3836,6 +3851,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                     rd->quietSince = cg.time;
                 }
             }
+
+            rd->lastDisp  = maxDisp;
+            rd->lastSteps = steps;
         }
 
         // Build the pose before falling asleep, so the matrices that get
