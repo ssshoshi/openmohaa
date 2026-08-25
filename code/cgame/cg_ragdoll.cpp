@@ -536,7 +536,20 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // State
 //=============================================================
 
-#define MAX_RAGDOLLS 16
+// How many corpses may exist at once, which is not the same as how many may be
+// simulated: cg_ragdoll_maxcount caps that, and a body that has settled costs
+// nothing to leave lying here.
+//
+// Sixteen was far too few for a busy round. Traced from a real one, two hundred
+// men died in eighteen seconds, a death every eighteen milliseconds at the
+// median and several inside the same millisecond; holding each corpse for even
+// one second needs twenty five slots, and for five seconds seventy. At sixteen
+// the pool turned over roughly every second and a half however the allocator
+// chose, so bodies were still being taken away shortly after they settled.
+//
+// A slot is ten and a half kilobytes, so this pool is under seven hundred, and
+// nothing walks it per frame except the expiry sweep.
+#define MAX_RAGDOLLS 64
 
 // How close a fresh corpse entity must be to a just-orphaned ragdoll for it to
 // adopt it. Body::Body copies the player's origin verbatim, so the match is
@@ -866,6 +879,21 @@ typedef struct {
 } cg_ragdoll_t;
 
 static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
+
+// When each body last had a ragdoll taken away from it.
+//
+// A corpse whose slot is recycled is still lying there dead, so on the very
+// next frame it asks for a ragdoll again, takes a slot from another settled
+// corpse, and that one asks again in its turn. Traced from a busy round, two
+// hundred captures came from fifty two bodies, one of them re-seeded twelve
+// times over, each new ragdoll starting from the pose its death animation
+// ended on: that churn is what is seen as corpses flickering and resetting.
+//
+// So a body that has lost its ragdoll does not get another. It keeps the pose
+// it had, which is the same thing that happens to a corpse that never got a
+// slot in the first place.
+static int rd_evictedAt[MAX_GENTITIES];
+
 
 // The animation pose of the entity being processed, in world space. Reading a
 // bone means going out to the renderer and back, so it is gathered once per
@@ -3940,6 +3968,8 @@ void CG_InitRagdoll(void)
         CG_RagdollFree(&cg_ragdolls[i]);
     }
 
+    memset(rd_evictedAt, 0, sizeof(rd_evictedAt));
+
     // cgs is zeroed on init, so this has to be turned on explicitly: a server
     // that never sends sv_ragdoll must not read as having disabled it.
     cgs.ragdollAllowed = qtrue;
@@ -4117,6 +4147,25 @@ static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
     return NULL;
 }
 
+static void CG_RagdollNoteEvicted(const cg_ragdoll_t *rd)
+{
+    if (rd->entityNum >= 0 && rd->entityNum < MAX_GENTITIES) {
+        // Zero means never, and cg.time can be zero on the very first frame of
+        // a map, which is the one moment that would read as never. One is close
+        // enough and cannot be mistaken for it.
+        rd_evictedAt[rd->entityNum] = cg.time ? cg.time : 1;
+    }
+}
+
+static qboolean CG_RagdollWasEvicted(int entityNum)
+{
+    if (entityNum < 0 || entityNum >= MAX_GENTITIES) {
+        return qfalse;
+    }
+
+    return rd_evictedAt[entityNum] ? qtrue : qfalse;
+}
+
 static cg_ragdoll_t *CG_RagdollAlloc(void)
 {
     cg_ragdoll_t *oldest  = NULL;
@@ -4169,6 +4218,7 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
     }
 
     if (oldest) {
+        CG_RagdollNoteEvicted(oldest);
         CG_RagdollFree(oldest);
         return oldest;
     }
@@ -4179,6 +4229,14 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
 void CG_RagdollEntityReset(centity_t *cent)
 {
     cg_ragdoll_t *rd = CG_RagdollForEntity(cent->currentState.number);
+
+    // Whoever comes next on this entity number is a different body and starts
+    // with a clean record, whatever happened to the one before it. Cleared
+    // ahead of the early return below, because a body that lost its ragdoll
+    // has no ragdoll to find.
+    if (cent->currentState.number >= 0 && cent->currentState.number < MAX_GENTITIES) {
+        rd_evictedAt[cent->currentState.number] = 0;
+    }
 
     if (!rd) {
         return;
@@ -4296,6 +4354,13 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     }
 
     if (!rd) {
+        // A body that has already had a ragdoll and lost it keeps the pose it
+        // is in rather than starting a new one. Seeding it again would take a
+        // slot from another settled corpse, which would then ask for one back.
+        if (CG_RagdollWasEvicted(cent->currentState.number)) {
+            return;
+        }
+
         rd = CG_RagdollAlloc();
 
         if (!rd) {
