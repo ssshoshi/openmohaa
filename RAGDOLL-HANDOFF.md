@@ -246,6 +246,21 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### A corpse gets one ragdoll, and losing it is final
+
+Recycling a slot does not end the story for the body it was taken from: that
+corpse is still lying there dead, so it asks for another on the next frame,
+takes one from a different settled corpse, and that one asks in its turn. Every
+re-seed starts from the death animation's pose, so what the player sees is
+corpses flickering and resetting for as long as the round stays busy.
+
+Found only because the trace count did not match the body count: 200 captures
+from 52 bodies, one re-seeded 12 times, each new trace starting a median of 21 ms
+after the last ended. **If dumps ever outnumber deaths again, suspect this.**
+
+`CG_RagdollWasEvicted` now refuses a second ragdoll; the record clears in
+`CG_RagdollEntityReset`, when the entity number is reused by a different body.
+
 ### cg_ragdoll_maxcount caps *solving*, not corpses
 
 Sleeping bodies do not count against it (`c88…`, see git log). They cost nothing:
