@@ -1742,6 +1742,7 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
     rd->numOverrides = 0;
     for (i = 0; i < RD_NUM_BONES; i++) {
         vec3_t frame[3];
+        vec3_t ownPos, ownAxis[3];
         int    bone;
 
         rd->boneIndex[i] = -1;
@@ -1755,6 +1756,33 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
             continue;
         }
 
+        // The bone's own pose, and not the pose of the joint it hangs from.
+        //
+        // Those are the same thing for every bone but one. "Bip01" and "Bip01
+        // Pelvis" are two rows of the table sharing a single joint, and the
+        // joint is read from the second of them, so a correction taken from the
+        // joint hands the root the pelvis's orientation instead of its own. In
+        // the rig the two stand a quarter turn apart, the root along the body's
+        // facing and the pelvis up the spine: measured out of the retail pak,
+        // every one of the seventeen death animations has them ninety degrees
+        // apart, to the tenth of a degree.
+        //
+        // That quarter turn does not stay in the root. It is what the first
+        // pose measures as the twist between the two, so it is what goes into
+        // twistRest, and from the moment the blend ends the two are built from
+        // the same frame and measure as having no twist between them at all.
+        // CG_RagdollUntwist reads the difference as ninety degrees of twist
+        // that has to be taken out, and puts a quarter turn into the pelvis on
+        // every frame for the rest of the corpse's life. Being parent relative
+        // it then carries the same turn down the spine, into both thighs and
+        // out along the arms, each about its own length rather than about a
+        // common axis, which is a shear at the waist rather than a turn: the
+        // lower body facing one way, the chest another, and the mesh torn open
+        // across the joints between them.
+        if (!CG_RagdollReadBoneWorld(model, bone, ownPos, ownAxis)) {
+            continue;
+        }
+
         if (!CG_RagdollBoneFrame(rd, i, frame)) {
             continue;
         }
@@ -1765,14 +1793,14 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
         // reconstruction reproduce the seed pose exactly.
         for (j = 0; j < 3; j++) {
             for (k = 0; k < 3; k++) {
-                rd->correction[i][j][k] = DotProduct(worldAxis[rd_bones[i].joint][j], frame[k]);
+                rd->correction[i][j][k] = DotProduct(ownAxis[j], frame[k]);
             }
         }
 
         rd->boneIndex[i] = bone;
-        AxisCopy(worldAxis[rd_bones[i].joint], rd->boneAxis[i]);
+        AxisCopy(ownAxis, rd->boneAxis[i]);
 
-        VectorCopy(worldPos[rd_bones[i].joint], rd->bonePos[i]);
+        VectorCopy(ownPos, rd->bonePos[i]);
         rd->numOverrides++;
     }
 
