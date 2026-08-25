@@ -274,6 +274,30 @@ is full the corpse has settled and friction holds the legs crossed. Applied
 instantly it stretches the body past standing height. Grid: crossing 6/6, passes
 +3/−0 at every limptime > 0. Regresses at `limptime 0`.
 
+### MEASURED: a third of all corpses had a bone inside the world
+
+The `L` line (`9f6ab87a`) settles it: **96 of 293 corpses** had a limb bone found
+inside world geometry. Legs slightly more than arms (R Calf-Foot 49, L Thigh-Calf
+41, L Forearm-Hand 36 …). Previously invisible to every measure.
+
+**"Body freaking out" == fighting the world.** dump157 (*"body freaked out"*) has
+**328 frames** with a bone in the world, dump18 137. The limb re-enters as fast as
+the push-out frees it. That fight is the next thing to look at after twist.
+
+### The capsules are narrower than the body, and the mesh is wider still
+
+`cg_ragdoll_armfree` **1.0** (`6f9ef801`), raised from 0.5. Eight of eighteen
+labelled screenshots were an arm inside the torso and **all eight scored clean on
+every measure**. dump125 settles why: an officer in a leather greatcoat whose arm
+leaves his body at the waist, not at a shoulder — the bone is outside the capsule
+and the sleeve is inside the coat.
+
+So **a negative reading on the capsule metric is correct, not excessive**: an arm
+"clear of the trunk by 14% of its thickness" is resting on the coat. Grid at 1.0:
+arm 4/4, cross 4/4, selfX 4/4, twist 3/4, +1 passing scenario at the played
+settings. Costs 2 passes at lt1500/st0.4 (a corner nothing sets). 1.25 starts to
+stand the arms off the body.
+
 ### The world was never tested against a bone, only against a joint
 
 `CG_RagdollCollide` boxes each **particle** from `pPrev` to `p`. Nothing tested the
