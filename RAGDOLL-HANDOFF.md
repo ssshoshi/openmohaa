@@ -191,6 +191,24 @@ Every one of these produced a wrong conclusion that was acted on:
   joint bend and reporting phantom 180° flips; torso twist measured absolutely so
   a body dying mid-turn read as twisted.
 
+### Tracing a corpse from the game
+
+The harness cannot reproduce a real map. `cg_ragdoll_dump 1` (cheat) captures the
+next body to fall into `ragdoll_dump.txt` in the home path and clears itself, so
+one command gives one corpse. Read it with `rdtrace.py` in the harness directory:
+
+```sh
+./rdtrace.py ragdoll_dump.txt            # summary, worst roll step per bone
+./rdtrace.py ragdoll_dump.txt --bone 13  # one bone frame by frame
+```
+
+Each frame carries the particles, the pose the animation would have drawn, and
+the pose actually drawn. The particles hold no orientation, so **a bone that turns
+while they sit still is the reconstruction, not the physics** — the reader flags
+exactly that, and it is the distinction almost every defect here has turned on.
+`RD_DUMP=1 ./rdsim` makes the harness write the same format, which is how the
+reader is tested.
+
 ### Useful technique
 
 Ablation. Disabling one constraint pass at a time (`CG_RagdollHinges`,
