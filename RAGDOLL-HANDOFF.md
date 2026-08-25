@@ -152,6 +152,11 @@ Every one of these produced a wrong conclusion that was acted on:
 - **`backBends`, the "knee back" column, was never incremented.** It was declared,
   printed and gated on, so `backBends == 0` passed vacuously. Now wired to the
   knee's offset from the hip-to-foot chord. It is not zero.
+- **Corpses not sleeping is a cvar, not a bug.** Six traces all ran their full
+  budget; the seventh showed why. `cg_ragdoll_sleepvel 0` disables sleeping by
+  design, and with it set the quiet timer is reset on every frame that runs a
+  physics step no matter how still the body is. Check the tuning cvars in a
+  trace header before reading anything into how long a corpse simulated.
 - **`limb held up by nothing` counted anything nearby as support, not anything
   underneath.** A foot floating level with the pelvis scored as resting on the hip.
   It now requires the support to lie below the limb, within 60° of straight down.
@@ -300,7 +305,33 @@ correction near the singularity was tried for the hip case and measured *worse*
 than doing nothing (mean step 66.8 → 70.6); don't reach for it again without a
 better reason than it being the obvious move.
 
-### 5. The rest of the death pose is still memorised
+### 5. Shape memory: found in the game, fade added, value not settled
+
+`CG_RagdollSolveConstraints` pulls every soft constraint back to the distance it
+had at death, for ever. Traced from the game (`ragdoll_dump6`), a corpse on a
+staircase held its hip within a few degrees of 90° and its knee of 50° for five
+seconds, and its waist was driven to 29° by the impact and pulled back to 8°.
+It balanced on head, neck and shoulder with the centre of mass 4 units off that
+base. A mannequin balances there; a body folds.
+
+`cg_ragdoll_limptime` (`f206e45b`) fades the bias, leaving every hard limit. It
+**ships at 0**, because the numbers do not pick a value:
+
+| limptime | 0 | 750 | 1500 | 3000 |
+|---|---|---|---|---|
+| floating limb, worst | 17.7 | 9.9 | **6.6** | 27.2 |
+| floating limb, mean | 4.3 | 1.2 | 1.3 | 4.2 |
+| torso twist, mean | **3.5** | 7.4 | 6.9 | 5.4 |
+| sprawl, worst | **3.4** | 5.3 | 4.2 | 4.6 |
+| synthetic passes | 11 | 8 | 13 | 14 |
+
+1500 is the best measured value. It buys the biggest improvement anyone has got
+on limbs left hanging in the air and costs a doubling of twist, which is the
+thing the user says reads worst. Settle it by eye, in the game, and do not sweep
+it: 3000 is *worse than off* for floating limbs, so the curve is not monotonic
+and a sweep will mislead.
+
+### 6. The rest of the death pose is still memorised
 
 The shear was one instance of a pattern that is still everywhere. Every rotational
 quantity in the drawn pose is a constant captured at death — `twistRest`,
@@ -316,7 +347,7 @@ had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 ro
 decision *last*: `37d0daea` records that squaring it against the shoulders doubled
 torso twist, but that was measured with the 90° shear present.
 
-### 6. Only 5 of 24 real animations pass their full quality gate
+### 7. Only 5 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
