@@ -2706,6 +2706,54 @@ static int CG_RagdollSupportCount(const cg_ragdoll_t *rd)
     return n;
 }
 
+// The one thing a step must not end with: a particle inside the world.
+//
+// The full solve knows only about planes already remembered, so a limb meeting
+// a wall for the first time is pushed straight into it and the step ends there.
+// Running the whole collision pass again to fix that costs the corpse its
+// stillness, because it is a fresh impact as far as friction and bounce are
+// concerned. This is only the part that has to happen: anything now inside
+// geometry is put back on the surface, by the same route out that
+// CG_RagdollCollide uses, and nothing else is touched.
+static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
+{
+    const vec3_t rd_mins = {-rd->radius, -rd->radius, -rd->radius};
+    const vec3_t rd_maxs = {rd->radius, rd->radius, rd->radius};
+    int          i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        rdParticle_t *part = &rd->part[i];
+        const int     toward = rd_joints[i].parent >= 0 ? rd_joints[i].parent : RD_SPINE;
+        trace_t       probe, out;
+        vec3_t        shift;
+
+        CG_Trace(&probe, part->p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut");
+
+        if (!probe.startsolid && !probe.allsolid) {
+            continue;
+        }
+
+        rd->buriedMask |= 1 << i;
+
+        CG_Trace(
+            &out, rd->part[toward].p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut"
+        );
+
+        if (out.startsolid || out.allsolid || out.fraction >= 1.0f) {
+            continue;
+        }
+
+        VectorSubtract(out.endpos, part->p, shift);
+        VectorMA(shift, RD_SURFACE_GAP, out.plane.normal, shift);
+
+        // Carried on the previous position too, so the correction changes where
+        // the particle is without changing how fast it is going. This is a
+        // tidying up, not an impact.
+        VectorAdd(part->p, shift, part->p);
+        VectorAdd(part->pPrev, shift, part->pPrev);
+    }
+}
+
 static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
 {
     const float damping = 1.0f - cg_ragdoll_damping->value;
@@ -2760,6 +2808,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // impact and as a corpse that creeps instead of settling.
     if (CG_RagdollCollide(rd, skipEntity)) {
         CG_RagdollSolveConstraints(rd, cg_ragdoll_iterations->integer);
+        CG_RagdollPushOut(rd, skipEntity);
     }
 
     // Every constraint correction is a position change, and in a Verlet
