@@ -2948,7 +2948,24 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
         );
 
         if (out.startsolid || out.allsolid || out.fraction >= 1.0f) {
-            continue;
+            vec3_t above;
+
+            // The joint it hangs from is buried too, so there is no way out
+            // along the body: this is a corpse that has gone into the world
+            // whole rather than caught a limb on something, and left alone it
+            // sinks, because the solve drags it a little further down every
+            // step and nothing can lift it. Try straight up instead, which is
+            // where the surface is when a body has gone through a floor.
+            VectorCopy(part->p, above);
+            above[2] += rd->radius * RD_UNBURY_REACH;
+
+            CG_Trace(
+                &out, above, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut"
+            );
+
+            if (out.startsolid || out.allsolid || out.fraction >= 1.0f) {
+                continue;
+            }
         }
 
         VectorSubtract(out.endpos, part->p, shift);
