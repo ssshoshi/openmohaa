@@ -52,6 +52,7 @@ cvar_t *cg_ragdoll_debug;
 cvar_t *cg_ragdoll_dump;
 cvar_t *cg_ragdoll_limptime;
 cvar_t *cg_ragdoll_solvegain;
+cvar_t *cg_ragdoll_blastimpulse;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -1718,14 +1719,19 @@ static int       rd_blastHead;
 // How far each kind of blast reaches, and how hard it pushes at the centre, in
 // units and units per second before the cvar scale. A tank shell throws a body
 // across a courtyard; a grenade rolls one over.
+//
+// These speeds are what a grenade was actually judged to look right at in the
+// game, rather than what was first guessed: the guesses were half this and were
+// only ever seen through cg_ragdoll_impulse set to 2. Folded in here so the
+// scale cvar can sit at 1 and mean it.
 static const struct {
     float radius;
     float speed;
 } rd_blastKinds[] = {
-    {200.0f, 260.0f}, // grenade
-    {260.0f, 340.0f}, // bazooka
-    {340.0f, 420.0f}, // heavy shell
-    {420.0f, 500.0f}  // tank
+    {200.0f, 520.0f}, // grenade
+    {260.0f, 680.0f}, // bazooka
+    {340.0f, 840.0f}, // heavy shell
+    {420.0f, 1000.0f} // tank
 };
 
 #define RD_NUM_BLAST_KINDS ((int)(sizeof(rd_blastKinds) / sizeof(rd_blastKinds[0])))
@@ -1736,7 +1742,7 @@ void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
 {
     rdBlast_t *blast;
 
-    if (cg_ragdoll_impulse->value <= 0.0f) {
+    if (cg_ragdoll_blastimpulse->value <= 0.0f) {
         return;
     }
 
@@ -1794,7 +1800,7 @@ static void CG_RagdollFindBlast(cg_ragdoll_t *rd)
             bestDist     = dist;
             VectorCopy(blast->pos, rd->blastPos);
             rd->blastRadius = blast->radius;
-            rd->blastSpeed  = blast->speed * cg_ragdoll_impulse->value;
+            rd->blastSpeed  = blast->speed * cg_ragdoll_blastimpulse->value;
         }
     }
 
@@ -3695,7 +3701,7 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // reading anything into the trace: six corpses once looked like they
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
-        "# blendtime %d  impulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f\n"
+        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
@@ -3707,6 +3713,7 @@ static void CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         CG_RagdollModelScale(model),
         cg_ragdoll_blendtime->integer,
         cg_ragdoll_impulse->value,
+        cg_ragdoll_blastimpulse->value,
         cg_ragdoll_stiffness->value,
         cg_ragdoll_limptime->integer,
         cg_ragdoll_solvegain->value,
@@ -3906,6 +3913,14 @@ void CG_InitRagdoll(void)
     // none, though, since a body given a small push finds a resting pose
     // instead of landing rigidly in the one it died in.
     cg_ragdoll_impulse   = cgi.Cvar_Get("cg_ragdoll_impulse", "0.75", CVAR_ARCHIVE);
+    // Kept apart from cg_ragdoll_impulse, which scales the push a bullet gives.
+    // The two want different numbers and were sharing one: raising it far
+    // enough for a grenade to throw a body properly also meant every rifle
+    // round did, and the energy a shot puts into a corpse goes into its limbs,
+    // which is how bodies end up with a leg hanging in the air. Each now has
+    // its own scale and either can be turned off on its own.
+    cg_ragdoll_blastimpulse = cgi.Cvar_Get("cg_ragdoll_blastimpulse", "1.0", CVAR_ARCHIVE);
+    cgi.Cvar_CheckRange(cg_ragdoll_blastimpulse, 0, 10, qfalse);
     cg_ragdoll_duration  = cgi.Cvar_Get("cg_ragdoll_duration", "5000", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_maxcount, 0, MAX_RAGDOLLS, qtrue);
     cgi.Cvar_CheckRange(cg_ragdoll_blendtime, 0, 2000, qtrue);
