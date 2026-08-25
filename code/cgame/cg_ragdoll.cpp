@@ -50,6 +50,7 @@ cvar_t *cg_ragdoll_sleepvel;
 cvar_t *cg_ragdoll_sleeptime;
 cvar_t *cg_ragdoll_debug;
 cvar_t *cg_ragdoll_dump;
+cvar_t *cg_ragdoll_limptime;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -2312,8 +2313,48 @@ static void CG_RagdollSelfCollide(cg_ragdoll_t *rd)
     }
 }
 
+// How much of the shape memory is still acting, from 1 at the moment of death
+// to 0 once the body has gone limp.
+//
+// Every soft constraint here pulls back toward the distance it had at the
+// instant of death. Held for the whole life of the corpse, that does not make a
+// body, it makes a mannequin welded in the posture it died in. Traced from the
+// game: a man shot standing has his waist driven to 29 degrees by the impact
+// and pulled back to 8, and holds his hip and knee within a few degrees of
+// their dying angles for five seconds together. Stood on its head on a
+// staircase a mannequin balances there quite happily. A body folds and goes
+// down the steps.
+//
+// A corpse is briefly tense and then is not, so this fades. Only the bias
+// toward the death pose goes: the hard limits are taken before it ever applies,
+// so bone lengths, the joint ranges, the ceiling on how far the legs may open
+// and the braces that stop the chest folding onto the thighs are all untouched.
+static float CG_RagdollLimpness(const cg_ragdoll_t *rd)
+{
+    float t;
+
+    if (cg_ragdoll_limptime->integer <= 0) {
+        return 1.0f;
+    }
+
+    t = (float)(cg.time - rd->startTime) / (float)cg_ragdoll_limptime->integer;
+
+    if (t <= 0.0f) {
+        return 1.0f;
+    }
+
+    if (t >= 1.0f) {
+        return 0.0f;
+    }
+
+    // Eased rather than straight, so the body does not visibly change its mind
+    // at either end of the fade.
+    return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
 static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
 {
+    const float limp = CG_RagdollLimpness(rd);
     int it, i, k;
 
     if (iterations < 3) {
@@ -2363,7 +2404,7 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
                 } else if (len > c->maxLen) {
                     target = c->maxLen;
                 } else if (c->stiffness > 0.0f) {
-                    float soft = c->stiffness * cg_ragdoll_stiffness->value;
+                    float soft = c->stiffness * cg_ragdoll_stiffness->value * limp;
 
 
                     if (soft > 0.9f) {
@@ -3466,6 +3507,21 @@ void CG_InitRagdoll(void)
     // stand in for it: its world is a floor and a box, and what real geometry
     // does to a corpse is precisely what it is missing.
     cg_ragdoll_dump      = cgi.Cvar_Get("cg_ragdoll_dump", "0", CVAR_CHEAT);
+
+    // How long a body takes to go limp, in milliseconds. 0 holds the shape
+    // memory for ever, which is what it used to do.
+    //
+    // The soft constraints bias the corpse back toward the pose it died in, and
+    // that is wanted for a moment: without it a body lands and sprawls flat.
+    // Held indefinitely it is what leaves a corpse rigid enough to balance on
+    // its head at the top of a staircase instead of folding down it. What fades
+    // is only the bias; every hard limit is taken before it and stays.
+    //
+    // Left off by default. How limp a corpse should look is a judgement made by
+    // eye rather than a thing that can be measured, so this is here to be tried
+    // in the game and settled on, not guessed at from the harness.
+    cg_ragdoll_limptime  = cgi.Cvar_Get("cg_ragdoll_limptime", "0", CVAR_ARCHIVE);
+    cgi.Cvar_CheckRange(cg_ragdoll_limptime, 0, 10000, qtrue);
 
     // Scales how firmly the soft constraints hold the body toward the shape it
     // died in. Lower is floppier, higher is stiffer. It is exposed because how
