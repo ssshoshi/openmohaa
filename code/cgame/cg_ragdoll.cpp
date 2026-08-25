@@ -3945,15 +3945,19 @@ void CG_InitRagdoll(void)
     cgs.ragdollAllowed = qtrue;
 
     cg_ragdoll = cgi.Cvar_Get("cg_ragdoll", "1", CVAR_ARCHIVE);
-    // Raised because running out is not graceful: a corpse that cannot get a
-    // slot keeps the frozen pose its death animation ended on, so in a busy
-    // firefight some bodies ragdoll and others visibly do not. Settled corpses
-    // stop simulating, so the cost of a larger pool is small.
-    // Eight, not the sixteen the pool can hold. Every live corpse is solved
+    // How many corpses may be *solving* at once, which is where the cost is.
+    // Eight, not the sixteen the pool can hold: every one of them is solved
     // every frame, and what the eye picks up is not one body settling but the
-    // several still moving behind it; doubling the count doubles how much of
-    // that is on screen at once. The pool stays larger so a busy round still
-    // has somewhere to put a fresh corpse without evicting one mid-fall.
+    // several still moving behind it, so doubling this doubles how much of that
+    // is on screen together.
+    //
+    // A corpse that has settled does not count against it. Sleeping skips the
+    // step entirely and re-emits the matrices the body came to rest on, so it
+    // costs nothing to leave lying there, and it used to be evicted anyway: in
+    // a round busy enough for eight bodies to be down at once, every further
+    // death threw away the oldest of them while half the pool stood empty, and
+    // a corpse that had just come to rest snapped back to the pose its death
+    // animation ended on. Settled bodies now stay until the pool is full.
     cg_ragdoll_maxcount  = cgi.Cvar_Get("cg_ragdoll_maxcount", "8", CVAR_ARCHIVE);
     cg_ragdoll_blendtime = cgi.Cvar_Get("cg_ragdoll_blendtime", "200", CVAR_ARCHIVE);
     // Scale on the push the killing shot gives the body. 0 disables it and
@@ -4115,8 +4119,9 @@ static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
 
 static cg_ragdoll_t *CG_RagdollAlloc(void)
 {
-    cg_ragdoll_t *oldest = NULL;
-    int           active = 0;
+    cg_ragdoll_t *oldest  = NULL;
+    int           used    = 0;
+    int           solving = 0;
     int           i;
 
     for (i = 0; i < MAX_RAGDOLLS; i++) {
@@ -4127,7 +4132,20 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
             continue;
         }
 
-        active++;
+        used++;
+
+        // What cg_ragdoll_maxcount is for is the cost of solving, and a
+        // sleeping corpse is not solved: the whole step is skipped for it and
+        // it re-emits the matrices it settled on. Counting it against the
+        // budget anyway is what made a busy round throw its corpses away. With
+        // enough bots dying, eight bodies would settle, and from then on every
+        // new death evicted the oldest of them even though half the pool stood
+        // empty, so a corpse that had just come to rest snapped back to the
+        // pose its death animation ended on. Only bodies still being solved
+        // count now, and settled ones stay until the pool itself is full.
+        if (rd->state != RD_SLEEPING) {
+            solving++;
+        }
 
         // Only ever recycle a corpse that has finished moving, or one whose
         // entity is already gone. Evicting a body that is still falling is
@@ -4142,7 +4160,7 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
         }
     }
 
-    if (active < MAX_RAGDOLLS && active < cg_ragdoll_maxcount->integer) {
+    if (used < MAX_RAGDOLLS && solving < cg_ragdoll_maxcount->integer) {
         for (i = 0; i < MAX_RAGDOLLS; i++) {
             if (cg_ragdolls[i].state == RD_FREE) {
                 return &cg_ragdolls[i];
