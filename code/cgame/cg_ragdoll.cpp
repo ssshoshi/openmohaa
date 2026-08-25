@@ -54,6 +54,7 @@ cvar_t *cg_ragdoll_limptime;
 cvar_t *cg_ragdoll_solvegain;
 cvar_t *cg_ragdoll_blastimpulse;
 cvar_t *cg_ragdoll_limbpush;
+cvar_t *cg_ragdoll_armfree;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -2554,6 +2555,8 @@ static void CG_RagdollLimbCollide(cg_ragdoll_t *rd)
     }
 }
 
+static float CG_RagdollLimpness(const cg_ragdoll_t *rd);
+
 static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
 {
     int    n, m, k;
@@ -2573,8 +2576,33 @@ static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
             vec3_t        dir, push;
             float         ta, tb, dist, scale, want;
 
-            if (rd->segTrunkScale[n][m] <= 0.0f) {
+            float keep = rd->segTrunkScale[n][m];
+
+            if (keep <= 0.0f) {
                 continue;
+            }
+
+            // The deepest limb inside the body, over a thousand corpses, was a
+            // hand in the upper chest, in one in four of them. It is not shape
+            // memory: these two segments are seeded at their full clearance
+            // already, so letting them recover it changes nothing at all. The
+            // clearance itself is too small. A hand's collision radius is the
+            // bone's, and the hand a player sees is a fist in a sleeve, wider
+            // than that and attached to an arm that can lie flat along the
+            // chest, so the solver holds the capsules apart correctly and the
+            // mesh still overlaps.
+            //
+            // So ask these two segments to keep more room than they need, and
+            // ramp it in on the limpness clock rather than applying it at once,
+            // which would lift the hands off the chest on the first frame in
+            // front of the player. Only the two forearm-to-hand segments: a
+            // thigh given extra clearance has nowhere to put it.
+            if (cg_ragdoll_armfree->value > 0.0f && (n == 1 || n == 3)) {
+                const float want = 1.0f + cg_ragdoll_armfree->value;
+
+                if (want > keep) {
+                    keep += (want - keep) * (1.0f - CG_RagdollLimpness(rd));
+                }
             }
 
             dist = CG_RagdollSegmentToSegment(pa->p, pb->p, pc->p, pd->p, &ta, &tb, dir);
@@ -2583,8 +2611,7 @@ static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
                 continue;
             }
 
-            want = (CG_RagdollTrunkClearance(rd, m, torso, dir, dist) + rd->limbRadius[n])
-                     * rd->segTrunkScale[n][m]
+            want = (CG_RagdollTrunkClearance(rd, m, torso, dir, dist) + rd->limbRadius[n]) * keep
                  - rd->collisionSlop;
 
             if (want <= 0.0f || dist >= want) {
@@ -3961,7 +3988,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // reading anything into the trace: six corpses once looked like they
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
-        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f\n"
+        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
@@ -3977,6 +4004,8 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_stiffness->value,
         cg_ragdoll_limptime->integer,
         cg_ragdoll_solvegain->value,
+        cg_ragdoll_limbpush->value,
+        cg_ragdoll_armfree->value,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
@@ -4265,6 +4294,7 @@ void CG_InitRagdoll(void)
     // So it is here to be judged by eye rather than settled by measurement. 0.1
     // is the balanced setting; 0.2 buys more clearance for more twist.
     cg_ragdoll_limbpush  = cgi.Cvar_Get("cg_ragdoll_limbpush", "0", CVAR_ARCHIVE);
+    cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "0.5", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
