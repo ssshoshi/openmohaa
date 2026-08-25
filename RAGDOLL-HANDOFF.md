@@ -246,6 +246,35 @@ Three things in that data look like faults and are not, so do not chase them:
   counts faces within 45° of level, and a staircase is mostly risers. A body
   draped down steps reads as 3 supports while holding 18 contacts.
 
+### Measured over 1000 corpses — the current baseline
+
+`impulse 1 / blastimpulse 2 / stiffness 1 / limptime 1500 / solvegain 0.7 /
+sleepvel 0.2`. 991 parsed.
+
+| | p10 | median | p90 | p99 | worst |
+|---|---|---|---|---|---|
+| settles at | 975 ms | **1987 ms** | 3801 ms | 5042 ms | 11050 ms |
+| residual movement | 0.03 | **0.10** | 0.18 | 17.21 | 36.90 |
+| contacts at rest | 17 | **20** of 23 | 22 | 23 | 23 |
+| limb inside the trunk | 0.24 | **0.33** | 0.36 | 0.38 | 0.62 |
+| **joint past its range** | 0.00 | **0.00** | 0.00 | 0.00 | **0.00** |
+
+**937 of 991 settle.** Of the 54 that do not: 42 are traces under a second where
+the entity was removed, 9 were still settling when the trace was cut, 2 were
+stuck holding two or three contacts, and 1 fell out of the world. That is three
+corpses in a thousand with anything actually wrong, and no corpse in a thousand
+folds a joint past its anatomical range.
+
+There is no systematic defect left in this data. Anything further is taste.
+
+**Sinking is not a thing — do not chase it.** It reads p90 6.7 units measured
+over the whole trace (that is bodies *falling*), and still 0.58 measured over
+quiet supported frames (those frames are not contiguous, so the body moves
+between them). Over an *unbroken* quiet run the worst offenders descend 0.00 and
+2.01 units. Four separate metrics have now been caught measuring something
+adjacent to what mattered; assume the fifth is too until it survives that kind
+of check.
+
 ### Measured over 349 explosive deaths
 
 `impulse 1 / blastimpulse 2 / stiffness 1 / limptime 1500 / solvegain 0.7 /
