@@ -2762,8 +2762,26 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
                 // a settled corpse pays for this a handful of times a second.
                 trace_t probe;
                 vec3_t  behind;
+                float   above;
 
-                VectorMA(part->p, -(rd->radius + RD_CONTACT_PROBE), part->contactNormal, behind);
+                // Traced as far as the plane itself, wherever the particle has
+                // drifted to, and a little past it. Reaching a fixed distance
+                // instead asks a different question from the one the forget
+                // rule asks: a plane is kept until the particle is sixteen
+                // units clear of it, but the probe only looked three and a half
+                // down, so anything that had drifted between those two numbers
+                // was reported as a surface that had gone. Traced in the game, a
+                // hand resting on a step lost its plane every quarter second,
+                // dropped, caught the step again and settled, over and over,
+                // which kept resetting the quiet timer just short of the four
+                // hundred milliseconds the body needed to fall asleep.
+                above = DotProduct(part->p, part->contactNormal) - part->contactDist;
+
+                if (above < 0.0f) {
+                    above = 0.0f;
+                }
+
+                VectorMA(part->p, -(above + rd->radius + RD_CONTACT_PROBE), part->contactNormal, behind);
                 CG_Trace(
                     &probe, part->p, rd_mins, rd_maxs, behind, skipEntity, mask, qfalse, qtrue, "CG_RagdollProbe"
                 );
