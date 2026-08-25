@@ -323,7 +323,27 @@ permanent, but the rate says the particles are routinely being driven into the
 world by the constraint solve, and nothing has looked at why. `rdtrace.py`
 reports it from the `C` record.
 
-### 6. Shape memory: found in the game, fade added, value not settled
+### 6. Remembered contact planes — expiry added, unproven in the harness
+
+A trace hit is remembered so the solver can re-project against it without
+tracing again, and `CG_RagdollProjectContacts` honours it every iteration: a
+particle can never pass below a plane it remembers. The only release was
+drifting 16 units *above* it, and **a particle hanging underneath a plane never
+rises above it**. A corpse was found dangling upside down in open air, held by
+contact planes at two toe tips, its entity long since on the floor below.
+
+`69791931` asks the world: a plane unconfirmed for 250 ms gets a short trace
+along its own normal. Age alone is not the test — a settled particle does not
+move, so its sweep strikes nothing and going unconfirmed is normal; expiring on
+age was measured and is ruinous (fidget 0.03 → 1.29, half the suite failing).
+
+**The harness cannot show this working.** Its world is a floor and a box, where
+surfaces do not disappear; the probe fires a few dozen times per corpse and drops
+a plane twice in the whole suite. Every metric is unchanged within noise. The
+evidence for the fix is the game trace, not the harness — which is the shape of
+most of the remaining problems here.
+
+### 7. Shape memory: found in the game, fade added, value not settled
 
 `CG_RagdollSolveConstraints` pulls every soft constraint back to the distance it
 had at death, for ever. Traced from the game (`ragdoll_dump6`), a corpse on a
@@ -349,7 +369,7 @@ thing the user says reads worst. Settle it by eye, in the game, and do not sweep
 it: 3000 is *worse than off* for floating limbs, so the curve is not monotonic
 and a sweep will mislead.
 
-### 7. The rest of the death pose is still memorised
+### 8. The rest of the death pose is still memorised
 
 The shear was one instance of a pattern that is still everywhere. Every rotational
 quantity in the drawn pose is a constant captured at death — `twistRest`,
@@ -365,7 +385,7 @@ had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 ro
 decision *last*: `37d0daea` records that squaring it against the shoulders doubled
 torso twist, but that was measured with the 90° shear present.
 
-### 8. Only 6 of 24 real animations pass their full quality gate
+### 9. Only 6 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
