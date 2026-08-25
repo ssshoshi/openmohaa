@@ -317,11 +317,16 @@ was, i.e. back inside, every step for ever, anchoring the corpse in mid air.
 from. Worst floating limb over the real deaths 17.7 → 8.7 units, and the deaths
 against a wall 17.7 → 5.5.
 
-**Burial itself is still frequent** — now transient rather than permanent, but
-the rate says the constraint solve routinely drives particles into the world and
-nothing has looked at why. A shoulder pressed against a wall was buried on 339
-frames of 835 in one game trace: placed back out every step, all corpse long.
-`rdtrace.py` reports it from the `C` record.
+**Why it happened is now known and fixed** (`c5040211`): the step ended on the
+constraint solve, which honours only planes already *remembered*, so a limb
+meeting a wall for the first time was pushed into it and the step ended there.
+A push-out pass now runs last. On flat ground burial went from 91 frames in 93 to
+1 in 70.
+
+Against a wall the count stays high (257 of 259) and that is the metric's
+wording, not a fault: `buriedMask` counts push-out events, and a limb *resting*
+against a wall is pushed out on every step by design. Read it as "was inside at
+the end of the solve", not "is stuck".
 
 **The ragdoll and its entity end up far apart.** Measured in the game, the pelvis
 settles 200–224 units from the entity origin on a staircase, because the corpse
@@ -398,7 +403,16 @@ had. Worth doing behind a cvar so it can be judged by eye. Re-open the Spine2 ro
 decision *last*: `37d0daea` records that squaring it against the shoulders doubled
 torso twist, but that was measured with the 90° shear present.
 
-### 9. Only 6 of 24 real animations pass their full quality gate
+### 9. The gate now disagrees with what corpses are supposed to do
+
+`lateMove < 0.5` requires a body to have stopped by frame 150. Since `24897ebf`
+a corpse on a slope steeper than its friction angle correctly keeps sliding, so
+it fails that term for doing the right thing — `slope 35 deg` travels 324 units
+where it used to travel 11. Three of the gate's lost passes are this, not
+regressions. Either exempt scenarios with a sloped floor, or measure late
+movement as *acceleration* rather than speed.
+
+### 10. Only 5 of 24 real animations pass their full quality gate
 
 The gate is a composite of ~16 thresholds, so one bad number fails a scenario.
 Treat it as a screen, not a score, and look at the individual metrics.
