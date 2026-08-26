@@ -374,6 +374,28 @@ showed in the median — and it bound on exactly the minority left visibly wrong
 At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
 recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
 
+### The elbow was folding to a LIVING arm's limit (fixed, `120°`)
+
+The 150° stop is AAOS **voluntary** maximum flexion — biceps pulling. A dead arm
+has nothing to pull with. At 150, **26% of corpses rested within 5° of the stop**,
+folded flat, and **5 of 8 photographed corpses had an elbow past 144°** — one
+labelled by the user "bent in a little too far", two more reading as "arm through
+torso", which is where a flat-folded arm puts the hand.
+
+Now `0.500f` (=cos(60°), 120°) on both `RD_?UARM→RD_?HAND` rows.
+
+**The suite cannot see this and did not vote on it.** Harness arms average 78° of
+fold; every metric is identical at 150 / 130 / 120 / 110. Free there, worthless
+there. Evidence is 100 in-game bodies. *Consider the knee (135°, `0.383f`) next —
+same argument, no complaint yet.*
+
+### UNPROVEN: `RD_MAX_CHEST_ROLL` 60→90 in game
+
+The grid supported it (chest-at-rest 4/4). In game across the next 100 corpses the
+median held at ~8° but **p90 went 49→59 and past-20° 21%→24%** — i.e. no measurable
+tail improvement, possibly noise at n=100 across a different round. Do not cite it
+as a win without a controlled batch.
+
 ### Diagnosing from unlabelled screenshots: what worked
 
 `cg_ragdoll_dumplabel` digits are readable when cropped by colour
