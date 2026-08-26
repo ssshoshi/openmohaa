@@ -374,6 +374,39 @@ showed in the median — and it bound on exactly the minority left visibly wrong
 At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
 recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
 
+## Bodies collide with each other and pile up (`cg_ragdoll_bodypush` 0.35)
+
+`d71eb6d1`. Trunk + limbs as one list of **12 capsules**; capsule-vs-capsule after a
+bounding-sphere reject. Trunk measured across its **narrow** axis — this pass cannot
+know which way two men met, and asking half a torso's *width* leaves a visible gap.
+
+**A sleeping corpse is immovable and takes none of the push.** That is most of what
+makes a heap (the body on the floor is what the next lands on) and it is the cheap
+half; waking it gives a pile that squirms. Two awake bodies each give half.
+
+**Sleep gate had to change.** A body on a heap could never sleep: the sleep test asks
+for *contact*, contact comes from tracing the *world*, and there is no world under a
+man lying on another man. `onBodyMask` joints now count as supported — **upward
+pushes only**, or two bodies propped against a wall each decide the other is the floor.
+
+### The suite can now simulate two bodies (`RD_PILE=<height>`)
+
+It only ever ran one man, so none of this was testable. `RD_PILE` drops a second body
+from that height onto the first and reports closest approach.
+
+| bodypush | closest approach |
+|---|---|
+| 0 | **1.5 units** (one lying through the other) |
+| 0.2 | 1.9 |
+| 0.35 | **5.1** |
+| 0.6 | 6.5 |
+
+Nothing is thrown (furthest particle from origin unchanged). A lone corpse is
+**byte-identical**. Second body costs ~1/7 of the first.
+
+*Caveat: `anim death_chest` fails with or without the pile — pre-existing, not caused
+by this.*
+
 ## SOLVED: the arms were inheriting a welded shoulder (`cg_ragdoll_shoulderslack` 6)
 
 `85d5419e`. The single biggest win of the project. Three measurements found it:
