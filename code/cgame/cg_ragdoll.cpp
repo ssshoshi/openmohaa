@@ -247,6 +247,11 @@ static const rdBoneDef_t rd_bones[] = {
 // back to follow them would wring the corpse rather than settle it.
 #define RD_MAX_CHEST_ROLL 60.0f
 
+// How much of the measured error is taken out per frame. A closed loop, so it
+// need not be one: driven whole it overshoots and the chest hunts back and
+// forth, which reads as a shiver in a body that has stopped moving.
+#define RD_CHEST_ROLL_GAIN 0.35f
+
 // "Bip01" and "Bip01 Pelvis" are two drawn bones sharing one physics particle,
 // so a loop that walks the bone table and writes through rd_bones[i].joint
 // would touch the pelvis twice while every other joint is touched once. The
@@ -3848,63 +3853,67 @@ static void CG_RagdollSmoothSpine(cg_ragdoll_t *rd)
 // way to know what the uncorrected chest would have been.
 static void CG_RagdollMeasureChestRoll(cg_ragdoll_t *rd)
 {
-    vec3_t saveX[RD_LAST_ROLL_BONE + 1], saveY[RD_LAST_ROLL_BONE + 1];
-    vec3_t frame[3], want, side;
-    float  keep, roll;
-    int    i;
+    const int lua = 7, rua = 10;   // the two upper arms in rd_bones
+    vec3_t    drawn, want, side, ref;
+    float     err;
+    int       k;
 
-    keep             = rd->spineRollFix;
-    rd->spineRollFix = 0.0f;
-
-    for (i = 0; i <= RD_LAST_ROLL_BONE; i++) {
-        VectorCopy(rd->transportX[i], saveX[i]);
-        VectorCopy(rd->transportY[i], saveY[i]);
+    if (!rd->twistRestValid || rd->boneIndex[RD_LAST_ROLL_BONE] < 0 || rd->boneIndex[lua] < 0
+        || rd->boneIndex[rua] < 0) {
+        return;
     }
 
-    for (i = 0; i <= RD_LAST_ROLL_BONE; i++) {
-        if (rd->boneIndex[i] < 0 || !CG_RagdollBoneFrame(rd, i, frame)) {
-            goto restore;
-        }
+    // Where the shoulders are actually being drawn. Not predicted from the
+    // frame this pass could build for itself: between that frame and the
+    // positions the renderer is given sit the seed correction and the spine
+    // smoothing, and an open loop that ignores both leaves most of the error
+    // in place however hard it is driven. Reading back what was drawn last
+    // frame accounts for all of it without having to model any of it.
+    //
+    // The arms hang off the chest by a fixed offset, so the line between them
+    // is that offset carried through the chest's own drawn axes.
+    VectorClear(drawn);
+
+    for (k = 0; k < 3; k++) {
+        VectorMA(drawn, rd->localOffset[rua][k] - rd->localOffset[lua][k], rd->rolledAxis[RD_LAST_ROLL_BONE][k], drawn);
     }
 
-    // frame is now the chest as it would be drawn with no correction at all.
-    // Where the shoulders really are, squared against the chest's own axis so
-    // only the roll about it is being compared.
     VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, want);
-    VectorMA(want, -DotProduct(want, frame[0]), frame[0], want);
 
-    if (VectorNormalize(want) < 0.001f) {
-        goto restore;
+    // Compared square to the chest's own axis, so only the roll about it is
+    // being measured and not the chest nodding or leaning.
+    VectorCopy(rd->rolledAxis[RD_LAST_ROLL_BONE][0], ref);
+    VectorMA(drawn, -DotProduct(drawn, ref), ref, drawn);
+    VectorMA(want, -DotProduct(want, ref), ref, want);
+
+    if (VectorNormalize(drawn) < 0.001f || VectorNormalize(want) < 0.001f) {
+        return;
     }
 
-    CrossProduct(frame[0], frame[1], side);
+    CrossProduct(ref, drawn, side);
 
-    roll = (float)(atan2(DotProduct(want, side), DotProduct(want, frame[1])) * 180.0 / M_PI);
+    err = (float)(atan2(DotProduct(want, side), DotProduct(want, drawn)) * 180.0 / M_PI);
 
     // The shoulder line is a line, not an arrow: half a turn puts it back on
-    // itself. Without this a chest a little past square reads as needing most
-    // of a turn back the other way.
-    if (roll > 90.0f) {
-        roll -= 180.0f;
-    } else if (roll < -90.0f) {
-        roll += 180.0f;
+    // itself, and without this a chest a little past square reads as needing
+    // most of a turn the other way.
+    if (err > 90.0f) {
+        err -= 180.0f;
+    } else if (err < -90.0f) {
+        err += 180.0f;
     }
 
-    if (roll > RD_MAX_CHEST_ROLL) {
-        roll = RD_MAX_CHEST_ROLL;
-    } else if (roll < -RD_MAX_CHEST_ROLL) {
-        roll = -RD_MAX_CHEST_ROLL;
+    rd->spineRollFix += err * RD_CHEST_ROLL_GAIN * cg_ragdoll_chestroll->value;
+
+    // Beyond this the correction is not a correction. A solver state wild
+    // enough to put the shoulders half a turn from the drawn chest is one where
+    // rolling the back to follow them would wring the corpse rather than settle
+    // it.
+    if (rd->spineRollFix > RD_MAX_CHEST_ROLL) {
+        rd->spineRollFix = RD_MAX_CHEST_ROLL;
+    } else if (rd->spineRollFix < -RD_MAX_CHEST_ROLL) {
+        rd->spineRollFix = -RD_MAX_CHEST_ROLL;
     }
-
-    keep = roll * cg_ragdoll_chestroll->value;
-
-restore:
-    for (i = 0; i <= RD_LAST_ROLL_BONE; i++) {
-        VectorCopy(saveX[i], rd->transportX[i]);
-        VectorCopy(saveY[i], rd->transportY[i]);
-    }
-
-    rd->spineRollFix = keep;
 }
 
 static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weight)
@@ -3918,6 +3927,7 @@ static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weig
     } else {
         rd->spineRollFix = 0.0f;
     }
+
 
     // First pass: work out every bone's orientation.
     for (i = 0; i < RD_NUM_BONES; i++) {
@@ -4678,7 +4688,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
     cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
-    cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "0", CVAR_ARCHIVE);
+    cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
