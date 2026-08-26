@@ -4363,7 +4363,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // reading anything into the trace: six corpses once looked like they
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
-        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f\n"
+        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f  chestroll %.2f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
@@ -4383,6 +4383,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_limbpush->value,
         cg_ragdoll_armfree->value,
         cg_ragdoll_legfree->value,
+        cg_ragdoll_chestroll->value,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
