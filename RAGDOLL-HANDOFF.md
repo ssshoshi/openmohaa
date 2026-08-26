@@ -374,6 +374,40 @@ showed in the median — and it bound on exactly the minority left visibly wrong
 At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
 recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
 
+## Target: Half-Life 2 quality (user's words, and they say it is close)
+
+Useful frame for what is left. HL2 ragdolls are Havok constraint bodies whose
+distinguishing properties are: **real per-joint angular limits**, bodies that
+settle fast and stay put, limbs with heft rather than rubberiness, and poses that
+read as *dead* — slumped and relaxed — rather than posed.
+
+Measured against that, the gaps in order:
+
+1. ~~No torsional limit on the trunk~~ — fixed, `cg_ragdoll_spinetwist` (`f7e0d20f`).
+2. **Limits taken from LIVING anatomy.** A living maximum is reached by pulling with
+   muscle; a corpse has none. The elbow fix (150°→120°) is the template — **the knee
+   is still at 135° (`0.383f`) and is the obvious next one.** Same for the neck.
+3. **Drawn-vs-particle displacement tail** — p90 ~15 units, worst 21. The limb is
+   drawn away from where it collides. Median is solved; the tail is not.
+4. **Corpses fighting the world** — dump44 spent **472 frames** with 5 bones inside
+   geometry. Distinct from static clipping; nothing addresses it yet.
+5. Cone limits are still seeded from the death pose (the memorisation pattern).
+
+### The trunk had NO torsional stiffness (fixed, `cg_ragdoll_spinetwist` 45°)
+
+Every brace holding the shoulders is **symmetric about the spine axis**, so rotation
+about it changes none of their lengths. A distance constraint anchored on an axis
+cannot resist rotation about that axis at any stiffness. The chest was free to wind.
+
+Diagonal braces (the textbook fix for racking) moved it **0.3°** and cost 2 passes —
+a diagonal resists a little at every angle; a joint needs nothing until a limit and
+then firmly. So the angle is measured directly and the shoulders turned back about
+the spine, 25% of the excess per iteration, with the **hips as anchor** (their drawn
+line is a median 6° out against the chest's 24°).
+
+Grid at 45°: twist **3/4**, chest-at-rest **3/4**, chest-worst **3/4**, −1 pass in one
+config. `anim death_twist` — named for exactly this — goes FAIL→PASS.
+
 ### The elbow was folding to a LIVING arm's limit (fixed, `120°`)
 
 The 150° stop is AAOS **voluntary** maximum flexion — biceps pulling. A dead arm
