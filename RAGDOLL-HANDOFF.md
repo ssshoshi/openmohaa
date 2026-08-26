@@ -346,6 +346,29 @@ for this.
 **Use 0.75.** Harness: chest 26.9→23.4 with **no scenario lost**; 1.0 reaches 21.5
 but fails `anim run01, wall` and adds noticeably more twist.
 
+### The correction must be CLOSED LOOP (`f1ec09c2`), default **1.0**
+
+Open loop at 0.75 left the shoulders a median **14.2°** out in game and **17% of
+hands drawn >3 units below their own particle** — through the floor, since the
+particle rests <3 above it.
+
+**Two passes sit between the frame this measures and the positions the renderer
+gets: the seed `correction[]` and `CG_RagdollSmoothSpine`.** An open loop modelling
+neither leaves most of the error whatever the gain. So it reads back the shoulders
+*as actually drawn last frame* (`rolledAxis[Spine2]` + the arms' `localOffset`) and
+corrects what it finds, at gain 0.35 — driven whole it hunts and the corpse shivers.
+
+Grid at 1.0: chest-worst **4/4**, **chest-at-rest roughly halves 4/4** (20.2→7.3,
+18.2→11.2, 21.8→13.9, 14.8→7.8), cross **4/4**, arm **4/4**, **+1 scenario pass**.
+Closing the loop removed the scenario loss that made 0.75 the open-loop ceiling.
+
+### PROVEN: `CG_RagdollUntwist` cannot fight the chest correction
+
+Positions are hung off `rolledAxis` — the axes **before** untwist (`:4048` comment).
+That pass changes how a bone is *drawn*, never where the bone below it *goes*.
+Driving its target by 45° failed **all 49 scenarios** and moved the chest
+measurement by **exactly 0.0**. Don't spend time here again.
+
 ### Next: corpses that fight the world
 
 `Lframes` separates them cleanly. dump106 (*"spazing out"*) 105 frames over 6 bones;
