@@ -947,6 +947,11 @@ typedef struct {
     // it is measured; see CG_RagdollMeasureChestRoll.
     float    spineRollFix;
 
+    // What the last measurement asked for, before the gain and the clamp. The
+    // correction reaching its limit and the correction not converging look the
+    // same from outside, and a trace that carries both can tell them apart.
+    float    chestRollErr;
+
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
     // and which one it is cannot be worked out from the pose.
@@ -4011,6 +4016,7 @@ static void CG_RagdollMeasureChestRoll(cg_ragdoll_t *rd)
         err += 180.0f;
     }
 
+    rd->chestRollErr = err;
     rd->spineRollFix += err * RD_CHEST_ROLL_GAIN * cg_ragdoll_chestroll->value;
 
     // Beyond this the correction is not a correction. A solver state wild
@@ -4481,12 +4487,14 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // reading anything into the trace: six corpses once looked like they
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
-        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f  chestroll %.2f\n"
+        "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f  chestroll %.2f  spinetwist %.0f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
         "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
         "# L <limbburied>   bitmask over the limb bones, low bit bone 0, middle found inside the world\n"
+        "# R <chestrollfix> <chestrollerr>   degrees the back is being rolled, and what the last\n"
+        "#     measurement asked for. Saturating and failing to converge look alike without both.\n"
         "# P <joint> <x> <y> <z>\n"
         "# A <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   animation pose\n"
         "# B <bone> <x> <y> <z> <ax ay az bx by bz cx cy cz>   drawn pose\n",
@@ -4502,6 +4510,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_armfree->value,
         cg_ragdoll_legfree->value,
         cg_ragdoll_chestroll->value,
+        cg_ragdoll_spinetwist->value,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
@@ -4635,6 +4644,9 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         CG_RagdollDumpLine(rd, line);
 
         Com_sprintf(line, sizeof(line), "L %d\n", rd->limbBuriedMask);
+        CG_RagdollDumpLine(rd, line);
+
+        Com_sprintf(line, sizeof(line), "R %.1f %.1f\n", rd->spineRollFix, rd->chestRollErr);
         CG_RagdollDumpLine(rd, line);
     }
 
