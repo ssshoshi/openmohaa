@@ -62,6 +62,7 @@ cvar_t *cg_ragdoll_spinetwist;
 cvar_t *cg_ragdoll_pinsleep;
 cvar_t *cg_ragdoll_jointsize;
 cvar_t *cg_ragdoll_shoulderslack;
+cvar_t *cg_ragdoll_bodypush;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -933,6 +934,12 @@ typedef struct {
     float    blastRadius;
     float    blastSpeed;
 
+    // Which particles are being held up by another corpse rather than by the
+    // world. Without this a body that comes to rest on a heap never sleeps: the
+    // sleep test asks for contact, contact comes from tracing against the
+    // world, and there is no world under a man lying on another man.
+    int      onBodyMask;
+
     // Which particles were buried in solid geometry on the last step. A trace
     // that starts inside a brush cannot say which way is out, so such a
     // particle is dropped back where it was, and if it stays buried it is
@@ -958,6 +965,11 @@ typedef struct {
     // Where the entity was standing when this corpse went to sleep, so the
     // drawn body can be held where it settled while still following the entity
     // down as it sinks.
+    // A sphere round the whole body, refreshed once a frame, so one corpse can
+    // be rejected against another without walking either one's particles.
+    vec3_t   boundCentre;
+    float    boundRadius;
+
     vec3_t   sleepOrigin;
     qboolean sleepPinned;
 
@@ -2863,6 +2875,151 @@ static void CG_RagdollSpineTwist(cg_ragdoll_t *rd)
     }
 }
 
+//=============================================================
+// One body against another
+//=============================================================
+
+// The trunk and the limbs as one list, so a body can be tested against another
+// body without caring which is which. Twelve capsules a man.
+#define RD_NUM_BODY_SEGMENTS (RD_NUM_LIMB_SEGMENTS + RD_NUM_TRUNK_SEGMENTS)
+
+static void CG_RagdollBodySegment(const cg_ragdoll_t *rd, int n, int *a, int *b, float *radius)
+{
+    if (n < RD_NUM_LIMB_SEGMENTS) {
+        *a      = rd_limbSegments[n].a;
+        *b      = rd_limbSegments[n].b;
+        *radius = rd->limbRadius[n];
+        return;
+    }
+
+    n -= RD_NUM_LIMB_SEGMENTS;
+
+    *a      = rd_trunkSegments[n].a;
+    *b      = rd_trunkSegments[n].b;
+
+    // The narrow axis of the trunk. A torso is much deeper than it is thick and
+    // this pass has no idea which way round two bodies have met, so asking for
+    // the wide figure would hold them apart by a torso's width whichever way
+    // they are lying and leave a visible gap between two men on a heap.
+    *radius = rd->trunkDeep[n];
+}
+
+// A sphere round the whole body, used to throw out most pairs before any
+// segment is looked at.
+static void CG_RagdollUpdateBounds(cg_ragdoll_t *rd)
+{
+    float worst = 0.0f;
+    int   i;
+
+    VectorCopy(rd->part[RD_SPINE1].p, rd->boundCentre);
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        vec3_t d;
+        float  len;
+
+        VectorSubtract(rd->part[i].p, rd->boundCentre, d);
+        len = VectorLength(d);
+
+        if (len > worst) {
+            worst = len;
+        }
+    }
+
+    rd->boundRadius = worst + rd->radius;
+}
+
+// Keeps one corpse out of another, so bodies pile up instead of lying through
+// each other.
+//
+// Every collision pass before this one is a body against itself or against the
+// world; two men who fell in the same doorway simply occupied the same space.
+//
+// A corpse that has gone to sleep is treated as immovable and takes none of the
+// correction. That is most of what makes a heap: the body already on the floor
+// is what the next one lands on, and waking it so the two can settle together
+// costs a great deal and buys a pile that squirms. The one still moving gives
+// way instead, which is also the cheaper half.
+//
+// Both awake, each gives half, and the other body's own pass gives the rest, so
+// the pair converges without either being special.
+static void CG_RagdollBodyCollide(cg_ragdoll_t *rd)
+{
+    const float rate = cg_ragdoll_bodypush->value;
+    int         other;
+
+    if (rate <= 0.0f) {
+        return;
+    }
+
+    for (other = 0; other < MAX_RAGDOLLS; other++) {
+        cg_ragdoll_t *od = &cg_ragdolls[other];
+        float         apart, reach, share;
+        vec3_t        between;
+        int           n, m, k;
+
+        if (od == rd || od->state == RD_FREE || !od->boundRadius) {
+            continue;
+        }
+
+        VectorSubtract(od->boundCentre, rd->boundCentre, between);
+        apart = VectorLength(between);
+        reach = rd->boundRadius + od->boundRadius;
+
+        if (apart > reach) {
+            continue;
+        }
+
+        // A sleeping body is the floor as far as this is concerned.
+        share = (od->state == RD_SLEEPING) ? 1.0f : 0.5f;
+
+        for (n = 0; n < RD_NUM_BODY_SEGMENTS; n++) {
+            int   na, nb;
+            float nr;
+
+            CG_RagdollBodySegment(rd, n, &na, &nb, &nr);
+
+            for (m = 0; m < RD_NUM_BODY_SEGMENTS; m++) {
+                int    ma, mb;
+                float  mr, ta, tb, dist, want, scale;
+                vec3_t dir, push;
+
+                CG_RagdollBodySegment(od, m, &ma, &mb, &mr);
+
+                dist = CG_RagdollSegmentToSegment(
+                    rd->part[na].p, rd->part[nb].p, od->part[ma].p, od->part[mb].p, &ta, &tb, dir
+                );
+
+                if (dist < 0.0001f) {
+                    continue;
+                }
+
+                want = nr + mr - rd->collisionSlop;
+
+                if (want <= 0.0f || dist >= want) {
+                    continue;
+                }
+
+                // dir runs from the other body toward this one, so it is the
+                // way this one has to move.
+                VectorScale(dir, 1.0f / dist, push);
+                scale = (want - dist) * rate * share;
+
+                for (k = 0; k < 3; k++) {
+                    rd->part[na].p[k] += push[k] * scale * (1.0f - ta);
+                    rd->part[nb].p[k] += push[k] * scale * ta;
+                }
+
+                // Held up by the other body rather than shouldered aside by it.
+                // Only upward pushes count, so two corpses standing against a
+                // wall do not each decide the other is the floor.
+                if (push[2] > 0.7f) {
+                    rd->onBodyMask |= (1 << na) | (1 << nb);
+                }
+            }
+        }
+    }
+}
+
 static void CG_RagdollSelfCollide(cg_ragdoll_t *rd)
 {
     int n, k;
@@ -3041,6 +3198,7 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
         CG_RagdollSpineTwist(rd);
         CG_RagdollCones(rd);
         CG_RagdollSelfCollide(rd);
+        CG_RagdollBodyCollide(rd);
         CG_RagdollSegmentCollide(rd);
         CG_RagdollLimbCollide(rd);
         CG_RagdollProjectContacts(rd);
@@ -3181,6 +3339,7 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 
     rd->buriedMask     = 0;
     rd->limbBuriedMask = 0;
+    rd->onBodyMask     = 0;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
@@ -3357,6 +3516,14 @@ static qboolean CG_RagdollSupported(const cg_ragdoll_t *rd)
     int i;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
+        // Lying on another corpse is as good as lying on the ground, and the
+        // ground is the only thing the contact test knows about.
+        if (rd->onBodyMask & (1 << i)) {
+            any++;
+            level++;
+            continue;
+        }
+
         if (!rd->part[i].hasContact) {
             continue;
         }
@@ -4589,11 +4756,13 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
         "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f  chestroll %.2f  spinetwist %.0f\n"
+        "# jointsize %d  shoulderslack %.1f  bodypush %.2f  pinsleep %d\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
         "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
         "# L <limbburied>   bitmask over the limb bones, low bit bone 0, middle found inside the world\n"
+        "# B2 <onbody>   bitmask over the joints, those being held up by another corpse rather than the world\n"
         "# R <chestrollfix> <chestrollerr>   degrees the back is being rolled, and what the last\n"
         "#     measurement asked for. Saturating and failing to converge look alike without both.\n"
         "# P <joint> <x> <y> <z>\n"
@@ -4612,6 +4781,10 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_legfree->value,
         cg_ragdoll_chestroll->value,
         cg_ragdoll_spinetwist->value,
+        cg_ragdoll_jointsize->integer,
+        cg_ragdoll_shoulderslack->value,
+        cg_ragdoll_bodypush->value,
+        cg_ragdoll_pinsleep->integer,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
@@ -4745,6 +4918,9 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         CG_RagdollDumpLine(rd, line);
 
         Com_sprintf(line, sizeof(line), "L %d\n", rd->limbBuriedMask);
+        CG_RagdollDumpLine(rd, line);
+
+        Com_sprintf(line, sizeof(line), "B2 %d\n", rd->onBodyMask);
         CG_RagdollDumpLine(rd, line);
 
         Com_sprintf(line, sizeof(line), "R %.1f %.1f\n", rd->spineRollFix, rd->chestRollErr);
@@ -4913,7 +5089,8 @@ void CG_InitRagdoll(void)
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
     cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "1", CVAR_ARCHIVE);
-    cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "6", CVAR_ARCHIVE);
+    cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
+    cg_ragdoll_bodypush   = cgi.Cvar_Get("cg_ragdoll_bodypush", "0.35", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
@@ -5332,6 +5509,10 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // stops being a reference. The shape memory ends up equal to the
         // current distance on every frame, so it never pulls at all.
     }
+
+    // Kept current for every corpse, asleep or not, because a sleeping one is
+    // exactly what the next body has to land on.
+    CG_RagdollUpdateBounds(rd);
 
     if (rd->state != RD_SLEEPING) {
         // Everything below reads the animation pose, so gather it once here
