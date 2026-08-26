@@ -463,6 +463,28 @@ measurement by **exactly 0.0**. Don't spend time here again.
 dump95 (*"contorted"*) 119 over 7. Meanwhile the photographed *static* clips have
 `Lframes` **0**. Two different bugs; this is the one left.
 
+### REJECTED: relaxing the cone axes toward anatomical neutral
+
+**This was the handoff's long-standing top hypothesis. It is wrong — do not retry.**
+
+The cones are narrow (hip 30°, shoulder 45°) and centred on the direction the limb
+died in, so a man shot mid-stride keeps that stride. Tried easing `coneAxis` toward
+an anatomical neutral (legs down the body, arms down and slightly out) on the
+limpness clock.
+
+- **Sprawl, the thing it was predicted to fix, did not move: 2.50 → 2.48.**
+- At full relax it **breaks 6 scenarios to fix 1** (passes 8→6).
+- The breakages are the *running* deaths (`death_run01`, `run01 wall`, `death_back1`)
+  — and that is the lesson: **a man shot mid-stride really does have his legs apart.**
+  The death pose is not all error. Pulling the cone to neutral fights real posture.
+
+### Item 2 does NOT generalise to the knee
+
+The elbow fix worked because arms are light and get folded flat by impacts: median
+fold 114°, p90 150°, **26% pinned at the stop**. The knee measures median ~30°, p90
+50–98° against a 135° limit — **it never approaches it**. Tightening it would be
+copying the shape of a fix rather than its reason.
+
 ### REJECTED: diagonal trunk braces
 
 `LTHIGH↔RUARM` + `RTHIGH↔LUARM` at 0.94–1.06. Reasoning was sound — every existing
