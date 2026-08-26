@@ -453,6 +453,38 @@ explosive. **Do not revisit.**
 
 Worst corpse was inside the world on **721 of its 722 frames**.
 
+### CONFIRMED in game: holding stuck joints works (`cg_ragdoll_stuckhold` 0.1, ON)
+
+300 corpses, `stuckhold 0.1` vs 0:
+
+| | before | after |
+|---|---|---|
+| still moving after 2 s | 14.5% | **8.3%** |
+| …with a bone in geometry | 30.0% | **22.1%** |
+| …clear of geometry | 6.2% | **2.0%** |
+| residual motion p90 / worst | 0.109 / 1.201 | **0.042 / 0.413** |
+
+**The hanging risk did not materialise.** 24 of 300 rest on <8 contacts, but **22 had
+traces under 200 frames** — men removed before ever settling. Only 2 were long-lived
+with few contacts. Defaulted on.
+
+**The suite is wrong about this one** and says so loudly (−2 wall scenarios): it has
+no scenario where a joint stays buried for the half second the rule waits, so it
+measures the cost and never the benefit. Trust the 300 bodies.
+
+### NEXT: a late rotation burst, unrelated to geometry
+
+**8 of 249 corpses turn more than 90° after 1.2 s** (worst 158°). They overlap with
+the restless ones — but the two the user photographed (dump69, dump189) have
+**`Lframes` 0 and 3 buried frames**, i.e. essentially no geometry contact.
+
+Not a tumble: median per-frame turn is **0.00°**, then dump69 turns 11–12° per frame
+for three frames at t≈1.46 s. An isolated lurch in a settling body.
+
+The `R` line shows the chest correction **responding** (roll 25°→41.6° chasing errors
+of 11–17°), not causing it. Something moves the *particles'* shoulder line in a body
+touching nothing. **Unexplained — this is the open thread.**
+
 ### Leaving a stuck joint alone is not enough — it must be HELD
 
 `6f3fffe9` stopped the push-out fighting a buried joint. That did not help in game
