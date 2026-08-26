@@ -59,6 +59,7 @@ cvar_t *cg_ragdoll_legfree;
 cvar_t *cg_ragdoll_dumplabel;
 cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_spinetwist;
+cvar_t *cg_ragdoll_pinsleep;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -951,6 +952,12 @@ typedef struct {
     // correction reaching its limit and the correction not converging look the
     // same from outside, and a trace that carries both can tell them apart.
     float    chestRollErr;
+
+    // Where the entity was standing when this corpse went to sleep, so the
+    // drawn body can be held where it settled while still following the entity
+    // down as it sinks.
+    vec3_t   sleepOrigin;
+    qboolean sleepPinned;
 
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
@@ -3976,20 +3983,17 @@ static void CG_RagdollMeasureChestRoll(cg_ragdoll_t *rd)
         return;
     }
 
-    // Where the shoulders are actually being drawn. Not predicted from the
-    // frame this pass could build for itself: between that frame and the
-    // positions the renderer is given sit the seed correction and the spine
-    // smoothing, and an open loop that ignores both leaves most of the error
-    // in place however hard it is driven. Reading back what was drawn last
-    // frame accounts for all of it without having to model any of it.
+    // Where the shoulders were actually put last frame. Read straight out of
+    // the positions that went to the renderer, and not rebuilt here from the
+    // offsets and the chest's axes.
     //
-    // The arms hang off the chest by a fixed offset, so the line between them
-    // is that offset carried through the chest's own drawn axes.
-    VectorClear(drawn);
-
-    for (k = 0; k < 3; k++) {
-        VectorMA(drawn, rd->localOffset[rua][k] - rd->localOffset[lua][k], rd->rolledAxis[RD_LAST_ROLL_BONE][k], drawn);
-    }
+    // Rebuilding them is what this did first, and it converged beautifully on
+    // the wrong thing: traced in the game the error it reported was a tenth of
+    // a degree while the shoulders it had emitted were eighty nine degrees from
+    // the ones the solver had. A loop that measures its own reconstruction will
+    // drive that reconstruction to zero and leave the pose exactly where it
+    // was. Only the emitted positions can say what was drawn.
+    VectorSubtract(rd->bonePos[rua], rd->bonePos[lua], drawn);
 
     VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, want);
 
@@ -4810,6 +4814,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
+    cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
@@ -5318,6 +5323,45 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // not only cheaper: the matrices are model-space, so freezing them is what
     // makes the corpse ride the entity as it sinks and is removed, instead of
     // staying pinned to fixed world coordinates.
+    //
+    // Riding it sideways is another matter. The server goes on moving a dead
+    // man's entity, and three of the six bodies photographed in one round had
+    // slid across the ground: traced, they had travelled a hundred and forty
+    // units while the ragdoll's own particles reported not moving at all. The
+    // corpse was not sliding, the ground was.
+    //
+    // So the sleeping pose is rebuilt each frame from the world positions it
+    // settled on, offset by however far the entity has sunk since. Down is
+    // followed, which is what the freezing was for; sideways is not.
+    if (rd->state == RD_SLEEPING && cg_ragdoll_pinsleep->integer && rd->numOverrides) {
+        vec3_t drop;
+        int    b;
+
+        if (!rd->sleepPinned) {
+            VectorCopy(model->origin, rd->sleepOrigin);
+            rd->sleepPinned = qtrue;
+        }
+
+        VectorClear(drop);
+        drop[2] = model->origin[2] - rd->sleepOrigin[2];
+
+        rd->numOverrides = 0;
+
+        for (b = 0; b < RD_NUM_BONES; b++) {
+            boneOverride_t *out = &rd->overrides[rd->numOverrides];
+            vec3_t          held;
+
+            if (rd->boneIndex[b] < 0) {
+                continue;
+            }
+
+            VectorAdd(rd->bonePos[b], drop, held);
+
+            out->boneIndex = rd->boneIndex[b];
+            CG_RagdollWriteBoneModel(model, held, rd->boneAxis[b], out->matrix);
+            rd->numOverrides++;
+        }
+    }
 
     if (!rd->numOverrides) {
         return;
