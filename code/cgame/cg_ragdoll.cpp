@@ -245,7 +245,14 @@ static const rdBoneDef_t rd_bones[] = {
 // Beyond this the correction is not a correction. A solver state wild enough to
 // put the shoulders half a turn from the drawn chest is one where rolling the
 // back to follow them would wring the corpse rather than settle it.
-#define RD_MAX_CHEST_ROLL 60.0f
+//
+// 60 was too mean. With the loop closed the typical corpse needs far less than
+// that, but a minority need more, and those were the ones left visibly wrong:
+// of the corpses photographed at 60, the drawn arm was still as much as 19
+// units from the particle it collides on behalf of. Raising it to 90 improves
+// the disagreement both at rest and at worst in every configuration measured.
+// 120 is worse again at rest, so this is a ceiling rather than a direction.
+#define RD_MAX_CHEST_ROLL 90.0f
 
 // How much of the measured error is taken out per frame. A closed loop, so it
 // need not be one: driven whole it overshoots and the chest hunts back and
