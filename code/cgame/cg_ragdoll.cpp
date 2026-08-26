@@ -347,8 +347,19 @@ static const rdConstraintDef_t rd_constraints[] = {
     // Joint limits: elbows and knees may neither hyperextend nor fold
     // completely through themselves. The soft term resists the fold so the
     // limb keeps some of the shape it died in.
-    {RD_LUARM,  RD_LHAND,    RD_LFARM,  0.259f, 0.985f, 0.12f, 0.0f },
-    {RD_RUARM,  RD_RHAND,    RD_RFARM,  0.259f, 0.985f, 0.12f, 0.0f },
+    // 0.5 is 120 degrees, not the 0.259 that 150 asks for. 150 is the AAOS
+    // figure and it is right for a living arm, but it is a voluntary maximum,
+    // reached by pulling with the biceps against nothing, and a dead arm has
+    // nothing to pull with. Left at 150 a quarter of all corpses in game came
+    // to rest with an elbow within five degrees of the stop, folded flat, which
+    // reads exactly as the complaint it drew: bent in a little too far.
+    //
+    // The suite cannot see this. Its arms average 78 degrees of fold, well
+    // clear of either limit, so the change costs nothing there and is worth
+    // nothing there either: every other measure is unmoved at 150, 130, 120 and
+    // 110 alike. The evidence is a hundred bodies in the game.
+    {RD_LUARM,  RD_LHAND,    RD_LFARM,  0.500f, 0.985f, 0.12f, 0.0f },
+    {RD_RUARM,  RD_RHAND,    RD_RFARM,  0.500f, 0.985f, 0.12f, 0.0f },
     // The knees and elbows, as a minimum distance across the joint, which is
     // how far each may fold. The geometry is unforgiving, so these are worked
     // back from the normative ranges rather than guessed: a chord of
