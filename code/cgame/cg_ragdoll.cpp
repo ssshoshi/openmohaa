@@ -61,6 +61,7 @@ cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_spinetwist;
 cvar_t *cg_ragdoll_pinsleep;
 cvar_t *cg_ragdoll_jointsize;
+cvar_t *cg_ragdoll_shoulderslack;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -4227,6 +4228,45 @@ static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weig
             for (k = 0; k < 3; k++) {
                 VectorMA(worldPos, rd->localOffset[i][k], rd->rolledAxis[def->parent][k], worldPos);
             }
+
+            // The shoulders are allowed to leave that offset a little.
+            //
+            // Everything else hangs rigidly off its parent, which is what makes
+            // every bone length exactly right. For a shoulder it is what makes
+            // the arm wrong. The offset is captured at the moment of death, so
+            // the drawn shoulders are welded to the chest in the pose the man
+            // was shot in, while the simulated ones go on moving relative to
+            // it. Measured over a hundred corpses, the part of the shoulder
+            // error that rolling the spine can remove is down to a degree at
+            // the median -- the correction does its job -- and what is left is
+            // a tilt out of that plane, nine degrees at the median and forty
+            // two at the ninetieth, which no amount of rolling can reach. The
+            // whole arm is then drawn ten units from the particles that collide
+            // on its behalf, rigidly: the arm adds nothing to the error, it
+            // just inherits all of it from the shoulder.
+            //
+            // A real shoulder girdle slides over the ribs, so letting this one
+            // move a few units towards where the solver has it is anatomy
+            // rather than a fudge. Clamped, because letting it go all the way
+            // is how limbs used to stretch.
+            if (cg_ragdoll_shoulderslack->value > 0.0f && (i == 7 || i == 10)) {
+                vec3_t want, off;
+                float  len;
+
+                VectorSubtract(rd->part[def->joint].p, worldPos, off);
+                len = VectorLength(off);
+
+                if (len > 0.001f) {
+                    const float slack = cg_ragdoll_shoulderslack->value;
+
+                    if (len > slack) {
+                        VectorScale(off, slack / len, off);
+                    }
+
+                    VectorAdd(worldPos, off, want);
+                    VectorCopy(want, worldPos);
+                }
+            }
         } else {
             // The root is the one bone that is positioned directly, so the
             // whole body still goes where the simulation puts it.
@@ -4872,7 +4912,8 @@ void CG_InitRagdoll(void)
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
-    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "0", CVAR_ARCHIVE);
+    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "1", CVAR_ARCHIVE);
+    cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "6", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
