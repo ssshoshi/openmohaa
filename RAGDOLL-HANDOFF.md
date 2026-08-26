@@ -374,6 +374,40 @@ showed in the median — and it bound on exactly the minority left visibly wrong
 At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
 recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
 
+## The watcher: automate the looking, never the judging (`cg_ragdoll_watch`)
+
+`36ed4100`. Off by default; turn on beside `cg_ragdoll_dump`.
+
+Once a corpse settles (or 4s elapse) it is checked against three invariants —
+each of which was a **real shipped defect found by eye, not by a metric**:
+
+| invariant | the bug it would have caught |
+|---|---|
+| no bone drawn >12 units from its own particle | the chest correction converging on its own reconstruction |
+| no limb inside the world at rest | bones never tested against geometry (31% of corpses) |
+| no movement once settled | the writhing corpse; the sliding corpses |
+
+If one trips *and the body is on screen*, it screenshots and prints which rule went.
+The trace number is already drawn on the body, so the picture names its own dump.
+Once per corpse, one shot per 3s, nothing beyond 1200 units or behind the camera.
+
+### Why this shape, and what must NOT be automated
+
+**Do not auto-tune parameters against harness metrics.** The chest correction *was*
+an automated closed loop: it drove its own reported error to a median of 0.2° while
+emitting a pose 89° wrong. An optimiser finds the blind spot in the objective and
+optimises into it, confidently. The metrics in this project have been wrong roughly
+ten times — radii copied from the solver's own table, median-shift feature ranking,
+a "penetration" figure that was a geometric constant.
+
+**The eye is the only objective function that has not lied.** Automate what feeds it:
+collection, parsing, population statistics, outlier ranking, and now the looking.
+Keep the harness as a regression gate that blocks, never as a target that guides.
+
+There is no ground truth to diff against for HL2. Encode its *properties* as
+invariants (settles fast, stays put, limits respected, no interpenetration) rather
+than treating any number as a target.
+
 ## Target: Half-Life 2 quality (user's words, and they say it is close)
 
 Useful frame for what is left. HL2 ragdolls are Havok constraint bodies whose
