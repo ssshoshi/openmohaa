@@ -60,6 +60,7 @@ cvar_t *cg_ragdoll_dumplabel;
 cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_spinetwist;
 cvar_t *cg_ragdoll_pinsleep;
+cvar_t *cg_ragdoll_jointsize;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -3120,12 +3121,55 @@ static void CG_RagdollSolveTracked(cg_ragdoll_t *rd, int iterations)
     }
 }
 
+// How big a box to trace for one joint against the world.
+//
+// Every trace here used a single radius for all twenty three joints, three
+// units scaled to the model, while the table the model was built against gives
+// each its own: a head is 4.5 and a pelvis 5.5, a wrist 2.8. A head resting on
+// the floor was therefore held three units clear when it needs four and a half,
+// so it sat a unit and a half inside the ground, which is exactly the complaint
+// it drew. A wrist was being held further off than it should be.
+//
+// These figures are already measured and already scaled to this model. They
+// were simply not used for anything except keeping limbs out of each other.
+static void CG_RagdollJointBox(const cg_ragdoll_t *rd, int joint, vec3_t mins, vec3_t maxs)
+{
+    float r = rd->radius;
+    int   k;
+
+    // The head only, not the whole skeleton.
+    //
+    // Given to every joint this is a clear loss: the trunk figures are half a
+    // torso's width, which is the right thing to keep another limb out of and
+    // much too much to hold the body off the floor with, and a body resting on
+    // a pelvis inflated from three units to five and a half perches on ledges
+    // it should roll off. Seven scenarios broke and two mended.
+    //
+    // The head is the case where the single figure is plainly wrong and nothing
+    // else depends on it. It is the largest thing on the body after the trunk,
+    // it was being held three units clear when the model says four and a half,
+    // so it sat a unit and a half inside the ground, and it was photographed
+    // doing exactly that twice in one round.
+    if (cg_ragdoll_jointsize->integer && (joint == RD_HEAD || joint == RD_HEADTIP)) {
+        r = rd->jointRadius[joint];
+
+        if (r < 0.5f) {
+            r = 0.5f;
+        }
+    }
+
+    for (k = 0; k < 3; k++) {
+        mins[k] = -r;
+        maxs[k] = r;
+    }
+}
+
 static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 {
     // Sized from the model, so a scaled-down character does not end up
-    // colliding as though its joints were as fat as a full-size one.
-    const vec3_t rd_mins = {-rd->radius, -rd->radius, -rd->radius};
-    const vec3_t rd_maxs = {rd->radius, rd->radius, rd->radius};
+    // colliding as though its joints were as fat as a full-size one, and from
+    // the joint, so a head is not traced as though it were a wrist.
+    vec3_t rd_mins, rd_maxs;
 
     const int   mask     = RD_CLIPMASK;
     const float friction = cg_ragdoll_friction->value;
@@ -3139,6 +3183,8 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
+
+        CG_RagdollJointBox(rd, i, rd_mins, rd_maxs);
         trace_t       trace;
         vec3_t        v, vn, vt;
         float         dot;
@@ -3372,13 +3418,23 @@ static const float rd_limbSamples[] = {0.35f, 0.65f};
 // what has already ended up inside something.
 static void CG_RagdollLimbPushOut(cg_ragdoll_t *rd, int skipEntity)
 {
-    const vec3_t rd_mins = {-rd->radius, -rd->radius, -rd->radius};
-    const vec3_t rd_maxs = {rd->radius, rd->radius, rd->radius};
-    int          n, q, k;
+    vec3_t rd_mins, rd_maxs;
+    int    n, q, k;
 
     for (n = 0; n < RD_NUM_LIMB_SEGMENTS; n++) {
         rdParticle_t *pa = &rd->part[rd_limbSegments[n].a];
         rdParticle_t *pb = &rd->part[rd_limbSegments[n].b];
+
+        // The thinner of the bone's two ends, since the middle of a forearm is
+        // nearer the wrist's thickness than the elbow's.
+        CG_RagdollJointBox(
+            rd,
+            rd->jointRadius[rd_limbSegments[n].a] < rd->jointRadius[rd_limbSegments[n].b]
+                ? rd_limbSegments[n].a
+                : rd_limbSegments[n].b,
+            rd_mins,
+            rd_maxs
+        );
 
         for (q = 0; q < RD_NUM_LIMB_SAMPLES; q++) {
             const float u = rd_limbSamples[q];
@@ -3460,12 +3516,13 @@ static void CG_RagdollLimbPushOut(cg_ragdoll_t *rd, int skipEntity)
 // CG_RagdollCollide uses, and nothing else is touched.
 static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
 {
-    const vec3_t rd_mins = {-rd->radius, -rd->radius, -rd->radius};
-    const vec3_t rd_maxs = {rd->radius, rd->radius, rd->radius};
-    int          i;
+    vec3_t rd_mins, rd_maxs;
+    int    i;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
+
+        CG_RagdollJointBox(rd, i, rd_mins, rd_maxs);
         const int     toward = rd_joints[i].parent >= 0 ? rd_joints[i].parent : RD_SPINE;
         trace_t       probe, out;
         vec3_t        shift;
@@ -4815,6 +4872,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
+    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
