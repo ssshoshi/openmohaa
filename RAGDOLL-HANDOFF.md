@@ -274,6 +274,29 @@ is full the corpse has settled and friction holds the legs crossed. Applied
 instantly it stretches the body past standing height. Grid: crossing 6/6, passes
 +3/−0 at every limptime > 0. Regresses at `limptime 0`.
 
+### TRAP: changing a cvar default does NOT reach the user
+
+Every ragdoll cvar is `CVAR_ARCHIVE`, and
+`%APPDATA%/openmohaa/main/configs/omconfig.cfg` pins each one with `seta`. A saved
+value **always wins over a new default**. An entire 300-corpse batch was collected
+believing it tested `armfree 1.0` when the config held it at 0.5; the trace header
+is what caught it. **Always read the header before analysing, and ask the user to
+set the cvar explicitly rather than relying on a default.**
+
+### The extremities: radius, not the segment gap
+
+The push-out names the right bone in 5 of 8 photographed world-clipping corpses.
+The 3 misses (dump10 *"right hand clipping step"*, dump248, dump125's left hand)
+have **`Lframes` 0 and `buriedJoints` 0** — neither the joint nor the bone middle
+was ever inside solid, yet it visibly clips.
+
+`rd->radius` is a single `3.0f * bodyScale` for *every* particle, ignoring the
+per-joint `jointRadius[]` that already exists, and it is smaller than a visible
+hand or boot. **Same mesh-vs-capsule mismatch as the torso** (see `armfree`).
+Untested: raising it also lifts the body off the floor, since resting contact
+planes come from the same traces. Do not conflate that with anything else in one
+batch.
+
 ### MEASURED: a third of all corpses had a bone inside the world
 
 The `L` line (`9f6ab87a`) settles it: **96 of 293 corpses** had a limb bone found
