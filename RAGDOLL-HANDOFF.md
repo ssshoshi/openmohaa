@@ -431,6 +431,47 @@ there, and counts as support — a limb wedged in a step holds the body up more 
 than the floor does. *A limb resting inside a step looks wrong; a limb shivering
 inside a step looks broken.*
 
+### SETTLED: blasts are NOT the cause (measured, not proxied)
+
+The `K` line answers it directly. Of 200 corpses, **22 were blown up**:
+
+| | restless after 2 s |
+|---|---|
+| blown up (22) | **13.6%** |
+| not blown up (178) | **14.6%** |
+
+Of the restless corpses, **10% had been blown up against 11% of the population** — no
+enrichment at all. The user's impression was confounded by most deaths being
+explosive. **Do not revisit.**
+
+### The world, by contrast, is overwhelming
+
+| | restless after 2 s |
+|---|---|
+| a bone inside geometry (70) | **30.0%** |
+| clear of it (130) | **6.2%** |
+
+Worst corpse was inside the world on **721 of its 722 frames**.
+
+### Leaving a stuck joint alone is not enough — it must be HELD
+
+`6f3fffe9` stopped the push-out fighting a buried joint. That did not help in game
+(14.5% restless, no better): the push-out stopped freeing it, but **gravity and the
+bone sticks went on moving it every step**, so the trading continued.
+
+Held properly — invMass scaled down *and* skipped by the integrator — **every scenario
+settles**: residual motion 0.047 → **0.0000**, zero non-settling, best ever recorded.
+Also best `cross` (−5.42) and `arm` (−46.71).
+
+**`cg_ragdoll_stuckhold`, default 0 (off), because holding a joint still is how a
+corpse comes to hang off one.** A hand stuck in a wall leaves the body dangling: the
+suite reports *limb held up by nothing +14.4 units* and two wall scenarios flip to
+FAIL. Twitching and dangling are both wrong; which is worse is for the eye. **0 is
+byte-identical to shipped.**
+
+*Note: `onBodyMask` is still 0 across 200 corpses — but no two corpses came near each
+other in these rounds, so this is not evidence the piling is broken.*
+
 ### The blast hypothesis is NOT supported (by the proxy available)
 
 The user's impression was that spazzing follows explosions. Launch speed (peak move
