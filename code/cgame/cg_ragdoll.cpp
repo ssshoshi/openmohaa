@@ -60,6 +60,7 @@ cvar_t *cg_ragdoll_dumplabel;
 cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_spinetwist;
 cvar_t *cg_ragdoll_pinsleep;
+cvar_t *cg_ragdoll_watch;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -958,6 +959,10 @@ typedef struct {
     // down as it sinks.
     vec3_t   sleepOrigin;
     qboolean sleepPinned;
+
+    // Whether this corpse has already been judged by the watcher, so one body
+    // cannot fill the screenshots folder on its own.
+    qboolean watched;
 
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
@@ -4418,6 +4423,114 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 }
 
 //=============================================================
+//=============================================================
+// The watcher
+//=============================================================
+
+// How far a drawn bone may sit from the particle that collides on its behalf
+// before something has gone wrong. The median is around three units and the
+// worst honest cases reach about eight.
+#define RD_WATCH_DRIFT   12.0f
+
+// How much a corpse may still be moving once it should have settled.
+#define RD_WATCH_RESTLESS 0.40f
+
+// Nothing is judged before this, so what is caught is a settled pose and not a
+// body still in the air.
+#define RD_WATCH_AT       4000
+
+// One screenshot at a time, however many corpses are misbehaving.
+#define RD_WATCH_COOLDOWN 3000
+
+static int rd_watchLast;
+
+// Takes a photograph of a corpse that has broken one of the rules the solver is
+// supposed to keep.
+//
+// Every one of these was a real defect this subsystem shipped, and every one of
+// them was found by a person looking at the screen and saying that looks wrong,
+// after which a trace was read to find out why. The metrics did not find them:
+// the suite passed throughout, because its world is a floor and a few walls and
+// its poses are tame. What is automated here is the looking, not the judging.
+// The number is already drawn over the body, so the picture names the trace
+// that explains it.
+static void CG_RagdollWatch(cg_ragdoll_t *rd, refEntity_t *model)
+{
+    const char *why = NULL;
+    vec3_t      toBody;
+    float       worst = 0.0f;
+    int         i;
+
+    if (!cg_ragdoll_watch->integer || rd->watched) {
+        return;
+    }
+
+    // Judged once, when it has either settled or run out of patience.
+    if (rd->state != RD_SLEEPING && cg.time - rd->startTime < RD_WATCH_AT) {
+        return;
+    }
+
+    rd->watched = qtrue;
+
+    // A drawn bone a long way from its own particle. Collision acts on the
+    // particles, so this is a limb drawn somewhere it was never kept out of.
+    for (i = 0; i < RD_NUM_BONES; i++) {
+        vec3_t  d;
+        float   len;
+
+        if (rd->boneIndex[i] < 0 || !CG_RagdollBoneOwnsJoint(i)) {
+            continue;
+        }
+
+        VectorSubtract(rd->bonePos[i], rd->part[rd_bones[i].joint].p, d);
+        len = VectorLength(d);
+
+        if (len > worst) {
+            worst = len;
+        }
+    }
+
+    if (worst > RD_WATCH_DRIFT) {
+        why = "a bone drawn far from the particle that collides for it";
+    }
+
+    // A limb still inside the world once everything has stopped.
+    if (!why && rd->limbBuriedMask) {
+        why = "a limb inside the world at rest";
+    }
+
+    // Still moving when it should be still.
+    if (!why && rd->lastDisp > RD_WATCH_RESTLESS) {
+        why = "still moving long after it should have settled";
+    }
+
+    if (!why) {
+        return;
+    }
+
+    if (cg.time - rd_watchLast < RD_WATCH_COOLDOWN) {
+        return;
+    }
+
+    // Only what can actually be seen. A photograph of the inside of a wall
+    // says nothing, and the point of this is to put a picture next to a trace.
+    VectorSubtract(rd->part[RD_PELVIS].p, cg.refdef.vieworg, toBody);
+
+    if (VectorLength(toBody) > 1200.0f) {
+        return;
+    }
+
+    if (VectorNormalize(toBody) < 0.001f || DotProduct(toBody, cg.refdef.viewaxis[0]) < 0.6f) {
+        return;
+    }
+
+    rd_watchLast = cg.time;
+
+    cgi.Printf("ragdoll: %s -- %s\n", rd->dumpName[0] ? rd->dumpName : "untraced", why);
+    cgi.SendConsoleCommand("screenshot\n");
+}
+
+//=============================================================
 // Lifecycle
 //=============================================================
 
@@ -4815,6 +4928,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
+    cg_ragdoll_watch      = cgi.Cvar_Get("cg_ragdoll_watch", "0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
@@ -5380,6 +5494,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // wanted in a screenshot of how the body looks.
     {
         const qboolean label = (qboolean)(cg_ragdoll_dumplabel->integer && rd->dumpSeq > 0);
+
+        CG_RagdollWatch(rd, model);
 
         if ((cg_ragdoll_debug->integer || label) && CG_RagdollDebugReady()) {
             if (label) {
