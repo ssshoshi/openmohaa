@@ -57,6 +57,7 @@ cvar_t *cg_ragdoll_limbpush;
 cvar_t *cg_ragdoll_armfree;
 cvar_t *cg_ragdoll_legfree;
 cvar_t *cg_ragdoll_dumplabel;
+cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -231,6 +232,21 @@ static const rdBoneDef_t rd_bones[] = {
 
 #define RD_NUM_BONES ((int)(sizeof(rd_bones) / sizeof(rd_bones[0])))
 
+// The three back bones above the pelvis, which share the chest roll correction
+// between them. The pelvis is left out on purpose: measured over three hundred
+// corpses the drawn hip line sits a median of 6 degrees from the simulated one
+// and is past 20 in eighteen of them, so it is a sound anchor, while the drawn
+// shoulder line is a median of 24 degrees out and past 20 in a hundred and
+// seventy four. The error is the chest's, so the pelvis should not pay for it.
+#define RD_FIRST_ROLL_BONE 2
+#define RD_LAST_ROLL_BONE  4
+#define RD_NUM_ROLL_BONES  (RD_LAST_ROLL_BONE - RD_FIRST_ROLL_BONE + 1)
+
+// Beyond this the correction is not a correction. A solver state wild enough to
+// put the shoulders half a turn from the drawn chest is one where rolling the
+// back to follow them would wring the corpse rather than settle it.
+#define RD_MAX_CHEST_ROLL 60.0f
+
 // "Bip01" and "Bip01 Pelvis" are two drawn bones sharing one physics particle,
 // so a loop that walks the bone table and writes through rd_bones[i].joint
 // would touch the pelvis twice while every other joint is touched once. The
@@ -313,6 +329,7 @@ static const rdConstraintDef_t rd_constraints[] = {
 
     {RD_PELVIS, RD_LUARM,    -1,        0.88f, 1.12f,  0.0f,  0.0f },
     {RD_PELVIS, RD_RUARM,    -1,        0.88f, 1.12f,  0.0f,  0.0f },
+
     {RD_SPINE2, RD_HEAD,     RD_NECK,   0.0f,  1.0f,   0.20f, 30.0f},
 
     // Joint limits: elbows and knees may neither hyperextend nor fold
@@ -898,6 +915,11 @@ typedef struct {
     // afterwards shows a limb that was never in trouble.
     int      limbBuriedMask;
 
+    // How far the drawn chest has to be rolled to face the way the simulated
+    // shoulders do, in degrees. Spread along the back rather than applied where
+    // it is measured; see CG_RagdollMeasureChestRoll.
+    float    spineRollFix;
+
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
     // and which one it is cannot be worked out from the pose.
@@ -1194,6 +1216,16 @@ static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3]
         VectorCopy(carried, helper);
     } else {
         VectorCopy(rd->transportY[boneNum], helper);
+    }
+
+    // The back's share of the chest roll correction. Added to this bone's roll
+    // reference, and inherited by the bone above through the transport, so the
+    // three shares accumulate to the whole by the time the chest is reached.
+    if (rd->spineRollFix != 0.0f && boneNum >= RD_FIRST_ROLL_BONE && boneNum <= RD_LAST_ROLL_BONE) {
+        vec3_t rolled;
+
+        RotatePointAroundVector(rolled, x, helper, rd->spineRollFix / (float)RD_NUM_ROLL_BONES);
+        VectorCopy(rolled, helper);
     }
 
     CG_RagdollOrthonormalize(x, helper, out);
@@ -3793,11 +3825,99 @@ static void CG_RagdollSmoothSpine(cg_ragdoll_t *rd)
     }
 }
 
+// How far the drawn chest is from the chest the solver actually has.
+//
+// The back takes its roll from the pelvis and hands it up one bone at a time,
+// so the drawn chest is a function of the hips alone and never looks at where
+// the shoulder particles have got to. The solver is free to turn the shoulders
+// about the spine and the drawn chest does not follow. Measured over three
+// hundred corpses the two shoulder lines sit a median of 24 degrees apart, are
+// more than 20 apart in 174 of them, and in the worst case very nearly face
+// opposite ways.
+//
+// Everything hanging off the chest is then drawn where that leaves it while
+// collision goes on protecting particles somewhere else, which is why an arm
+// lies through the ground or through the body while every measurement of the
+// skeleton says it is clear: the arm is the right length, points the right way,
+// and is simply in the wrong place, by as much as 21 units.
+//
+// Anchoring the chest to the shoulders outright was tried before and reverted:
+// it puts the whole of this difference into one joint, and a mesh skinned across
+// that joint pinches. So it is measured here and spread along the back instead.
+// Measuring costs a throwaway pass over the five spine bones, which is the only
+// way to know what the uncorrected chest would have been.
+static void CG_RagdollMeasureChestRoll(cg_ragdoll_t *rd)
+{
+    vec3_t saveX[RD_LAST_ROLL_BONE + 1], saveY[RD_LAST_ROLL_BONE + 1];
+    vec3_t frame[3], want, side;
+    float  keep, roll;
+    int    i;
+
+    keep             = rd->spineRollFix;
+    rd->spineRollFix = 0.0f;
+
+    for (i = 0; i <= RD_LAST_ROLL_BONE; i++) {
+        VectorCopy(rd->transportX[i], saveX[i]);
+        VectorCopy(rd->transportY[i], saveY[i]);
+    }
+
+    for (i = 0; i <= RD_LAST_ROLL_BONE; i++) {
+        if (rd->boneIndex[i] < 0 || !CG_RagdollBoneFrame(rd, i, frame)) {
+            goto restore;
+        }
+    }
+
+    // frame is now the chest as it would be drawn with no correction at all.
+    // Where the shoulders really are, squared against the chest's own axis so
+    // only the roll about it is being compared.
+    VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, want);
+    VectorMA(want, -DotProduct(want, frame[0]), frame[0], want);
+
+    if (VectorNormalize(want) < 0.001f) {
+        goto restore;
+    }
+
+    CrossProduct(frame[0], frame[1], side);
+
+    roll = (float)(atan2(DotProduct(want, side), DotProduct(want, frame[1])) * 180.0 / M_PI);
+
+    // The shoulder line is a line, not an arrow: half a turn puts it back on
+    // itself. Without this a chest a little past square reads as needing most
+    // of a turn back the other way.
+    if (roll > 90.0f) {
+        roll -= 180.0f;
+    } else if (roll < -90.0f) {
+        roll += 180.0f;
+    }
+
+    if (roll > RD_MAX_CHEST_ROLL) {
+        roll = RD_MAX_CHEST_ROLL;
+    } else if (roll < -RD_MAX_CHEST_ROLL) {
+        roll = -RD_MAX_CHEST_ROLL;
+    }
+
+    keep = roll * cg_ragdoll_chestroll->value;
+
+restore:
+    for (i = 0; i <= RD_LAST_ROLL_BONE; i++) {
+        VectorCopy(saveX[i], rd->transportX[i]);
+        VectorCopy(saveY[i], rd->transportY[i]);
+    }
+
+    rd->spineRollFix = keep;
+}
+
 static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weight)
 {
     int i, j, k;
 
     rd->numOverrides = 0;
+
+    if (cg_ragdoll_chestroll->value > 0.0f) {
+        CG_RagdollMeasureChestRoll(rd);
+    } else {
+        rd->spineRollFix = 0.0f;
+    }
 
     // First pass: work out every bone's orientation.
     for (i = 0; i < RD_NUM_BONES; i++) {
@@ -4557,6 +4677,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
     cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
+    cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
