@@ -4821,7 +4821,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
         "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f  chestroll %.2f  spinetwist %.0f\n"
-        "# jointsize %d  shoulderslack %.1f  bodypush %.2f  pinsleep %d\n"
+        "# jointsize %d  shoulderslack %.1f  bodypush %.2f  pinsleep %d  stuckhold %.2f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
@@ -4851,6 +4851,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_shoulderslack->value,
         cg_ragdoll_bodypush->value,
         cg_ragdoll_pinsleep->integer,
+        cg_ragdoll_stuckhold->value,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
@@ -5170,7 +5171,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "1", CVAR_ARCHIVE);
     cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
     cg_ragdoll_bodypush   = cgi.Cvar_Get("cg_ragdoll_bodypush", "0.35", CVAR_ARCHIVE);
-    cg_ragdoll_stuckhold  = cgi.Cvar_Get("cg_ragdoll_stuckhold", "0", CVAR_ARCHIVE);
+    cg_ragdoll_stuckhold  = cgi.Cvar_Get("cg_ragdoll_stuckhold", "0.1", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
