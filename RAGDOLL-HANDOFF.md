@@ -463,6 +463,37 @@ measurement by **exactly 0.0**. Don't spend time here again.
 dump95 (*"contorted"*) 119 over 7. Meanwhile the photographed *static* clips have
 `Lframes` **0**. Two different bugs; this is the one left.
 
+### Both new limits verified in game
+
+Elbow: median **115°**, p90 120.7, worst 123.7 — was median 114, p90 150, worst 153
+with **26% pinned at the stop**. Spine twist: particle trunk twist p90 **44.8°**
+against the 45° limit. Both doing exactly what they were built to do.
+
+### REJECTED: fading the twist limit on the limpness clock
+
+dump22 (*"spasm and moved"*) writhes: its trunk twist wanders **34°–62° for the whole
+late phase**, drifting 0.17°/frame and never arriving, mean 52.7° against a 45° limit
+— permanently active, permanently losing. The feedback path is real: turning the
+shoulders turns the torso frame, the cones and hinges are expressed in that frame,
+they move the limbs, the limbs pull the shoulders back.
+
+Fading the limit out as the body settles made **everything** worse — twist 21→32,
+chest 20.8→26.7, and residual motion 0.071→**0.109** with more non-settling
+scenarios, i.e. worse at the very thing it was meant to fix. Reverted.
+
+`RD_SPINE_TWIST_RATE` sweep (0.15/0.25/0.40/0.60) gives **no consistent direction**:
+0.15 has the best settling mean and pass count but costs limb-in-limb 12.7→19.2, and
+the settling mean is driven by 3 outlier scenarios (`nonzero` is 3–4 at every rate).
+**The suite cannot resolve this.** Left at 0.25.
+
+### The clamp: harness and game disagree — UNRESOLVED
+
+Harness prefers higher monotonically (chest 22.8/12.6 at 45 → 20.8/10.4 at 90).
+In game the shoulder-error tail has gone **p90 49.4 → 59.3 → 64.7** since raising it.
+One cross-round comparison, so not conclusive either way — do not flip the constant
+on it. The trace now carries `R <chestrollfix> <chestrollerr>`, which distinguishes
+*saturating at the clamp* from *not converging*. **Next batch settles this.**
+
 ### REJECTED: relaxing the cone axes toward anatomical neutral
 
 **This was the handoff's long-standing top hypothesis. It is wrong — do not retry.**
