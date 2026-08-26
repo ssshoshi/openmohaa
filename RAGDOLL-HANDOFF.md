@@ -389,6 +389,38 @@ for *contact*, contact comes from tracing the *world*, and there is no world und
 man lying on another man. `onBodyMask` joints now count as supported — **upward
 pushes only**, or two bodies propped against a wall each decide the other is the floor.
 
+### Piling: works when bodies MEET, fails when they SPAWN overlapped
+
+Measured over 100 in-game corpses by cross-referencing dumps (they share a clock and
+world coordinates, so pairs alive at the same instant can be compared directly):
+
+- **3 pairs came to rest 0.5–2.8 units apart** — one man lying through another. All
+  were consecutive dump numbers, i.e. deaths in the same place within ~100 ms.
+- Reproduced in the suite: `RD_PILE=8` (spawn overlapped) moves them **not at all**
+  (2.5 → 2.3). `RD_PILE=40` (dropped from above) works: **1.0 → 4.0**.
+
+Cause: the blend drags every particle back toward the animation it died in, and the
+bone sticks re-assert after, so the in-solve push gives its ground straight back.
+
+**REJECTED: a post-solve body push-out.** The world equivalent carries `pPrev` along
+so it adds no energy; for bodies that kills the very speed that would carry them
+apart. The working case regressed 4.0 → 2.6 and one body was thrown **64 units** from
+its origin.
+
+### BUG (fixed, `9dc33b5f`): `onBodyMask` cleared after it was set
+
+It was cleared inside `CG_RagdollCollide`, which runs **after** the solve that fills
+it in. Every mark was wiped before anything read it: **zero of 100 corpses ever
+reported being held up by another**, so none could sleep on a heap. Cleared at the
+top of `CG_RagdollStep` now.
+
+### Spazzing on geometry is confirmed and measurable
+
+Corpses still moving after 2 s have **median 51 frames with a bone inside world
+geometry**; corpses that settled have **0**. dump42: 314 frames, residual 0.32.
+This is the same class as dump44 (472 frames) and dump106 (105). **Still the largest
+open defect**, and unrelated to body collision.
+
 ### The suite can now simulate two bodies (`RD_PILE=<height>`)
 
 It only ever ran one man, so none of this was testable. `RD_PILE` drops a second body
