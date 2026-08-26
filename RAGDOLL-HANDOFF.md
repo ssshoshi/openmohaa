@@ -486,7 +486,34 @@ scenarios, i.e. worse at the very thing it was meant to fix. Reverted.
 the settling mean is driven by 3 outlier scenarios (`nonzero` is 3–4 at every rate).
 **The suite cannot resolve this.** Left at 0.25.
 
-### The clamp: harness and game disagree — UNRESOLVED
+### RESOLVED: the loop was converging on its own reconstruction
+
+The `R` line settled it. Over 100 corpses the correction reported a **median error
+of 0.2°, p90 1.9°** — converged — while the *emitted* shoulders were up to **89°**
+from the particles (dump47: reported 0.1°, actual 89.3°). Only **10/100** ever
+touched the clamp, so **the clamp was never the problem** and raising it 60→90 was
+chasing a phantom.
+
+Cause: it rebuilt the drawn shoulder line from `localOffset × rolledAxis` instead of
+reading the emitted `bonePos`. **A loop that measures its own reconstruction drives
+the reconstruction to zero and leaves the pose where it was.** Now reads `bonePos`
+(`b3348cfd`), which cannot fail that way.
+
+**The suite cannot tell the two apart** — every figure identical, because in a tame
+pose the reconstruction *is* right. A negation probe is useless here (the shoulder
+line is a line; ±180° wraps to the same value); use an asymmetric bias (+20°) to
+prove such a path is live.
+
+### Corpses were not sliding — the ground was (`cg_ragdoll_pinsleep`, on)
+
+3 of 6 photographed corpses had "slid across ground". The trace: **entity origin
+travelled ~141 units while the ragdoll's own `maxdisp` read 0.00.** A sleeping body
+emits frozen *model-space* matrices, so it rides its entity wherever the server
+takes it. Riding it *down* is the point (that is how a corpse sinks and is removed);
+riding it sideways is not. The sleeping pose is now rebuilt each frame from the
+world positions it settled on, offset only by how far the entity has sunk.
+
+### The clamp: harness and game disagree — was a symptom, see above
 
 Harness prefers higher monotonically (chest 22.8/12.6 at 45 → 20.8/10.4 at 90).
 In game the shoulder-error tail has gone **p90 49.4 → 59.3 → 64.7** since raising it.
