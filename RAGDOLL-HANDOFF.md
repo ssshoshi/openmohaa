@@ -414,6 +414,36 @@ it in. Every mark was wiped before anything read it: **zero of 100 corpses ever
 reported being held up by another**, so none could sleep on a heap. Cleared at the
 top of `CG_RagdollStep` now.
 
+### Spazzing on geometry: cause found and addressed (`6f3fffe9`)
+
+Over 200 corpses: those still moving after 2 s have a bone inside the world for a
+**median of 50 frames**; those that settle, **0**. The three photographed had joints
+buried in solid for 26 / 50 / 79 frames with movement still spiking 1.2–3.3 units a
+step at the end of life.
+
+**The fight is between the push-out (which frees the joint) and gravity plus the
+constraints (which put it back).** Neither wins; they trade the limb to and fro for
+the corpse's whole life, and the motion keeps resetting the quiet timer so it can
+never sleep.
+
+A joint buried for **30 steps (half a second)** is now left where it is and held
+there, and counts as support — a limb wedged in a step holds the body up more firmly
+than the floor does. *A limb resting inside a step looks wrong; a limb shivering
+inside a step looks broken.*
+
+### The blast hypothesis is NOT supported (by the proxy available)
+
+The user's impression was that spazzing follows explosions. Launch speed (peak move
+in the first 300 ms) says no:
+
+- hardest-launched quarter: **14.3%** restless; gentlest half: **14.9%**
+- restless corpses' median launch **10.7** vs **11.3** for everyone else
+- one of the three photographed launched at **6.0**, which is nothing
+
+Likely confounded by most deaths being explosive in these rounds. The trace now
+carries a **`K` line** (blast, radius, speed) so the next batch answers it directly
+rather than by proxy.
+
 ### Spazzing on geometry is confirmed and measurable
 
 Corpses still moving after 2 s have **median 51 frames with a bone inside world
