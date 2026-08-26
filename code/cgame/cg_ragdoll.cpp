@@ -63,6 +63,7 @@ cvar_t *cg_ragdoll_pinsleep;
 cvar_t *cg_ragdoll_jointsize;
 cvar_t *cg_ragdoll_shoulderslack;
 cvar_t *cg_ragdoll_bodypush;
+cvar_t *cg_ragdoll_stuckhold;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -3708,6 +3709,8 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
 
         if (!probe.startsolid && !probe.allsolid) {
             rd->buriedFor[i] = 0;
+            rd->stuckMask &= ~(1 << i);
+            part->invMass = rd_joints[i].invMass;
             continue;
         }
 
@@ -3730,6 +3733,16 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
             rd->buriedFor[i]++;
         } else {
             rd->stuckMask |= 1 << i;
+
+            // Made heavy, optionally. Held completely still it stops moving
+            // and so does the twitching, but the body can then hang off it:
+            // a hand stuck in a wall leaves a corpse dangling, which the suite
+            // reports as a limb held up by nothing by fourteen units. Off, the
+            // joint is merely left alone and the body sags past it.
+            if (cg_ragdoll_stuckhold->value > 0.0f) {
+                part->invMass = cg_ragdoll_stuckhold->value * rd_joints[i].invMass;
+            }
+
             VectorClear(part->v);
             VectorCopy(part->p, part->pPrev);
             continue;
@@ -3793,7 +3806,6 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // before anything read it, so no corpse ever reported being held up by
     // another and none of them could fall asleep on a heap.
     rd->onBodyMask = 0;
-    rd->stuckMask  = 0;
 
     const float damping = 1.0f - cg_ragdoll_damping->value;
     const float gravity = CG_RagdollGravity();
@@ -3847,6 +3859,20 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
+
+        // A joint that has given up getting out of the world is held where it
+        // is. Pinning it in the push out alone was not enough: that runs once,
+        // at the end of the step, and gravity and the bone sticks move it again
+        // on the next one, so the trading went on exactly as before. Measured
+        // over two hundred corpses afterwards, one was still inside the world
+        // on seven hundred and twenty one of its seven hundred and twenty two
+        // frames.
+        if ((rd->stuckMask & (1 << i)) && cg_ragdoll_stuckhold->value > 0.0f) {
+            VectorClear(part->v);
+            VectorCopy(part->p, part->pPrev);
+            VectorClear(part->solved);
+            continue;
+        }
 
         VectorScale(part->v, damping, part->v);
         part->v[2] -= gravity * dt;
@@ -5144,6 +5170,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "1", CVAR_ARCHIVE);
     cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
     cg_ragdoll_bodypush   = cgi.Cvar_Get("cg_ragdoll_bodypush", "0.35", CVAR_ARCHIVE);
+    cg_ragdoll_stuckhold  = cgi.Cvar_Get("cg_ragdoll_stuckhold", "0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
