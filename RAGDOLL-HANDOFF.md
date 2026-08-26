@@ -274,6 +274,57 @@ is full the corpse has settled and friction holds the legs crossed. Applied
 instantly it stretches the body past standing height. Grid: crossing 6/6, passes
 +3/−0 at every limptime > 0. Regresses at `limptime 0`.
 
+## ROOT CAUSE: the drawn chest is not where the simulated chest is
+
+**This is the top open problem and it explains most of the screenshots.**
+
+Measured over 300 in-game corpses, comparing each dump's final `P` (particle) and
+`B` (drawn) records:
+
+| | median | p90 | worst |
+|---|---|---|---|
+| angle: **particle** shoulder line vs **drawn** shoulder line | **24.5°** | **85.6°** | 174° |
+| drawn hand / forearm distance from its own particle | 4.2–4.6 | ~14 | 22.4 |
+| drawn foot / calf / head / spine2 from its particle | 1.3–1.4 | ~4 | 8 |
+
+- **174 of 300 corpses (58%)** exceed 20° of shoulder-line rotation.
+- Correlation between that angle and how far the shoulder is drawn from its
+  particle: **r = 0.925**.
+- Bone **lengths** match exactly (ratio 1.00) and bone **directions** match exactly
+  (median 0.0°). Nothing is stretched or bent. The whole arm is correct and
+  *translated bodily* — up to 21 units — because its anchor is wrong.
+
+### Why
+
+`rd_bones[]` (`:189`): *"The spine takes its roll from the pelvis and passes it up,
+one bone to the next."* The drawn chest roll is therefore a function of the pelvis
+alone and **never looks at where the shoulder particles are**. The solver is free
+to rotate the shoulders about the spine axis; the drawn chest does not follow.
+
+The arms hang off the *drawn* chest, so they are drawn wherever that rotation puts
+them, while collision — which is correct, and which `armfree`/`legfree`/the
+world push-out all operate on — acts on particles somewhere else entirely. Hence
+arms through the ground, arms through the body, and "bent oddly", all at once, with
+every skeleton metric scoring clean.
+
+### The fix, and why the earlier attempt failed
+
+`37d0daea` tried anchoring Spine2's roll to the shoulder line and was reverted: it
+doubled the *drawn* twist metric (15°→35°) and pinched the mesh, because it put the
+entire pelvis-to-shoulder discrepancy into one joint (`:191`).
+
+**Distribute it, do not anchor it.** Compute the roll discrepancy between the
+pelvis-transported frame and the actual shoulder line, then spread it evenly across
+pelvis→spine→spine1→spine2 so each joint takes a quarter. That gives the chest the
+right orientation without the hourglass pinch the comment describes.
+
+The metric that condemned `37d0daea` compared **drawn against drawn** and could not
+see this; the measurement above compares **drawn against particle**. Re-judge that
+revert on the new measurement, not the old one.
+
+Ship behind a default-off cvar and grid it. This is the code the project's worst
+regression came from.
+
 ### TRAP: changing a cvar default does NOT reach the user
 
 Every ragdoll cvar is `CVAR_ARCHIVE`, and
