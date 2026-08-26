@@ -362,6 +362,38 @@ Grid at 1.0: chest-worst **4/4**, **chest-at-rest roughly halves 4/4** (20.2→7
 18.2→11.2, 21.8→13.9, 14.8→7.8), cross **4/4**, arm **4/4**, **+1 scenario pass**.
 Closing the loop removed the scenario loss that made 0.75 the open-loop ceiling.
 
+### In game at 1.0: median fixed, tail was the clamp (`RD_MAX_CHEST_ROLL` 60→90)
+
+200 corpses. Shoulder-line error **median 7.7°** (24.5 → 19.2 → 14.2 → 7.7 across
+chestroll 0 / 0.5 / 0.75 / 1.0). Past 20°: **58% → 21%**. Arms drawn >3 units below
+their particle: 17% → **12%**.
+
+But **p90 is still 49°**. The clamp never bound for the typical corpse so it never
+showed in the median — and it bound on exactly the minority left visibly wrong. Of
+11 photographed corpses, 5 had a drawn limb >10 units from its particle (max 19).
+At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
+recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
+
+### Diagnosing from unlabelled screenshots: what worked
+
+`cg_ragdoll_dumplabel` digits are readable when cropped by colour
+(cyan ≈ RGB 51,229,255) and enlarged — the seven-segment decode is legible by eye.
+Automated segment OCR was **not** worth it (resampling dims the 1px strokes below
+threshold).
+
+**Ranking features by median-shift/σ produced a false lead**: elbow fold scored
+highest (flagged 145° vs rest 90°) but does **not** discriminate — 100/200 corpses
+are past 110° and it catches 6/11, an in-set rate of 6–8% against a 5.5% base. A
+bimodal distribution makes median shift meaningless. **Always convert a candidate
+to precision-against-base-rate before believing it.**
+
+Real (if modest) discriminator: drawn-vs-particle gap >10 units — 17% in-set vs 6%
+base, catching 5/11.
+
+Real but non-predictive population fact: **32% of corpses rest with an elbow within
+5° of its 150° limit.** Worth revisiting on its own; a corpse does not hold maximal
+flexion.
+
 ### PROVEN: `CG_RagdollUntwist` cannot fight the chest correction
 
 Positions are hung off `rolledAxis` — the axes **before** untwist (`:4048` comment).
