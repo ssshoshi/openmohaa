@@ -643,6 +643,10 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 
 // How far, in particle radii, a buried particle may be moved to get it out.
 // Beyond this the exit found is not the surface it is behind.
+// How long a joint may go on failing to get out of the world before it is left
+// where it is. At sixty steps a second this is half a second of trying.
+#define RD_STUCK_STEPS 30
+
 #define RD_UNBURY_REACH 4.0f
 
 // Collision displacement below this is treated as a resting contact rather
@@ -939,6 +943,11 @@ typedef struct {
     // sleep test asks for contact, contact comes from tracing against the
     // world, and there is no world under a man lying on another man.
     int      onBodyMask;
+
+    // Which joints have given up trying to get out of the world, and how many
+    // steps each has been inside it. See CG_RagdollPushOut.
+    int      stuckMask;
+    short    buriedFor[RD_NUM_JOINTS];
 
     // Which particles were buried in solid geometry on the last step. A trace
     // that starts inside a brush cannot say which way is out, so such a
@@ -3515,9 +3524,10 @@ static qboolean CG_RagdollSupported(const cg_ragdoll_t *rd)
     int i;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
-        // Lying on another corpse is as good as lying on the ground, and the
-        // ground is the only thing the contact test knows about.
-        if (rd->onBodyMask & (1 << i)) {
+        // Lying on another corpse is as good as lying on the ground, and a
+        // joint wedged in the world is going nowhere at all, which is better
+        // than either. The contact test knows about neither.
+        if ((rd->onBodyMask | rd->stuckMask) & (1 << i)) {
             any++;
             level++;
             continue;
@@ -3697,10 +3707,33 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
         CG_Trace(&probe, part->p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut");
 
         if (!probe.startsolid && !probe.allsolid) {
+            rd->buriedFor[i] = 0;
             continue;
         }
 
         rd->buriedMask |= 1 << i;
+
+        // A joint that has spent half a second inside the world is not going to
+        // get out of it, and going on trying is what the player sees as a
+        // spasm: the push frees it, the constraints and gravity put it back,
+        // and the pair of them trade the limb to and fro for as long as the
+        // corpse lives. Traced in the game, the corpses reported as spazzing
+        // are exactly these -- those still moving after two seconds have a bone
+        // inside the world for fifty frames against none for the ones that
+        // settle, and the worst spent three hundred and fourteen.
+        //
+        // So it is left where it is, and held there, and the rest of the body
+        // is allowed to settle around it. A limb resting inside a step looks
+        // wrong; a limb shivering inside a step looks broken, and it also stops
+        // the whole corpse ever falling asleep.
+        if (rd->buriedFor[i] < RD_STUCK_STEPS) {
+            rd->buriedFor[i]++;
+        } else {
+            rd->stuckMask |= 1 << i;
+            VectorClear(part->v);
+            VectorCopy(part->p, part->pPrev);
+            continue;
+        }
 
         CG_Trace(
             &out, rd->part[toward].p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut"
@@ -3760,6 +3793,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // before anything read it, so no corpse ever reported being held up by
     // another and none of them could fall asleep on a heap.
     rd->onBodyMask = 0;
+    rd->stuckMask  = 0;
 
     const float damping = 1.0f - cg_ragdoll_damping->value;
     const float gravity = CG_RagdollGravity();
@@ -4768,6 +4802,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
         "# L <limbburied>   bitmask over the limb bones, low bit bone 0, middle found inside the world\n"
         "# B2 <onbody>   bitmask over the joints, those being held up by another corpse rather than the world\n"
+        "# K <blast> <radius> <speed>   the explosion that threw this body, if any\n"
         "# R <chestrollfix> <chestrollerr>   degrees the back is being rolled, and what the last\n"
         "#     measurement asked for. Saturating and failing to converge look alike without both.\n"
         "# P <joint> <x> <y> <z>\n"
@@ -4926,6 +4961,19 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         CG_RagdollDumpLine(rd, line);
 
         Com_sprintf(line, sizeof(line), "B2 %d\n", rd->onBodyMask);
+        CG_RagdollDumpLine(rd, line);
+
+        // Whether this man was blown up. Recorded so that a claim about which
+        // bodies misbehave -- that it is the ones caught in blasts -- can be
+        // answered from the trace rather than from an impression.
+        Com_sprintf(
+            line,
+            sizeof(line),
+            "K %d %.0f %.0f\n",
+            rd->hasBlast ? 1 : 0,
+            rd->hasBlast ? rd->blastRadius : 0.0f,
+            rd->hasBlast ? rd->blastSpeed : 0.0f
+        );
         CG_RagdollDumpLine(rd, line);
 
         Com_sprintf(line, sizeof(line), "R %.1f %.1f\n", rd->spineRollFix, rd->chestRollErr);
