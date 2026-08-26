@@ -374,6 +374,45 @@ showed in the median — and it bound on exactly the minority left visibly wrong
 At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
 recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
 
+## VERDICT: per-model collision meshes are NOT worth building
+
+Asked directly; answered with measurements rather than opinion.
+
+**The cheap approximation of a collision mesh already fails to show a clear win.**
+Every world trace uses one radius for all 23 joints (`rd->radius` = 3.0 × bodyScale)
+while `jointRadius[]` — already measured, already per-model — sits unused for this.
+The mismatch is real and large: head 4.5, pelvis 5.5, thigh 5.5 against 3.0.
+
+- **All joints, per-joint radii: clear net regression.** 7 scenarios break, 2 mend.
+  The trunk figures are half a *torso's width*, right for holding another limb off
+  and far too much for holding a body off the floor — an inflated pelvis perches on
+  ledges it should roll off.
+- **Head only** (`cg_ragdoll_jointsize`, `5fb94c24`, **off**): gridded over 4 configs
+  — twist 3/4, chest-worst 3/4, both limb metrics 2/4, **−1 pass in 3/4**. One config
+  showed cross 12.7→3.3; the other three say that was luck.
+
+If the *cheap* version is a draw, an authored mesh per model — vastly more work, and
+needing format and asset pipeline changes — cannot be justified. **A convex hull is
+also largely wasted on this solver**: collision here is a box trace at a point, so a
+hull collapses back to a radius. Hulls pay off with rigid bodies, contact manifolds
+and friction, which is a rewrite.
+
+### On Source/VPhysics: concepts transfer, numbers do not
+
+Their ragdolls are rigid bodies with mass, inertia tensors and convex hulls, solved
+with impulses. Ours is 23 point particles with distance constraints, solved
+positionally. Damping/friction/stiffness figures have no counterpart.
+
+The useful insight is what it names: **our limbs have no rotational inertia at all** —
+a bone is two point masses on a stick, so its resistance to being spun about its own
+length is zero. Every corrective pass here (untwist, chest roll, spine twist limit)
+is a hand-built substitute for angular dynamics the representation does not carry.
+Closing that properly means rigid bodies, i.e. a rewrite — not a tuning pass.
+
+We have independently converged on the shape of a Havok ragdoll constraint anyway:
+swing cone plus twist limit. The cones were always here; the twist limit was missing
+until `f7e0d20f`.
+
 ### DO NOT auto-tune parameters against these metrics
 
 Kept because the argument is worth more than the experiment that prompted it.
