@@ -325,6 +325,33 @@ New harness metric `drawn chest vs simulated chest`. Every other twist figure in
 the suite compares the drawn pose **against itself** and is structurally blind to
 this; that is what condemned `37d0daea`.
 
+### CONFIRMED in game at 0.5, and the residual clipping is the same cause
+
+300 corpses, `chestroll 0.5` vs 0: shoulder-line error **median 24.5°→19.2°, p90
+85.6→57.1, worst 174→86**; corpses past 20° **174/300→145/300**. Body-clipping
+metrics are now clean: hand/forearm-in-trunk **0.00 including the worst case**,
+limb-in-limb worst 0.35 (0.99 four batches ago). The user's "arm through body"
+class disappeared from the screenshots entirely.
+
+**Crucially, the added drawn twist did not draw complaints** — 1–2 of 10 shots,
+versus 8 of 18 for arm-in-body before. The concealed-twist trade is worth taking.
+
+**The remaining ground clipping is residual chest error, not the particle radius.**
+For the three photographed cases the drawn arm sits **4.1–5.9 units below its own
+particle in z**, while the particle rests correctly ~2.9 above the surface — the
+particle is on the floor and the drawn arm is through it. Forearm and Hand offsets
+are *identical*, i.e. the whole arm translated rigidly. Do not chase `rd->radius`
+for this.
+
+**Use 0.75.** Harness: chest 26.9→23.4 with **no scenario lost**; 1.0 reaches 21.5
+but fails `anim run01, wall` and adds noticeably more twist.
+
+### Next: corpses that fight the world
+
+`Lframes` separates them cleanly. dump106 (*"spazing out"*) 105 frames over 6 bones;
+dump95 (*"contorted"*) 119 over 7. Meanwhile the photographed *static* clips have
+`Lframes` **0**. Two different bugs; this is the one left.
+
 ### REJECTED: diagonal trunk braces
 
 `LTHIGH↔RUARM` + `RTHIGH↔LUARM` at 0.94–1.06. Reasoning was sound — every existing
