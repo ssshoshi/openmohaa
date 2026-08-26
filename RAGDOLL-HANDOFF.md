@@ -307,6 +307,37 @@ world push-out all operate on — acts on particles somewhere else entirely. Hen
 arms through the ground, arms through the body, and "bent oddly", all at once, with
 every skeleton metric scoring clean.
 
+### Fixed behind `cg_ragdoll_chestroll` (`c64aad8f`), default **0**
+
+Measured against what the uncorrected chest *would* have been, then spread a third
+each across Spine/Spine1/Spine2, accumulating through the transport. The pelvis is
+excluded — its hip line is a median 6° out against the chest's 24°.
+
+Grid at 0.5 over limptime × stiffness: chest-vs-particle **4/4**, cross **4/4**,
+arm **4/4**, passes unchanged **4/4**. **Drawn twist roughly doubles, 4/4.**
+
+**That twist is real and was being concealed.** The body has it; the arms have been
+paying for the concealment by being drawn in the wrong place. Whether showing it
+reads better is a judgement by eye — which is why it is off by default and why the
+last session to decide this from a table alone got it wrong.
+
+New harness metric `drawn chest vs simulated chest`. Every other twist figure in
+the suite compares the drawn pose **against itself** and is structurally blind to
+this; that is what condemned `37d0daea`.
+
+### REJECTED: diagonal trunk braces
+
+`LTHIGH↔RUARM` + `RTHIGH↔LUARM` at 0.94–1.06. Reasoning was sound — every existing
+brace (shoulder↔shoulder, hip↔hip, pelvis→shoulder) is **symmetric about the spine
+axis**, so rotation about it changes none of their lengths, and the trunk has *no*
+torsional stiffness at all. A diagonal is the ordinary way to brace against racking.
+**It moved chest disagreement by 0.3° and cost 2 scenario passes.** Reverted.
+
+Open question this raises: with `chestroll 0` the drawn chest is offset even when
+physical twist is low, which suggests much of the disagreement is baked into the
+seed `correction[]` at death rather than accumulated live. Worth testing before
+attacking the physics again.
+
 ### The fix, and why the earlier attempt failed
 
 `37d0daea` tried anchoring Spine2's roll to the shoulder line and was reverted: it
