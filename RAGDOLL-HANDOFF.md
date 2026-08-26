@@ -374,6 +374,35 @@ showed in the median — and it bound on exactly the minority left visibly wrong
 At 90: chest-at-rest **4/4 better**, chest-worst **4/4**, arm **4/4**, 9 passes (best
 recorded). 120 is worse at rest — 90 is a ceiling, not a direction.
 
+## SOLVED: the arms were inheriting a welded shoulder (`cg_ragdoll_shoulderslack` 6)
+
+`85d5419e`. The single biggest win of the project. Three measurements found it:
+
+1. **Decompose the shoulder error.** The part rolling the spine *can* remove is
+   median **1.1°**, p90 7.1 — the chest correction is finished. What remains is a
+   **tilt out of that plane**: median 9.1°, p90 **42.5°**, which rolling can never
+   reach. That is why the loop reported converged while arms stayed wrong.
+2. **Walk the drift out from the root.** Whole spine tight (p90 3–4 units, pelvis to
+   head, thighs too). **UpperArm alone is p90 10.4, worst 17.7.** One step.
+3. **Walk down the arm.** Shoulder, elbow and hand are displaced *identically* to two
+   decimals; error added shoulder→hand is median **+0.00**. The arm adds nothing —
+   it inherits everything from the shoulder.
+
+Cause: shoulders hang off Spine2 by an offset captured at death, welded into the
+dying pose, while the simulated shoulders keep moving. A real shoulder girdle slides
+over the ribs. They may now move up to 6 units toward their particles, clamped.
+
+Grid: chest-at-rest **4/4, 3–4× better**; chest-worst 4/4; cross 4/4; arm 4/4;
+twist 3/4; +1 pass. **9 is better again on all of those** if 6 proves too little.
+Only `selfX` (the old joint-distance metric, superseded by `cross`) worsens.
+
+### Two hypotheses tested and killed on the way
+
+- **Roll error accumulating down the arm** — no: the chain adds +0.00.
+- **Shoulders swapped by the line-symmetry wrap** (180° ambiguity; worst error 17.7
+  ≈ the 18-unit shoulder span, which looked damning) — no: **1 corpse in 100** is
+  swapped, and of the 24 worst only 2 would improve. Test before believing.
+
 ## VERDICT: per-model collision meshes are NOT worth building
 
 Asked directly; answered with measurements rather than opinion.
