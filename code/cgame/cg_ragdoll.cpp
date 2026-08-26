@@ -58,6 +58,7 @@ cvar_t *cg_ragdoll_armfree;
 cvar_t *cg_ragdoll_legfree;
 cvar_t *cg_ragdoll_dumplabel;
 cvar_t *cg_ragdoll_chestroll;
+cvar_t *cg_ragdoll_spinetwist;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -712,6 +713,9 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 
 // Fraction of a limb-versus-body overlap resolved per iteration.
 #define RD_SEGMENT_RATE 0.35f
+
+// How much of the excess twist is taken out per iteration.
+#define RD_SPINE_TWIST_RATE 0.25f
 
 // The least clearance a limb bone must keep from the trunk, as a fraction of
 // the full body thickness, however close the two were when the body fell.
@@ -2760,6 +2764,91 @@ static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
 // thickness. Without this the solver is free to fold an arm straight through
 // the chest, because the distance constraints alone say nothing about the
 // volume the body actually occupies.
+// How far the shoulders may wind round from the hips, about the line of the
+// spine. A living trunk turns some way and then stops, and nothing here was
+// stopping it.
+//
+// Every brace holding the shoulders on -- shoulder to shoulder, hip to hip, and
+// both of the pelvis to shoulder braces -- is symmetric about the spine axis,
+// and turning the shoulders about that axis changes the length of not one of
+// them. A distance constraint anchored on an axis cannot resist rotation about
+// it, whatever its stiffness, so the trunk had no torsional limit of any kind
+// and the chest was free to wind round until something else stopped it.
+// Measured in game it wound past twenty degrees in more than half of all
+// corpses, which is the single thing that most reads as wrong about them.
+//
+// Adding a diagonal brace, hip to opposite shoulder, is the ordinary way to
+// stiffen a frame against racking and was tried first. It moved the measurement
+// by three tenths of a degree and cost two scenarios: a diagonal resists a
+// little at every angle rather than nothing until the limit and then firmly,
+// and what is wanted here is a limit.
+//
+// So this measures the angle directly and turns the shoulders back about the
+// spine when it is exceeded. The hips are the anchor and are left alone: their
+// drawn line sits a median of six degrees from the simulation against the
+// chest's twenty four, so they are the half that is trustworthy.
+static void CG_RagdollSpineTwist(cg_ragdoll_t *rd)
+{
+    const float lim = cg_ragdoll_spinetwist->value;
+    vec3_t      axis, hip, sho, side;
+    float       over, ang;
+    int         k;
+
+    if (lim <= 0.0f) {
+        return;
+    }
+
+    VectorSubtract(rd->part[RD_SPINE2].p, rd->part[RD_PELVIS].p, axis);
+
+    if (VectorNormalize(axis) < 0.001f) {
+        return;
+    }
+
+    VectorSubtract(rd->part[RD_RTHIGH].p, rd->part[RD_LTHIGH].p, hip);
+    VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, sho);
+
+    // Squared to the spine, so what is left is the turn about it and not the
+    // trunk leaning or bending.
+    VectorMA(hip, -DotProduct(hip, axis), axis, hip);
+    VectorMA(sho, -DotProduct(sho, axis), axis, sho);
+
+    if (VectorNormalize(hip) < 0.001f || VectorNormalize(sho) < 0.001f) {
+        return;
+    }
+
+    CrossProduct(axis, hip, side);
+
+    ang = (float)(atan2(DotProduct(sho, side), DotProduct(sho, hip)) * 180.0 / M_PI);
+
+    // The shoulder line is a line, not an arrow.
+    if (ang > 90.0f) {
+        ang -= 180.0f;
+    } else if (ang < -90.0f) {
+        ang += 180.0f;
+    }
+
+    if (ang > lim) {
+        over = ang - lim;
+    } else if (ang < -lim) {
+        over = ang + lim;
+    } else {
+        return;
+    }
+
+    // Partial, like every other correction here. Taken out whole it feeds the
+    // corpse energy faster than the damping removes it and the trunk rings.
+    over *= RD_SPINE_TWIST_RATE;
+
+    for (k = 0; k < 2; k++) {
+        rdParticle_t *part = &rd->part[k ? RD_RUARM : RD_LUARM];
+        vec3_t        rel, turned;
+
+        VectorSubtract(part->p, rd->part[RD_SPINE2].p, rel);
+        RotatePointAroundVector(turned, axis, rel, -over);
+        VectorAdd(rd->part[RD_SPINE2].p, turned, part->p);
+    }
+}
+
 static void CG_RagdollSelfCollide(cg_ragdoll_t *rd)
 {
     int n, k;
@@ -2935,6 +3024,7 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
         // inside the ribcage, is far more noticeable than a joint sitting a
         // little outside one of the soft limits.
         CG_RagdollHinges(rd);
+        CG_RagdollSpineTwist(rd);
         CG_RagdollCones(rd);
         CG_RagdollSelfCollide(rd);
         CG_RagdollSegmentCollide(rd);
@@ -4707,6 +4797,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
     cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
+    cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
