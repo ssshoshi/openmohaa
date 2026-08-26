@@ -3339,7 +3339,6 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 
     rd->buriedMask     = 0;
     rd->limbBuriedMask = 0;
-    rd->onBodyMask     = 0;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
@@ -3756,6 +3755,12 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
 
 static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
 {
+    // Cleared here rather than in the world collision, which runs after the
+    // solve that fills it in: put there, every mark this step made was wiped
+    // before anything read it, so no corpse ever reported being held up by
+    // another and none of them could fall asleep on a heap.
+    rd->onBodyMask = 0;
+
     const float damping = 1.0f - cg_ragdoll_damping->value;
     const float gravity = CG_RagdollGravity();
     float       maxDisp = 0.0f;
