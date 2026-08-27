@@ -597,6 +597,34 @@ open option, not a decision.
 An untouched corpse is **byte-identical**. *Aim carefully when testing — the first
 bullet test read 0.0 because the line missed the body (it rests at z≈3, not z=20).*
 
+## Jitter halved in game; what is left is geometry + being hit
+
+492 corpses, `jointsize 2`. Complaint rate **0.8%** (4 screenshots), the lowest yet.
+
+**Separate corpses that were hit from those that were not** — the `W` line makes this
+possible, and without it the totals are meaningless:
+
+| | awake at 2.5 s | median jitter |
+|---|---|---|
+| never hit (348) | 28% | **0.0252** (was 0.0557) |
+| shot or blasted (102) | 80% | 0.0559 |
+
+The 80% is the feature working, not a defect. Among untouched-but-awake corpses,
+**geometry is now 3× the rest**: 0.0486 touching it against 0.0159 clear of it.
+
+### BUG (fixed, this round): waking forgot how long a joint had been stuck
+
+`CG_RagdollWake` cleared `buriedFor[]`, so **every hit restarted the half second of
+struggling the hold exists to end**. A body in geometry hit more than once never
+reached the hold at all.
+
+**All four photographed corpses were exactly this**: every one hit (1–5 wakes), every
+one in geometry, none asleep. Worst: 993 frames in the world of 1300, woken 5 times.
+
+The hold is still *released* on a hit so the body can move; only the counting is kept.
+A joint still buried is re-pinned by the very next probe; one the hit freed is cleared
+by that same probe.
+
 ## JITTER: sleep was gated on the FASTEST joint (fixed, `95ca3b8e`)
 
 **A shivering corpse is an awake corpse** — once it sleeps the pose is frozen and
