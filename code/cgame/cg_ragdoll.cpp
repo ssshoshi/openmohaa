@@ -64,6 +64,7 @@ cvar_t *cg_ragdoll_jointsize;
 cvar_t *cg_ragdoll_shoulderslack;
 cvar_t *cg_ragdoll_bodypush;
 cvar_t *cg_ragdoll_stuckhold;
+cvar_t *cg_ragdoll_shove;
 cvar_t *cg_ragdoll_stiffness;
 
 //=============================================================
@@ -982,6 +983,16 @@ typedef struct {
 
     vec3_t   sleepOrigin;
     qboolean sleepPinned;
+
+    // How far the entity had sunk when the corpse was last drawn asleep, so a
+    // body woken by a shot or a blast carries on from where it was being drawn
+    // rather than jumping back to where its particles were left.
+    float    sleepDrop;
+
+    // A corpse shoved after it had settled is given this long before the
+    // lifetime cap is allowed to put it back to sleep. Without it a body past
+    // its five seconds goes straight back down on the very frame it is hit.
+    int      wakeUntil;
 
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
@@ -1959,6 +1970,8 @@ static const struct {
 
 // Called by the message parser for every explosion, whatever it hit. kind
 // indexes rd_blastKinds and is clamped, so an unknown one reads as a grenade.
+static void CG_RagdollWake(cg_ragdoll_t *rd);
+
 void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
 {
     rdBlast_t *blast;
@@ -1982,6 +1995,55 @@ void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
     blast->speed  = rd_blastKinds[kind].speed;
     blast->time   = cg.time;
     blast->used   = qtrue;
+
+    // The bodies already lying about when it went off.
+    //
+    // Until now this only wrote the blast down for whoever was about to die in
+    // it: a man killed by the grenade was thrown, and a man who had died a
+    // second earlier lay through it untouched. Corpses are thrown by explosions
+    // now whether or not the explosion is what killed them.
+    if (cg_ragdoll_shove->value > 0.0f) {
+        int n, i;
+
+        for (n = 0; n < MAX_RAGDOLLS; n++) {
+            cg_ragdoll_t *rd = &cg_ragdolls[n];
+            qboolean      touched = qfalse;
+
+            if (rd->state == RD_FREE || !rd->boundRadius) {
+                continue;
+            }
+
+            for (i = 0; i < RD_NUM_JOINTS; i++) {
+                vec3_t away;
+                float  dist;
+
+                VectorSubtract(rd->part[i].p, pos, away);
+                dist = VectorNormalize(away);
+
+                if (dist >= blast->radius) {
+                    continue;
+                }
+
+                // Right on top of it there is no direction to be thrown in.
+                if (dist < 1.0f) {
+                    VectorSet(away, 0.0f, 0.0f, 1.0f);
+                }
+
+                VectorMA(
+                    rd->part[i].v,
+                    blast->speed * cg_ragdoll_shove->value * (1.0f - dist / blast->radius),
+                    away,
+                    rd->part[i].v
+                );
+
+                touched = qtrue;
+            }
+
+            if (touched) {
+                CG_RagdollWake(rd);
+            }
+        }
+    }
 
     if (cg_ragdoll_debug->integer) {
         cgi.Printf(
@@ -4759,6 +4821,147 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 }
 
 //=============================================================
+// Being shot at, and blown up, after the fact
+//=============================================================
+
+// How long a corpse goes on simulating after something hits it.
+#define RD_WAKE_TIME 2500
+
+// How near a bullet has to pass a joint to move it, and how hard.
+#define RD_BULLET_REACH 12.0f
+#define RD_BULLET_SPEED 220.0f
+
+// Puts a settled corpse back to work.
+static void CG_RagdollWake(cg_ragdoll_t *rd)
+{
+    int i;
+
+    if (rd->state != RD_SLEEPING && rd->state != RD_ACTIVE) {
+        return;
+    }
+
+    if (rd->state == RD_SLEEPING) {
+        // While it slept the drawn body followed the entity down as it sank,
+        // and the particles did not. Carrying that across means the corpse
+        // starts moving from where it was last seen rather than jumping back up
+        // to where it stopped simulating.
+        if (rd->sleepPinned && rd->sleepDrop != 0.0f) {
+            for (i = 0; i < RD_NUM_JOINTS; i++) {
+                rd->part[i].p[2] += rd->sleepDrop;
+                rd->part[i].pPrev[2] += rd->sleepDrop;
+            }
+        }
+
+        rd->state = RD_ACTIVE;
+    }
+
+    rd->sleepPinned = qfalse;
+    rd->sleepDrop   = 0.0f;
+    rd->quietSince  = cg.time;
+    rd->wakeUntil   = cg.time + RD_WAKE_TIME;
+
+    // A joint that had given up getting out of the world is given another go:
+    // whatever just hit the body may well have freed it.
+    rd->stuckMask = 0;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        rd->buriedFor[i] = 0;
+        rd->part[i].invMass = rd_joints[i].invMass;
+    }
+}
+
+// A bullet passing through a body that is already dead.
+//
+// The shot is not traced against the corpse and nothing here changes what the
+// bullet hits: this is handed the line the bullet actually took, after the fact,
+// and moves whatever it happened to pass through. That is deliberate. Corpses
+// are built on the client and the server knows nothing about them, so a corpse
+// that stopped bullets would stop them on one machine and not another, and a
+// man could be sheltered by a body his killer cannot see.
+void CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large)
+{
+    const float strength = cg_ragdoll_shove->value * (large ? 1.6f : 1.0f);
+    vec3_t      dir;
+    float       length;
+    int         n, i;
+
+    if (strength <= 0.0f) {
+        return;
+    }
+
+    VectorSubtract(end, start, dir);
+    length = VectorNormalize(dir);
+
+    if (length < 1.0f) {
+        return;
+    }
+
+    for (n = 0; n < MAX_RAGDOLLS; n++) {
+        cg_ragdoll_t *rd = &cg_ragdolls[n];
+        qboolean      touched = qfalse;
+
+        vec3_t toCentre, nearest;
+        float  centreAlong;
+
+        if (rd->state == RD_FREE || !rd->boundRadius) {
+            continue;
+        }
+
+        // Thrown out whole before any joint is looked at. Automatic fire calls
+        // this many times a second and most rounds go nowhere near a body.
+        VectorSubtract(rd->boundCentre, start, toCentre);
+        centreAlong = DotProduct(toCentre, dir);
+
+        if (centreAlong < -rd->boundRadius || centreAlong > length + rd->boundRadius) {
+            continue;
+        }
+
+        VectorMA(start, centreAlong < 0.0f ? 0.0f : (centreAlong > length ? length : centreAlong), dir, nearest);
+        VectorSubtract(rd->boundCentre, nearest, toCentre);
+
+        if (VectorLength(toCentre) > rd->boundRadius + RD_BULLET_REACH) {
+            continue;
+        }
+
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            vec3_t rel, closest;
+            float  along, away;
+
+            VectorSubtract(rd->part[i].p, start, rel);
+            along = DotProduct(rel, dir);
+
+            if (along < 0.0f || along > length) {
+                continue;
+            }
+
+            VectorMA(start, along, dir, closest);
+            VectorSubtract(rd->part[i].p, closest, rel);
+            away = VectorLength(rel);
+
+            if (away > RD_BULLET_REACH) {
+                continue;
+            }
+
+            // Hardest along the line and tailing off to nothing at the edge, so
+            // a round that grazes a corpse twitches it and one through the
+            // middle throws it.
+            VectorMA(
+                rd->part[i].v,
+                RD_BULLET_SPEED * strength * (1.0f - away / RD_BULLET_REACH),
+                dir,
+                rd->part[i].v
+            );
+
+            touched = qtrue;
+        }
+
+        if (touched) {
+            CG_RagdollWake(rd);
+        }
+    }
+}
+
+//=============================================================
 // Lifecycle
 //=============================================================
 
@@ -5184,6 +5387,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
     cg_ragdoll_bodypush   = cgi.Cvar_Get("cg_ragdoll_bodypush", "0.35", CVAR_ARCHIVE);
     cg_ragdoll_stuckhold  = cgi.Cvar_Get("cg_ragdoll_stuckhold", "0.1", CVAR_ARCHIVE);
+    cg_ragdoll_shove      = cgi.Cvar_Get("cg_ragdoll_shove", "1.0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limbpush, 0, 1, qfalse);
     cg_ragdoll_solvegain = cgi.Cvar_Get("cg_ragdoll_solvegain", "0.7", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_solvegain, 0, 1, qfalse);
@@ -5669,7 +5873,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
             if (supported && cg.time - rd->quietSince > cg_ragdoll_sleeptime->integer) {
                 rd->state = RD_SLEEPING;
-            } else if (cg_ragdoll_duration->integer > 0 && elapsed > cg_ragdoll_duration->integer) {
+            } else if (cg_ragdoll_duration->integer > 0 && elapsed > cg_ragdoll_duration->integer
+                       && cg.time > rd->wakeUntil) {
                 // The lifetime cap is a budget, not a statement about the body.
                 // Applied on its own it freezes whatever pose the corpse is in
                 // at that instant, and a body still on its way down a staircase
@@ -5717,6 +5922,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
         VectorClear(drop);
         drop[2] = model->origin[2] - rd->sleepOrigin[2];
+        rd->sleepDrop = drop[2];
 
         rd->numOverrides = 0;
 

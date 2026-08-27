@@ -52,6 +52,7 @@ extern "C" {
     // shot. dir is the outward normal, as the message parser stores it.
     void CG_RagdollNoteFleshImpact(const vec3_t pos, const vec3_t dir, int large);
     void CG_RagdollNoteExplosion(const vec3_t pos, int kind);
+    void CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large);
 
     extern cvar_t *cg_ragdoll;
     extern cvar_t *cg_ragdoll_maxcount;

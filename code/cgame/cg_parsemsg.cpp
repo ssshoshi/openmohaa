@@ -592,6 +592,15 @@ static void CG_MakeBulletTracerInternal(
                         iNumImpacts++;
                     }
 
+                    // Corpses are moved by the round after the fact, along the
+                    // line it actually took. Nothing above is changed by this:
+                    // the bullet is traced against the world and the living
+                    // exactly as before and passes through the dead, which it
+                    // has to, since corpses exist only on the client and one
+                    // that stopped bullets would shelter a man on one machine
+                    // and not on another.
+                    CG_RagdollNoteBullet(vTraceStart, trace.endpos, iLarge);
+
                     if (iTracerVisible && !bMadeTracer) {
                         CG_BulletTracerEffect(vTrailStart, trace.endpos, iLarge, alpha);
                         bMadeTracer = qtrue;
