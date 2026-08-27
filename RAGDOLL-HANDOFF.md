@@ -555,6 +555,28 @@ could be sheltered by a corpse his killer cannot see.
 Explosions previously were recorded *only for the man about to die in them*.
 `CG_RagdollNoteExplosion` now also throws the bodies already lying there.
 
+### Explosions: scaled by `blastimpulse`, with lift and a ceiling
+
+A blast on a corpse needed three fixes beyond simply applying it:
+
+1. **Own scale.** A round jolts, a grenade throws — `cg_ragdoll_shove` is bullets
+   only; post-death blasts use `cg_ragdoll_blastimpulse`, same as death-by-blast.
+2. **Lift (`RD_BLAST_LIFT` 0.85).** A grenade on the floor and a corpse on the floor
+   means a nearly *horizontal* push — into the ground it is already resting on. It
+   slid a few feet. Some of the push is turned upward now.
+3. **Ceiling (`RD_BLAST_MAX_SPEED` 1250).** Sliding, friction eats the push; airborne,
+   nothing does. **Doubling the strength took a corpse from 26 units to 1306** — a
+   man leaving the map. The response is wildly non-linear across the takeoff cliff.
+
+Resulting curve (grenade 40 units away, corpse settled 4 s):
+
+| blastimpulse | 1 | 2 | 3 | 6 |
+|---|---|---|---|---|
+| pelvis moves | 12.7 | **100** | 143 | 143 |
+
+**Death-by-explosion is untouched** — it was already liked. Unifying the two is an
+open option, not a decision.
+
 ### Waking a settled corpse — three things it needs
 
 1. **`wakeUntil`** — the lifetime cap would otherwise re-sleep a body past its 5 s on
