@@ -4924,10 +4924,20 @@ static void CG_RagdollWake(cg_ragdoll_t *rd)
 
     // A joint that had given up getting out of the world is given another go:
     // whatever just hit the body may well have freed it.
+    // The hold is released so the body can actually move, but how long each
+    // joint has been buried is not forgotten.
+    //
+    // Clearing that as well made every hit restart the half second of
+    // struggling that the hold exists to end. A corpse lying in geometry and
+    // shot at more than once never reached the hold at all: the worst one
+    // traced had a bone inside the world for nine hundred and ninety three
+    // frames of thirteen hundred and was woken five times, and it shivered for
+    // all of them. Left alone, a joint that is still buried is pinned again by
+    // the very next probe, and one the hit actually freed is cleared by that
+    // same probe, which is what it is for.
     rd->stuckMask = 0;
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
-        rd->buriedFor[i] = 0;
         rd->part[i].invMass = rd_joints[i].invMass;
     }
 }
