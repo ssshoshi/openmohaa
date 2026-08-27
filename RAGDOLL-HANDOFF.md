@@ -597,6 +597,20 @@ open option, not a decision.
 An untouched corpse is **byte-identical**. *Aim carefully when testing — the first
 bullet test read 0.0 because the line missed the body (it rests at z≈3, not z=20).*
 
+## Sleeping now works: awake-at-2.5s fell 28% -> 5.6%
+
+203 corpses. Complaint rate **1%** (2 screenshots).
+
+Corpses **never hit**, still awake at 2.5 s: **8 of 143 (5.6%)** — was 28%. Bodies now
+actually fall asleep, and a sleeping corpse cannot jitter.
+
+**Beware the selection effect:** median jitter *among survivors* rose (0.025 → 0.123)
+because the easy cases now sleep and only the hard ones remain. The honest aggregate
+over all long-lived corpses, counting sleepers as zero, is **0.0190**.
+
+Remaining: **dump197** — awake, jitter 0.68, **`Lframes` 0** (touching no geometry),
+22 contacts, hit twice. A corpse that will not settle without geometry to blame.
+
 ## Jitter halved in game; what is left is geometry + being hit
 
 492 corpses, `jointsize 2`. Complaint rate **0.8%** (4 screenshots), the lowest yet.
