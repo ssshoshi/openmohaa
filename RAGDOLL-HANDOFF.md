@@ -597,6 +597,36 @@ open option, not a decision.
 An untouched corpse is **byte-identical**. *Aim carefully when testing — the first
 bullet test read 0.0 because the line missed the body (it rests at z≈3, not z=20).*
 
+## TRAP: the restless metric now double-counts the shove feature
+
+429 corpses: "still moving after 2 s" jumped **12.7% → 21.0%** when shoves landed.
+Half of that is the feature working — a corpse shot at 3 s *should* be moving at 4.
+
+Split by the **shape** of the motion (peak ÷ mean over the late frames):
+
+| | n | median Lframes |
+|---|---|---|
+| **spiky** (>25× — something hit it) | 45 | 40 |
+| **steady** (a continuing fight) | 45 | 22 |
+
+**The steady half is 10.5%, slightly better than the 12.7% before.** The trace now
+carries a `W` line counting shoves, so future batches can separate them directly
+instead of by inference.
+
+## The hold must not carry a corpse (`RD_STUCK_MIN_SUPPORT` 6)
+
+A body was photographed **hanging on a lamp it should have slid off**. The trace
+agrees: corpses resting on <8 contacts went **0.7% → 1.7%** with the hold in, two of
+them on a *single* contact after 500+ buried frames.
+
+Exactly the failure predicted when the hold shipped. A joint that is the only thing
+touching anything is not *steadying* the body, it is *carrying* it. The hold now
+waits until the body has somewhere else to rest; a corpse with nothing under it goes
+on struggling, which is the only way it comes free.
+
+**Free:** the suite keeps the settling (residual still ~halved) and **the two wall
+scenarios the hold used to break now pass**.
+
 ## WARNING: batch-to-batch variance is ~4 points. Calibrate claims against it.
 
 Two consecutive 300-corpse batches at **identical settings**:
