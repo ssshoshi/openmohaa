@@ -597,6 +597,40 @@ open option, not a decision.
 An untouched corpse is **byte-identical**. *Aim carefully when testing — the first
 bullet test read 0.0 because the line missed the body (it rests at z≈3, not z=20).*
 
+## JITTER: sleep was gated on the FASTEST joint (fixed, `95ca3b8e`)
+
+**A shivering corpse is an awake corpse** — once it sleeps the pose is frozen and
+nothing can move it. So all jitter reduces to: why did it not sleep?
+
+Because the gate used `maxDisp`, the single fastest particle. **One twitching hand
+kept a whole body awake for its entire life.**
+
+Measured in game (the 126 of 429 corpses still writing `P` records at 2.5 s, i.e.
+still awake):
+
+| jitter, units/frame/joint | |
+|---|---|
+| median | **0.0557** |
+| 87% of them exceed | 0.02 |
+| harness median, for scale | **0.00026** |
+
+Touching geometry roughly doubles it (0.083 vs 0.044) — but a corpse touching
+*nothing* still manages 0.044, so the world is not the whole story.
+
+Now judged on the **average** joint, with the fastest allowed 4× the sleeping speed
+before it counts (`RD_SLEEP_SPIKE`) so a genuinely flying limb still blocks sleep.
+**This is what a rigid-body engine does** — Havok sleeps on energy, a sum over the
+whole body, never on its liveliest corner.
+
+Suite: residual motion **0.033 → 0.003** (tenfold), non-settling scenarios 3 → 1,
+one death animation FAIL→PASS, none broken, limbs-in-air slightly *fewer* (so nothing
+freezes mid-fall).
+
+### Note on measuring jitter from dumps
+
+A sleeping corpse writes only `F` and `E` records. **Corpses with `P` records late in
+the trace are by definition the ones that never slept** — the sample is the defect.
+
 ## TRAP: the restless metric now double-counts the shove feature
 
 429 corpses: "still moving after 2 s" jumped **12.7% → 21.0%** when shoves landed.
