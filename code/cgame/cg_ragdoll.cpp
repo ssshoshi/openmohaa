@@ -649,6 +649,9 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // where it is. At sixty steps a second this is half a second of trying.
 #define RD_STUCK_STEPS 30
 
+// How much else has to be holding the body up before a stuck joint is pinned.
+#define RD_STUCK_MIN_SUPPORT 6
+
 #define RD_UNBURY_REACH 4.0f
 
 // Collision displacement below this is treated as a resting contact rather
@@ -993,6 +996,11 @@ typedef struct {
     // lifetime cap is allowed to put it back to sleep. Without it a body past
     // its five seconds goes straight back down on the very frame it is hit.
     int      wakeUntil;
+
+    // How many times something has hit this corpse since it died. Without it a
+    // trace cannot tell a body that is moving because it was shot from one that
+    // is moving because it is stuck, and they look identical in the totals.
+    int      wakeCount;
 
     // What the sleep test last saw, kept only so the trace can report it. A
     // corpse that will not sleep is holding one of these above its threshold,
@@ -3834,6 +3842,16 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
         // the whole corpse ever falling asleep.
         if (rd->buriedFor[i] < RD_STUCK_STEPS) {
             rd->buriedFor[i]++;
+        } else if (CG_RagdollSupportCount(rd) < RD_STUCK_MIN_SUPPORT) {
+            // Held only when the body has somewhere else to rest. A joint that
+            // is the only thing touching anything is not steadying the corpse,
+            // it is carrying it, and pinning that is how a man ends up hanging
+            // off a lamp he ought to slide from. Measured, corpses resting on
+            // fewer than eight contacts went from seven in a thousand to
+            // seventeen when the hold came in. So a body with nothing else
+            // under it goes on struggling, which is the only way it will ever
+            // come free.
+            rd->buriedFor[i] = RD_STUCK_STEPS;
         } else {
             rd->stuckMask |= 1 << i;
 
@@ -4889,6 +4907,7 @@ static void CG_RagdollWake(cg_ragdoll_t *rd)
     rd->sleepDrop   = 0.0f;
     rd->quietSince  = cg.time;
     rd->wakeUntil   = cg.time + RD_WAKE_TIME;
+    rd->wakeCount++;
 
     // A joint that had given up getting out of the world is given another go:
     // whatever just hit the body may well have freed it.
@@ -5066,13 +5085,14 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         // could not fall asleep, and the answer was cg_ragdoll_sleepvel set to
         // zero, which switches sleeping off by design.
         "# blendtime %d  impulse %.2f  blastimpulse %.2f  stiffness %.2f  limptime %d  solvegain %.2f  limbpush %.2f  armfree %.2f  legfree %.2f  chestroll %.2f  spinetwist %.0f\n"
-        "# jointsize %d  shoulderslack %.1f  bodypush %.2f  pinsleep %d  stuckhold %.2f\n"
+        "# jointsize %d  shoulderslack %.1f  bodypush %.2f  pinsleep %d  stuckhold %.2f  shove %.2f\n"
         "# sleepvel %.3f  sleeptime %d  duration %d  gravity %.1f\n"
         "# F <time_ms> <blendweight> <state> <supports> <maxdisp> <steps> <quiet_ms>\n"
         "# E <x> <y> <z>   entity origin, which the drawn corpse rides once asleep\n"
         "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
         "# L <limbburied>   bitmask over the limb bones, low bit bone 0, middle found inside the world\n"
         "# B2 <onbody>   bitmask over the joints, those being held up by another corpse rather than the world\n"
+        "# W <wakes>   how many times a shot or a blast has moved this corpse since it died\n"
         "# K <blast> <radius> <speed>   the explosion that threw this body, if any\n"
         "# R <chestrollfix> <chestrollerr>   degrees the back is being rolled, and what the last\n"
         "#     measurement asked for. Saturating and failing to converge look alike without both.\n"
@@ -5097,6 +5117,7 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_bodypush->value,
         cg_ragdoll_pinsleep->integer,
         cg_ragdoll_stuckhold->value,
+        cg_ragdoll_shove->value,
         cg_ragdoll_sleepvel->value,
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
@@ -5238,6 +5259,9 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         // Whether this man was blown up. Recorded so that a claim about which
         // bodies misbehave -- that it is the ones caught in blasts -- can be
         // answered from the trace rather than from an impression.
+        Com_sprintf(line, sizeof(line), "W %d\n", rd->wakeCount);
+        CG_RagdollDumpLine(rd, line);
+
         Com_sprintf(
             line,
             sizeof(line),
