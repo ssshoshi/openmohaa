@@ -542,6 +542,39 @@ Nothing is thrown (furthest particle from origin unchanged). A lone corpse is
 *Caveat: `anim death_chest` fails with or without the pile — pre-existing, not caused
 by this.*
 
+## Corpses react to shots and explosions (`cg_ragdoll_shove` 1.0, `18daeb50`)
+
+**Bullets are never traced against a corpse.** `CG_RagdollNoteBullet` is handed the
+line the bullet *actually took*, after the fact, from `CG_MakeBulletTracerInternal`,
+and moves whatever it passed through. Nothing about what a bullet hits changes.
+
+That is the design, not a shortcut: **corpses exist only on the client**, so a body
+that stopped bullets would stop them on one machine and not another, and a player
+could be sheltered by a corpse his killer cannot see.
+
+Explosions previously were recorded *only for the man about to die in them*.
+`CG_RagdollNoteExplosion` now also throws the bodies already lying there.
+
+### Waking a settled corpse — three things it needs
+
+1. **`wakeUntil`** — the lifetime cap would otherwise re-sleep a body past its 5 s on
+   the very frame it is hit. A shove buys `RD_WAKE_TIME` (2.5 s) against it.
+2. **`sleepDrop` carried across** — a sleeping body rides its entity down as it sinks
+   while its particles stay put (`pinsleep`). Without carrying the sink, a woken
+   corpse jumps back up to where it stopped simulating.
+3. **`stuckMask` cleared** — whatever just hit it may have freed a stuck joint.
+
+### Harness can fire at corpses now: `RD_SHOVE="ms x y z kind"`, `RD_SHOT="ms x1 y1 z1 x2 y2 z2"`
+
+| | pelvis moves |
+|---|---|
+| grenade 40 units away, 4 s after death | **12.8** |
+| round through the pelvis | **2.9** |
+| round passing 30 units away | 0.1 |
+
+An untouched corpse is **byte-identical**. *Aim carefully when testing — the first
+bullet test read 0.0 because the line missed the body (it rests at z≈3, not z=20).*
+
 ## WARNING: batch-to-batch variance is ~4 points. Calibrate claims against it.
 
 Two consecutive 300-corpse batches at **identical settings**:
