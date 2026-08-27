@@ -542,6 +542,35 @@ Nothing is thrown (furthest particle from origin unchanged). A lone corpse is
 *Caveat: `anim death_chest` fails with or without the pile — pre-existing, not caused
 by this.*
 
+## WARNING: batch-to-batch variance is ~4 points. Calibrate claims against it.
+
+Two consecutive 300-corpse batches at **identical settings**:
+
+| | batch B | batch C |
+|---|---|---|
+| still moving after 2 s | **8.3%** | **12.7%** |
+| …with a bone in geometry | 22.1% | 28.2% |
+| …clear of geometry | 2.0% | 4.6% |
+| residual p90 / worst | 0.042 / 0.413 | 0.077 / 0.806 |
+
+**Nothing changed between them.** Different rounds, different maps and situations.
+
+This means the `stuckhold` result (14.5% → 8.3%) is **not established**: the claimed
+effect (~6 points) is comparable to the noise (~4). It may still be real — the
+mechanism is sound and the direction agrees — but a single before/after batch pair
+cannot show it. **To settle any in-game effect, run two batches back-to-back in the
+same session, toggling only the cvar.** Do not compare across sessions.
+
+## Radii: head + forearms + hands (`cg_ragdoll_jointsize` 2, default)
+
+Extended after a corpse was photographed with an arm through the ground while every
+measurement came back clean — never touched geometry, settled, drawn within 2 units
+of its particles. **The bone was where it belonged; the sleeve was in the floor.**
+
+Grid: arm **4/4**, twist 3/4, cross 3/4, **+2 passes, none lost** (one config's worst
+crossing 76% → 8%). Contrast: *all* joints is a clear loss (7 break, 2 fix) because
+the trunk figures are half a torso's width.
+
 ## SOLVED: the arms were inheriting a welded shoulder (`cg_ragdoll_shoulderslack` 6)
 
 `85d5419e`. The single biggest win of the project. Three measurements found it:
