@@ -1966,6 +1966,25 @@ static const struct {
     {420.0f, 1000.0f} // tank
 };
 
+// How much of an explosion's push is turned upward, as a fraction of it.
+//
+// A grenade goes off on the floor and a corpse is lying on the floor, so the
+// line between them is nearly flat and the body is shoved sideways into the
+// ground it is already resting on. It slides, and friction has it a few feet
+// later. What makes a body actually leave the ground is the part of the blast
+// that is not horizontal, and on level ground there is almost none of it.
+#define RD_BLAST_LIFT 0.85f
+
+// The fastest an explosion may launch any part of a corpse, in units a second.
+//
+// Without a cap the response is wildly non-linear: while the body is sliding on
+// the floor friction eats most of the push, and the moment it clears the ground
+// nothing does. Measured, doubling the strength took a corpse from twenty six
+// units to thirteen hundred, which is a man leaving the map. A running soldier
+// does about two hundred and fifty, so this is a body moving several times
+// faster than anyone can run and no faster than that.
+#define RD_BLAST_MAX_SPEED 1250.0f
+
 #define RD_NUM_BLAST_KINDS ((int)(sizeof(rd_blastKinds) / sizeof(rd_blastKinds[0])))
 
 // Called by the message parser for every explosion, whatever it hit. kind
@@ -2002,7 +2021,13 @@ void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
     // it: a man killed by the grenade was thrown, and a man who had died a
     // second earlier lay through it untouched. Corpses are thrown by explosions
     // now whether or not the explosion is what killed them.
-    if (cg_ragdoll_shove->value > 0.0f) {
+    //
+    // Scaled by the same cg_ragdoll_blastimpulse that throws the man the
+    // grenade kills, and not by the shove that a bullet uses. An explosion
+    // should move a body the same whether it has been dead a second or an
+    // instant, and the two want very different strengths from one another: a
+    // round jolts a corpse, a grenade throws it across the room.
+    {
         int n, i;
 
         for (n = 0; n < MAX_RAGDOLLS; n++) {
@@ -2015,7 +2040,7 @@ void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
 
             for (i = 0; i < RD_NUM_JOINTS; i++) {
                 vec3_t away;
-                float  dist;
+                float  dist, push;
 
                 VectorSubtract(rd->part[i].p, pos, away);
                 dist = VectorNormalize(away);
@@ -2029,12 +2054,16 @@ void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
                     VectorSet(away, 0.0f, 0.0f, 1.0f);
                 }
 
-                VectorMA(
-                    rd->part[i].v,
-                    blast->speed * cg_ragdoll_shove->value * (1.0f - dist / blast->radius),
-                    away,
-                    rd->part[i].v
-                );
+                away[2] += RD_BLAST_LIFT;
+                VectorNormalize(away);
+
+                push = blast->speed * cg_ragdoll_blastimpulse->value * (1.0f - dist / blast->radius);
+
+                if (push > RD_BLAST_MAX_SPEED) {
+                    push = RD_BLAST_MAX_SPEED;
+                }
+
+                VectorMA(rd->part[i].v, push, away, rd->part[i].v);
 
                 touched = qtrue;
             }
@@ -4830,6 +4859,7 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 // How near a bullet has to pass a joint to move it, and how hard.
 #define RD_BULLET_REACH 12.0f
 #define RD_BULLET_SPEED 220.0f
+
 
 // Puts a settled corpse back to work.
 static void CG_RagdollWake(cg_ragdoll_t *rd)
