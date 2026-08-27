@@ -699,6 +699,10 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 #define RD_GROUND_DAMPING 0.35f
 #define RD_REST_SPEED     0.40f
 
+// How many times the sleeping speed one joint may move before it alone keeps
+// the body awake.
+#define RD_SLEEP_SPIKE 4.0f
+
 // Below this, in units per second along the surface, a resting particle is
 // held rather than allowed to creep. Was written as half a unit of Verlet
 // displacement per step, which is the same thing at sixty steps a second.
@@ -975,6 +979,10 @@ typedef struct {
     // correction reaching its limit and the correction not converging look the
     // same from outside, and a trace that carries both can tell them apart.
     float    chestRollErr;
+
+    // The average joint's movement on the last step, beside the fastest one's.
+    // Sleep is judged on the average: see the comment where it is used.
+    float    lastMean;
 
     // Where the entity was standing when this corpse went to sleep, so the
     // drawn body can be held where it settled while still following the entity
@@ -3931,6 +3939,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     const float damping = 1.0f - cg_ragdoll_damping->value;
     const float gravity = CG_RagdollGravity();
     float       maxDisp = 0.0f;
+    float       meanDisp = 0.0f;
     int         i, k;
 
     // The shot's push is a velocity, and is now simply handed over as one.
@@ -4063,7 +4072,11 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
         if (len > maxDisp) {
             maxDisp = len;
         }
+
+        meanDisp += len;
     }
+
+    rd->lastMean = meanDisp / (float)RD_NUM_JOINTS;
 
     return maxDisp;
 }
@@ -5897,7 +5910,22 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             }
 
             if (steps) {
-                if (maxDisp > cg_ragdoll_sleepvel->value) {
+                // Judged on the average joint rather than the fastest one.
+                //
+                // A single twitching hand used to keep a whole corpse awake for
+                // as long as it lived, and an awake corpse is the only kind
+                // that can shiver: once it sleeps the pose is frozen. Measured
+                // in the game, of four hundred and twenty nine bodies a hundred
+                // and twenty six were still simulating two and a half seconds
+                // after death, and those were shivering at fifty times the rate
+                // the suite ever produces.
+                //
+                // The fastest joint still has a say, but a loose one: it may be
+                // several times the sleeping speed before it counts, which
+                // stops a body being frozen while some part of it is genuinely
+                // flying, without letting one noisy joint hold the rest hostage.
+                if (rd->lastMean > cg_ragdoll_sleepvel->value
+                    || maxDisp > cg_ragdoll_sleepvel->value * RD_SLEEP_SPIKE) {
                     rd->quietSince = cg.time;
                 }
             }
