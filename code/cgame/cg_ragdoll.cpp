@@ -3306,7 +3306,8 @@ static void CG_RagdollJointBox(const cg_ragdoll_t *rd, int joint, vec3_t mins, v
     float r = rd->radius;
     int   k;
 
-    // The head only, not the whole skeleton.
+    // The head, and at 2 the forearms and hands as well; never the whole
+    // skeleton.
     //
     // Given to every joint this is a clear loss: the trunk figures are half a
     // torso's width, which is the right thing to keep another limb out of and
@@ -3314,12 +3315,23 @@ static void CG_RagdollJointBox(const cg_ragdoll_t *rd, int joint, vec3_t mins, v
     // a pelvis inflated from three units to five and a half perches on ledges
     // it should roll off. Seven scenarios broke and two mended.
     //
+    // The forearms and hands were added after a corpse was photographed with an
+    // arm through the ground while every measurement of it came back clean: it
+    // had never touched geometry, it had settled, and it was drawn within two
+    // units of its own particles. The bone was where it belonged and the sleeve
+    // was in the floor. Gridded, that change improves a limb in the trunk in
+    // four configurations of four, twist in three, crossing in three, and gains
+    // two scenarios while losing none.
+    //
     // The head is the case where the single figure is plainly wrong and nothing
     // else depends on it. It is the largest thing on the body after the trunk,
     // it was being held three units clear when the model says four and a half,
     // so it sat a unit and a half inside the ground, and it was photographed
     // doing exactly that twice in one round.
-    if (cg_ragdoll_jointsize->integer && (joint == RD_HEAD || joint == RD_HEADTIP)) {
+    if (cg_ragdoll_jointsize->integer && (joint == RD_HEAD || joint == RD_HEADTIP
+                                          || (cg_ragdoll_jointsize->integer > 1
+                                              && (joint == RD_LFARM || joint == RD_LHAND || joint == RD_LHANDTIP
+                                                  || joint == RD_RFARM || joint == RD_RHAND || joint == RD_RHANDTIP)))) {
         r = rd->jointRadius[joint];
 
         if (r < 0.5f) {
@@ -5168,7 +5180,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
-    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "1", CVAR_ARCHIVE);
+    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "2", CVAR_ARCHIVE);
     cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
     cg_ragdoll_bodypush   = cgi.Cvar_Get("cg_ragdoll_bodypush", "0.35", CVAR_ARCHIVE);
     cg_ragdoll_stuckhold  = cgi.Cvar_Get("cg_ragdoll_stuckhold", "0.1", CVAR_ARCHIVE);
