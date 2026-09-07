@@ -523,20 +523,24 @@ static void R_DrawSunFlareBlend()
 
 void R_DrawLensFlares()
 {
-    // FIXME: unimplemented (GL2)
-#if 0
-    int i;
+    int    i;
+    mat4_t oldModelview, oldProjection, matrix;
 
     R_RotateForViewer();
 
-    qglPushMatrix();
-    qglLoadIdentity();
-    qglMatrixMode(GL_PROJECTION);
-    qglPushMatrix();
-    qglLoadIdentity();
-    qglOrtho(-1.0, 1.0, -1.0, 1.0, -99999.0, 99999.0);
+    // The flares themselves are drawn as screen space quads, so swap in an
+    // identity modelview and a normalized ortho projection for the duration,
+    // then put the view matrices back.
+    Mat4Copy(glState.modelview, oldModelview);
+    Mat4Copy(glState.projection, oldProjection);
 
-    tess.no_global_fog = true;
+    Mat4Identity(matrix);
+    GL_SetModelviewMatrix(matrix);
+
+    Mat4Ortho(-1.0, 1.0, -1.0, 1.0, -99999.0, 99999.0, matrix);
+    GL_SetProjectionMatrix(matrix);
+
+    tess.no_global_fog = qtrue;
     R_DrawSunFlare();
 
     for (i = 0; i < backEnd.refdef.num_entities; i++) {
@@ -602,10 +606,8 @@ void R_DrawLensFlares()
     R_DrawSunFlareBlend();
     tess.no_global_fog = qfalse;
 
-    qglPopMatrix();
-    qglMatrixMode(GL_MODELVIEW);
-    qglPopMatrix();
-#endif
+    GL_SetProjectionMatrix(oldProjection);
+    GL_SetModelviewMatrix(oldModelview);
 }
 
 void R_InitLensFlare()

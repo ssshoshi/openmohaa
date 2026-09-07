@@ -2622,6 +2622,13 @@ static qboolean ParseShader( char **text )
 		//
 		// OPENMOHAA-specific stuff
 		//=========================
+		// portal sky
+		else if ( !Q_stricmp( token, "portalsky" ) )
+		{
+			shader.sort = SS_PORTALSKY;
+			shader.isPortalSky = qtrue;
+			continue;
+		}
 		// skip stuff that only q3map or the server needs
 		else if (  !Q_stricmp( token, "surfaceLight" )
 				|| !Q_stricmp( token, "surfaceColor" )
@@ -3762,6 +3769,10 @@ static shader_t *FinishShader( void ) {
 	//=========================
 	shader.needsLGrid = qfalse;
 	shader.needsLSpherical = qfalse;
+
+	if ( shader.isPortalSky ) {
+		shader.sort = SS_PORTALSKY;
+	}
 	//=========================
 
 	//

@@ -1302,6 +1302,14 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 		// add light flares on lights that aren't obscured
 		RB_RenderFlares();
+
+		//
+		// OPENMOHAA-specific stuff
+		//=========================
+		if (!(backEnd.refdef.rdflags & RDF_HUD)) {
+			R_DrawLensFlares();
+		}
+		//=========================
 	}
 
 	if (glRefConfig.framebufferObject && tr.renderCubeFbo && backEnd.viewParms.targetFbo == tr.renderCubeFbo)

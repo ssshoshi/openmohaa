@@ -256,6 +256,186 @@ R_MarkFragments
 
 =================
 */
+/*
+=================
+R_TessellateMarkFragments
+
+Clips the surfaces in `surfaces` against the projection volume and appends the
+resulting fragments. Shared by the world and inline model mark paths, which
+differ only in how they gather the surface list.
+=================
+*/
+static void R_TessellateMarkFragments(
+	int *returnedPointsOut, int *returnedFragmentsOut,
+	int numsurfaces, surfaceType_t **surfaces, const vec3_t projectionDir,
+	int numPlanes, vec3_t *normals, float *dists, vec3_t mins, vec3_t maxs,
+	int maxPoints, vec3_t pointBuffer,
+	int maxFragments, markFragment_t *fragmentBuffer, float fRadiusSquared )
+{
+	int              i, j, k, m, n;
+	int              returnedPoints, returnedFragments;
+	vec3_t           clipPoints[2][MAX_VERTS_ON_POLY];
+	int              numClipPoints;
+	float           *v;
+	srfBspSurface_t *cv;
+	glIndex_t       *tri;
+	srfVert_t       *dv;
+	vec3_t           normal;
+	vec3_t           v1, v2;
+
+	returnedPoints = 0;
+	returnedFragments = 0;
+
+	for ( i = 0 ; i < numsurfaces ; i++ ) {
+
+		if (*surfaces[i] == SF_GRID) {
+
+			cv = (srfBspSurface_t *) surfaces[i];
+			for ( m = 0 ; m < cv->height - 1 ; m++ ) {
+				for ( n = 0 ; n < cv->width - 1 ; n++ ) {
+					// We triangulate the grid and chop all triangles within
+					// the bounding planes of the to be projected polygon.
+					// LOD is not taken into account, not such a big deal though.
+					//
+					// It's probably much nicer to chop the grid itself and deal
+					// with this grid as a normal SF_GRID surface so LOD will
+					// be applied. However the LOD of that chopped grid must
+					// be synced with the LOD of the original curve.
+					// One way to do this; the chopped grid shares vertices with
+					// the original curve. When LOD is applied to the original
+					// curve the unused vertices are flagged. Now the chopped curve
+					// should skip the flagged vertices. This still leaves the
+					// problems with the vertices at the chopped grid edges.
+					//
+					// To avoid issues when LOD applied to "hollow curves" (like
+					// the ones around many jump pads) we now just add a 2 unit
+					// offset to the triangle vertices.
+					// The offset is added in the vertex normal vector direction
+					// so all triangles will still fit together.
+					// The 2 unit offset should avoid pretty much all LOD problems.
+					vec3_t fNormal;
+
+					numClipPoints = 3;
+
+					dv = cv->verts + m * cv->width + n;
+
+					VectorCopy(dv[0].xyz, clipPoints[0][0]);
+					R_VaoUnpackNormal(fNormal, dv[0].normal);
+					VectorMA(clipPoints[0][0], MARKER_OFFSET, fNormal, clipPoints[0][0]);
+					VectorCopy(dv[cv->width].xyz, clipPoints[0][1]);
+					R_VaoUnpackNormal(fNormal, dv[cv->width].normal);
+					VectorMA(clipPoints[0][1], MARKER_OFFSET, fNormal, clipPoints[0][1]);
+					VectorCopy(dv[1].xyz, clipPoints[0][2]);
+					R_VaoUnpackNormal(fNormal, dv[1].normal);
+					VectorMA(clipPoints[0][2], MARKER_OFFSET, fNormal, clipPoints[0][2]);
+					// check the normal of this triangle
+					VectorSubtract(clipPoints[0][0], clipPoints[0][1], v1);
+					VectorSubtract(clipPoints[0][2], clipPoints[0][1], v2);
+					CrossProduct(v1, v2, normal);
+					VectorNormalizeFast(normal);
+					if (DotProduct(normal, projectionDir) < -0.1) {
+						// add the fragments of this triangle
+						R_AddMarkFragments(numClipPoints, clipPoints,
+										   numPlanes, normals, dists,
+										   maxPoints, pointBuffer,
+										   maxFragments, fragmentBuffer,
+										   &returnedPoints, &returnedFragments, mins, maxs);
+
+						if ( returnedFragments == maxFragments ) {
+							goto done;	// not enough space for more fragments
+						}
+					}
+
+					VectorCopy(dv[1].xyz, clipPoints[0][0]);
+					R_VaoUnpackNormal(fNormal, dv[1].normal);
+					VectorMA(clipPoints[0][0], MARKER_OFFSET, fNormal, clipPoints[0][0]);
+					VectorCopy(dv[cv->width].xyz, clipPoints[0][1]);
+					R_VaoUnpackNormal(fNormal, dv[cv->width].normal);
+					VectorMA(clipPoints[0][1], MARKER_OFFSET, fNormal, clipPoints[0][1]);
+					VectorCopy(dv[cv->width+1].xyz, clipPoints[0][2]);
+					R_VaoUnpackNormal(fNormal, dv[cv->width + 1].normal);
+					VectorMA(clipPoints[0][2], MARKER_OFFSET, fNormal, clipPoints[0][2]);
+					// check the normal of this triangle
+					VectorSubtract(clipPoints[0][0], clipPoints[0][1], v1);
+					VectorSubtract(clipPoints[0][2], clipPoints[0][1], v2);
+					CrossProduct(v1, v2, normal);
+					VectorNormalizeFast(normal);
+					if (DotProduct(normal, projectionDir) < -0.05) {
+						// add the fragments of this triangle
+						R_AddMarkFragments(numClipPoints, clipPoints,
+										   numPlanes, normals, dists,
+										   maxPoints, pointBuffer,
+										   maxFragments, fragmentBuffer,
+										   &returnedPoints, &returnedFragments, mins, maxs);
+
+						if ( returnedFragments == maxFragments ) {
+							goto done;	// not enough space for more fragments
+						}
+					}
+				}
+			}
+		}
+		else if (*surfaces[i] == SF_FACE) {
+
+			srfBspSurface_t *surf = ( srfBspSurface_t * ) surfaces[i];
+
+			// check the normal of this face
+			if (DotProduct(surf->cullPlane.normal, projectionDir) > -0.5) {
+				continue;
+			}
+
+			for(k = 0, tri = surf->indexes; k < surf->numIndexes; k += 3, tri += 3)
+			{
+				for(j = 0; j < 3; j++)
+				{
+					v = surf->verts[tri[j]].xyz;
+					VectorMA(v, MARKER_OFFSET, surf->cullPlane.normal, clipPoints[0][j]);
+				}
+
+				// add the fragments of this face
+				R_AddMarkFragments( 3 , clipPoints,
+								   numPlanes, normals, dists,
+								   maxPoints, pointBuffer,
+								   maxFragments, fragmentBuffer,
+								   &returnedPoints, &returnedFragments, mins, maxs);
+				if ( returnedFragments == maxFragments ) {
+					goto done;	// not enough space for more fragments
+				}
+			}
+		}
+		else if(*surfaces[i] == SF_TRIANGLES && r_marksOnTriangleMeshes->integer) {
+
+			srfBspSurface_t *surf = (srfBspSurface_t *) surfaces[i];
+
+			for(k = 0, tri = surf->indexes; k < surf->numIndexes; k += 3, tri += 3)
+			{
+				for(j = 0; j < 3; j++)
+				{
+					vec3_t fNormal;
+					v = surf->verts[tri[j]].xyz;
+					R_VaoUnpackNormal(fNormal, surf->verts[tri[j]].normal);
+					VectorMA(v, MARKER_OFFSET, fNormal, clipPoints[0][j]);
+				}
+
+				// add the fragments of this face
+				R_AddMarkFragments(3, clipPoints,
+								   numPlanes, normals, dists,
+								   maxPoints, pointBuffer,
+								   maxFragments, fragmentBuffer, &returnedPoints, &returnedFragments, mins, maxs);
+				if(returnedFragments == maxFragments)
+				{
+					goto done;	// not enough space for more fragments
+				}
+			}
+		}
+	}
+
+done:
+	*returnedPointsOut    = returnedPoints;
+	*returnedFragmentsOut = returnedFragments;
+}
+
+
 int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projection,
 				   int maxPoints, vec3_t pointBuffer, int maxFragments, markFragment_t *fragmentBuffer, float fRadiusSquared ) {
 	int				numsurfaces, numPlanes;
@@ -321,159 +501,175 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 	//assert(numsurfaces <= 64);
 	//assert(numsurfaces != 64);
 
-	returnedPoints = 0;
-	returnedFragments = 0;
-
-	for ( i = 0 ; i < numsurfaces ; i++ ) {
-
-		if (*surfaces[i] == SF_GRID) {
-
-			cv = (srfBspSurface_t *) surfaces[i];
-			for ( m = 0 ; m < cv->height - 1 ; m++ ) {
-				for ( n = 0 ; n < cv->width - 1 ; n++ ) {
-					// We triangulate the grid and chop all triangles within
-					// the bounding planes of the to be projected polygon.
-					// LOD is not taken into account, not such a big deal though.
-					//
-					// It's probably much nicer to chop the grid itself and deal
-					// with this grid as a normal SF_GRID surface so LOD will
-					// be applied. However the LOD of that chopped grid must
-					// be synced with the LOD of the original curve.
-					// One way to do this; the chopped grid shares vertices with
-					// the original curve. When LOD is applied to the original
-					// curve the unused vertices are flagged. Now the chopped curve
-					// should skip the flagged vertices. This still leaves the
-					// problems with the vertices at the chopped grid edges.
-					//
-					// To avoid issues when LOD applied to "hollow curves" (like
-					// the ones around many jump pads) we now just add a 2 unit
-					// offset to the triangle vertices.
-					// The offset is added in the vertex normal vector direction
-					// so all triangles will still fit together.
-					// The 2 unit offset should avoid pretty much all LOD problems.
-					vec3_t fNormal;
-
-					numClipPoints = 3;
-
-					dv = cv->verts + m * cv->width + n;
-
-					VectorCopy(dv[0].xyz, clipPoints[0][0]);
-					R_VaoUnpackNormal(fNormal, dv[0].normal);
-					VectorMA(clipPoints[0][0], MARKER_OFFSET, fNormal, clipPoints[0][0]);
-					VectorCopy(dv[cv->width].xyz, clipPoints[0][1]);
-					R_VaoUnpackNormal(fNormal, dv[cv->width].normal);
-					VectorMA(clipPoints[0][1], MARKER_OFFSET, fNormal, clipPoints[0][1]);
-					VectorCopy(dv[1].xyz, clipPoints[0][2]);
-					R_VaoUnpackNormal(fNormal, dv[1].normal);
-					VectorMA(clipPoints[0][2], MARKER_OFFSET, fNormal, clipPoints[0][2]);
-					// check the normal of this triangle
-					VectorSubtract(clipPoints[0][0], clipPoints[0][1], v1);
-					VectorSubtract(clipPoints[0][2], clipPoints[0][1], v2);
-					CrossProduct(v1, v2, normal);
-					VectorNormalizeFast(normal);
-					if (DotProduct(normal, projectionDir) < -0.1) {
-						// add the fragments of this triangle
-						R_AddMarkFragments(numClipPoints, clipPoints,
-										   numPlanes, normals, dists,
-										   maxPoints, pointBuffer,
-										   maxFragments, fragmentBuffer,
-										   &returnedPoints, &returnedFragments, mins, maxs);
-
-						if ( returnedFragments == maxFragments ) {
-							return returnedFragments;	// not enough space for more fragments
-						}
-					}
-
-					VectorCopy(dv[1].xyz, clipPoints[0][0]);
-					R_VaoUnpackNormal(fNormal, dv[1].normal);
-					VectorMA(clipPoints[0][0], MARKER_OFFSET, fNormal, clipPoints[0][0]);
-					VectorCopy(dv[cv->width].xyz, clipPoints[0][1]);
-					R_VaoUnpackNormal(fNormal, dv[cv->width].normal);
-					VectorMA(clipPoints[0][1], MARKER_OFFSET, fNormal, clipPoints[0][1]);
-					VectorCopy(dv[cv->width+1].xyz, clipPoints[0][2]);
-					R_VaoUnpackNormal(fNormal, dv[cv->width + 1].normal);
-					VectorMA(clipPoints[0][2], MARKER_OFFSET, fNormal, clipPoints[0][2]);
-					// check the normal of this triangle
-					VectorSubtract(clipPoints[0][0], clipPoints[0][1], v1);
-					VectorSubtract(clipPoints[0][2], clipPoints[0][1], v2);
-					CrossProduct(v1, v2, normal);
-					VectorNormalizeFast(normal);
-					if (DotProduct(normal, projectionDir) < -0.05) {
-						// add the fragments of this triangle
-						R_AddMarkFragments(numClipPoints, clipPoints,
-										   numPlanes, normals, dists,
-										   maxPoints, pointBuffer,
-										   maxFragments, fragmentBuffer,
-										   &returnedPoints, &returnedFragments, mins, maxs);
-
-						if ( returnedFragments == maxFragments ) {
-							return returnedFragments;	// not enough space for more fragments
-						}
-					}
-				}
-			}
-		}
-		else if (*surfaces[i] == SF_FACE) {
-
-			srfBspSurface_t *surf = ( srfBspSurface_t * ) surfaces[i];
-
-			// check the normal of this face
-			if (DotProduct(surf->cullPlane.normal, projectionDir) > -0.5) {
-				continue;
-			}
-
-			for(k = 0, tri = surf->indexes; k < surf->numIndexes; k += 3, tri += 3)
-			{
-				for(j = 0; j < 3; j++)
-				{
-					v = surf->verts[tri[j]].xyz;
-					VectorMA(v, MARKER_OFFSET, surf->cullPlane.normal, clipPoints[0][j]);
-				}
-
-				// add the fragments of this face
-				R_AddMarkFragments( 3 , clipPoints,
-								   numPlanes, normals, dists,
-								   maxPoints, pointBuffer,
-								   maxFragments, fragmentBuffer,
-								   &returnedPoints, &returnedFragments, mins, maxs);
-				if ( returnedFragments == maxFragments ) {
-					return returnedFragments;	// not enough space for more fragments
-				}
-			}
-		}
-		else if(*surfaces[i] == SF_TRIANGLES && r_marksOnTriangleMeshes->integer) {
-
-			srfBspSurface_t *surf = (srfBspSurface_t *) surfaces[i];
-
-			for(k = 0, tri = surf->indexes; k < surf->numIndexes; k += 3, tri += 3)
-			{
-				for(j = 0; j < 3; j++)
-				{
-					vec3_t fNormal;
-					v = surf->verts[tri[j]].xyz;
-					R_VaoUnpackNormal(fNormal, surf->verts[tri[j]].normal);
-					VectorMA(v, MARKER_OFFSET, fNormal, clipPoints[0][j]);
-				}
-
-				// add the fragments of this face
-				R_AddMarkFragments(3, clipPoints,
-								   numPlanes, normals, dists,
-								   maxPoints, pointBuffer,
-								   maxFragments, fragmentBuffer, &returnedPoints, &returnedFragments, mins, maxs);
-				if(returnedFragments == maxFragments)
-				{
-					return returnedFragments;	// not enough space for more fragments
-				}
-			}
-		}
-	}
+	R_TessellateMarkFragments( &returnedPoints, &returnedFragments,
+		numsurfaces, surfaces, projectionDir,
+		numPlanes, normals, dists, mins, maxs,
+		maxPoints, pointBuffer,
+		maxFragments, fragmentBuffer, fRadiusSquared );
 	return returnedFragments;
 }
 
+/*
+=================
+R_BoxSurfacesForBModel_r
+
+The inline model equivalent of R_BoxSurfaces_r. A brush model owns a flat run of
+surfaces rather than a BSP tree, so there is nothing to recurse through.
+=================
+*/
+static void R_BoxSurfacesForBModel_r( bmodel_t *pBmodel, vec3_t mins, vec3_t maxs,
+		surfaceType_t **list, int listsize, int *listlength, vec3_t dir )
+{
+	int         i;
+	int         s;
+	msurface_t *surf;
+
+	for ( i = 0; i < pBmodel->numSurfaces; i++ ) {
+		int *surfViewCount;
+		int  surfIndex = pBmodel->firstSurface + i;
+
+		if ( *listlength >= listsize ) {
+			break;
+		}
+
+		surfViewCount = &tr.world->surfacesViewCount[surfIndex];
+		surf          = tr.world->surfaces + surfIndex;
+
+		// check if the surface has NOIMPACT or NOMARKS set
+		if ( ( surf->shader->surfaceFlags & ( SURF_NOIMPACT | SURF_NOMARKS ) )
+			|| ( surf->shader->contentFlags & CONTENTS_FOG ) ) {
+			*surfViewCount = tr.viewCount;
+		}
+		else if ( *( surf->data ) == SF_FACE ) {
+			// the face plane should go through the box
+			s = BoxOnPlaneSide( mins, maxs, &surf->cullinfo.plane );
+			if ( s == 1 || s == 2 ) {
+				*surfViewCount = tr.viewCount;
+			} else if ( DotProduct( surf->cullinfo.plane.normal, dir ) > -0.5 ) {
+				// don't add faces that make sharp angles with the projection direction
+				*surfViewCount = tr.viewCount;
+			}
+		}
+		else if ( *( surf->data ) != SF_GRID && *( surf->data ) != SF_TRIANGLES ) {
+			*surfViewCount = tr.viewCount;
+		}
+
+		if ( *surfViewCount != tr.viewCount ) {
+			*surfViewCount = tr.viewCount;
+			list[*listlength] = surf->data;
+			( *listlength )++;
+		}
+	}
+}
+
+/*
+=================
+R_MarkFragmentsForInlineModel
+
+Projects a decal onto a brush model (doors, vehicles, anything that moves). The
+points arrive in world space, so they are pulled back into the model's own space
+before clipping, which is the only real difference from the world path.
+=================
+*/
 int R_MarkFragmentsForInlineModel(clipHandle_t bmodel, const vec3_t vAngles, const vec3_t vOrigin, int numPoints,
 	const vec3_t* points, const vec3_t projection, int maxPoints, vec3_t pointBuffer,
 	int maxFragments, markFragment_t* fragmentBuffer, float fRadiusSquared)
 {
-	// FIXME: unimplemented (GL2)
-	return 0;
+	int            i;
+	int            numsurfaces;
+	vec3_t         vTmp;
+	vec3_t         v1, v2;
+	vec3_t         vMins, vMaxs;
+	vec3_t         vTransPoints[MAX_VERTS_ON_POLY];
+	vec3_t         vTransProj;
+	vec3_t         vTransProjDir;
+	bmodel_t      *pBmodel;
+	surfaceType_t *surfaces[64];
+	int            returnedFragments;
+	int            returnedPoints;
+	vec3_t         normals[MAX_VERTS_ON_POLY + 2];
+	float          dists[MAX_VERTS_ON_POLY + 2];
+
+	if ( numPoints <= 0 ) {
+		return 0;
+	}
+
+	if ( !tr.world || !tr.world->bmodels ) {
+		return 0;
+	}
+
+	// increment view count for double check prevention
+	tr.viewCount++;
+
+	pBmodel = &tr.world->bmodels[bmodel];
+
+	if ( numPoints > MAX_VERTS_ON_POLY ) {
+		numPoints = MAX_VERTS_ON_POLY;
+	}
+
+	if ( vAngles[0] || vAngles[1] || vAngles[2] ) {
+		vec3_t axis[3];
+
+		AngleVectorsLeft( vAngles, axis[0], axis[1], axis[2] );
+
+		for ( i = 0; i < numPoints; i++ ) {
+			VectorSubtract( points[i], vOrigin, vTmp );
+			MatrixTransformVectorRight( axis, vTmp, vTransPoints[i] );
+		}
+
+		MatrixTransformVectorRight( axis, projection, vTransProj );
+	} else {
+		for ( i = 0; i < numPoints; i++ ) {
+			VectorSubtract( points[i], vOrigin, vTransPoints[i] );
+		}
+
+		VectorCopy( projection, vTransProj );
+	}
+
+	VectorNormalize2( vTransProj, vTransProjDir );
+	ClearBounds( vMins, vMaxs );
+
+	for ( i = 0; i < numPoints; i++ ) {
+		AddPointToBounds( vTransPoints[i], vMins, vMaxs );
+		VectorAdd( vTransPoints[i], vTransProj, vTmp );
+		AddPointToBounds( vTmp, vMins, vMaxs );
+		// make sure we get all the surfaces (also the one(s) in front of the hit surface)
+		VectorMA( vTransPoints[i], -20.f, vTransProjDir, vTmp );
+		AddPointToBounds( vTmp, vMins, vMaxs );
+	}
+
+	// create the bounding planes for the to be projected polygon
+	for ( i = 0; i < numPoints; i++ ) {
+		VectorSubtract( vTransPoints[( i + 1 ) % numPoints], vTransPoints[i], v1 );
+		VectorAdd( vTransPoints[i], vTransProj, v2 );
+		VectorSubtract( vTransPoints[i], v2, v2 );
+		CrossProduct( v1, v2, normals[i] );
+		VectorNormalize( normals[i] );
+		dists[i] = DotProduct( normals[i], vTransPoints[i] );
+	}
+
+	// add near and far clipping planes for projection
+	VectorCopy( vTransProjDir, normals[numPoints] );
+	dists[numPoints] = DotProduct( normals[numPoints], vTransPoints[0] ) - 32.f;
+
+	VectorCopy( vTransProjDir, normals[numPoints + 1] );
+	VectorInverse( normals[numPoints + 1] );
+	dists[numPoints + 1] = DotProduct( normals[numPoints + 1], vTransPoints[0] ) - 20.f;
+
+	returnedPoints    = 0;
+	returnedFragments = 0;
+	numsurfaces       = 0;
+
+	R_BoxSurfacesForBModel_r( pBmodel, vMins, vMaxs, surfaces, ARRAY_LEN( surfaces ), &numsurfaces, vTransProjDir );
+	if ( !numsurfaces ) {
+		return 0;
+	}
+
+	R_TessellateMarkFragments( &returnedPoints, &returnedFragments,
+		numsurfaces, surfaces, vTransProjDir,
+		numPoints + 2, normals, dists, vMins, vMaxs,
+		maxPoints, pointBuffer,
+		maxFragments, fragmentBuffer, fRadiusSquared );
+
+	return returnedFragments;
 }

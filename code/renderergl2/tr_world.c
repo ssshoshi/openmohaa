@@ -339,6 +339,16 @@ static void R_AddWorldSurface( msurface_t *surf, int dlightBits, int pshadowBits
 		pshadowBits = ( pshadowBits != 0 );
 	}
 
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	if ( surf->shader && surf->shader->isPortalSky ) {
+		// gathered separately and rendered as its own view
+		R_Sky_AddSurf( surf );
+		return;
+	}
+	//=========================
+
 	R_AddDrawSurf( surf->data, surf->shader, surf->fogIndex, dlightBits, pshadowBits, surf->cubemapIndex );
 }
 

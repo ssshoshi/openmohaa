@@ -1610,6 +1610,12 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs,
 	R_RadixSort( drawSurfs, numDrawSurfs );
 	R_RadixSort( spriteSurfs, numSpriteSurfs );
 
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	R_Sky_Render();
+	//=========================
+
 	// skip pass through drawing if rendering a shadow map
 	if (tr.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW))
 	{
@@ -2098,6 +2104,13 @@ void R_RenderView (viewParms_t *parms) {
 	R_RotateForViewer ();
 
 	R_SetupProjection(&tr.viewParms, r_zproj->value, tr.viewParms.zFar, qtrue);
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// the portal sky surfaces are gathered again for each view
+	R_Sky_Reset();
+	//=========================
 
 	R_GenerateDrawSurfs();
 
@@ -3324,16 +3337,7 @@ qboolean SurfIsOffscreen2(const srfBspSurface_t* surface, shader_t* shader, int 
 	return qfalse;
 }
 
-static qboolean DrawSurfIsOffscreen(drawSurf_t* drawSurf) {
-	// FIXME: unimplemented (GL2)
-	return qfalse;
-#if 0
-	int entityNum;
-	shader_t* shader;
-	int dlighted;
-	qboolean bStaticModel;
-
-	R_DecomposeSort(drawSurf->sort, &entityNum, &shader, &dlighted, &bStaticModel);
-	return SurfIsOffscreen2((srfBspSurface_t*)drawSurf->surface, shader, entityNum);
-#endif
-}
+// The MOH:AA renderer culls portals with its own DrawSurfIsOffscreen wrapper
+// around SurfIsOffscreen2. This renderer uses ioq3's SurfIsOffscreen instead,
+// called from R_MirrorViewBySurface, so that wrapper is not needed here.
+// SurfIsOffscreen2 is still used on its own by the portal sky.

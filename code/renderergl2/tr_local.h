@@ -199,6 +199,7 @@ typedef struct vao_s
 typedef enum {
 	SS_BAD,
 	SS_PORTAL,			// mirrors, portals, viewscreens
+	SS_PORTALSKY,
 	SS_ENVIRONMENT,		// sky box
 	SS_OPAQUE,			// opaque
 
@@ -626,6 +627,7 @@ typedef struct shader_s {
 	// OPENMOHAA-specific stuff
 	//
 	qboolean force32bit;
+    qboolean isPortalSky;
     float fDistRange;
     float fDistNear;
     spriteParms_t sprite;
