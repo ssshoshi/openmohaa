@@ -2849,6 +2849,15 @@ static void ComputeVertexAttribs(void)
 			case CGEN_EXACT_VERTEX_LIT:
 			case CGEN_VERTEX_LIT:
 			case CGEN_ONE_MINUS_VERTEX:
+			//
+			// OPENMOHAA-specific stuff
+			//=========================
+			// These are evaluated per vertex on the CPU and handed to the
+			// shader through the vertex colors, so they need the attribute too.
+			case CGEN_STATIC:
+			case CGEN_LIGHTING_GRID:
+			case CGEN_LIGHTING_SPHERICAL:
+			//=========================
 				shader.vertexAttribs |= ATTR_COLOR;
 				break;
 
@@ -3749,6 +3758,13 @@ static shader_t *FinishShader( void ) {
 	}
 
 	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	shader.needsLGrid = qfalse;
+	shader.needsLSpherical = qfalse;
+	//=========================
+
+	//
 	// set appropriate stage information
 	//
 	for ( stage = 0; stage < MAX_SHADER_STAGES; ) {
@@ -3765,6 +3781,16 @@ static shader_t *FinishShader( void ) {
 			stage++;
 			continue;
 		}
+
+		//
+		// OPENMOHAA-specific stuff
+		//=========================
+		if ( pStage->rgbGen == CGEN_LIGHTING_GRID ) {
+			shader.needsLGrid = qtrue;
+		} else if ( pStage->rgbGen == CGEN_LIGHTING_SPHERICAL || pStage->rgbGen == CGEN_STATIC ) {
+			shader.needsLSpherical = qtrue;
+		}
+		//=========================
 
 		//
 		// ditch this stage if it's detail and detail textures are disabled

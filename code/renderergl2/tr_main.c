@@ -3289,7 +3289,7 @@ qboolean SurfIsOffscreen2(const srfBspSurface_t* surface, shader_t* shader, int 
 		vec3_t normal;
 		float dot;
 		float len;
-		unsigned* indices;
+		glIndex_t *indices;
 
 		indices = surface->indexes; // (unsigned*)(((char*)surface) + surface->ofsIndices);
 

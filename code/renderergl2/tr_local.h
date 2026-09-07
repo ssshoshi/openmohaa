@@ -142,6 +142,11 @@ typedef struct {
 
     int			iGridLighting;
     float		lodpercentage[2];
+    qboolean	bLightGridCalculated;
+    // Spherical lighting is expensive, so it is solved once per entity per
+    // frame and the resulting sphere is reused by every surface of it.
+    qboolean	sphereCalculated;
+    int			lightingSphere;
 } trRefEntity_t;
 
 
@@ -624,6 +629,10 @@ typedef struct shader_s {
     float fDistRange;
     float fDistNear;
     spriteParms_t sprite;
+    // Set when any stage uses rgbGen lightinggrid or lightingspherical, so the
+    // backend knows which of MOH:AA's two entity lighting models to set up.
+    int needsLGrid;
+    int needsLSpherical;
 } shader_t;
 
 enum
@@ -2399,6 +2408,16 @@ extern cvar_t	*r_drawstaticdecals;
 extern cvar_t	*r_drawterrain;
 extern cvar_t	*r_drawsprites;
 extern cvar_t	*r_drawspherelights;
+extern cvar_t	*r_fastentlight;
+
+extern cvar_t	*r_static_shaderdata0;
+extern cvar_t	*r_static_shaderdata1;
+extern cvar_t	*r_static_shaderdata2;
+extern cvar_t	*r_static_shaderdata3;
+extern cvar_t	*r_static_shadermultiplier0;
+extern cvar_t	*r_static_shadermultiplier1;
+extern cvar_t	*r_static_shadermultiplier2;
+extern cvar_t	*r_static_shadermultiplier3;
 
 extern cvar_t	*r_numdebuglines;
 extern cvar_t	*r_stipplelines;

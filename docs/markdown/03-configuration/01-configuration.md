@@ -54,6 +54,62 @@ Update checking is enabled by default, but can be disabled with:
 
 If disabled, remember to check the project page for new versions. Updates can improve security and provide important fixes against exploits.
 
+## Graphics
+
+### Choosing a renderer
+
+OpenMoHAA ships the original OpenGL 1 renderer and, optionally, an OpenGL 2 renderer derived
+from [ioquake3](https://ioquake3.org/). The renderer is selected with `cl_renderer`, which is
+latched, so it takes effect after a `vid_restart`:
+
+```cpp
+set cl_renderer opengl1 // The default, and the only renderer built by default
+set cl_renderer opengl2 // Experimental
+vid_restart
+```
+
+If the requested renderer cannot be loaded, the game falls back to the default one rather than
+failing to start.
+
+The renderer only affects how the game is drawn on your machine. It is not visible to servers
+and has no effect on gameplay, so it can be changed freely while playing online.
+
+### The OpenGL 2 renderer
+
+> [!WARNING]
+> The OpenGL 2 renderer is a work in progress and is **not** built by default. It does not yet
+> render all MOH:AA content correctly. Use `opengl1` if you want the reference behaviour.
+
+To build it, configure with `-DBUILD_RENDERER_GL2=ON`. It requires `-DUSE_RENDERER_DLOPEN=ON`
+unless the OpenGL 1 renderer is disabled, because a statically linked build compiles the
+renderer directly into the client and only one can be linked at a time.
+
+It adds the modern rendering features from ioquake3's OpenGL 2 renderer, all of which are
+disabled or conservative by default. The settings below are latched unless noted otherwise:
+
+- `set r_ext_framebuffer_multisample x`: Multisample anti-aliasing, `0` (off) to `16`.
+- `set r_ext_compressed_textures x`: `0` none, `1` DXT/RGTC, `2` BPTC. Reduces video memory use.
+- `set r_hdr 1`: Render the scene in high dynamic range, which reduces colour banding.
+- `set r_toneMap 1` / `set r_autoExposure 1`: Tone mapping and automatic exposure. Both require
+  `r_hdr` and `r_postProcess`, and neither is latched.
+- `set r_normalMapping 1` / `set r_specularMapping 1`: Use normal and specular maps for
+  materials that provide them. Enabled by default when the renderer is built.
+- `set r_parallaxMapping x`: `0` off, `1` parallax occlusion mapping, `2` relief mapping.
+- `set r_sunShadows 1`: Sunlight and cascaded shadow maps, tuned with `r_shadowMapSize` and
+  `r_shadowFilter`.
+- `set r_ssao 1`: Screen-space ambient occlusion. Costs performance.
+- `set r_imageUpsample x`: Interpolate textures to a higher resolution, `0` off, `1` 2x, `2` 4x.
+
+Normal and specular maps are picked up automatically: for a texture `foo.jpg`, the renderer
+looks for `foo_n` (normal map), `foo_nh` (normal map with height in the alpha channel, for
+parallax mapping) and `foo_s` (specular map). Because these are ordinary extra files, they can
+be shipped in a separate pk3 without modifying any stock game content.
+
+Materials can also be described explicitly in `.mtr` files, which live alongside `.shader`
+files in `scripts/` and use the same syntax. A `.mtr` file replaces the `.shader` file of the
+same name, but *only* when the OpenGL 2 renderer is active, so adding one cannot change how the
+game looks under OpenGL 1.
+
 ## Server configuration
 
 ### Optimization / Antichams

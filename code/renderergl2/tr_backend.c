@@ -468,6 +468,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
 
+	// OPENMOHAA-specific stuff
+	//=========================
+	backEnd.numSpheresUsed = 0;
+	//=========================
+
 	for (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {
 		if ( drawSurf->sort == (unsigned)oldSort && drawSurf->cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
@@ -515,6 +520,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 		if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
 			continue;
+
+		// OPENMOHAA-specific stuff
+		//=========================
+		backEnd.currentSphere = &backEnd.spareSphere;
+		//=========================
 
 		//
 		// change the modelview matrix if needed
@@ -628,6 +638,65 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
             oldbStaticModel = bStaticModel;
             //=========================
 		}
+
+		//
+		// OPENMOHAA-specific stuff
+		//=========================
+		// MOH:AA lights entities and static props from either the light grid or
+		// the spherical lights in the BSP, chosen per shader. Without this the
+		// entity lighting is never set up and everything non-world draws black.
+		//
+		if (bStaticModel)
+		{
+			if (r_drawspherelights->integer) {
+				RB_Static_BuildDLights();
+			}
+
+			if (!backEnd.currentStaticModel->bLightGridCalculated) {
+				RB_Grid_SetupStaticModel();
+			}
+		}
+		else if (backEnd.currentEntity && backEnd.currentEntity->e.tiki)
+		{
+			if (shader->needsLGrid
+				|| (shader->needsLSpherical && r_fastentlight->integer)
+				|| !r_drawspherelights->integer)
+			{
+				backEnd.currentSphere->TessFunction = RB_CalcLightGridColor;
+				RB_Grid_SetupEntity();
+			}
+			else if (shader->needsLSpherical)
+			{
+				if (tr.refdef.rdflags & RDF_HUD)
+				{
+					backEnd.currentSphere = &backEnd.hudSphere;
+					backEnd.hudSphere.TessFunction = 0;
+					RB_Sphere_SetupEntity();
+				}
+				else if (backEnd.currentEntity->sphereCalculated)
+				{
+					backEnd.currentSphere = &backEnd.spheres[backEnd.currentEntity->lightingSphere];
+				}
+				else
+				{
+					if (backEnd.numSpheresUsed == MAX_SPHERE_LIGHTS)
+					{
+						ri.Printf(PRINT_DEVELOPER, "Spherical lighting: Ran out of space in the sphere array!\n");
+						backEnd.currentSphere = &backEnd.spareSphere;
+					}
+					else
+					{
+						backEnd.currentSphere = &backEnd.spheres[backEnd.numSpheresUsed];
+						backEnd.currentEntity->lightingSphere = backEnd.numSpheresUsed++;
+						backEnd.currentEntity->sphereCalculated = qtrue;
+					}
+
+					backEnd.currentSphere->TessFunction = NULL;
+					RB_Sphere_SetupEntity();
+				}
+			}
+		}
+		//=========================
 
         if (*drawSurf->surface == SF_SPRITE) {
             backEnd.shaderStartTime = ((refSprite_t*)drawSurf->surface)->shaderTime;

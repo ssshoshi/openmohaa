@@ -969,8 +969,10 @@ int R_DlightTerrain(cTerraPatchUnpacked_t* surf, int dlightBits)
 {
 	int dlightMap = 0;
 
-	// FIXME: unimplemented
-	// Fast Dlight only
+	// The GL1 renderer has a second path here that patches the dynamic light
+	// directly into a copy of the terrain lightmap. This renderer applies
+	// dynamic lights per pixel in the shader instead, so all that is needed is
+	// to work out which lights reach the patch.
 
 	if (R_FastDlightTerrain(surf, dlightBits)) {
 		++tr.pc.c_dlightSurfaces;

@@ -1,0 +1,57 @@
+name: "Renderer GL2"
+
+# The GL2 renderer is not part of the release builds yet, so nothing else in CI
+# compiles it. Without this job it silently bit-rots between the occasional
+# manual fix. Build only the renderer target, which keeps the job cheap.
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "Building the GL2 renderer"
+    runs-on: ubuntu-latest
+    environment: "testing"
+
+    steps:
+    - uses: awalsh128/cache-apt-pkgs-action@latest
+      name: Install required packages
+      with:
+        packages: flex bison ninja-build cmake clang libsdl2-dev libopenal-dev
+        version: "${{ runner.os }}-${{ runner.arch }}-renderergl2-v1"
+
+    - uses: actions/checkout@v4
+      with:
+        path: 'source'
+
+    - name: Settings
+      working-directory: ${{github.workspace}}
+      run: |
+        echo "CMAKE_GENERATOR=Ninja Multi-Config" >> $GITHUB_ENV
+        echo "CC=clang" >> $GITHUB_ENV
+        echo "CXX=clang++" >> $GITHUB_ENV
+
+    - name: Configure CMake
+      working-directory: ${{github.workspace}}
+      # USE_RENDERER_DLOPEN must stay ON: the static path compiles the renderer
+      # into the client binary, and GL1 and GL2 cannot both be linked that way.
+      run: |
+        cmake -B ./build ./source \
+          --log-level=VERBOSE \
+          -DBUILD_RENDERER_GL2=ON \
+          -DUSE_RENDERER_DLOPEN=ON \
+          -DBUILD_SERVER=OFF \
+          -DBUILD_GAME_LIBRARIES=OFF \
+          -DBUILD_GAME_QVMS=OFF
+
+    - name: Build
+      working-directory: ${{github.workspace}}
+      run: |
+        cmake --build ./build --config Debug --target renderer_opengl2 --parallel

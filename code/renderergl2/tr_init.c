@@ -253,6 +253,16 @@ cvar_t *r_drawstaticdecals;
 cvar_t *r_drawterrain;
 cvar_t *r_drawsprites;
 cvar_t *r_drawspherelights;
+cvar_t *r_fastentlight;
+
+cvar_t *r_static_shaderdata0;
+cvar_t *r_static_shaderdata1;
+cvar_t *r_static_shaderdata2;
+cvar_t *r_static_shaderdata3;
+cvar_t *r_static_shadermultiplier0;
+cvar_t *r_static_shadermultiplier1;
+cvar_t *r_static_shadermultiplier2;
+cvar_t *r_static_shadermultiplier3;
 
 cvar_t *r_numdebuglines;
 cvar_t *r_stipplelines;
@@ -1573,6 +1583,18 @@ void R_Register( void )
     r_drawterrain = ri.Cvar_Get("r_drawterrain", "1", CVAR_CHEAT);
     r_drawsprites = ri.Cvar_Get("r_drawsprites", "1", CVAR_CHEAT);
     r_drawspherelights = ri.Cvar_Get("r_drawspherelights", "1", CVAR_CHEAT);
+    r_fastentlight = ri.Cvar_Get("r_fastentlight", "0", CVAR_ARCHIVE);
+
+    // Used by shaders that leave a deform parameter unset, so that it can be
+    // driven from an entity or, for world surfaces, from these.
+    r_static_shaderdata0 = ri.Cvar_Get("r_static_shaderdata0", "0", CVAR_SYSTEMINFO);
+    r_static_shaderdata1 = ri.Cvar_Get("r_static_shaderdata1", "0", CVAR_SYSTEMINFO);
+    r_static_shaderdata2 = ri.Cvar_Get("r_static_shaderdata2", "0", CVAR_SYSTEMINFO);
+    r_static_shaderdata3 = ri.Cvar_Get("r_static_shaderdata3", "0", CVAR_SYSTEMINFO);
+    r_static_shadermultiplier0 = ri.Cvar_Get("r_static_shadermultiplier0", "1", CVAR_SYSTEMINFO);
+    r_static_shadermultiplier1 = ri.Cvar_Get("r_static_shadermultiplier1", "1", CVAR_SYSTEMINFO);
+    r_static_shadermultiplier2 = ri.Cvar_Get("r_static_shadermultiplier2", "1", CVAR_SYSTEMINFO);
+    r_static_shadermultiplier3 = ri.Cvar_Get("r_static_shadermultiplier3", "1", CVAR_SYSTEMINFO);
 
     r_debuglines_depthmask = ri.Cvar_Get("r_debuglines_depthmask", "0", CVAR_ARCHIVE);
     r_stipplelines = ri.Cvar_Get("r_stipplelines", "1", CVAR_ARCHIVE);

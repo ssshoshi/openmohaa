@@ -523,9 +523,172 @@ int R_CubemapForPoint( vec3_t point )
 RB_SetupEntityGridLighting
 ===============
 */
+/*
+===============
+R_GetLightingGridValueCombined
+
+The GL1 renderer accumulated both light grid samples into a single value, while
+this renderer keeps them apart as an ambient and a directed term. The MOH:AA
+lighting below wants the combined value, so add them back together.
+===============
+*/
+static void R_GetLightingGridValueCombined( const vec3_t vPos, vec3_t vLight )
+{
+	vec3_t ambient, directed;
+
+	R_GetLightingGridValue( tr.world, vPos, ambient, directed );
+	VectorAdd( ambient, directed, vLight );
+}
+
+/*
+===============
+R_AddDlightsToGridValue
+
+Dynamic lights within radius add to a grid sample. Shared by the entity, static
+model and smoke paths, which all did this identically.
+===============
+*/
+static void R_AddDlightsToGridValue( const trRefdef_t *refdef, const vec3_t lightOrigin, vec3_t vLight )
+{
+	int       i;
+	dlight_t *dl;
+	float     power;
+	vec3_t    dir;
+	float     d;
+
+	for ( i = 0; i < refdef->num_dlights; i++ ) {
+		dl = &refdef->dlights[i];
+		VectorSubtract( dl->origin, lightOrigin, dir );
+		d = VectorLengthSquared( dir );
+
+		power = dl->radius * dl->radius;
+		if ( power >= d ) {
+			d = dl->radius * 7500.0 / d;
+			VectorMA( vLight, d, dl->color, vLight );
+		}
+	}
+}
+
+/*
+===============
+R_NormalizeGridLighting
+
+Applies the map overbright scale, then normalizes by the brightest channel
+rather than saturating to white, so bright light does not wash out to grey.
+===============
+*/
+static void R_NormalizeGridLighting( vec3_t vLight )
+{
+	if ( tr.overbrightShift ) {
+		VectorScale( vLight, tr.overbrightMult, vLight );
+	}
+
+	if ( vLight[0] > 255.0 || vLight[1] > 255.0 || vLight[2] > 255.0 ) {
+		float scale = 255.0 / Q_max( vLight[0], Q_max( vLight[1], vLight[2] ) );
+		VectorScale( vLight, scale, vLight );
+	}
+}
+
+/*
+===============
+R_PackGridLighting
+===============
+*/
+static int R_PackGridLighting( vec3_t vLight )
+{
+	int iColor = 0;
+	int i;
+
+	// clamp ambient
+	for ( i = 0; i < 3; i++ ) {
+		if ( vLight[i] > tr.identityLightByte ) {
+			vLight[i] = tr.identityLightByte;
+		}
+	}
+
+	( (byte *)&iColor )[0] = Q_ftol( vLight[0] );
+	( (byte *)&iColor )[1] = Q_ftol( vLight[1] );
+	( (byte *)&iColor )[2] = Q_ftol( vLight[2] );
+	( (byte *)&iColor )[3] = 0xff;
+
+	return iColor;
+}
+
+/*
+===============
+RB_GetEntityGridLighting
+===============
+*/
+static int RB_GetEntityGridLighting( void )
+{
+	vec3_t vLight;
+	float *lightOrigin = backEnd.currentSphere->traceOrigin;
+
+	if ( !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) && tr.world && tr.world->lightGridData ) {
+		R_GetLightingGridValueCombined( lightOrigin, vLight );
+	} else {
+		vLight[0] = vLight[1] = vLight[2] = tr.identityLight * 150.0;
+	}
+
+	R_AddDlightsToGridValue( &backEnd.refdef, lightOrigin, vLight );
+	R_NormalizeGridLighting( vLight );
+
+	return R_PackGridLighting( vLight );
+}
+
+/*
+===============
+RB_SetupEntityGridLighting
+
+Solves the light grid colour once for an entity and shares it with the whole
+attachment chain, so a multi-part model is lit consistently.
+===============
+*/
 void RB_SetupEntityGridLighting()
 {
-	// FIXME: unimplemented
+	trRefEntity_t *ent;
+	int            iColor = 0;
+
+	if ( backEnd.currentEntity->bLightGridCalculated ) {
+		return;
+	}
+
+	for ( ent = backEnd.currentEntity; ent->e.parentEntity != ENTITYNUM_NONE;
+		  ent = &backEnd.refdef.entities[ent->e.parentEntity] ) {
+		trRefEntity_t *newref = &backEnd.refdef.entities[ent->e.parentEntity];
+
+		if ( newref == ent ) {
+			// a parent that refers to itself would loop forever
+			iColor = newref->iGridLighting;
+			break;
+		}
+
+		if ( newref->bLightGridCalculated ) {
+			iColor = newref->iGridLighting;
+			break;
+		}
+	}
+
+	if ( ent->e.parentEntity == ENTITYNUM_NONE ) {
+		iColor = RB_GetEntityGridLighting();
+	}
+
+	// push the result back down the chain
+	ent = backEnd.currentEntity;
+	for ( ;; ) {
+		ent->bLightGridCalculated = qtrue;
+		ent->iGridLighting        = iColor;
+
+		if ( ent->e.parentEntity == ENTITYNUM_NONE ) {
+			break;
+		}
+
+		if ( ent == &backEnd.refdef.entities[ent->e.parentEntity] ) {
+			break;
+		}
+
+		ent = &backEnd.refdef.entities[ent->e.parentEntity];
+	}
 }
 
 /*
@@ -535,7 +698,23 @@ RB_SetupStaticModelGridLighting
 */
 void RB_SetupStaticModelGridLighting(trRefdef_t *refdef, cStaticModelUnpacked_t *ent, const vec3_t lightOrigin)
 {
-    // FIXME: unimplemented
+	vec3_t vLight;
+
+	if ( ent->bLightGridCalculated ) {
+		return;
+	}
+	ent->bLightGridCalculated = qtrue;
+
+	if ( !( refdef->rdflags & RDF_NOWORLDMODEL ) && tr.world && tr.world->lightGridData ) {
+		R_GetLightingGridValueCombined( lightOrigin, vLight );
+	} else {
+		vLight[0] = vLight[1] = vLight[2] = tr.identityLight * 150.0;
+	}
+
+	R_AddDlightsToGridValue( refdef, lightOrigin, vLight );
+	R_NormalizeGridLighting( vLight );
+
+	ent->iGridLighting = R_PackGridLighting( vLight );
 }
 
 /*
@@ -765,7 +944,13 @@ R_GetLightingForDecal
 */
 void R_GetLightingForDecal(vec3_t vLight, const vec3_t vFacing, const vec3_t vOrigin)
 {
-    // FIXME: unimplemented (GL2)
+	R_GetLightingGridValueCombined( vOrigin, vLight );
+
+	if ( !tr.overbrightShift ) {
+		return;
+	}
+
+	R_NormalizeGridLighting( vLight );
 }
 
 /*
@@ -775,7 +960,16 @@ R_GetLightingForSmoke
 */
 void R_GetLightingForSmoke(vec3_t vLight, const vec3_t vOrigin)
 {
-	// FIXME: unimplemented (GL2)
+	// GL1 picks between an interpolated and a single-sample grid lookup here
+	// via r_smoothsmokelight. This renderer only has the interpolated one, so
+	// smoke always gets the smoother result.
+	R_GetLightingGridValueCombined( vOrigin, vLight );
+
+	R_AddDlightsToGridValue( &backEnd.refdef, vOrigin, vLight );
+	R_NormalizeGridLighting( vLight );
+
+	// callers in cgame expect this one normalized to 0-1
+	VectorScale( vLight, 1.0f / 255.0f, vLight );
 }
 
 qboolean R_FindGridPointForSphere(world_t *world, const vec3_t sphereOrigin, const vec3_t point, vec3_t out) {

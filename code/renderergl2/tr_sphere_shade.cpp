@@ -273,6 +273,29 @@ static void RB_OptimizeLights()
     }
 }
 
+/*
+==============
+RB_UnpackTessNormals
+
+The lighting math below came from the GL1 renderer, where tess.normal is an
+array of floats. GL2 stores normals packed into int16, so unpack them once into
+a scratch buffer and let the math run against that unchanged.
+==============
+*/
+static vec4_t s_unpackedNormals[SHADER_MAX_VERTEXES];
+
+static float *RB_UnpackTessNormals(void)
+{
+    int i;
+
+    for (i = 0; i < tess.numVertexes; i++) {
+        R_VaoUnpackNormal(s_unpackedNormals[i], tess.normal[i]);
+        s_unpackedNormals[i][3] = 0.0f;
+    }
+
+    return (float *)s_unpackedNormals;
+}
+
 static void RB_Light_CubeMap(unsigned char *colors)
 {
     int              i, j;
@@ -283,7 +306,7 @@ static void RB_Light_CubeMap(unsigned char *colors)
     reallightinfo_t *pLight;
 
     color  = colors;
-    normal = (float *)tess.normal;
+    normal = RB_UnpackTessNormals();
     xyz    = (float *)tess.xyz;
 
     for (i = 0; i < tess.numVertexes; i++, xyz += 4, normal += 4, color += 4) {
@@ -417,7 +440,7 @@ void RB_Light_Real(unsigned char *colors)
     }
 
     if (backEnd.currentSphere->numRealLights != 1) {
-        normal = (float *)tess.normal;
+        normal = RB_UnpackTessNormals();
         xyz    = (float *)tess.xyz;
 
         for (i = 0; i < tess.numVertexes; i++, xyz += 4, normal += 4, color += 4) {
@@ -480,7 +503,7 @@ void RB_Light_Real(unsigned char *colors)
             color[3] = 0xff;
         }
     } else {
-        normal = (float *)tess.normal;
+        normal = RB_UnpackTessNormals();
         xyz    = (float *)tess.xyz;
 
         pLight = &backEnd.currentSphere->light[0];

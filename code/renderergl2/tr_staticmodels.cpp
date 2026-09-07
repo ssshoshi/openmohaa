@@ -424,6 +424,9 @@ void R_AddStaticModelSurfaces(void)
                                 continue;
                             }
                             break;
+                        default:
+                            // Only the fading alpha types get distance culled here.
+                            break;
                         }
                     }
 

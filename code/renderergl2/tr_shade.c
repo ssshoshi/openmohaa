@@ -567,6 +567,88 @@ static void ProjectDlightTexture( void ) {
 }
 
 
+/*
+** RB_WarnUnhandledGen
+**
+** Several of MOH:AA's rgbGen/alphaGen types have no GL2 implementation yet. They
+** used to fall out of the switches below silently, which made them very hard to
+** notice. Report each distinct one once per run so the remaining gaps are
+** visible without letting a single bad shader flood the console.
+*/
+static const char * const s_colorGenNames[] = {
+	"CGEN_BAD",
+	"CGEN_IDENTITY_LIGHTING",
+	"CGEN_IDENTITY",
+	"CGEN_ENTITY",
+	"CGEN_ONE_MINUS_ENTITY",
+	"CGEN_EXACT_VERTEX",
+	"CGEN_VERTEX",
+	"CGEN_EXACT_VERTEX_LIT",
+	"CGEN_VERTEX_LIT",
+	"CGEN_ONE_MINUS_VERTEX",
+	"CGEN_WAVEFORM",
+	"CGEN_LIGHTING_DIFFUSE",
+	"CGEN_FOG",
+	"CGEN_CONST",
+	"CGEN_MULTIPLY_BY_WAVEFORM",
+	"CGEN_LIGHTING_GRID",
+	"CGEN_LIGHTING_SPHERICAL",
+	"CGEN_NOISE",
+	"CGEN_GLOBAL_COLOR",
+	"CGEN_STATIC",
+	"CGEN_SCOORD",
+	"CGEN_TCOORD",
+	"CGEN_DOT",
+	"CGEN_ONE_MINUS_DOT",
+};
+
+static const char * const s_alphaGenNames[] = {
+	"AGEN_IDENTITY",
+	"AGEN_SKIP",
+	"AGEN_ENTITY",
+	"AGEN_ONE_MINUS_ENTITY",
+	"AGEN_VERTEX",
+	"AGEN_ONE_MINUS_VERTEX",
+	"AGEN_LIGHTING_SPECULAR",
+	"AGEN_WAVEFORM",
+	"AGEN_PORTAL",
+	"AGEN_CONST",
+	"AGEN_NOISE",
+	"AGEN_DOT",
+	"AGEN_ONE_MINUS_DOT",
+	"AGEN_CONSTANT",
+	"AGEN_GLOBAL_ALPHA",
+	"AGEN_SKYALPHA",
+	"AGEN_ONE_MINUS_SKYALPHA",
+	"AGEN_SCOORD",
+	"AGEN_TCOORD",
+	"AGEN_DIST_FADE",
+	"AGEN_ONE_MINUS_DIST_FADE",
+	"AGEN_TIKI_DIST_FADE",
+	"AGEN_ONE_MINUS_TIKI_DIST_FADE",
+	"AGEN_DOT_VIEW",
+	"AGEN_ONE_MINUS_DOT_VIEW",
+	"AGEN_HEIGHT_FADE",
+};
+
+static unsigned int s_warnedRgbGen;
+static unsigned int s_warnedAlphaGen;
+
+static void RB_WarnUnhandledGen( unsigned int *warned, const char *what, int value,
+		const char * const *names, int numNames )
+{
+	if ( value < 0 || value >= 32 || ( *warned & ( 1u << value ) ) ) {
+		return;
+	}
+
+	*warned |= 1u << value;
+
+	ri.Printf( PRINT_WARNING, "WARNING: %s %s is not implemented in the GL2 renderer (first seen in shader '%s')\n",
+		what, value < numNames ? names[value] : "(out of range)",
+		tess.shader ? tess.shader->name : "<unknown>" );
+}
+
+
 static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t vertColor, int blend )
 {
 	qboolean isBlend = ((blend & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_DST_COLOR)
@@ -678,6 +760,11 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 		// OPENMOHAA-specific stuff
 		//=========================
 		case CGEN_STATIC:
+		// Spherical and light grid lighting are evaluated per vertex and written
+		// into the vertex colors, so the shader just passes those through. The
+		// values themselves are produced by the sphere lighting code.
+		case CGEN_LIGHTING_GRID:
+		case CGEN_LIGHTING_SPHERICAL:
 			baseColor[0] =
 			baseColor[1] =
 			baseColor[2] =
@@ -687,6 +774,28 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			vertColor[1] =
 			vertColor[2] =
 			vertColor[3] = 1.0f;
+			break;
+		case CGEN_MULTIPLY_BY_WAVEFORM:
+			{
+				float glow = RB_CalcWaveColorSingle( &pStage->rgbWave );
+
+				baseColor[0] = pStage->colorConst[0] / 255.0f * glow;
+				baseColor[1] = pStage->colorConst[1] / 255.0f * glow;
+				baseColor[2] = pStage->colorConst[2] / 255.0f * glow;
+			}
+			break;
+		case CGEN_GLOBAL_COLOR:
+			baseColor[0] = backEnd.color2D[0] / 255.0f;
+			baseColor[1] = backEnd.color2D[1] / 255.0f;
+			baseColor[2] = backEnd.color2D[2] / 255.0f;
+			baseColor[3] = backEnd.color2D[3] / 255.0f;
+			break;
+		default:
+			// CGEN_DOT, CGEN_ONE_MINUS_DOT, CGEN_SCOORD and CGEN_TCOORD are all
+			// evaluated per vertex and cannot be expressed as a base/vertex color
+			// pair, so they still need doing.
+			RB_WarnUnhandledGen( &s_warnedRgbGen, "rgbGen", pStage->rgbGen,
+				s_colorGenNames, ARRAY_LEN( s_colorGenNames ) );
 			break;
 		//=========================
 	}
@@ -735,6 +844,28 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			baseColor[3] = 1.0f;
 			vertColor[3] = 0.0f;
 			break;
+		//
+		// OPENMOHAA-specific stuff
+		//=========================
+		case AGEN_GLOBAL_ALPHA:
+			baseColor[3] = backEnd.color2D[3] / 255.0f;
+			vertColor[3] = 0.0f;
+			break;
+		case AGEN_SKYALPHA:
+			baseColor[3] = tr.refdef.sky_alpha;
+			vertColor[3] = 0.0f;
+			break;
+		case AGEN_ONE_MINUS_SKYALPHA:
+			baseColor[3] = 1.0f - tr.refdef.sky_alpha;
+			vertColor[3] = 0.0f;
+			break;
+		default:
+			// The distance and height fades, and the dot and texture coordinate
+			// driven alphas, are all per vertex and still need doing.
+			RB_WarnUnhandledGen( &s_warnedAlphaGen, "alphaGen", pStage->alphaGen,
+				s_alphaGenNames, ARRAY_LEN( s_alphaGenNames ) );
+			break;
+		//=========================
 	}
 
 }
@@ -1645,6 +1776,128 @@ static void RB_RenderShadowmap( shaderCommands_t *input )
 /*
 ** RB_StageIteratorGeneric
 */
+/*
+** RB_ComputeEntityLightColors
+**
+** MOH:AA evaluates spherical and light grid lighting per vertex on the CPU.
+** The GL1 renderer did this into a scratch color array once per stage; GL2
+** uploads vertex colors once per batch, so it has to happen here, before
+** RB_UpdateTessVao, and the stages using rgbGen lightingSpherical / lightingGrid
+** / static then just pass the vertex color through.
+*/
+static void RB_ComputeEntityLightColors( void )
+{
+	static byte colors[SHADER_MAX_VERTEXES][4];
+	int         i;
+
+	if ( !tess.shader->needsLSpherical && !tess.shader->needsLGrid ) {
+		return;
+	}
+
+	// Light grid shading is always applied; only the spherical lights respect
+	// r_drawspherelights, which is also what makes the backend fall back to the
+	// grid for these shaders when it is off.
+	if ( !tess.shader->needsLGrid && !r_drawspherelights->integer ) {
+		return;
+	}
+
+	if ( !backEnd.currentStaticModel ) {
+		if ( !backEnd.currentSphere || !backEnd.currentSphere->TessFunction ) {
+			return;
+		}
+
+		backEnd.currentSphere->TessFunction( (unsigned char *)colors );
+
+		for ( i = 0; i < tess.numVertexes; i++ ) {
+			// 0-255 to 0-65535
+			tess.color[i][0] = colors[i][0] * 257;
+			tess.color[i][1] = colors[i][1] * 257;
+			tess.color[i][2] = colors[i][2] * 257;
+			tess.color[i][3] = colors[i][3] * 257;
+		}
+
+		return;
+	}
+
+	// Static props keep their baked vertex colors and, when the model asks for
+	// it, take the dynamic lights affecting it on top.
+	if ( backEnd.currentStaticModel->useSpecialLighting )
+	{
+		float *xyz    = ( float * ) tess.xyz;
+		int16_t *packedNormal = tess.normal[0];
+
+		for ( i = 0; i < tess.numVertexes; i++, xyz += 4, packedNormal += 4 )
+		{
+			vec3_t normal;
+			vec3_t colorout;
+			int    j, r, g, b;
+
+			R_VaoUnpackNormal( normal, packedNormal );
+
+			colorout[0] = tess.color[i][0] / 257.0f;
+			colorout[1] = tess.color[i][1] / 257.0f;
+			colorout[2] = tess.color[i][2] / 257.0f;
+
+			for ( j = 0; j < backEnd.currentStaticModel->numdlights; j++ )
+			{
+				float     ooLightDistSquared;
+				float     dot;
+				vec3_t    diff;
+				dlight_t *dl;
+
+				dl = &backEnd.refdef.dlights[backEnd.currentStaticModel->dlights[j].index];
+				VectorSubtract( backEnd.currentStaticModel->dlights[j].transformed, xyz, diff );
+
+				dot = DotProduct( diff, normal );
+				if ( dot >= 0 )
+				{
+					float ooLen = 1.0f / VectorLengthSquared( diff );
+
+					ooLightDistSquared = dot * ( 7500.0f * dl->radius * ooLen * sqrt( ooLen ) );
+					colorout[0] += dl->color[0] * ooLightDistSquared;
+					colorout[1] += dl->color[1] * ooLightDistSquared;
+					colorout[2] += dl->color[2] * ooLightDistSquared;
+				}
+			}
+
+			r = colorout[0];
+			g = colorout[1];
+			b = colorout[2];
+
+			if ( tr.overbrightShift )
+			{
+				r = (int)( (float)r * tr.overbrightMult );
+				g = (int)( (float)g * tr.overbrightMult );
+				b = (int)( (float)b * tr.overbrightMult );
+			}
+
+			// normalize by color rather than saturating to white
+			if ( r > 0xFF || g > 0xFF || b > 0xFF )
+			{
+				float t = 255.0f / (float)Q_max( r, Q_max( g, b ) );
+
+				r = (int)( (float)r * t );
+				g = (int)( (float)g * t );
+				b = (int)( (float)b * t );
+			}
+
+			tess.color[i][0] = r * 257;
+			tess.color[i][1] = g * 257;
+			tess.color[i][2] = b * 257;
+			// alpha is left alone so vertices are not hidden
+		}
+	}
+	else if ( tr.identityLight != 1.0f )
+	{
+		for ( i = 0; i < tess.numVertexes; i++ ) {
+			tess.color[i][0] *= tr.identityLight;
+			tess.color[i][1] *= tr.identityLight;
+			tess.color[i][2] *= tr.identityLight;
+		}
+	}
+}
+
+
 void RB_StageIteratorGeneric( void )
 {
 	shaderCommands_t *input;
@@ -1666,6 +1919,8 @@ void RB_StageIteratorGeneric( void )
 
 	if (tess.useInternalVao)
 	{
+		RB_ComputeEntityLightColors();
+
 		RB_UpdateTessVao(vertexAttribs);
 	}
 	else

@@ -553,6 +553,206 @@ RB_DeformTessGeometry
 
 =====================
 */
+/*
+========================
+RB_CalcFlapVertexes
+
+Used by MOH:AA for cloth that flaps in the wind (flags, banners, tent
+canvas). Each vertex is pushed along its normal by a wave, scaled by that
+vertex's S or T texture coordinate so one edge stays pinned.
+
+Any wave parameter left at the sentinel 1234567 is supplied by the entity, or
+by the r_static_shaderdata cvars for world surfaces.
+========================
+*/
+static void RB_CalcFlapVertexes( deformStage_t *ds, texDirection_t coordsToUse )
+{
+	int      i;
+	float   *xyz    = ( float * ) tess.xyz;
+	int16_t *normal = tess.normal[0];
+	float   *st     = ( float * ) tess.texCoords;
+	float   *table;
+	vec3_t   offset;
+	float    scale, vertexScale;
+	float    base, amplitude, phase, frequency;
+	float    min = ds->bulgeWidth;
+	float    max = ds->bulgeHeight;
+
+	if ( ds->deformationWave.base != 1234567.0f ) {
+		base = ds->deformationWave.base;
+	} else if ( backEnd.currentEntity ) {
+		base = ( float )backEnd.currentEntity->e.surfaces[0] / 16.0f - 8.0f;
+	} else {
+		base = r_static_shaderdata0->value;
+	}
+
+	if ( ds->deformationWave.amplitude != 1234567.0f ) {
+		amplitude = ds->deformationWave.amplitude;
+	} else if ( backEnd.currentEntity ) {
+		amplitude = ( float )backEnd.currentEntity->e.surfaces[1] / 16.0f;
+	} else {
+		amplitude = r_static_shaderdata1->value;
+	}
+
+	if ( ds->deformationWave.phase != 1234567.0f ) {
+		phase = ds->deformationWave.phase;
+	} else if ( backEnd.currentEntity ) {
+		phase = ( float )backEnd.currentEntity->e.surfaces[2] / 16.0f - 8.0f;
+	} else {
+		phase = r_static_shaderdata2->value;
+	}
+
+	if ( ds->deformationWave.frequency != 1234567.0f ) {
+		frequency = ds->deformationWave.frequency;
+	} else if ( backEnd.currentEntity ) {
+		frequency = ( float )backEnd.currentEntity->e.surfaces[3] / 16.0f;
+	} else {
+		frequency = r_static_shaderdata3->value;
+	}
+
+	if ( !backEnd.currentEntity ) {
+		base      *= r_static_shadermultiplier0->value;
+		amplitude *= r_static_shadermultiplier1->value;
+		phase     *= r_static_shadermultiplier2->value;
+		frequency *= r_static_shadermultiplier3->value;
+	}
+
+	if ( frequency ) {
+		table = TableForFunc( ds->deformationWave.func );
+
+		// Note: the GL1 renderer computes a per-vertex spread offset here and
+		// then never applies it, so the whole surface waves in phase. Kept as
+		// is, since changing it would make the two renderers disagree.
+		scale = WAVEVALUE( table, base, amplitude, phase, frequency );
+
+		for ( i = 0; i < tess.numVertexes; i++, xyz += 4, st += 2, normal += 4 ) {
+			R_VaoUnpackNormal( offset, normal );
+
+			vertexScale = ( max - min ) * st[coordsToUse] + min;
+
+			xyz[0] += scale * vertexScale * offset[0];
+			xyz[1] += scale * vertexScale * offset[1];
+			xyz[2] += scale * vertexScale * offset[2];
+		}
+	} else {
+		scale = EvalWaveForm( &ds->deformationWave );
+
+		for ( i = 0; i < tess.numVertexes; i++, xyz += 4, st += 2, normal += 4 ) {
+			R_VaoUnpackNormal( offset, normal );
+
+			vertexScale = ( max - min ) * st[coordsToUse] + min;
+
+			xyz[0] += scale * vertexScale * offset[0];
+			xyz[1] += scale * vertexScale * offset[1];
+			xyz[2] += scale * vertexScale * offset[2];
+		}
+	}
+}
+
+
+/*
+========================
+LightGlowDeform
+
+MOH:AA's light coronas. Replaces each incoming quad with a camera facing quad
+of the same size, pulled toward the viewer so it is not buried in the surface
+it sits on.
+========================
+*/
+static void LightGlowDeform( void )
+{
+	int    i;
+	int    oldVerts;
+	float *xyz;
+	vec3_t mid, delta;
+	float  radius, dist, ofs;
+	vec3_t forward, left, up;
+	vec3_t leftDir, upDir;
+
+	if ( tess.numVertexes & 3 ) {
+		ri.Printf( PRINT_WARNING, "LightGlowDeform shader %s had odd vertex count\n", tess.shader->name );
+	}
+	if ( tess.numIndexes != ( tess.numVertexes >> 2 ) * 6 ) {
+		ri.Printf( PRINT_WARNING, "LightGlowDeform shader %s had odd index count\n", tess.shader->name );
+	}
+
+	oldVerts = tess.numVertexes;
+	tess.numVertexes = 0;
+	tess.numIndexes = 0;
+
+	if ( backEnd.currentEntity == &tr.worldEntity ) {
+		VectorCopy( backEnd.viewParms.ori.axis[1], leftDir );
+		VectorCopy( backEnd.viewParms.ori.axis[2], upDir );
+	} else {
+		GlobalVectorToLocal( backEnd.viewParms.ori.axis[1], leftDir );
+		GlobalVectorToLocal( backEnd.viewParms.ori.axis[2], upDir );
+	}
+
+	for ( i = 0; i < oldVerts; i += 4 ) {
+		vec4_t color;
+
+		xyz = tess.xyz[i];
+
+		mid[0] = ( xyz[0] + xyz[4] + xyz[8]  + xyz[12] ) * 0.25f;
+		mid[1] = ( xyz[1] + xyz[5] + xyz[9]  + xyz[13] ) * 0.25f;
+		mid[2] = ( xyz[2] + xyz[6] + xyz[10] + xyz[14] ) * 0.25f;
+
+		VectorSubtract( xyz, mid, delta );
+
+		radius = VectorLength( delta ) * 0.707f;
+		VectorAdd( mid, backEnd.ori.origin, delta );
+		VectorSubtract( backEnd.viewParms.ori.origin, delta, forward );
+
+		dist = VectorNormalize( forward ) - 4.0f;
+
+		VectorScale( forward, radius, forward );
+		VectorScale( leftDir, radius, left );
+		VectorScale( upDir, radius, up );
+
+		if ( backEnd.viewParms.isMirror ) {
+			VectorSubtract( vec3_origin, forward, forward );
+			VectorSubtract( vec3_origin, left, left );
+		}
+
+		if ( backEnd.currentStaticModel || backEnd.currentEntity->e.nonNormalizedAxes ) {
+			float axisLength;
+
+			if ( backEnd.currentStaticModel ) {
+				axisLength = VectorLength( backEnd.currentStaticModel->axis[0] );
+			} else {
+				axisLength = VectorLength( backEnd.currentEntity->e.axis[0] );
+			}
+
+			if ( axisLength != 0.0f ) {
+				VectorScale( forward, axisLength, forward );
+				VectorScale( left, axisLength, left );
+				VectorScale( up, axisLength, up );
+			} else {
+				VectorClear( forward );
+				VectorClear( left );
+				VectorClear( up );
+			}
+		}
+
+		ofs = VectorLength( forward );
+		if ( ofs > dist ) {
+			VectorNormalizeFast( forward );
+			VectorScale( forward, dist, forward );
+		}
+
+		VectorAdd( mid, forward, mid );
+
+		// tess colors are 16 bit here, RB_AddQuadStamp wants normalized floats
+		color[0] = tess.color[i][0] / 65535.0f;
+		color[1] = tess.color[i][1] / 65535.0f;
+		color[2] = tess.color[i][2] / 65535.0f;
+		color[3] = tess.color[i][3] / 65535.0f;
+
+		RB_AddQuadStamp( mid, left, up, color );
+	}
+}
+
+
 void RB_DeformTessGeometry( void ) {
 	int		i;
 	deformStage_t	*ds;
@@ -590,6 +790,19 @@ void RB_DeformTessGeometry( void ) {
 		case DEFORM_AUTOSPRITE2:
 			Autosprite2Deform();
 			break;
+		//
+		// OPENMOHAA-specific stuff
+		//=========================
+		case DEFORM_LIGHTGLOW:
+			LightGlowDeform();
+			break;
+		case DEFORM_FLAP_S:
+			RB_CalcFlapVertexes( ds, USE_S_COORDS );
+			break;
+		case DEFORM_FLAP_T:
+			RB_CalcFlapVertexes( ds, USE_T_COORDS );
+			break;
+		//=========================
 		case DEFORM_TEXT0:
 		case DEFORM_TEXT1:
 		case DEFORM_TEXT2:
