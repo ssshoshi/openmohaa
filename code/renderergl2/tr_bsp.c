@@ -2955,6 +2955,83 @@ static	void R_LoadNodesAndLeafsOld(lump_t* nodeLump, lump_t* leafLump) {
 R_UnpackTerraPatch
 ================
 */
+/*
+================
+R_BuildTerraPatchNormals
+
+A terrain patch is a 9x9 heightfield covering 512x512 units, so the samples are
+64 units apart and the stored height is scaled by two. Central differences over
+that give a normal per sample; the edges fall back to a one sided difference
+rather than reaching into the neighbouring patch.
+
+The texture axes are taken from the patch's own corner texture coordinates
+rather than assumed, so patches whose UVs are rotated or mirrored still get a
+tangent pointing the right way.
+================
+*/
+static void R_BuildTerraPatchNormals(cTerraPatchUnpacked_t *pUnpacked)
+{
+    static const float TERRAIN_GRID_STEP   = 512.0f / 8.0f;
+    static const float TERRAIN_HEIGHT_UNIT = 2.0f;
+    static const float TERRAIN_PATCH_SIZE  = 512.0f;
+
+    int   row, col;
+    float dsdx, dsdy, dtdx, dtdy;
+
+    // texCoord[0][0] is the corner at (x0, y0), [1][0] is +X from it and
+    // [0][1] is +Y, so these give the texture axes across the patch.
+    dsdx = (pUnpacked->texCoord[1][0][0] - pUnpacked->texCoord[0][0][0]) / TERRAIN_PATCH_SIZE;
+    dtdx = (pUnpacked->texCoord[1][0][1] - pUnpacked->texCoord[0][0][1]) / TERRAIN_PATCH_SIZE;
+    dsdy = (pUnpacked->texCoord[0][1][0] - pUnpacked->texCoord[0][0][0]) / TERRAIN_PATCH_SIZE;
+    dtdy = (pUnpacked->texCoord[0][1][1] - pUnpacked->texCoord[0][0][1]) / TERRAIN_PATCH_SIZE;
+
+    for (row = 0; row < 9; row++) {
+        for (col = 0; col < 9; col++) {
+            int    i = row * 9 + col;
+            int    xPrev = (col > 0) ? col - 1 : col;
+            int    xNext = (col < 8) ? col + 1 : col;
+            int    yPrev = (row > 0) ? row - 1 : row;
+            int    yNext = (row < 8) ? row + 1 : row;
+            float  dzdx, dzdy;
+            vec3_t normal;
+            vec4_t tangent;
+
+            dzdx = (float)(pUnpacked->heightmap[row * 9 + xNext] - pUnpacked->heightmap[row * 9 + xPrev])
+                 * TERRAIN_HEIGHT_UNIT / ((xNext - xPrev) * TERRAIN_GRID_STEP);
+            dzdy = (float)(pUnpacked->heightmap[yNext * 9 + col] - pUnpacked->heightmap[yPrev * 9 + col])
+                 * TERRAIN_HEIGHT_UNIT / ((yNext - yPrev) * TERRAIN_GRID_STEP);
+
+            VectorSet(normal, -dzdx, -dzdy, 1.0f);
+            VectorNormalize(normal);
+            R_VaoPackNormal(pUnpacked->normals[i], normal);
+
+            {
+                // The surface directions along the two texture axes, then the
+                // standard Gram-Schmidt tangent from them.
+                vec3_t sdir, tdir, bitangent;
+                float  det = dsdx * dtdy - dsdy * dtdx;
+                float  r   = (det != 0.0f) ? 1.0f / det : 0.0f;
+
+                VectorSet(sdir,  dtdy * r, -dtdx * r, 0.0f);
+                VectorSet(tdir, -dsdy * r,  dsdx * r, 0.0f);
+
+                sdir[2] = dzdx * sdir[0] + dzdy * sdir[1];
+                tdir[2] = dzdx * tdir[0] + dzdy * tdir[1];
+
+                if (VectorLength(sdir) < 0.0001f) {
+                    // degenerate UVs, fall back to the world X direction
+                    VectorSet(sdir, 1.0f, 0.0f, dzdx);
+                    VectorSet(tdir, 0.0f, 1.0f, dzdy);
+                }
+
+                // w carries the handedness the shader needs to rebuild the bitangent
+                tangent[3] = R_CalcTangentSpace(tangent, bitangent, normal, sdir, tdir);
+                R_VaoPackTangent(pUnpacked->tangents[i], tangent);
+            }
+        }
+    }
+}
+
 void R_UnpackTerraPatch(cTerraPatch_t* pPacked, cTerraPatchUnpacked_t* pUnpacked) {
     int i, j;
 
@@ -3020,6 +3097,8 @@ void R_UnpackTerraPatch(cTerraPatch_t* pPacked, cTerraPatchUnpacked_t* pUnpacked
 
     pUnpacked->frameCount = 0;
     pUnpacked->zmax += pUnpacked->zmax;
+
+    R_BuildTerraPatchNormals(pUnpacked);
 }
 
 /*

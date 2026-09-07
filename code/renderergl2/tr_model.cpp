@@ -1352,6 +1352,10 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     //	}
     //}
     //tess.numVertexes += sf->numVerts;
+
+    if (tess.shader->vertexAttribs & ATTR_TANGENT) {
+        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, indexes);
+    }
 }
 
 /*
@@ -1514,6 +1518,10 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
             tess.color[baseVertex + i][2] = 0xffff;
             tess.color[baseVertex + i][3] = 0xffff;
         }
+    }
+
+    if (tess.shader->vertexAttribs & ATTR_TANGENT) {
+        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
     }
 }
 

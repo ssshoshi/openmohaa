@@ -1429,6 +1429,10 @@ typedef struct cTerraPatchUnpacked_s {
     struct cTerraPatchUnpacked_s* pNextActive;
     varnodeUnpacked_t varTree[2][63];
     unsigned char heightmap[81];
+    // One packed normal per heightmap sample, worked out once at load. The
+    // tessellation is dynamic, but the heightfield it samples is not.
+    int16_t normals[81][4];
+    int16_t tangents[81][4];
     byte flags;
     byte byDirty;
 } cTerraPatchUnpacked_t;
@@ -2561,6 +2565,7 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 void R_CalcTexDirs(vec3_t sdir, vec3_t tdir, const vec3_t v1, const vec3_t v2,
 				   const vec3_t v3, const vec2_t w1, const vec2_t w2, const vec2_t w3);
 vec_t R_CalcTangentSpace(vec3_t tangent, vec3_t bitangent, const vec3_t normal, const vec3_t sdir, const vec3_t tdir);
+void RB_CalcTangentsForRange( int baseVertex, int numVerts, int baseIndex, int numIndexes );
 qboolean R_CalcTangentVectors(srfVert_t * dv[3]);
 
 #define	CULL_IN		0		// completely unclipped

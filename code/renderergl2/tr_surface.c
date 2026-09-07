@@ -1349,10 +1349,85 @@ void RB_SurfaceMarkFragment(srfMarkFragment_t* p) {
 	}
 }
 
+/*
+=============
+RB_CalcTangentsForRange
+
+Derives a tangent frame for a run of vertices already written into tess, by
+accumulating the texture direction of every triangle that uses each vertex and
+then orthonormalizing against the normal that is already there.
+
+The TIKI vertex format carries no bind pose tangent, so for skinned and static
+models this is the practical way to get one without changing the model format.
+Only called when the bound shader actually consumes tangents.
+=============
+*/
+void RB_CalcTangentsForRange( int baseVertex, int numVerts, int baseIndex, int numIndexes )
+{
+	static vec3_t sdirs[SHADER_MAX_VERTEXES];
+	static vec3_t tdirs[SHADER_MAX_VERTEXES];
+	int           i;
+
+	if ( numVerts <= 0 || numIndexes < 3 ) {
+		return;
+	}
+
+	if ( baseVertex + numVerts > SHADER_MAX_VERTEXES ) {
+		return;
+	}
+
+	for ( i = 0; i < numVerts; i++ ) {
+		VectorClear( sdirs[i] );
+		VectorClear( tdirs[i] );
+	}
+
+	for ( i = 0; i + 2 < numIndexes; i += 3 ) {
+		glIndex_t i0 = tess.indexes[baseIndex + i + 0];
+		glIndex_t i1 = tess.indexes[baseIndex + i + 1];
+		glIndex_t i2 = tess.indexes[baseIndex + i + 2];
+		int       v0 = (int)i0 - baseVertex;
+		int       v1 = (int)i1 - baseVertex;
+		int       v2 = (int)i2 - baseVertex;
+		vec3_t    sdir, tdir;
+
+		if ( v0 < 0 || v1 < 0 || v2 < 0 || v0 >= numVerts || v1 >= numVerts || v2 >= numVerts ) {
+			continue;
+		}
+
+		R_CalcTexDirs( sdir, tdir,
+			tess.xyz[i0], tess.xyz[i1], tess.xyz[i2],
+			tess.texCoords[i0], tess.texCoords[i1], tess.texCoords[i2] );
+
+		VectorAdd( sdirs[v0], sdir, sdirs[v0] );
+		VectorAdd( sdirs[v1], sdir, sdirs[v1] );
+		VectorAdd( sdirs[v2], sdir, sdirs[v2] );
+
+		VectorAdd( tdirs[v0], tdir, tdirs[v0] );
+		VectorAdd( tdirs[v1], tdir, tdirs[v1] );
+		VectorAdd( tdirs[v2], tdir, tdirs[v2] );
+	}
+
+	for ( i = 0; i < numVerts; i++ ) {
+		vec3_t normal, tangent, bitangent;
+		vec4_t packMe;
+
+		R_VaoUnpackNormal( normal, tess.normal[baseVertex + i] );
+
+		packMe[3] = R_CalcTangentSpace( tangent, bitangent, normal, sdirs[i], tdirs[i] );
+		VectorCopy( tangent, packMe );
+
+		R_VaoPackTangent( tess.tangent[baseVertex + i], packMe );
+	}
+}
+
+
 void RB_DrawTerrainTris(srfTerrain_t* p) {
 	int i;
 	terraInt numv;
 	int dlightBits;
+	// drawinfo is the first member of the patch, so the surface doubles as a
+	// handle to it. The per-sample normals live there.
+	const cTerraPatchUnpacked_t *patch = (const cTerraPatchUnpacked_t *)p;
 
 	RB_CHECKOVERFLOW(p->nVerts, p->nTris * 3);
 
@@ -1379,11 +1454,22 @@ void RB_DrawTerrainTris(srfTerrain_t* p) {
                 tess.lightCoords[tess.numVertexes][0] = g_pVert[i].xyz[0] * lmScale + p->lmapX;
                 tess.lightCoords[tess.numVertexes][1] = g_pVert[i].xyz[1] * lmScale + p->lmapY;
             }
-            if (tess.shader->vertexAttribs & ATTR_NORMAL)
+            if (tess.shader->vertexAttribs & (ATTR_NORMAL | ATTR_TANGENT))
             {
-                tess.normal[tess.numVertexes][0] = 0;
-                tess.normal[tess.numVertexes][1] = 0;
-                tess.normal[tess.numVertexes][2] = 32767;
+                // pHgt points at this vertex's heightmap sample, which is also
+                // the index of its precomputed tangent frame
+                int iHgt = (int)(g_pVert[i].pHgt - patch->heightmap);
+
+                if (iHgt < 0 || iHgt >= (int)ARRAY_LEN(patch->normals)) {
+                    iHgt = 0;
+                }
+
+                if (tess.shader->vertexAttribs & ATTR_NORMAL) {
+                    VectorCopy4(patch->normals[iHgt], tess.normal[tess.numVertexes]);
+                }
+                if (tess.shader->vertexAttribs & ATTR_TANGENT) {
+                    VectorCopy4(patch->tangents[iHgt], tess.tangent[tess.numVertexes]);
+                }
             }
             if (tess.shader->vertexAttribs & ATTR_COLOR)
             {
@@ -1417,11 +1503,22 @@ void RB_DrawTerrainTris(srfTerrain_t* p) {
                 tess.lightCoords[tess.numVertexes][1] = g_pVert[i].texCoords[1][1];
             }
 			//tess.vertexDlightBits[tess.numVertexes] = dlightBits;
-            if (tess.shader->vertexAttribs & ATTR_NORMAL)
+            if (tess.shader->vertexAttribs & (ATTR_NORMAL | ATTR_TANGENT))
             {
-                tess.normal[tess.numVertexes][0] = 0;
-                tess.normal[tess.numVertexes][1] = 0;
-                tess.normal[tess.numVertexes][2] = 32767;
+                // pHgt points at this vertex's heightmap sample, which is also
+                // the index of its precomputed tangent frame
+                int iHgt = (int)(g_pVert[i].pHgt - patch->heightmap);
+
+                if (iHgt < 0 || iHgt >= (int)ARRAY_LEN(patch->normals)) {
+                    iHgt = 0;
+                }
+
+                if (tess.shader->vertexAttribs & ATTR_NORMAL) {
+                    VectorCopy4(patch->normals[iHgt], tess.normal[tess.numVertexes]);
+                }
+                if (tess.shader->vertexAttribs & ATTR_TANGENT) {
+                    VectorCopy4(patch->tangents[iHgt], tess.tangent[tess.numVertexes]);
+                }
             }
             if (tess.shader->vertexAttribs & ATTR_COLOR)
             {
