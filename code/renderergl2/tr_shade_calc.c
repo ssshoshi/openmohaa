@@ -50,17 +50,78 @@ static float *TableForFunc( genFunc_t func )
 }
 
 /*
+** RB_ResolveWaveForm
+**
+** MOH:AA lets a shader leave any wave/deform parameter set to the sentinel
+** 1234567, meaning "supply this at draw time". For a regular entity the value
+** comes from that entity's e.surfaces[0..3]; for everything else (world
+** surfaces and static models, i.e. trees and brush) it comes from the
+** r_static_shaderdata* cvars, which the client updates every frame from the
+** global wind state. World and static-model surfaces additionally scale every
+** parameter by the matching r_static_shadermultiplier* cvar.
+**
+** This mirrors the GL1 renderer's EvalWaveForm() exactly, including its reuse
+** of r_static_shaderdata1 (rather than 3) for the frequency term.
+*/
+void RB_ResolveWaveForm( const waveForm_t *in, waveForm_t *out )
+{
+	out->func = in->func;
+
+	if ( in->base != 1234567.0f ) {
+		out->base = in->base;
+	} else if ( backEnd.currentEntity ) {
+		out->base = (float)backEnd.currentEntity->e.surfaces[0] / 16.0f - 8.0f;
+	} else {
+		out->base = r_static_shaderdata0->value;
+	}
+
+	if ( in->amplitude != 1234567.0f ) {
+		out->amplitude = in->amplitude;
+	} else if ( backEnd.currentEntity ) {
+		out->amplitude = (float)backEnd.currentEntity->e.surfaces[1] / 16.0f;
+	} else {
+		out->amplitude = r_static_shaderdata1->value;
+	}
+
+	if ( in->phase != 1234567.0f ) {
+		out->phase = in->phase;
+	} else if ( backEnd.currentEntity ) {
+		out->phase = (float)backEnd.currentEntity->e.surfaces[2] / 16.0f - 8.0f;
+	} else {
+		out->phase = r_static_shaderdata2->value;
+	}
+
+	if ( in->frequency != 1234567.0f ) {
+		out->frequency = in->frequency;
+	} else if ( backEnd.currentEntity ) {
+		out->frequency = (float)backEnd.currentEntity->e.surfaces[3] / 16.0f;
+	} else {
+		out->frequency = r_static_shaderdata1->value;
+	}
+
+	if ( !backEnd.currentEntity ) {
+		out->base      *= r_static_shadermultiplier0->value;
+		out->amplitude *= r_static_shadermultiplier1->value;
+		out->phase     *= r_static_shadermultiplier2->value;
+		out->frequency *= r_static_shadermultiplier3->value;
+	}
+}
+
+/*
 ** EvalWaveForm
 **
 ** Evaluates a given waveForm_t, referencing backEnd.refdef.time directly
 */
-static float EvalWaveForm( const waveForm_t *wf ) 
+static float EvalWaveForm( const waveForm_t *wf )
 {
 	float	*table;
+	waveForm_t	rwf;
 
-	table = TableForFunc( wf->func );
+	RB_ResolveWaveForm( wf, &rwf );
 
-	return WAVEVALUE( table, wf->base, wf->amplitude, wf->phase, wf->frequency );
+	table = TableForFunc( rwf.func );
+
+	return WAVEVALUE( table, rwf.base, rwf.amplitude, rwf.phase, rwf.frequency );
 }
 
 static float EvalWaveFormClamped( const waveForm_t *wf )
@@ -115,15 +176,20 @@ void RB_CalcDeformVertexes( deformStage_t *ds )
 	float	*xyz = ( float * ) tess.xyz;
 	int16_t	*normal = tess.normal[0];
 	float	*table;
+	waveForm_t	wf;
 
-	if ( ds->deformationWave.frequency == 0 )
+	// Fill in any wind-driven parameters the shader left as sentinels, so trees
+	// and brush sway here the same way they do in the GL1 renderer.
+	RB_ResolveWaveForm( &ds->deformationWave, &wf );
+
+	if ( wf.frequency == 0 )
 	{
-		scale = EvalWaveForm( &ds->deformationWave );
+		scale = WAVEVALUE( TableForFunc( wf.func ), wf.base, wf.amplitude, wf.phase, wf.frequency );
 
 		for ( i = 0; i < tess.numVertexes; i++, xyz += 4, normal += 4 )
 		{
 			R_VaoUnpackNormal(offset, normal);
-			
+
 			xyz[0] += offset[0] * scale;
 			xyz[1] += offset[1] * scale;
 			xyz[2] += offset[2] * scale;
@@ -131,16 +197,16 @@ void RB_CalcDeformVertexes( deformStage_t *ds )
 	}
 	else
 	{
-		table = TableForFunc( ds->deformationWave.func );
+		table = TableForFunc( wf.func );
 
 		for ( i = 0; i < tess.numVertexes; i++, xyz += 4, normal += 4 )
 		{
 			float off = ( xyz[0] + xyz[1] + xyz[2] ) * ds->deformationSpread;
 
-			scale = WAVEVALUE( table, ds->deformationWave.base, 
-				ds->deformationWave.amplitude,
-				ds->deformationWave.phase + off,
-				ds->deformationWave.frequency );
+			scale = WAVEVALUE( table, wf.base,
+				wf.amplitude,
+				wf.phase + off,
+				wf.frequency );
 
 			R_VaoUnpackNormal(offset, normal);
 

@@ -1490,7 +1490,10 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
 
     for (j = 0; j < render_count; j++) {
         Vector4Copy(surf->pStaticXyz[j], tess.xyz[baseVertex + j]);
-        Vector4Copy(surf->pStaticNormal[j], tess.normal[baseVertex + j]);
+        // tess.normal is packed int16 (32767 = 1.0), not float -- a plain copy of
+        // the float model normal truncates every component to 0/+-1, which zeroes
+        // out any normal-driven CPU deform (flap/wave) so foliage never sways.
+        R_VaoPackNormal(tess.normal[baseVertex + j], surf->pStaticNormal[j]);
         tess.texCoords[baseVertex + j][0]   = surf->pStaticTexCoords[j][0][0];
         tess.texCoords[baseVertex + j][1]   = surf->pStaticTexCoords[j][0][1];
         tess.lightCoords[baseVertex + j][0] = surf->pStaticTexCoords[j][1][0];

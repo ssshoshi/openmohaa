@@ -462,14 +462,23 @@ static void ComputeDeformValues(int *deformGen, vec5_t deformParams)
 		switch (ds->deformation)
 		{
 			case DEFORM_WAVE:
-				*deformGen = ds->deformationWave.func;
+			{
+				// Resolve MOH:AA's wind sentinels on the CPU and hand the GPU
+				// concrete numbers; the vertex shader has no access to the
+				// entity state or r_static_shaderdata* cvars they come from.
+				waveForm_t rwf;
 
-				deformParams[0] = ds->deformationWave.base;
-				deformParams[1] = ds->deformationWave.amplitude;
-				deformParams[2] = ds->deformationWave.phase;
-				deformParams[3] = ds->deformationWave.frequency;
+				RB_ResolveWaveForm( &ds->deformationWave, &rwf );
+
+				*deformGen = rwf.func;
+
+				deformParams[0] = rwf.base;
+				deformParams[1] = rwf.amplitude;
+				deformParams[2] = rwf.phase;
+				deformParams[3] = rwf.frequency;
 				deformParams[4] = ds->deformationSpread;
 				break;
+			}
 
 			case DEFORM_BULGE:
 				*deformGen = DGEN_BULGE;

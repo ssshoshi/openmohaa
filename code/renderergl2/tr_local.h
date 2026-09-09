@@ -3329,6 +3329,12 @@ void	R_TransformClipToWindow( const vec4_t clip, const viewParms_t *view, vec4_t
 
 void	RB_DeformTessGeometry( void );
 
+// Resolves MOH:AA's 1234567 "fill this in at draw time" sentinels in a wave,
+// pulling the missing parameters from the current entity or, for world and
+// static-model surfaces, from the r_static_shaderdata*/r_static_shadermultiplier*
+// cvars. Mirrors the GL1 renderer's EvalWaveForm().
+void	RB_ResolveWaveForm( const waveForm_t *in, waveForm_t *out );
+
 void	RB_CalcFogTexCoords( float *dstTexCoords );
 
 void	RB_CalcScaleTexMatrix( const float scale[2], float *matrix );
