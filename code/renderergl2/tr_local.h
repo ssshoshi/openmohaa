@@ -2411,6 +2411,7 @@ extern cvar_t	*r_drawentitypoly;
 extern cvar_t	*r_drawstaticmodels;
 extern cvar_t	*r_drawstaticmodelpoly;
 extern cvar_t	*r_drawstaticdecals;
+extern cvar_t	*r_drawStaticModelSprites;
 extern cvar_t	*r_drawterrain;
 extern cvar_t	*r_drawsprites;
 extern cvar_t	*r_drawspherelights;
