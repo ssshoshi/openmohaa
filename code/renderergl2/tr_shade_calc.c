@@ -501,13 +501,18 @@ Autosprite2Deform
 Autosprite2 will pivot a rectangular quad along the center of its long axis
 =====================
 */
+// MOH:AA's edge ordering, not ioq3's. Autosprite2Deform (ported from the GL1
+// renderer) matches each short edge against a long edge by shared vertex, and
+// that comparison only lands on the right edges with this ordering. ioq3's
+// {0,1}{0,2}{0,3}{1,2}{1,3}{2,3} makes it pick the diagonals as the long edges
+// and mis-orient the billboard.
 int edgeVerts[6][2] = {
 	{ 0, 1 },
-	{ 0, 2 },
 	{ 0, 3 },
-	{ 1, 2 },
+	{ 0, 2 },
 	{ 1, 3 },
-	{ 2, 3 }
+	{ 1, 2 },
+	{ 3, 2 }
 };
 
 static void Autosprite2Deform( void ) {
@@ -531,10 +536,11 @@ static void Autosprite2Deform( void ) {
 
 	// MOH:AA's Autosprite2Deform, not ioq3's. The two differ in how each short
 	// edge is projected: ioq3 reads triangle winding from tess.indexes, MOH:AA
-	// compares the short edges against the long edges. On MOH:AA's tree-sprite
-	// meshes the ioq3 path builds a skewed quad whose corners span a large depth
-	// range, so a per-vertex distance fade (oneMinusDistFade) tears the billboard
-	// in half at its alphaFunc cutoff instead of dissolving it uniformly.
+	// compares the short edges against the long edges (and reorders edgeVerts to
+	// match). On MOH:AA's tree-sprite meshes the ioq3 path builds a skewed quad
+	// whose corners span a large depth range, so a per-vertex distance fade
+	// (oneMinusDistFade) tears the billboard in half at its alphaFunc cutoff
+	// instead of dissolving it uniformly.
 	for ( i = 0, indexes = 0 ; i < tess.numVertexes ; i+=4, indexes+=6 ) {
 		float shortLengths[2];
 		int shortNums[2];
