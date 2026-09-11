@@ -2320,7 +2320,15 @@ infoParm_t	infoParms[] = {
 	{"pointlight",	0,	SURF_POINTLIGHT, 0 },	// sample lighting at vertexes
 	{"nolightmap",	0,	SURF_NOLIGHTMAP,0 },	// don't generate a lightmap
 	{"nodlight",	0,	SURF_NODLIGHT, 0 },		// don't ever add dynamic lights
-	{"dust",		0,	SURF_DUST, 0}			// leave a dust trail when walking on this surface
+	{"dust",		0,	SURF_DUST, 0},			// leave a dust trail when walking on this surface
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// fence is what makes ParseShader force these single sided, see there
+	{"fence",		1,	0,	CONTENTS_FENCE },
+	{"foliage",		0,	SURF_FOLIAGE,	0 },
+	//=========================
 };
 
 
@@ -2694,6 +2702,18 @@ static qboolean ParseShader( char **text )
 	if ( s == 0 && !shader.isSky && !(shader.contentFlags & CONTENTS_FOG ) ) {
 		return qfalse;
 	}
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// MOH:AA's compiler builds fence brushes (foliage, grilles) as back-to-back
+	// coplanar faces with their own lightmaps, and the far side's is often near
+	// black. Drawn two sided, that dark face wins the depth test against the lit
+	// one, so like GL1, fences only ever draw the side facing the viewer.
+	if ( ( shader.contentFlags & CONTENTS_FENCE ) && shader.cullType == CT_TWO_SIDED ) {
+		shader.cullType = CT_FRONT_SIDED;
+	}
+	//=========================
 
 	shader.explicitlyDefined = qtrue;
 
