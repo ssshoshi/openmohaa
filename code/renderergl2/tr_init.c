@@ -250,7 +250,6 @@ cvar_t *r_drawentitypoly;
 cvar_t *r_drawstaticmodels;
 cvar_t *r_drawstaticmodelpoly;
 cvar_t *r_drawstaticdecals;
-cvar_t *r_drawStaticModelSprites;
 cvar_t *r_drawterrain;
 cvar_t *r_drawsprites;
 cvar_t *r_drawspherelights;
@@ -1581,11 +1580,6 @@ void R_Register( void )
     r_drawstaticmodels = ri.Cvar_Get("r_drawstaticmodels", "1", CVAR_CHEAT);
     r_drawstaticmodelpoly = ri.Cvar_Get("r_drawstaticmodelpoly", "1", CVAR_CHEAT);
     r_drawstaticdecals = ri.Cvar_Get("r_drawstaticdecals", "0", 0);
-    // MOH:AA tree/bush LOD impostors (deformVertexes autoSprite2 on static
-    // models). They render as an opaque slab here where GL1 shows nothing, and
-    // the detailed foliage renders fine at all ranges, so default off.
-    // 1 = draw them, 2 = draw + label each with its sprite id.
-    r_drawStaticModelSprites = ri.Cvar_Get("r_drawStaticModelSprites", "0", CVAR_ARCHIVE);
     r_drawterrain = ri.Cvar_Get("r_drawterrain", "1", CVAR_CHEAT);
     r_drawsprites = ri.Cvar_Get("r_drawsprites", "1", CVAR_CHEAT);
     r_drawspherelights = ri.Cvar_Get("r_drawspherelights", "1", CVAR_CHEAT);

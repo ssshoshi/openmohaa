@@ -1940,38 +1940,11 @@ void RB_StageIteratorGeneric( void )
 	//
 	// log this call
 	//
-	if ( r_logFile->integer )
+	if ( r_logFile->integer ) 
 	{
 		// don't just call LogComment, or we will get
 		// a call to va() every frame!
 		GLimp_LogComment( va("--- RB_StageIteratorGeneric( %s ) ---\n", tess.shader->name) );
-	}
-
-	// OPENMOHAA: MOH:AA's tree/bush LOD impostors (deformVertexes autoSprite2, or
-	// a "...sprite" static-model shader) draw as an opaque billboard slab in this
-	// renderer where the GL1 renderer shows nothing. The detailed foliage meshes
-	// render correctly at all ranges here, so the impostors add nothing --
-	// r_drawStaticModelSprites 0 skips them (matching GL1), 1 draws them, 2 also
-	// logs each one's shader name once.
-	if ( backEnd.currentStaticModel && tess.shader
-		&& ( strstr( tess.shader->name, "sprite" )
-			|| ( tess.shader->numDeforms
-				&& tess.shader->deforms[0].deformation == DEFORM_AUTOSPRITE2 ) )
-		&& !( backEnd.viewParms.flags & ( VPF_SHADOWMAP | VPF_DEPTHSHADOW ) ) )
-	{
-		if ( r_drawStaticModelSprites->integer >= 2 )
-		{
-			static const shader_t *seen[64];
-			static int nseen = 0;
-			int s, dup = 0;
-			for ( s = 0; s < nseen; s++ ) if ( seen[s] == tess.shader ) { dup = 1; break; }
-			if ( !dup && nseen < 64 ) {
-				seen[nseen++] = tess.shader;
-				ri.Printf( PRINT_ALL, "TREESPRITE: %s\n", tess.shader->name );
-			}
-		}
-		if ( r_drawStaticModelSprites->integer == 0 )
-			return;
 	}
 
 	//
