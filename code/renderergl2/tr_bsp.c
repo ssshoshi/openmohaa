@@ -737,6 +737,7 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, float *hdrVertColors, 
 	glIndex_t  *tri;
 	int			numVerts, numIndexes, badTriangles;
 	int realLightmapNum;
+	static surfaceType_t	skipData = SF_SKIP;
 
 	realLightmapNum = LittleLong( ds->lightmapNum );
 
@@ -748,6 +749,22 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, float *hdrVertColors, 
 	if ( r_singleShader->integer && !surf->shader->isSky ) {
 		surf->shader = tr.defaultShader;
 	}
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// Unlike q3map, MOH:AA's compiler keeps planar faces for nodraw shaders,
+	// e.g. the alphashadow brushes that only exist to bake tree shadows into
+	// the lightmaps. The GL1 renderer skips them here, so must this one or they
+	// draw as opaque alpha-tested blobs. The compiled flags are checked too
+	// because a nodraw shader with no stages falls back to the default shader
+	// here, which doesn't carry the flag.
+	if ( ( surf->shader->surfaceFlags
+		| s_worldData.shaders[ LittleLong( ds->shaderNum ) ].surfaceFlags ) & SURF_NODRAW ) {
+		surf->data = &skipData;
+		return;
+	}
+	//=========================
 
 	numVerts = LittleLong(ds->numVerts);
 	if (numVerts > MAX_FACE_POINTS) {
