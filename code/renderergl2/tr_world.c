@@ -989,6 +989,12 @@ int R_DlightTerrain(cTerraPatchUnpacked_t* surf, int dlightBits)
 		dlightMap = 1;
 	}
 
+	// Never take the patched lightmap route: lmapX/lmapY are only ever filled
+	// in by the GL1 dynamic lightmap allocator, which does not exist here, so
+	// leaving this set would send the draw down a path reading uninitialised
+	// coordinates.
+	surf->drawinfo.dlightMap[0] = 0;
+
     return dlightMap;
 }
 

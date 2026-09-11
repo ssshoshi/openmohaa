@@ -775,9 +775,13 @@ static void R_PreTessellateTerrain()
         const float t10 = patch->texCoord[1][0][1] - tMin;
         const float t11 = patch->texCoord[1][1][1] - tMin;
 
-        const float lmapSize = (float)(patch->drawinfo.lmapSize - 1) / TERRAIN_LIGHTMAP_SIZE;
-        const float ls       = patch->s + lmapSize;
-        const float lt       = patch->t + lmapSize;
+        // patch->s/t have already been packed into the merged lightmap atlas,
+        // so the span across the patch has to be scaled down to match.
+        const float lmapSize  = (float)(patch->drawinfo.lmapSize - 1) / TERRAIN_LIGHTMAP_SIZE;
+        const float lmapSizeS = (tr.fatLightmapCols > 0) ? lmapSize / tr.fatLightmapCols : lmapSize;
+        const float lmapSizeT = (tr.fatLightmapRows > 0) ? lmapSize / tr.fatLightmapRows : lmapSize;
+        const float ls        = patch->s + lmapSizeS;
+        const float lt        = patch->t + lmapSizeT;
 
         terraInt iTri0 = R_AllocateTri(patch, qfalse);
         terraInt iTri1 = R_AllocateTri(patch, qfalse);

@@ -3063,9 +3063,17 @@ void R_UnpackTerraPatch(cTerraPatch_t* pPacked, cTerraPatchUnpacked_t* pUnpacked
 
     pUnpacked->drawinfo.lmapStep = (float)(64 / pPacked->lmapScale);
     pUnpacked->drawinfo.lmapSize = pPacked->lmapScale * 8 + 1;
-    pUnpacked->s = ((float)pPacked->s + 0.5) / LIGHTMAP_SIZE;
-    pUnpacked->t = ((float)pPacked->t + 0.5) / LIGHTMAP_SIZE;
+    // Terrain carries its own lightmap coordinates rather than going through
+    // the surface loader, so the fat lightmap packing has to be applied here
+    // too. Without it a patch samples its own 0-1 coordinates out of the
+    // merged atlas and lands on the wrong page, which renders it black.
+    pUnpacked->s = FatPackU(((float)pPacked->s + 0.5) / LIGHTMAP_SIZE, pPacked->iLightMap);
+    pUnpacked->t = FatPackV(((float)pPacked->t + 0.5) / LIGHTMAP_SIZE, pPacked->iLightMap);
     pUnpacked->drawinfo.lmData = NULL;
+    pUnpacked->drawinfo.lmapX = 0.0f;
+    pUnpacked->drawinfo.lmapY = 0.0f;
+    pUnpacked->drawinfo.dlightMap[0] = 0;
+    pUnpacked->drawinfo.dlightMap[1] = 0;
 
     for (i = 0; i < 2; i++) {
         for (j = 0; j < 2; j++) {
@@ -3077,7 +3085,7 @@ void R_UnpackTerraPatch(cTerraPatch_t* pPacked, cTerraPatchUnpacked_t* pUnpacked
     pUnpacked->x0 = ((int)pPacked->x << 6);
     pUnpacked->y0 = ((int)pPacked->y << 6);
     pUnpacked->z0 = pPacked->iBaseHeight;
-    pUnpacked->shader = ShaderForShaderNum(pPacked->iShader, pPacked->iLightMap);
+    pUnpacked->shader = ShaderForShaderNum(pPacked->iShader, FatLightmap(pPacked->iLightMap));
     pUnpacked->iNorth = pPacked->iNorth;
     pUnpacked->iEast = pPacked->iEast;
     pUnpacked->iSouth = pPacked->iSouth;
