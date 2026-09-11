@@ -2904,6 +2904,17 @@ static void ComputeVertexAttribs(void)
 
 			case AGEN_VERTEX:
 			case AGEN_ONE_MINUS_VERTEX:
+			//
+			// OPENMOHAA-specific stuff
+			//=========================
+			// The distance and height fades are computed per vertex on the CPU
+			// and handed over in the vertex alpha.
+			case AGEN_DIST_FADE:
+			case AGEN_ONE_MINUS_DIST_FADE:
+			case AGEN_TIKI_DIST_FADE:
+			case AGEN_ONE_MINUS_TIKI_DIST_FADE:
+			case AGEN_HEIGHT_FADE:
+			//=========================
 				shader.vertexAttribs |= ATTR_COLOR;
 				break;
 

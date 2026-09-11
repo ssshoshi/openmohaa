@@ -868,6 +868,17 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			baseColor[3] = 1.0f - tr.refdef.sky_alpha;
 			vertColor[3] = 0.0f;
 			break;
+		// The fades vary per vertex and were written into the vertex alpha by
+		// RB_ComputeVertexAlphaGen before the batch was uploaded, so here they
+		// just need passing through.
+		case AGEN_DIST_FADE:
+		case AGEN_ONE_MINUS_DIST_FADE:
+		case AGEN_TIKI_DIST_FADE:
+		case AGEN_ONE_MINUS_TIKI_DIST_FADE:
+		case AGEN_HEIGHT_FADE:
+			baseColor[3] = 0.0f;
+			vertColor[3] = 1.0f;
+			break;
 		default:
 			// The distance and height fades, and the dot and texture coordinate
 			// driven alphas, are all per vertex and still need doing.
@@ -1786,6 +1797,148 @@ static void RB_RenderShadowmap( shaderCommands_t *input )
 ** RB_StageIteratorGeneric
 */
 /*
+** RB_StageUsesVertexAlphaGen
+**
+** The distance and height fades vary per vertex, so they cannot be folded into
+** the base/vertex colour pair the way the constant alphaGens are.
+*/
+static qboolean RB_StageUsesVertexAlphaGen( const shaderStage_t *pStage )
+{
+	switch ( pStage->alphaGen )
+	{
+		case AGEN_DIST_FADE:
+		case AGEN_ONE_MINUS_DIST_FADE:
+		case AGEN_TIKI_DIST_FADE:
+		case AGEN_ONE_MINUS_TIKI_DIST_FADE:
+		case AGEN_HEIGHT_FADE:
+			return qtrue;
+		default:
+			return qfalse;
+	}
+}
+
+/*
+** RB_ComputeVertexAlphaGen
+**
+** MOH:AA fades vegetation and detail props out with distance rather than
+** popping them, and fades some surfaces by height. Both are per vertex, and
+** like the entity lighting they have to be written into the vertex colours
+** before the batch is uploaded, so that both the generic and the lightall paths
+** pick them up.
+**
+** The distance is measured from the viewer to the vertex in model space, which
+** is what the GL1 renderer arrives at by transforming the view origin through
+** the model's axes.
+*/
+static void RB_ComputeVertexAlphaGen( void )
+{
+	const shaderStage_t *pStage = NULL;
+	float                distNear, distRange;
+	vec3_t               localViewOrigin;
+	int                  i;
+
+	for ( i = 0; i < MAX_SHADER_STAGES; i++ ) {
+		if ( !tess.xstages[i] ) {
+			continue;
+		}
+		if ( RB_StageUsesVertexAlphaGen( tess.xstages[i] ) ) {
+			pStage = tess.xstages[i];
+			break;
+		}
+	}
+
+	if ( !pStage ) {
+		return;
+	}
+
+	VectorCopy( backEnd.ori.viewOrigin, localViewOrigin );
+
+	distNear  = tess.shader->fDistNear;
+	distRange = tess.shader->fDistRange;
+
+	if ( pStage->alphaGen == AGEN_HEIGHT_FADE )
+	{
+		float alphaMin = pStage->alphaMin;
+		float alphaMax = pStage->alphaMax;
+		float span     = alphaMax - alphaMin;
+
+		if ( span == 0.0f ) {
+			return;
+		}
+
+		for ( i = 0; i < tess.numVertexes; i++ ) {
+			float dist  = fabs( localViewOrigin[2] - tess.xyz[i][2] );
+			float alpha;
+
+			dist  = Q_clamp_float( dist, alphaMin, alphaMax );
+			alpha = 1.0f - ( dist - alphaMin ) / span;
+
+			tess.color[i][3] = (uint16_t)( alpha * 65535.0f );
+		}
+		return;
+	}
+
+	if ( distRange == 0.0f ) {
+		// GL1 divides by the range regardless, so a zero range degenerates to a
+		// hard on/off at fDistNear (e.g. static_tree1_1's "distFade 2304 0").
+		// Match that instead of leaving the surface permanently opaque.
+		for ( i = 0; i < tess.numVertexes; i++ ) {
+			vec3_t org;
+			float  alpha;
+
+			VectorSubtract( tess.xyz[i], localViewOrigin, org );
+			alpha = ( VectorLength( org ) >= distNear ) ? 1.0f : 0.0f;
+			if ( pStage->alphaGen == AGEN_DIST_FADE || pStage->alphaGen == AGEN_TIKI_DIST_FADE ) {
+				alpha = 1.0f - alpha;
+			}
+			tess.color[i][3] = (uint16_t)( alpha * 65535.0f );
+		}
+		return;
+	}
+
+	if ( pStage->alphaGen == AGEN_TIKI_DIST_FADE || pStage->alphaGen == AGEN_ONE_MINUS_TIKI_DIST_FADE )
+	{
+		// These fade the whole model together on its origin rather than per
+		// vertex, so one value covers the batch.
+		vec3_t org;
+		float  frac, alpha;
+
+		if ( backEnd.currentStaticModel ) {
+			VectorSubtract( backEnd.currentStaticModel->origin, backEnd.viewParms.ori.origin, org );
+		} else if ( backEnd.currentEntity ) {
+			VectorSubtract( backEnd.currentEntity->e.origin, backEnd.viewParms.ori.origin, org );
+		} else {
+			// GL1 treats this as a shader authoring error; just leave it alone
+			return;
+		}
+
+		frac  = ( VectorLength( org ) - distNear ) / distRange;
+		frac  = Q_clamp_float( frac, 0.0f, 1.0f );
+		alpha = ( pStage->alphaGen == AGEN_TIKI_DIST_FADE ) ? 1.0f - frac : frac;
+
+		for ( i = 0; i < tess.numVertexes; i++ ) {
+			tess.color[i][3] = (uint16_t)( alpha * 65535.0f );
+		}
+		return;
+	}
+
+	// AGEN_DIST_FADE / AGEN_ONE_MINUS_DIST_FADE, per vertex
+	for ( i = 0; i < tess.numVertexes; i++ ) {
+		vec3_t org;
+		float  frac, alpha;
+
+		VectorSubtract( tess.xyz[i], localViewOrigin, org );
+
+		frac  = ( VectorLength( org ) - distNear ) / distRange;
+		frac  = Q_clamp_float( frac, 0.0f, 1.0f );
+		alpha = ( pStage->alphaGen == AGEN_DIST_FADE ) ? 1.0f - frac : frac;
+
+		tess.color[i][3] = (uint16_t)( alpha * 65535.0f );
+	}
+}
+
+
+/*
 ** RB_ComputeEntityLightColors
 **
 ** MOH:AA evaluates spherical and light grid lighting per vertex on the CPU.
@@ -1929,6 +2082,7 @@ void RB_StageIteratorGeneric( void )
 	if (tess.useInternalVao)
 	{
 		RB_ComputeEntityLightColors();
+		RB_ComputeVertexAlphaGen();
 
 		RB_UpdateTessVao(vertexAttribs);
 	}
