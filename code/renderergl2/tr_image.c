@@ -2878,6 +2878,21 @@ void R_CreateBuiltinImages( void ) {
 	Com_Memset( data, 255, sizeof( data ) );
 	tr.whiteImage = R_CreateImage("*white", (byte *)data, 8, 8, IMGTYPE_COLORALPHA, IMGFLAG_NONE, 0);
 
+	// A flat tangent-space normal, for lightall stages that have no normal map.
+	// Some paths bound tr.whiteImage here, which decodes to xy = (0.5, 0.5) and
+	// z = 0 -- a normal lying in the tangent plane rather than perpendicular to
+	// it. Red and alpha both carry 128 so this reads correctly with or without
+	// SWIZZLE_NORMALMAP.
+	for ( y = 0; y < DEFAULT_SIZE; y++ ) {
+		for ( x = 0; x < DEFAULT_SIZE; x++ ) {
+			data[y][x][0] = 128;
+			data[y][x][1] = 128;
+			data[y][x][2] = 255;
+			data[y][x][3] = 128;
+		}
+	}
+	tr.flatNormalImage = R_CreateImage("*flatNormal", (byte *)data, 8, 8, IMGTYPE_COLORALPHA, IMGFLAG_NOLIGHTSCALE, 0);
+
 	if (r_dlightMode->integer >= 2)
 	{
 		for( x = 0; x < MAX_DLIGHTS; x++)

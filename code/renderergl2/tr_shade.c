@@ -1695,7 +1695,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 						enableTextures[0] = 1.0f;
 					}
 					else if (r_normalMapping->integer)
-						GL_BindToTMU( tr.whiteImage, TB_NORMALMAP );
+						GL_BindToTMU( tr.flatNormalImage, TB_NORMALMAP );
 
 					if (pStage->bundle[TB_DELUXEMAP].image[0])
 					{

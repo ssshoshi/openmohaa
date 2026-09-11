@@ -3237,6 +3237,21 @@ static int CollapseStagesToGLSL(void)
 			{
 				vertexlit = qtrue;
 			}
+			//
+			// OPENMOHAA-specific stuff
+			//=========================
+			// MOH:AA solves spherical and light grid lighting per vertex on the
+			// CPU and hands it over in the vertex colours, which is exactly what
+			// the vertex lit path consumes. Counting them here is what lets
+			// models and static props reach the lightall shader at all, and so
+			// what lets them be normal mapped.
+			else if (diffuse->rgbGen == CGEN_STATIC
+				|| diffuse->rgbGen == CGEN_LIGHTING_SPHERICAL
+				|| diffuse->rgbGen == CGEN_LIGHTING_GRID)
+			{
+				vertexlit = qtrue;
+			}
+			//=========================
 
 			CollapseStagesToLightall(diffuse, normal, specular, lightmap, diffuselit, vertexlit, parallax, tcgen);
 		}
