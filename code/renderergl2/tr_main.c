@@ -2916,7 +2916,15 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 			R_AddPolygonSurfaces();
 
-			R_AddEntitySurfaces ();
+			// Entity submission (including bone pose evaluation) runs again
+			// for every cascade that includes it, so this is the single
+			// biggest lever on shadow cost in a fight with many players.
+			// Cascade numbering runs near (0) to far (3); keep entities only
+			// on the near r_sunEntityShadowCascades of them.
+			if (level < r_sunEntityShadowCascades->integer)
+			{
+				R_AddEntitySurfaces ();
+			}
 
 			R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, tr.refdef.numDrawSurfs - firstDrawSurf,
 				tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf );

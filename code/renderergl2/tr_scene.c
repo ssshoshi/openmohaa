@@ -560,13 +560,40 @@ void RE_RenderScene( const refdef_t *fd ) {
 		{
 			R_RenderSunShadowMaps(fd, 0);
 			R_RenderSunShadowMaps(fd, 1);
-			R_RenderSunShadowMaps(fd, 2);
+
+			// Cascade 2 carries no entities as long as
+			// r_sunEntityShadowCascades keeps it excluded (the default), so
+			// unlike cascades 0-1 it's safe to reuse across frames where the
+			// camera has barely moved -- nothing that could be in it changes
+			// without the camera changing too. Cascades 0-2 all use a
+			// camera-relative (not world-fixed) view basis, so both origin
+			// and facing direction have to be checked, not just position.
+			if (r_sunEntityShadowCascades->integer <= 2
+				&& r_sunCascade2CacheDist->value > 0.0f
+				&& r_sunCascade2CacheAngle->value >= 0.0f
+				&& tr.haveCascade2Cache
+				&& DistanceSquared(fd->vieworg, tr.lastCascade2Origin)
+					< Square(r_sunCascade2CacheDist->value)
+				&& DotProduct(fd->viewaxis[0], tr.lastCascade2Forward)
+					> r_sunCascade2CacheAngle->value)
+			{
+				Mat4Copy(tr.lastCascade2Mvp, tr.refdef.sunShadowMvp[2]);
+			}
+			else
+			{
+				R_RenderSunShadowMaps(fd, 2);
+				VectorCopy(fd->vieworg, tr.lastCascade2Origin);
+				VectorCopy(fd->viewaxis[0], tr.lastCascade2Forward);
+				Mat4Copy(tr.refdef.sunShadowMvp[2], tr.lastCascade2Mvp);
+				tr.haveCascade2Cache = qtrue;
+			}
 		}
 		else
 		{
 			Mat4Zero(tr.refdef.sunShadowMvp[0]);
 			Mat4Zero(tr.refdef.sunShadowMvp[1]);
 			Mat4Zero(tr.refdef.sunShadowMvp[2]);
+			tr.haveCascade2Cache = qfalse;
 		}
 
 		// only rerender last cascade if sun has changed position

@@ -2176,6 +2176,16 @@ typedef struct {
 	vec3_t                  lastCascadeSunDirection;
 	float                   lastCascadeSunMvp[16];
 
+	// Cascade 2 (the wide mid/far split) is otherwise re-rendered every
+	// frame the camera moves at all, same as the near cascades, but unlike
+	// them it carries no entities by default -- so it's safe to reuse
+	// whenever the camera has stayed close to where it was last rendered
+	// from. See the cascade 2 check in RE_RenderScene.
+	qboolean                haveCascade2Cache;
+	vec3_t                  lastCascade2Origin;
+	vec3_t                  lastCascade2Forward;
+	float                   lastCascade2Mvp[16];
+
 	frontEndCounters_t		pc;
 	int						frontEndMsec;		// not in pc due to clearing issue
 
@@ -2392,6 +2402,9 @@ extern  cvar_t  *r_shadowMapSize;
 extern  cvar_t  *r_shadowCascadeZNear;
 extern  cvar_t  *r_shadowCascadeZFar;
 extern  cvar_t  *r_shadowCascadeZBias;
+extern  cvar_t  *r_sunEntityShadowCascades;
+extern  cvar_t  *r_sunCascade2CacheDist;
+extern  cvar_t  *r_sunCascade2CacheAngle;
 extern  cvar_t  *r_ignoreDstAlpha;
 
 extern	cvar_t	*r_greyscale;

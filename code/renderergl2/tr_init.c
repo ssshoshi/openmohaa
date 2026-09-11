@@ -164,6 +164,9 @@ cvar_t  *r_shadowMapSize;
 cvar_t  *r_shadowCascadeZNear;
 cvar_t  *r_shadowCascadeZFar;
 cvar_t  *r_shadowCascadeZBias;
+cvar_t  *r_sunEntityShadowCascades;
+cvar_t  *r_sunCascade2CacheDist;
+cvar_t  *r_sunCascade2CacheAngle;
 cvar_t  *r_ignoreDstAlpha;
 
 cvar_t	*r_ignoreGLErrors;
@@ -1472,6 +1475,25 @@ void R_Register( void )
 	r_shadowCascadeZNear = ri.Cvar_Get( "r_shadowCascadeZNear", "8", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZFar = ri.Cvar_Get( "r_shadowCascadeZFar", "1024", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZBias = ri.Cvar_Get( "r_shadowCascadeZBias", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	// Each cascade re-adds every entity in view (bone poses included), so a
+	// busy fight costs entity submission ~5x (4 cascades + the main view).
+	// The two outer cascades cover the most ground and are the least
+	// noticeably detailed, so this is where entity shadows are worth
+	// dropping first for performance. 2 keeps entity shadows on the near
+	// two cascades (players/props stay sharply shadowed up close); lower to
+	// 1 or 0 for more headroom in busy fights at the cost of distant player
+	// shadows; raise to 4 to restore stock ioq3 behaviour on every cascade.
+	r_sunEntityShadowCascades = ri.Cvar_Get( "r_sunEntityShadowCascades", "2", CVAR_ARCHIVE );
+	// Cascade 2 is otherwise rebuilt every frame the camera moves at all,
+	// same cost as the near cascades, but (below r_sunEntityShadowCascades 3)
+	// it never carries entities -- so its depth map can be reused as long as
+	// the camera has stayed close to where it was last rendered from. A
+	// texel in this cascade already spans several world units, so small
+	// moves and turns don't change anything visible. 0 distance or a
+	// negative angle disables the cache and re-renders every frame, matching
+	// stock behaviour.
+	r_sunCascade2CacheDist = ri.Cvar_Get( "r_sunCascade2CacheDist", "48", CVAR_ARCHIVE );
+	r_sunCascade2CacheAngle = ri.Cvar_Get( "r_sunCascade2CacheAngle", "0.97", CVAR_ARCHIVE );
 	r_ignoreDstAlpha = ri.Cvar_Get( "r_ignoreDstAlpha", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	//
