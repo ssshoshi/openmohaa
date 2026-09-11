@@ -47,7 +47,11 @@ uniform vec4      u_CubeMapInfo;
 
 uniform int       u_AlphaTest;
 
+uniform vec4      u_GlobalFogColor;
+uniform vec2      u_GlobalFogParams;
+
 varying vec4      var_TexCoords;
+varying float     var_FogDist;
 
 varying vec4      var_Color;
 #if (defined(USE_LIGHT) && !defined(USE_FAST_LIGHT))
@@ -518,4 +522,9 @@ void main()
 #endif
 
 	gl_FragColor.a = alpha;
+
+	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer
+	// gets from fixed function GL_FOG.
+	float fogFactor = clamp((var_FogDist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
+	gl_FragColor.rgb = mix(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
 }

@@ -27,9 +27,9 @@ uniform vec4   u_DiffuseTexMatrix6;
 uniform vec4   u_DiffuseTexMatrix7;
 #endif
 
-#if defined(USE_TCGEN) || defined(USE_RGBAGEN)
+// Also used unconditionally by the MOH:AA global fog below, so it cannot be
+// guarded by the tcgen and rgbagen defines any more.
 uniform vec3   u_LocalViewOrigin;
-#endif
 
 #if defined(USE_TCGEN)
 uniform int    u_TCGen0;
@@ -71,6 +71,7 @@ uniform mat4 u_BoneMatrix[MAX_GLSL_BONES];
 
 varying vec2   var_DiffuseTex;
 varying vec4   var_Color;
+varying float  var_FogDist;
 
 #if defined(USE_DEFORM_VERTEXES)
 vec3 DeformPosition(const vec3 pos, const vec3 normal, const vec2 st)
@@ -245,6 +246,9 @@ void main()
 #endif
 
 	gl_Position = u_ModelViewProjectionMatrix * vec4(position, 1.0);
+
+	// MOH:AA global fog. u_LocalViewOrigin is in the same space as position.
+	var_FogDist = distance(position, u_LocalViewOrigin);
 
 #if defined(USE_TCGEN)
 	vec2 tex = GenTexCoords(u_TCGen0, position, normal, u_TCGen0Vector0, u_TCGen0Vector1);

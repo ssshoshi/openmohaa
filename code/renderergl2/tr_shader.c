@@ -3936,6 +3936,51 @@ static shader_t *FinishShader( void ) {
 	}
 
 	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// Decide how each stage takes MOH:AA's global distance fog. An opaque stage
+	// just fades toward the fog colour. A blended one cannot: an additive stage
+	// has to fade toward black and a modulated one toward white, or it would
+	// brighten or darken the fog it is supposed to disappear into.
+	{
+		int i;
+
+		for ( i = 0; i < MAX_SHADER_STAGES; i++ ) {
+			shaderStage_t *pStage = &stages[i];
+			int            srcBits, dstBits;
+
+			if ( !pStage->active ) {
+				break;
+			}
+
+			if ( !( pStage->stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) ) {
+				// opaque
+				pStage->stateBits |= GLS_FOG_ENABLED;
+				continue;
+			}
+
+			srcBits = pStage->stateBits & GLS_SRCBLEND_BITS;
+			dstBits = pStage->stateBits & GLS_DSTBLEND_BITS;
+
+			if ( ( srcBits == GLS_SRCBLEND_ONE && dstBits == GLS_DSTBLEND_ONE )
+				|| ( srcBits == GLS_SRCBLEND_ZERO && dstBits == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR )
+				|| ( srcBits == GLS_SRCBLEND_SRC_ALPHA && dstBits == GLS_DSTBLEND_ONE )
+				|| ( srcBits == GLS_SRCBLEND_DST_COLOR && dstBits == GLS_DSTBLEND_ONE )
+				|| ( srcBits == GLS_SRCBLEND_ONE_MINUS_DST_COLOR && dstBits == GLS_DSTBLEND_ONE ) ) {
+				pStage->stateBits |= GLS_FOG_ENABLED | GLS_FOG_BLACK;
+			} else if ( ( srcBits == GLS_SRCBLEND_DST_COLOR && dstBits == GLS_DSTBLEND_ZERO )
+				|| ( srcBits == GLS_SRCBLEND_ZERO && dstBits == GLS_DSTBLEND_SRC_COLOR ) ) {
+				pStage->stateBits |= GLS_FOG_ENABLED | GLS_FOG_WHITE;
+			} else if ( ( srcBits == GLS_SRCBLEND_SRC_ALPHA && dstBits == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+				|| ( srcBits == GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA && dstBits == GLS_DSTBLEND_SRC_ALPHA ) ) {
+				pStage->stateBits |= GLS_FOG_ENABLED;
+			}
+			// anything else is left unfogged, as in the GL1 renderer
+		}
+	}
+	//=========================
+
+	//
 	// if we are in r_vertexLight mode, never use a lightmap texture
 	//
 	if ( stage > 1 && ( (r_vertexLight->integer && !r_uiFullScreen->integer) || glConfig.hardwareType == GLHW_PERMEDIA2 ) ) {

@@ -25,16 +25,18 @@ attribute vec3 attr_LightDirection;
 uniform vec4   u_EnableTextures; // x = normal, y = deluxe, z = specular, w = cube
 #endif
 
-#if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+// Also used unconditionally by the MOH:AA global fog below, so it can no longer
+// be guarded by the lighting defines.
 uniform vec3   u_ViewOrigin;
-#endif
 
 #if defined(USE_TCGEN)
 uniform int    u_TCGen0;
 uniform vec3   u_TCGen0Vector0;
 uniform vec3   u_TCGen0Vector1;
-uniform vec3   u_LocalViewOrigin;
 #endif
+
+// Needed unconditionally by the MOH:AA global fog below.
+uniform vec3   u_LocalViewOrigin;
 
 #if defined(USE_TCMOD)
 uniform vec4   u_DiffuseTexMatrix0;
@@ -74,6 +76,7 @@ uniform float u_PrimaryLightRadius;
 #endif
 
 varying vec4   var_TexCoords;
+varying float  var_FogDist;
 
 varying vec4   var_Color;
 #if defined(USE_LIGHT_VECTOR) && !defined(USE_FAST_LIGHT)
@@ -220,6 +223,16 @@ void main()
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	tangent   = (u_ModelMatrix * vec4(tangent,  0.0)).xyz;
   #endif
+#endif
+
+	// MOH:AA global fog. USE_MODELMATRIX is only defined for animated entities,
+	// so everywhere else position is still in model space and has to be
+	// measured against the model space view origin instead. Getting this wrong
+	// puts entities at a huge apparent distance and fogs them out completely.
+#if defined(USE_MODELMATRIX)
+	var_FogDist = distance(position, u_ViewOrigin);
+#else
+	var_FogDist = distance(position, u_LocalViewOrigin);
 #endif
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)

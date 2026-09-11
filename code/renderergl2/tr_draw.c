@@ -504,6 +504,9 @@ void Set2DWindow(int x, int y, int w, int h, float left, float right, float bott
     backEnd.projection2D = qtrue;
     backEnd.last2DFBO = glState.currentFBO;
 
+    // Make sure the global fog doesn't mess up the UI, as GL1 does here
+    backEnd.globalFogEnabled = qfalse;
+
     qglViewport(x, y, w, h);
     qglScissor(x, y, w, h);
 

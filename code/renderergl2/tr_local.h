@@ -821,6 +821,10 @@ typedef enum
 	UNIFORM_FOGEYET,
 	UNIFORM_FOGCOLORMASK,
 
+	// MOH:AA global distance fog
+	UNIFORM_GLOBALFOGCOLOR,
+	UNIFORM_GLOBALFOGPARAMS,
+
 	UNIFORM_MODELMATRIX,
 	UNIFORM_MODELVIEWPROJECTIONMATRIX,
 
@@ -2018,6 +2022,13 @@ typedef struct {
     sphereor_t spareSphere;
     sphereor_t hudSphere;
     cStaticModelUnpacked_t* currentStaticModel;
+
+    // MOH:AA's global distance fog. GL1 drives this with fixed function
+    // GL_FOG, which does not exist here, so it is applied in the shaders.
+    qboolean	globalFogEnabled;
+    vec4_t		globalFogColor;
+    float		globalFogStart;
+    float		globalFogInvRange;
     float shaderStartTime;
     int dsStreamVert;
 } backEndState_t;
@@ -2823,6 +2834,7 @@ void RB_InstantQuad( vec4_t quadVerts[4] );
 void RB_InstantQuad2(vec4_t quadVerts[4], vec2_t texCoords[4]);
 
 void RB_ShowImages( void );
+void RB_SetupFog( void );
 
 
 /*

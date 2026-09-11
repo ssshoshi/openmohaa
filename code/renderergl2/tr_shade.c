@@ -658,6 +658,43 @@ static void RB_WarnUnhandledGen( unsigned int *warned, const char *what, int val
 }
 
 
+/*
+** RB_SetGlobalFogUniforms
+**
+** MOH:AA's global distance fog. A stage opts in through GLS_FOG_ENABLED, and
+** may force the fog colour to black or white, which is how additive and
+** modulated blends stay neutral as they fade out. Anything that has asked to be
+** left alone, and any stage that did not opt in, gets a zero range so the
+** shader's fog factor stays at zero.
+*/
+static void RB_SetGlobalFogUniforms( shaderProgram_t *sp, const shaderStage_t *pStage )
+{
+	vec4_t color;
+	vec2_t params;
+
+	if ( !backEnd.globalFogEnabled || tess.no_global_fog
+		|| !( pStage->stateBits & GLS_FOG_ENABLED ) ) {
+		VectorSet4( color, 0.0f, 0.0f, 0.0f, 0.0f );
+		params[0] = 0.0f;
+		params[1] = 0.0f;
+	} else {
+		if ( pStage->stateBits & GLS_FOG_BLACK ) {
+			VectorSet4( color, 0.0f, 0.0f, 0.0f, 1.0f );
+		} else if ( pStage->stateBits & GLS_FOG_WHITE ) {
+			VectorSet4( color, 1.0f, 1.0f, 1.0f, 1.0f );
+		} else {
+			VectorCopy4( backEnd.globalFogColor, color );
+		}
+
+		params[0] = backEnd.globalFogStart;
+		params[1] = backEnd.globalFogInvRange;
+	}
+
+	GLSL_SetUniformVec4( sp, UNIFORM_GLOBALFOGCOLOR, color );
+	GLSL_SetUniformVec2( sp, UNIFORM_GLOBALFOGPARAMS, params );
+}
+
+
 static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t vertColor, int blend )
 {
 	qboolean isBlend = ((blend & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_DST_COLOR)
@@ -1042,6 +1079,8 @@ static void ForwardDlight( void ) {
 			vec4_t vertColor;
 
 			ComputeShaderColors(pStage, baseColor, vertColor, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+
+			RB_SetGlobalFogUniforms(sp, pStage);
 
 			GLSL_SetUniformVec4(sp, UNIFORM_BASECOLOR, baseColor);
 			GLSL_SetUniformVec4(sp, UNIFORM_VERTCOLOR, vertColor);
@@ -1468,6 +1507,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			vec4_t vertColor;
 
 			ComputeShaderColors(pStage, baseColor, vertColor, pStage->stateBits);
+
+			RB_SetGlobalFogUniforms(sp, pStage);
 
 			GLSL_SetUniformVec4(sp, UNIFORM_BASECOLOR, baseColor);
 			GLSL_SetUniformVec4(sp, UNIFORM_VERTCOLOR, vertColor);

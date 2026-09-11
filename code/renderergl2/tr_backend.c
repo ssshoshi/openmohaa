@@ -378,7 +378,22 @@ void RB_BeginDrawingView (void) {
 	if ( r_fastsky->integer && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) )
 	{
 		clearBits |= GL_COLOR_BUFFER_BIT;	// FIXME: only if sky shaders have been used
+		qglClearColor( 0.5f, 0.5f, 1.0f, 1.0f );
 	}
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// With global fog on and no sky drawn, clear to the fog colour so anything
+	// the world does not cover meets the fog instead of a black gap.
+	else if ( !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL )
+		&& backEnd.globalFogEnabled && !tr.skyRendered && !tr.portalRendered )
+	{
+		clearBits |= GL_COLOR_BUFFER_BIT;
+		qglClearColor( backEnd.globalFogColor[0], backEnd.globalFogColor[1],
+			backEnd.globalFogColor[2], backEnd.globalFogColor[3] );
+	}
+	//=========================
 
 	// clear to black for cube maps
 	if (tr.renderCubeFbo && backEnd.viewParms.targetFbo == tr.renderCubeFbo)
@@ -742,6 +757,10 @@ void	RB_SetGL2D (void) {
 	mat4_t matrix;
 	int width, height;
 
+	// The global fog belongs to the 3D view that was just drawn. GL1 turns
+	// GL_FOG off for 2D, so the UI and HUD must not pick it up here either.
+	backEnd.globalFogEnabled = qfalse;
+
 	if (backEnd.projection2D && backEnd.last2DFBO == glState.currentFBO)
 		return;
 
@@ -1009,6 +1028,38 @@ const void *RB_StretchPic ( const void *data ) {
 
 /*
 =============
+RB_SetupFog
+
+Works out MOH:AA's global distance fog for this view. The GL1 renderer feeds
+these to fixed function GL_FOG with GL_LINEAR, which does not exist in a core
+profile, so they become shader uniforms here. The values and the linear falloff
+are the same.
+=============
+*/
+void RB_SetupFog( void )
+{
+	float range;
+
+	if ( !backEnd.viewParms.farplane_distance || r_farplane_nofog->integer ) {
+		backEnd.globalFogEnabled = qfalse;
+		return;
+	}
+
+	backEnd.globalFogEnabled = qtrue;
+	backEnd.globalFogStart   = backEnd.viewParms.farplane_bias;
+
+	range = backEnd.viewParms.farplane_distance - backEnd.viewParms.farplane_bias;
+	backEnd.globalFogInvRange = ( range > 0.0f ) ? 1.0f / range : 0.0f;
+
+	backEnd.globalFogColor[0] = backEnd.viewParms.farplane_color[0] * tr.identityLight;
+	backEnd.globalFogColor[1] = backEnd.viewParms.farplane_color[1] * tr.identityLight;
+	backEnd.globalFogColor[2] = backEnd.viewParms.farplane_color[2] * tr.identityLight;
+	backEnd.globalFogColor[3] = 1.0f;
+}
+
+
+/*
+=============
 RB_DrawSurfs
 
 =============
@@ -1026,6 +1077,11 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	backEnd.refdef = cmd->refdef;
 	backEnd.viewParms = cmd->viewParms;
+
+	// OPENMOHAA-specific stuff
+	//=========================
+	RB_SetupFog();
+	//=========================
 
 	isShadowView = !!(backEnd.viewParms.flags & VPF_DEPTHSHADOW);
 
@@ -2122,7 +2178,7 @@ const void* RB_SpriteSurfs(const void* data) {
     backEnd.refdef = cmd->refdef;
     backEnd.viewParms = cmd->viewParms;
 	
-	//RB_SetupFog();
+    RB_SetupFog();
     RB_RenderSpriteSurfList(cmd->drawSurfs, cmd->numDrawSurfs);
 
     return (const void*)(cmd + 1);
