@@ -3003,6 +3003,22 @@ void R_SetColorMappings( void ) {
 	// setup the overbright lighting
 	tr.overbrightBits = r_overBrightBits->integer;
 
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// Overbright is paid for with the hardware gamma ramp, so it cannot be used
+	// where that is unavailable. The GL1 renderer applies both of these and the
+	// two must agree, or the same scene comes out at different brightness
+	// depending on which renderer is loaded.
+	if ( !glConfig.deviceSupportsGamma ) {
+		tr.overbrightBits = 0;		// need hardware gamma for overbright
+	}
+
+	if ( !glConfig.isFullscreen ) {
+		tr.overbrightBits = 0;		// never overbright in windowed mode
+	}
+	//=========================
+
 	// allow 2 overbright bits
 	if ( tr.overbrightBits > 2 ) {
 		tr.overbrightBits = 2;
