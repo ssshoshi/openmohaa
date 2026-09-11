@@ -26,6 +26,10 @@ list(APPEND COMMON_LIBRARIES
 
 if(MINGW)
     list(APPEND COMMON_LIBRARIES mingw32)
+
+    # win_resource.rc names its icon relative to the source root when built with
+    # MinGW, but windres runs from the build directory, so tell it where to look.
+    string(APPEND CMAKE_RC_FLAGS " -I\"${CMAKE_SOURCE_DIR}\"")
 endif()
 
 list(APPEND CLIENT_DEFINITIONS USE_ICON)

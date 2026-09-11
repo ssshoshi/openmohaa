@@ -95,7 +95,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #endif
 
 // alloca
-#ifdef _MSC_VER
+// Windows provides alloca through malloc.h and has no alloca.h at all, which
+// applies to MinGW as much as to MSVC.
+#if defined(_MSC_VER) || defined(_WIN32)
 #  include <malloc.h>
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #  include <stdlib.h>

@@ -38,5 +38,18 @@ elseif(NOT BUILD_RENDERER_GL1 AND NOT BUILD_RENDERER_GL2)
     message(FATAL_ERROR "Zero static renderers enabled; choose one")
 endif()
 
+# A renderer is dlopen()ed at runtime, so an unresolved symbol would otherwise
+# not surface until load time -- where the client quietly falls back to the
+# other renderer and the problem looks like "my changes had no effect".
+if(USE_RENDERER_DLOPEN AND NOT APPLE AND NOT MSVC)
+    include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE HAVE_CHECK_LINKER_FLAG)
+    if(HAVE_CHECK_LINKER_FLAG)
+        check_linker_flag(C "-Wl,--no-undefined" RENDERER_HAS_NO_UNDEFINED)
+        if(RENDERER_HAS_NO_UNDEFINED)
+            list(APPEND RENDERER_LINK_OPTIONS "-Wl,--no-undefined")
+        endif()
+    endif()
+endif()
+
 list(APPEND RENDERER_LIBRARIES ${COMMON_LIBRARIES})
 

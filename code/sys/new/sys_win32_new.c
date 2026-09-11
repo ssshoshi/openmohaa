@@ -22,7 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../sys_local.h"
 
-#include <Windows.h>
+#include <windows.h>
 #include <dbghelp.h>
 
 #ifdef _MSC_VER

@@ -21,15 +21,6 @@ option(BUILD_STANDALONE "Build binaries for standalone games" OFF)
 
 option(USE_RENDERER_DLOPEN "Dynamically load the renderer(s)" ON)
 
-# Statically linked renderers are compiled directly into the client binary, so
-# only one of them can be selected at a time -- otherwise both would define
-# GetRefAPI() and the link would fail on duplicate symbols.
-if(NOT USE_RENDERER_DLOPEN AND BUILD_RENDERER_GL1 AND BUILD_RENDERER_GL2)
-    message(FATAL_ERROR
-        "BUILD_RENDERER_GL1 and BUILD_RENDERER_GL2 cannot both be enabled when "
-        "USE_RENDERER_DLOPEN is OFF. Enable USE_RENDERER_DLOPEN, or pick one renderer.")
-endif()
-
 option(USE_OPENAL "OpenAL audio" ON)
 option(USE_OPENAL_DLOPEN "Dynamically load OpenAL" ON)
 option(USE_HTTP "HTTP download support" ON)
