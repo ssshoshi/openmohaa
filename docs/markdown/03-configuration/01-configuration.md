@@ -96,8 +96,17 @@ disabled or conservative by default. The settings below are latched unless noted
   materials that provide them. Enabled by default when the renderer is built.
 - `set r_parallaxMapping x`: `0` off, `1` parallax occlusion mapping, `2` relief mapping.
 - `set r_sunShadows 1`: Sunlight and cascaded shadow maps, tuned with `r_shadowMapSize` and
-  `r_shadowFilter`.
+  `r_shadowFilter`. The sun is taken from the map's own `worldspawn` (`sundirection` and
+  `suncolor`/`sunlight`), so this works on stock maps with no modified assets.
+- `set r_sunShadowScale x`: How much a shadowed surface is darkened, `0.85` by default. MOH:AA
+  already bakes the sun into its lightmaps, so shadows only need to suggest themselves; lower
+  values (ioq3 uses `0.5`) give stronger, darker shadows.
 - `set r_ssao 1`: Screen-space ambient occlusion. Costs performance.
+- `set r_drawSunRays 1`: Light shafts from the sun. Needs `r_sunShadows`.
+- `set r_genNormalMaps 1`: Derive rough normal maps from the diffuse textures, for surfaces
+  that have no authored `_n` image. A fallback, not a substitute for real normal maps.
+- `set r_cubeMapping 1`: Image-based reflections. Needs cubemaps generated per map, and does
+  nothing without them.
 - `set r_imageUpsample x`: Interpolate textures to a higher resolution, `0` off, `1` 2x, `2` 4x.
 
 Normal and specular maps are picked up automatically: for a texture `foo.jpg`, the renderer
@@ -109,6 +118,39 @@ Materials can also be described explicitly in `.mtr` files, which live alongside
 files in `scripts/` and use the same syntax. A `.mtr` file replaces the `.shader` file of the
 same name, but *only* when the OpenGL 2 renderer is active, so adding one cannot change how the
 game looks under OpenGL 1.
+
+Inside a `.mtr`, a stage can say what its image is for:
+
+```cpp
+textures/example/wall
+{
+    {
+        map textures/example/wall.jpg
+    }
+    {
+        stage normalmap          // or normalparallaxmap, if alpha holds height
+        map textures/example/wall_n.jpg
+        normalScale 1 1          // strength; negative values flip an axis
+    }
+    {
+        stage specularmap
+        map textures/example/wall_s.jpg
+        specularReflectance 0.04 // how metallic, 0.04 suits most materials
+        specularExponent 16      // how sharp the highlight is
+    }
+    {
+        map $lightmap
+        blendfunc GL_DST_COLOR GL_ZERO
+    }
+}
+```
+
+Normal and specular maps affect the diffuse stage declared before them, so a surface that
+blends two diffuse layers can give each its own.
+
+Note that a texture only picks up normal or specular mapping if its shader is lit -- it needs a
+lightmap, or one of the vertex lit `rgbGen` modes. Fullbright and purely additive effect
+shaders are drawn as they always were.
 
 ## Server configuration
 
