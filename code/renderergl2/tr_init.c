@@ -157,6 +157,7 @@ cvar_t  *r_forceSunAmbientScale;
 cvar_t  *r_sunlightMode;
 cvar_t  *r_drawSunRays;
 cvar_t  *r_sunShadows;
+cvar_t  *r_sunShadowScale;
 cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
 cvar_t  *r_shadowMapSize;
@@ -1462,6 +1463,9 @@ void R_Register( void )
 	r_sunlightMode = ri.Cvar_Get( "r_sunlightMode", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	r_sunShadows = ri.Cvar_Get( "r_sunShadows", "1", CVAR_ARCHIVE | CVAR_LATCH );
+	// ioq3 uses 0.5, which assumes the lightmap holds no direct sun. MOH:AA
+	// bakes the sun into its lightmaps, so at 0.5 every interior is simply halved.
+	r_sunShadowScale = ri.Cvar_Get( "r_sunShadowScale", "0.85", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowBlur = ri.Cvar_Get("r_shadowBlur", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	r_shadowMapSize = ri.Cvar_Get("r_shadowMapSize", "1024", CVAR_ARCHIVE | CVAR_LATCH);

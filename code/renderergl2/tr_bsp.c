@@ -3387,6 +3387,69 @@ void R_LoadStaticModelIndexes(lump_t* lump) {
 
 /*
 =================
+R_SetupSunFromWorldspawn
+
+ioq3 learns about the sun from a q3gl2_sun line in a sky shader. No MOH:AA map
+has one, but every MOH:AA map describes its sun in worldspawn instead, through
+suncolor/sunlight and sundirection, which R_Sphere_InitLights has already parsed
+into s_sun. Bridging the two is what lets the cascaded shadow maps work on stock
+maps without shipping modified assets.
+
+A sky shader that does supply q3gl2_sun has already set tr.sunShadows, and wins.
+=================
+*/
+static void R_SetupSunFromWorldspawn( void )
+{
+	if ( tr.sunShadows ) {
+		// a q3gl2_sun line has already described the sun
+		return;
+	}
+
+	if ( !s_sun.exists ) {
+		return;
+	}
+
+	VectorCopy( s_sun.direction, tr.sunDirection );
+	VectorNormalize( tr.sunDirection );
+
+	// MOH:AA already bakes the sun into its lightmaps, so this pass must not add
+	// a second helping of it. With r_sunlightMode 1 the shader multiplies lit
+	// areas by sunCol and shadowed ones by sunShadowScale, so the useful setup
+	// is sunCol == 1, leaving lit surfaces exactly as the lightmap had them and
+	// only darkening what the sun cannot reach.
+	//
+	// RE_BeginScene computes sunCol as tr.sunLight * (1 << r_mapOverBrightBits) / 255,
+	// so pick the intensity that lands on 1 while keeping the map's sun hue.
+	{
+		float maxChannel = Q_max( s_sun.color[0], Q_max( s_sun.color[1], s_sun.color[2] ) );
+		float target     = 255.0f / (float)( 1 << r_mapOverBrightBits->integer );
+
+		if ( maxChannel > 0.0f ) {
+			VectorScale( s_sun.color, target / maxChannel, tr.sunLight );
+		} else {
+			VectorSet( tr.sunLight, target, target, target );
+		}
+	}
+
+	if ( r_sunShadows->integer ) {
+		tr.sunShadows = qtrue;
+
+		// How much a shadowed surface is darkened. ioq3 takes this from the
+		// q3gl2_sun line and defaults to 0.5, which suits a map whose lightmap
+		// was built without the sun. MOH:AA's lightmaps already contain it, so
+		// halving them again is far too strong; this only needs to suggest the
+		// shadow, not create it.
+		tr.sunShadowScale = r_sunShadowScale->value;
+	}
+
+	ri.Printf( PRINT_DEVELOPER, "Sun taken from worldspawn: dir %.2f %.2f %.2f, light %.1f %.1f %.1f%s\n",
+		tr.sunDirection[0], tr.sunDirection[1], tr.sunDirection[2],
+		tr.sunLight[0], tr.sunLight[1], tr.sunLight[2],
+		tr.sunShadows ? ", casting shadows" : "" );
+}
+
+/*
+=================
 RE_LoadWorldMap
 
 Called directly from cgame
@@ -3588,6 +3651,7 @@ void RE_LoadWorldMap( const char *name ) {
 
     ri.UI_LoadResource("*111");
     R_Sphere_InitLights();
+    R_SetupSunFromWorldspawn();
 	//=========================
 
 	// determine vertex light directions
