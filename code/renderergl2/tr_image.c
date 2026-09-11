@@ -3431,6 +3431,49 @@ image_t* R_RefreshImageFile(const char* name, imgType_t type, imgFlags_t flags) 
 }
 
 /*
+===============
+R_FreeImage
+
+Deletes an image and gives its slot back. GL2 otherwise never frees an image
+before shutdown, so anything recreated per map, like lightmaps, would pile up
+on every map change until MAX_DRAWIMAGES is hit. The caller must make sure
+nothing still points at the image.
+===============
+*/
+void R_FreeImage(image_t *image) {
+	image_t **link;
+	long hash;
+	int i;
+
+	if (!image) {
+		return;
+	}
+
+	hash = generateHashValue(image->imgName);
+	for (link = &hashTable[hash]; *link; link = &(*link)->next) {
+		if (*link == image) {
+			*link = image->next;
+			break;
+		}
+	}
+
+	for (i = 0; i < tr.numImages; i++) {
+		if (tr.images[i] == image) {
+			tr.numImages--;
+			tr.images[i] = tr.images[tr.numImages];
+			tr.images[tr.numImages] = NULL;
+			break;
+		}
+	}
+
+	qglDeleteTextures(1, &image->texnum);
+	// the texture may still be bound, and its name can be reused
+	GL_BindNullTextures();
+
+	ri.Free(image);
+}
+
+/*
 ================
 R_ImageExists
 ================

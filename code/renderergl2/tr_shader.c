@@ -691,6 +691,7 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 				}
 
 				stage->bundle[cntBundle].isLightmap = qtrue;
+				stage->bundle[cntBundle].isDeluxemap = qtrue;
 				if ( shader.lightmapIndex < 0 ) {
 					stage->bundle[cntBundle].image[0] = tr.whiteImage;
 				} else {
@@ -2956,6 +2957,7 @@ static void CollapseStagesToLightall(shaderStage_t *diffuse,
 		//ri.Printf(PRINT_ALL, ", deluxemap");
 		diffuse->bundle[TB_DELUXEMAP] = lightmap->bundle[0];
 		diffuse->bundle[TB_DELUXEMAP].image[0] = tr.deluxemaps[shader.lightmapIndex];
+		diffuse->bundle[TB_DELUXEMAP].isDeluxemap = qtrue;
 	}
 
 	if (r_normalMapping->integer)
@@ -4830,6 +4832,61 @@ void R_InitShaders( void ) {
 //
 // OPENMOHAA-specific stuff
 //=========================
+
+/*
+==================
+R_RefreshShaderLightmaps
+
+The renderer is not restarted between maps and shaders are never freed, so a
+shader first built on one map is handed straight back by R_FindShader on the
+next, with its lightmap bundles still pointing at the previous map's lightmap
+images. Every shared texture then samples the old map's lighting. GL1 avoids
+this by rebuilding all shaders in RE_BeginRegistration; here the cached
+shaders are pointed at the current lightmaps instead. This runs once the old
+map's lightmaps are freed, and again once the new map's are loaded.
+
+A shader whose lightmap index the current map doesn't have gets the white
+image, so it never keeps a pointer to a freed lightmap. R_FindShader won't
+return it on this map, and a later map that has the index refreshes it again.
+==================
+*/
+void R_RefreshShaderLightmaps( void ) {
+	int i, j, b;
+
+	for ( i = 0; i < tr.numShaders; i++ ) {
+		shader_t *sh = tr.shaders[i];
+		qboolean  valid;
+
+		if ( sh->lightmapIndex < 0 ) {
+			// never had a lightmap to begin with
+			continue;
+		}
+
+		valid = tr.lightmaps && sh->lightmapIndex < tr.numLightmaps;
+
+		for ( j = 0; j < MAX_SHADER_STAGES; j++ ) {
+			shaderStage_t *pStage = sh->stages[j];
+
+			if ( !pStage || !pStage->active ) {
+				break;
+			}
+
+			for ( b = 0; b < NUM_TEXTURE_BUNDLES; b++ ) {
+				textureBundle_t *bundle = &pStage->bundle[b];
+
+				if ( !bundle->isLightmap ) {
+					continue;
+				}
+
+				if ( bundle->isDeluxemap ) {
+					bundle->image[0] = ( valid && tr.deluxemaps ) ? tr.deluxemaps[sh->lightmapIndex] : tr.whiteImage;
+				} else {
+					bundle->image[0] = valid ? tr.lightmaps[sh->lightmapIndex] : tr.whiteImage;
+				}
+			}
+		}
+	}
+}
 
 static void CreateMultistageFromBundle() {
 	int stage, bundle;

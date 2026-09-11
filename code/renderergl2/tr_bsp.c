@@ -532,6 +532,64 @@ static	void R_LoadLightmaps( lump_t *l, lump_t *surfs ) {
 	}
 
 	ri.Free(image);
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// Shaders cached from a previous map still point at its lightmaps
+	R_RefreshShaderLightmaps();
+	//=========================
+}
+
+/*
+=================
+R_FreeWorldImages
+
+Frees the images the previous map created for itself. The renderer is not
+restarted between maps, so without this every map change leaks its lightmaps
+and cubemaps, both the textures and their image slots. This is GL1's
+R_FreeUnusedImages, narrowed to the images that are known to be per map,
+since GL2 keeps its shaders across maps and so can't tell unused images apart
+by registration sequence the way GL1 does.
+=================
+*/
+static void R_FreeWorldImages( void )
+{
+	int i;
+
+	R_IssuePendingRenderCommands();
+
+	if ( tr.lightmaps ) {
+		for ( i = 0; i < tr.numLightmaps; i++ ) {
+			R_FreeImage( tr.lightmaps[i] );
+		}
+		ri.Free( tr.lightmaps );
+		tr.lightmaps = NULL;
+	}
+
+	if ( tr.deluxemaps ) {
+		for ( i = 0; i < tr.numLightmaps; i++ ) {
+			R_FreeImage( tr.deluxemaps[i] );
+		}
+		ri.Free( tr.deluxemaps );
+		tr.deluxemaps = NULL;
+	}
+
+	tr.numLightmaps = 0;
+
+	// point the cached shaders away from the freed lightmaps
+	R_RefreshShaderLightmaps();
+
+	if ( tr.cubemaps ) {
+		for ( i = 0; i < tr.numCubemaps; i++ ) {
+			R_FreeImage( tr.cubemaps[i].image );
+		}
+		ri.Free( tr.cubemaps );
+		tr.cubemaps = NULL;
+	}
+
+	// also stops a map without cubemaps from using the previous map's
+	tr.numCubemaps = 0;
 }
 
 
@@ -3498,6 +3556,22 @@ void RE_LoadWorldMap( const char *name ) {
 
 	// reset last cascade sun direction so last shadow cascade is rerendered
 	VectorClear(tr.lastCascadeSunDirection);
+
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// The renderer is not restarted between maps, so the previous map's sun
+	// would otherwise carry over. A leftover tr.sunShadows makes
+	// R_SetupSunFromWorldspawn think a sky shader already set the sun, and it
+	// skips the new map's worldspawn sun, which leaves the shadows cast from
+	// the default direction above. The cascade 2 cache would also hand back a
+	// depth map of the old map's geometry.
+	tr.sunShadows = qfalse;
+	VectorClear(tr.sunLight);
+	tr.haveCascade2Cache = qfalse;
+
+	R_FreeWorldImages();
+	//=========================
 
 	tr.worldMapLoaded = qtrue;
 

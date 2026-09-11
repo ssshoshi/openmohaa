@@ -457,6 +457,8 @@ typedef struct {
     //=========================
     float imageAnimationPhase;
     int flags;
+    // isLightmap is also set for deluxe maps, this tells the two apart
+    qboolean isDeluxemap;
     //=========================
 } textureBundle_t;
 
@@ -2706,6 +2708,7 @@ shader_t	*R_GetShaderByHandle( qhandle_t hShader );
 shader_t	*R_GetShaderByState( int index, long *cycleTime );
 shader_t *R_FindShaderByName( const char *name );
 void		R_InitShaders( void );
+void		R_RefreshShaderLightmaps( void );
 void		R_ShaderList_f( void );
 void    R_RemapShader(const char *oldShader, const char *newShader, const char *timeOffset);
 
@@ -2730,6 +2733,7 @@ void R_SetupFrustum (viewParms_t *dest, float xmin, float xmax, float ymax, floa
 int R_DistanceCullLocalPointAndRadius(float fDist, const vec3_t pt, float radius);
 int R_DistanceCullPointAndRadius(float fDist, const vec3_t pt, float radius);
 qboolean R_ImageExists(const char* name);
+void R_FreeImage(image_t *image);
 int R_CountTextureMemory();
 qboolean R_LoadRawImage(const char *name, byte **pic, int *width, int *height);
 void R_FreeRawImage(byte *pic);
