@@ -535,8 +535,11 @@ void R_LoadFontShader(fontheader_sgl_t* font)
         {
             if (fontshader->stages[0] != NULL && fontshader->stages[0]->active)
             {
-                fontshader->stages[0]->rgbGen = CGEN_ENTITY;
-                fontshader->stages[0]->alphaGen = AGEN_ENTITY;
+                // These used to be CGEN_ENTITY/AGEN_ENTITY driven by a stand-in
+                // entity, because the global colour gens had no implementation
+                // here. They do now, so this matches the GL1 renderer again.
+                fontshader->stages[0]->rgbGen = CGEN_GLOBAL_COLOR;
+                fontshader->stages[0]->alphaGen = AGEN_GLOBAL_ALPHA;
             }
         }
 
@@ -585,7 +588,7 @@ void R_DrawString_sgl(fontheader_sgl_t* font, const char* text, float x, float y
         R_LoadFontShader(font);
     }
 
-    Vector4Copy(backEnd.color2D, backEnd.entity2D.e.shaderRGBA);
+    // Still marks this as a 2D draw, which keeps overbright off it
     backEnd.currentEntity = &backEnd.entity2D;
 
     charHeight = s_fontHeightScale * font->height * s_fontGeneralScale;
