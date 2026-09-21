@@ -30,6 +30,21 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "tr_local.h"
 #include "tr_dsa.h"
 
+/*
+================
+R_MicroSeconds
+================
+*/
+double R_MicroSeconds(void)
+{
+	static Uint64 freq = 0;
+
+	if (!freq)
+		freq = SDL_GetPerformanceFrequency();
+
+	return (double)SDL_GetPerformanceCounter() * 1000000.0 / (double)freq;
+}
+
 void GLimp_InitExtraExtensions(void)
 {
 	char *extension;
@@ -166,6 +181,22 @@ void GLimp_InitExtraExtensions(void)
 	glRefConfig.occlusionQuery = qtrue;
 	glRefConfig.occlusionQueryTarget = GL_SAMPLES_PASSED;
 	QGL_ARB_occlusion_query_PROCS;
+
+	// OpenGL 3.3 - GL_ARB_timer_query. Only used by r_speeds 8, which needs to
+	// attribute frame time to individual passes: the CPU-side timers can only
+	// see how long submission took, not how long the GPU spent on the work.
+	extension = "GL_ARB_timer_query";
+	glRefConfig.timerQuery = qfalse;
+	if (QGL_VERSION_ATLEAST(3, 3) || SDL_GL_ExtensionSupported(extension))
+	{
+		glRefConfig.timerQuery = qtrue;
+		QGL_ARB_timer_query_PROCS;
+		ri.Printf(PRINT_ALL, result[1], extension);
+	}
+	else
+	{
+		ri.Printf(PRINT_ALL, result[2], extension);
+	}
 
 	// OpenGL 3.0 - GL_ARB_framebuffer_object
 	extension = "GL_ARB_framebuffer_object";

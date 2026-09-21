@@ -2886,6 +2886,7 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 		shadowParms.flags = VPF_DEPTHSHADOW | VPF_DEPTHCLAMP | VPF_ORTHOGRAPHIC | VPF_NOVIEWMODEL;
 		shadowParms.zFar = lightviewBounds[1][0];
+		shadowParms.sunCascade = level;
 
 		VectorCopy(lightOrigin, shadowParms.ori.origin);
 		

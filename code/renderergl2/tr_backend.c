@@ -1100,11 +1100,26 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 		VectorSet4(viewInfo, backEnd.viewParms.zFar / r_znear->value, backEnd.viewParms.zFar, 0.0, 0.0);
 
+		// Only the sun cascades are orthographic depth shadows, so that pair of
+		// flags is what makes sunCascade meaningful (every other view leaves it
+		// at whatever the viewParms memset produced).
+		int sunLevel = (isShadowView && (backEnd.viewParms.flags & VPF_ORTHOGRAPHIC))
+			? backEnd.viewParms.sunCascade : -1;
+
 		backEnd.depthFill = qtrue;
 		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+		R_GpuTimerBegin(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
+		if (sunLevel >= 0 && sunLevel <= 3)
+			R_GpuTimerBegin(GPUTIMER_SUN0 + sunLevel);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+		if (sunLevel >= 0 && sunLevel <= 3)
+			R_GpuTimerEnd(GPUTIMER_SUN0 + sunLevel);
+		R_GpuTimerEnd(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
 		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 		backEnd.depthFill = qfalse;
+
+		if (sunLevel >= 0 && sunLevel <= 3)
+			backEnd.pc.c_sunCascadeSurfs[sunLevel] += cmd->numDrawSurfs;
 
 		if (!isShadowView)
 		{
@@ -1136,6 +1151,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 				vec4_t quadVerts[4];
 				vec2_t texCoords[4];
 				vec4_t box;
+
+				R_GpuTimerBegin(GPUTIMER_SHADOWMASK);
 
 				FBO_Bind(tr.screenShadowFbo);
 
@@ -1238,6 +1255,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 					RB_InstantQuad2(quadVerts, texCoords);
 				}
+
+				R_GpuTimerEnd(GPUTIMER_SHADOWMASK);
 			}
 
 			if (r_ssao->integer)
@@ -1322,12 +1341,14 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	if (!isShadowView)
 	{
+		R_GpuTimerBegin(GPUTIMER_MAIN3D);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 
 		if (r_drawSun->integer)
 		{
 			RB_DrawSun(0.1f, tr.sunShader);
 		}
+		R_GpuTimerEnd(GPUTIMER_MAIN3D);
 
 		if (glRefConfig.framebufferObject && r_drawSunRays->integer)
 		{
@@ -1662,13 +1683,18 @@ const void	*RB_SwapBuffers( const void *data ) {
 		ri.Hunk_FreeTempMemory( stencilReadback );
 	}
 
+	R_GpuTimerBegin(GPUTIMER_PRESENT);
 	RB_PresentToScreen();
+	R_GpuTimerEnd(GPUTIMER_PRESENT);
 
 	if ( !glState.finishCalled ) {
 		qglFinish();
 	}
 
 	GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
+
+	R_GpuTimerEnd(GPUTIMER_FRAME);
+	R_GpuTimerFrameEnd();
 
 	GLimp_EndFrame();
 
@@ -1741,6 +1767,8 @@ const void *RB_PostProcess(const void *data)
 		backEnd.refdef = cmd->refdef;
 		backEnd.viewParms = cmd->viewParms;
 	}
+
+	R_GpuTimerBegin(GPUTIMER_POSTPROCESS);
 
 	srcFbo = tr.renderFbo;
 	dstFbo = tr.renderFbo;
@@ -1929,6 +1957,8 @@ const void *RB_PostProcess(const void *data)
 		}
 	}
 #endif
+
+	R_GpuTimerEnd(GPUTIMER_POSTPROCESS);
 
 	return (const void *)(cmd + 1);
 }

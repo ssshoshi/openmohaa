@@ -48,6 +48,7 @@ QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
+QGL_ARB_timer_query_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;
@@ -1055,6 +1056,10 @@ typedef struct {
     float		farplane_color[3];
     int			farplane_cull;
     qboolean	renderTerrain; // added in 2.0
+
+	// Which sun shadow cascade this view is rendering, 0-3, or -1 when it is
+	// not one. Only used to attribute GPU time per cascade (r_gpuTimers).
+	int			sunCascade;
 } viewParms_t;
 
 
@@ -1875,7 +1880,30 @@ typedef struct {
 	int		c_leafs;
 	int		c_dlightSurfaces;
 	int		c_dlightSurfacesCulled;
+
+	// How much of the frontend runs again for every sun shadow cascade. These
+	// are counts, not times, so they cannot be confused by the GPU's clock.
+	int		c_worldWalks;
+	int		c_terrainPrepares;
+	int		c_terrainTessellates;
+	int		c_terrainSplits;
+	int		c_terrainMerges;
+	int		c_staticModelWalks;
+
+	// Microseconds, because com_speeds only reports whole milliseconds and the
+	// gap being chased here is a few of them across the whole frame.
+	double	t_terrainPrepare;
+	double	t_markLeaves;
+	double	t_worldNode;
+	double	t_surfaceScan;
+	double	t_terrainSurfaces;
+	double	t_staticModels;
+	double	t_shadowFrontend;
 } frontEndCounters_t;
+
+// Wall clock in microseconds, for frontend attribution. SDL is already linked
+// into the renderer, and ri.Milliseconds() is far too coarse here.
+double R_MicroSeconds(void);
 
 #define	FOG_TABLE_SIZE		256
 #define FUNCTABLE_SIZE		1024
@@ -1915,6 +1943,44 @@ typedef enum {
 	TCR_BPTC = 0x0002,
 } textureCompressionRef_t;
 
+// GPU pass timers, see tr_gputimer.c. r_speeds 8 reports these.
+#define GPUTIMER_FRAMES     4
+#define GPUTIMER_MAX_MARKS  32
+
+typedef enum {
+	GPUTIMER_FRAME,
+	GPUTIMER_SUNSHADOW,
+	GPUTIMER_SUN0,
+	GPUTIMER_SUN1,
+	GPUTIMER_SUN2,
+	GPUTIMER_SUN3,
+	GPUTIMER_DEPTHPREPASS,
+	GPUTIMER_SHADOWMASK,
+	GPUTIMER_MAIN3D,
+	GPUTIMER_POSTPROCESS,
+	GPUTIMER_PRESENT,
+
+	GPUTIMER_COUNT
+} gpuTimerId_t;
+
+typedef struct {
+	float		msec[GPUTIMER_COUNT];
+	qboolean	valid;
+	int			overflowed;
+	int			numMarks;
+} gpuTimerResults_t;
+
+extern const char *const gpuTimerNames[GPUTIMER_COUNT];
+
+void R_GpuTimerInit(void);
+void R_GpuTimerShutdown(void);
+void R_GpuTimerFrameEnd(void);
+void R_GpuTimerMark(int id, qboolean isEnd);
+qboolean R_GpuTimerReport(gpuTimerResults_t *out, int *numFrames, int minFrames);
+
+#define R_GpuTimerBegin(id) R_GpuTimerMark((id), qfalse)
+#define R_GpuTimerEnd(id)   R_GpuTimerMark((id), qtrue)
+
 // We can't change glConfig_t without breaking DLL/vms compatibility, so
 // store extensions we have here.
 typedef struct {
@@ -1922,6 +1988,8 @@ typedef struct {
 
 	qboolean	occlusionQuery;
 	GLenum		occlusionQueryTarget;
+
+	qboolean	timerQuery;
 
 	int glslMajorVersion;
 	int glslMinorVersion;
@@ -1963,6 +2031,9 @@ typedef struct {
 typedef struct {
 	int		c_surfaces, c_shaders, c_vertexes, c_indexes, c_totalIndexes;
 	int     c_surfBatches;
+	int     c_sunCascadeSurfs[4];
+	int     c_drawCalls;
+	int     c_bufferUploads;
 	float	c_overDraw;
 	
 	int		c_vaoBinds;
@@ -2221,6 +2292,8 @@ typedef struct {
 	GLuint					sunFlareQuery[2];
 	int						sunFlareQueryIndex;
 	qboolean				sunFlareQueryActive[2];
+
+	gpuTimerResults_t		gpuTimer;
 
 	float					sinTable[FUNCTABLE_SIZE];
 	float					squareTable[FUNCTABLE_SIZE];
@@ -2539,6 +2612,8 @@ extern cvar_t* r_showportal;
 //=========================
 
 extern cvar_t *r_vaoCache;
+extern cvar_t *r_gpuTimerSync;
+extern cvar_t *r_gpuTimers;
 
 //====================================================================
 

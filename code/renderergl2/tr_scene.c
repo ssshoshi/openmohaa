@@ -556,6 +556,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 	// playing with even more shadows
 	if(glRefConfig.framebufferObject && r_sunlightMode->integer && !( fd->rdflags & RDF_NOWORLDMODEL ) && (r_forceSun->integer || tr.sunShadows))
 	{
+		double tShadowStart = R_MicroSeconds();
+
 		if (r_shadowCascadeZFar->integer != 0)
 		{
 			R_RenderSunShadowMaps(fd, 0);
@@ -607,6 +609,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 		{
 			Mat4Copy(tr.lastCascadeSunMvp, tr.refdef.sunShadowMvp[3]);
 		}
+
+		tr.pc.t_shadowFrontend += R_MicroSeconds() - tShadowStart;
 	}
 
 	// playing with cube maps

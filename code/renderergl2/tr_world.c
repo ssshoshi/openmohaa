@@ -797,9 +797,14 @@ void R_AddWorldSurfaces (void) {
 	// OPENMOHAA-specific stuff
 	//=========================
     if (r_drawterrain->integer && tr.refdef.render_terrain && !tr.viewParms.isPortalSky) {
+        double tStart = R_MicroSeconds();
+        tr.pc.c_terrainPrepares++;
         R_TerrainPrepareFrame();
+        tr.pc.t_terrainPrepare += R_MicroSeconds() - tStart;
     }
     //=========================
+
+	tr.pc.c_worldWalks++;
 
 	// determine which leaves are in the PVS / areamask
 	if (!(tr.viewParms.flags & VPF_DEPTHSHADOW))
@@ -835,12 +840,17 @@ void R_AddWorldSurfaces (void) {
 		pshadowBits = 0;
 	}
 
-	R_RecursiveWorldNode( tr.world->nodes, planeBits, dlightBits, pshadowBits);
+	{
+		double tStart = R_MicroSeconds();
+		R_RecursiveWorldNode( tr.world->nodes, planeBits, dlightBits, pshadowBits);
+		tr.pc.t_worldNode += R_MicroSeconds() - tStart;
+	}
 
 	// now add all the potentially visible surfaces
 	// also mask invisible dlights for next frame
 	{
 		int i;
+		double tStart = R_MicroSeconds();
 
 		tr.refdef.dlightMask = 0;
 
@@ -854,6 +864,7 @@ void R_AddWorldSurfaces (void) {
 		}
 
 		tr.refdef.dlightMask = ~tr.refdef.dlightMask;
+		tr.pc.t_surfaceScan += R_MicroSeconds() - tStart;
 	}
 
     //
@@ -861,10 +872,16 @@ void R_AddWorldSurfaces (void) {
     //=========================
 
 	if (r_drawterrain->integer && tr.refdef.render_terrain && !tr.viewParms.isPortalSky) {
+		double tStart = R_MicroSeconds();
+		tr.pc.c_terrainTessellates++;
 		R_AddTerrainSurfaces();
+		tr.pc.t_terrainSurfaces += R_MicroSeconds() - tStart;
 	}
 	if (r_drawstaticmodels->integer) {
+		double tStart = R_MicroSeconds();
+		tr.pc.c_staticModelWalks++;
 		R_AddStaticModelSurfaces();
+		tr.pc.t_staticModels += R_MicroSeconds() - tStart;
 	}
 
 	if (g_bInfostaticmodels) {

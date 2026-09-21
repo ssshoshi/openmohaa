@@ -37,6 +37,69 @@ void R_SavePerformanceCounters(void) {
 R_PerformanceCounters
 =====================
 */
+/*
+================
+R_ReportGpuTimers
+
+Print the average per-pass GPU cost once every `interval` world frames. The
+"other" column is frame time the named scopes did not account for, so a
+breakdown that is mostly "other" means the passes are mis-attributed -- which is
+what a driver that defers work will do, and what r_gpuTimerSync 1 checks for.
+================
+*/
+static void R_ReportGpuTimers( int interval )
+{
+	gpuTimerResults_t avg;
+	int   numFrames = 0;
+	int   i;
+	char  line[256];
+	float accounted = 0.0f;
+
+	if (!glRefConfig.timerQuery)
+	{
+		ri.Printf( PRINT_ALL, "gpu: GL_ARB_timer_query not available\n" );
+		return;
+	}
+
+	if (!R_GpuTimerReport( &avg, &numFrames, interval ))
+		return;
+
+	Com_sprintf( line, sizeof(line), "gpu %6.2fms =", avg.msec[GPUTIMER_FRAME] );
+
+	for (i = 0; i < GPUTIMER_COUNT; i++)
+	{
+		if (i == GPUTIMER_FRAME)
+			continue;
+
+		// sun0..sun3 are nested inside sunshadow, so counting both would
+		// double up and drive "other" negative.
+		if (i < GPUTIMER_SUN0 || i > GPUTIMER_SUN3)
+			accounted += avg.msec[i];
+		Q_strcat( line, sizeof(line), va(" %s %.2f", gpuTimerNames[i], avg.msec[i]) );
+	}
+
+	ri.Printf( PRINT_ALL, "%s other %.2f  (avg of %i frames)\n",
+		line, avg.msec[GPUTIMER_FRAME] - accounted, numFrames );
+
+	// How many draw surfaces each cascade submitted last frame. If a cascade
+	// that should be cached still shows a count every frame, it is being
+	// re-rendered regardless of the cache.
+	// Draw calls and buffer uploads are counts, not times, so unlike the ms
+	// figures they are immune to the card's clock drifting between runs.
+	ri.Printf( PRINT_ALL, "gpu submission: %i draws %i uploads\n",
+		backEnd.pc.c_drawCalls, backEnd.pc.c_bufferUploads );
+
+	ri.Printf( PRINT_ALL, "gpu cascade surfs: %i %i %i %i\n",
+		backEnd.pc.c_sunCascadeSurfs[0], backEnd.pc.c_sunCascadeSurfs[1],
+		backEnd.pc.c_sunCascadeSurfs[2], backEnd.pc.c_sunCascadeSurfs[3] );
+
+	if (avg.overflowed)
+	{
+		ri.Printf( PRINT_ALL, "gpu: %i marks dropped, raise GPUTIMER_MAX_MARKS\n",
+			avg.overflowed );
+	}
+}
+
 void R_PerformanceCounters( void ) {
 	if (r_fps->integer) {
 		ri.SetPerformanceCounters(
@@ -47,6 +110,61 @@ void R_PerformanceCounters( void ) {
 			pc_save.c_vertexes,
 			backEnd.pc.c_characterlights
 			);
+	}
+
+	if (r_gpuTimers->integer)
+	{
+		// Frontend repeat counts are pure CPU-side counters, so they report on
+		// their own cadence rather than waiting on GPU query results that may
+		// never arrive (a software rasteriser renders too few world frames for
+		// the timer ring to complete a readback).
+		//
+		// Averaged over the window rather than sampled from one frame: the
+		// cascades read tr.refdef.render_terrain, which RE_RenderScene does not
+		// assign until after they have run, so the first world frame of a map
+		// sees a stale zero and is not representative.
+		static int    feFrames = 0;
+		static float  feWalks, fePrep, feTess, feStatic, feSplits, feMerges;
+		static double feShadow, feNode, feScan, fePrepT, feTerrT, feStatT;
+
+		if (tr.pc.c_worldWalks)
+		{
+			feWalks  += tr.pc.c_worldWalks;
+			fePrep   += tr.pc.c_terrainPrepares;
+			feTess   += tr.pc.c_terrainTessellates;
+			feStatic += tr.pc.c_staticModelWalks;
+			feSplits += tr.pc.c_terrainSplits;
+			feMerges += tr.pc.c_terrainMerges;
+			feShadow += tr.pc.t_shadowFrontend;
+			feNode   += tr.pc.t_worldNode;
+			feScan   += tr.pc.t_surfaceScan;
+			fePrepT  += tr.pc.t_terrainPrepare;
+			feTerrT  += tr.pc.t_terrainSurfaces;
+			feStatT  += tr.pc.t_staticModels;
+			feFrames++;
+		}
+
+		if (feFrames >= r_gpuTimers->integer)
+		{
+			ri.Printf( PRINT_ALL,
+				"frontend per frame: %.1f worldwalks %.1f terrprep %.1f terrtess %.1f statmodels"
+				" (%.0f splits %.0f merges) over %i frames\n",
+				feWalks / feFrames, fePrep / feFrames, feTess / feFrames,
+				feStatic / feFrames, feSplits / feFrames, feMerges / feFrames, feFrames );
+
+			ri.Printf( PRINT_ALL,
+				"frontend ms/frame: shadowpasses %.2f | worldnode %.2f surfscan %.2f"
+				" terrprep %.2f terrsurf %.2f statmodels %.2f\n",
+				feShadow / feFrames / 1000.0, feNode / feFrames / 1000.0,
+				feScan / feFrames / 1000.0, fePrepT / feFrames / 1000.0,
+				feTerrT / feFrames / 1000.0, feStatT / feFrames / 1000.0 );
+
+			feFrames = 0;
+			feWalks = fePrep = feTess = feStatic = feSplits = feMerges = 0.0f;
+			feShadow = feNode = feScan = fePrepT = feTerrT = feStatT = 0.0;
+		}
+
+		R_ReportGpuTimers( r_gpuTimers->integer );
 	}
 
 	if ( !r_speeds->integer ) {
@@ -92,6 +210,10 @@ void R_PerformanceCounters( void ) {
 			backEnd.pc.c_staticVaoDraws, backEnd.pc.c_dynamicVaoDraws);
 		ri.Printf( PRINT_ALL, "GLSL binds: %i  draws: gen %i light %i fog %i dlight %i\n",
 			backEnd.pc.c_glslShaderBinds, backEnd.pc.c_genericDraws, backEnd.pc.c_lightallDraws, backEnd.pc.c_fogDraws, backEnd.pc.c_dlightDraws);
+	}
+	else if (r_speeds->integer == 8 )
+	{
+		R_ReportGpuTimers( 1 );
 	}
 
 	Com_Memset( &tr.pc, 0, sizeof( tr.pc ) );

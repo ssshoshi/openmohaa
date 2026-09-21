@@ -233,6 +233,8 @@ cvar_t	*r_saveFontData;
 cvar_t	*r_marksOnTriangleMeshes;
 
 cvar_t	*r_vaoCache;
+cvar_t	*r_gpuTimerSync;
+cvar_t	*r_gpuTimers;
 
 cvar_t	*r_aviMotionJpegQuality;
 cvar_t	*r_screenshotJpegQuality;
@@ -1592,7 +1594,17 @@ void R_Register( void )
 
 	r_marksOnTriangleMeshes = ri.Cvar_Get("r_marksOnTriangleMeshes", "0", CVAR_ARCHIVE);
 
+	// Upstream ioquake3 turned this off for GLES drivers where glBufferSubData
+	// is pathologically slow. On desktop GL it is a real CPU win, but a cached
+	// patch bypasses the LOD in RB_SurfaceGrid, so the frame is not identical
+	// to the uncached one -- which is why it stays opt-in rather than on.
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
+	// Per-pass GPU timings, averaged over this many frames per report. Not
+	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
+	// precisely when a benchmark wants this.
+	r_gpuTimers = ri.Cvar_Get("r_gpuTimers", "0", CVAR_ARCHIVE);
+	// see tr_gputimer.c -- forces a pipeline drain at each scope boundary
+	r_gpuTimerSync = ri.Cvar_Get("r_gpuTimerSync", "0", CVAR_CHEAT);
 
 	r_aviMotionJpegQuality = ri.Cvar_Get("r_aviMotionJpegQuality", "90", CVAR_ARCHIVE);
 	r_screenshotJpegQuality = ri.Cvar_Get("r_screenshotJpegQuality", "90", CVAR_ARCHIVE);
@@ -1723,6 +1735,8 @@ void R_Register( void )
 
 void R_InitQueries(void)
 {
+	R_GpuTimerInit();
+
 	if (!glRefConfig.occlusionQuery)
 		return;
 
@@ -1732,6 +1746,8 @@ void R_InitQueries(void)
 
 void R_ShutDownQueries(void)
 {
+	R_GpuTimerShutdown();
+
 	if (!glRefConfig.occlusionQuery)
 		return;
 

@@ -483,6 +483,7 @@ static void R_ForceSplit(terraInt iTri)
     uint32_t       flags, flags2;
 
     g_nSplit++;
+    tr.pc.c_terrainSplits++;
 
     iBase = pTri->iBase;
     pBase = &g_pTris[iBase];
@@ -572,6 +573,7 @@ static void R_ForceMerge(terraInt iTri)
     terraInt               iNext = pTri->iNext;
 
     g_nMerge++;
+    tr.pc.c_terrainMerges++;
 
     if (pTri->iLeftChild) {
         terraInt iLeft = g_pTris[pTri->iLeftChild].iBase;

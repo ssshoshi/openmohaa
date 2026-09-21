@@ -40,6 +40,8 @@ R_DrawElements
 
 void R_DrawElements( int numIndexes, int firstIndex )
 {
+	backEnd.pc.c_drawCalls++;
+
 	if (tess.useCacheVao)
 	{
 		VaoCache_DrawElements(numIndexes, firstIndex);

@@ -156,6 +156,11 @@ extern void (APIENTRYP qglUnlockArraysEXT) (void);
 	GLE(void, GetQueryObjectiv, GLuint id, GLenum pname, GLint *params) \
 	GLE(void, GetQueryObjectuiv, GLuint id, GLenum pname, GLuint *params) \
 
+// GL_ARB_timer_query, built-in to OpenGL 3.3 but not OpenGL ES
+#define QGL_ARB_timer_query_PROCS \
+	GLE(void, QueryCounter, GLuint id, GLenum target) \
+	GLE(void, GetQueryObjectui64v, GLuint id, GLenum pname, GLuint64 *params) \
+
 // OpenGL 1.5, was GL_ARB_vertex_buffer_object
 #define QGL_1_5_PROCS \
 	GLE(void, BindBuffer, GLenum target, GLuint buffer) \
@@ -332,6 +337,7 @@ QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
+QGL_ARB_timer_query_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;

@@ -606,6 +606,7 @@ void RB_UpdateTessVao(unsigned int attribBits)
 		R_BindVao(tess.vao);
 
 		// orphan old vertex buffer so we don't stall on it
+		backEnd.pc.c_bufferUploads++;
 		qglBufferData(GL_ARRAY_BUFFER, tess.vao->vertexesSize, NULL, GL_DYNAMIC_DRAW);
 
 		// if nothing to set, set everything
@@ -622,6 +623,7 @@ void RB_UpdateTessVao(unsigned int attribBits)
 			if (attribUpload & attribBit)
 			{
 				// note: tess has a VBO where stride == size
+				backEnd.pc.c_bufferUploads++;
 				qglBufferSubData(GL_ARRAY_BUFFER, vAtb->offset, tess.numVertexes * vAtb->stride, tess.attribPointers[attribIndex]);
 			}
 
@@ -647,8 +649,10 @@ void RB_UpdateTessVao(unsigned int attribBits)
 		}
 
 		// orphan old index buffer so we don't stall on it
+		backEnd.pc.c_bufferUploads++;
 		qglBufferData(GL_ELEMENT_ARRAY_BUFFER, tess.vao->indexesSize, NULL, GL_DYNAMIC_DRAW);
 
+		backEnd.pc.c_bufferUploads++;
 		qglBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, tess.numIndexes * sizeof(tess.indexes[0]), tess.indexes);
 	}
 }
@@ -801,6 +805,7 @@ void VaoCache_Commit(void)
 		if (vcq.vertexCommitSize)
 		{
 			qglBindBuffer(GL_ARRAY_BUFFER, vc.vao->vertexesVBO);
+			backEnd.pc.c_bufferUploads++;
 			qglBufferSubData(GL_ARRAY_BUFFER, vc.vertexOffset, vcq.vertexCommitSize, vcq.vertexes);
 			vc.vertexOffset += vcq.vertexCommitSize;
 		}
@@ -808,6 +813,7 @@ void VaoCache_Commit(void)
 		if (vcq.indexCommitSize)
 		{
 			qglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vc.vao->indexesIBO);
+			backEnd.pc.c_bufferUploads++;
 			qglBufferSubData(GL_ELEMENT_ARRAY_BUFFER, vc.indexOffset, vcq.indexCommitSize, vcq.indexes);
 			vc.indexOffset += vcq.indexCommitSize;
 		}
