@@ -605,9 +605,16 @@ void RB_UpdateTessVao(unsigned int attribBits)
 
 		R_BindVao(tess.vao);
 
-		// orphan old vertex buffer so we don't stall on it
-		backEnd.pc.c_bufferUploads++;
-		qglBufferData(GL_ARRAY_BUFFER, tess.vao->vertexesSize, NULL, GL_DYNAMIC_DRAW);
+		// Orphan the old vertex buffer so we don't stall on it. Note this
+		// discards the buffer's full SHADER_MAX_VERTEXES capacity every batch,
+		// not just the handful of vertices actually in use, so at ~1000 batches
+		// a frame it is a lot of allocation churn. r_tessOrphan 0 skips it, to
+		// measure whether that churn or the stall it avoids costs more.
+		if (r_tessOrphan->integer)
+		{
+			backEnd.pc.c_bufferUploads++;
+			qglBufferData(GL_ARRAY_BUFFER, tess.vao->vertexesSize, NULL, GL_DYNAMIC_DRAW);
+		}
 
 		// if nothing to set, set everything
 		if(!(attribBits & ATTR_BITS))
@@ -648,9 +655,11 @@ void RB_UpdateTessVao(unsigned int attribBits)
 			}
 		}
 
-		// orphan old index buffer so we don't stall on it
-		backEnd.pc.c_bufferUploads++;
-		qglBufferData(GL_ELEMENT_ARRAY_BUFFER, tess.vao->indexesSize, NULL, GL_DYNAMIC_DRAW);
+		if (r_tessOrphan->integer)
+		{
+			backEnd.pc.c_bufferUploads++;
+			qglBufferData(GL_ELEMENT_ARRAY_BUFFER, tess.vao->indexesSize, NULL, GL_DYNAMIC_DRAW);
+		}
 
 		backEnd.pc.c_bufferUploads++;
 		qglBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, tess.numIndexes * sizeof(tess.indexes[0]), tess.indexes);

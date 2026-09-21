@@ -2621,6 +2621,7 @@ extern cvar_t* r_showportal;
 extern cvar_t *r_vaoCache;
 extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
+extern cvar_t *r_tessOrphan;
 
 //====================================================================
 
