@@ -960,6 +960,10 @@ static void RB_SurfaceGrid( srfBspSurface_t *srf ) {
 	int     pshadowBits;
 	//int		*vDlightBits;
 
+	// The VAO cache can only store a surface whole, so a cached patch skips the
+	// row and column dropping below and renders at full tessellation. That
+	// changes the silhouette of arches and curved walls, which is why
+	// r_vaoCache is not on by default -- see the comment on the cvar.
 	if (RB_SurfaceVaoCached(srf->numVerts, srf->verts, srf->numIndexes,
 		srf->indexes, srf->dlightBits, srf->pshadowBits))
 	{
