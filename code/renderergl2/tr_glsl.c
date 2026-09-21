@@ -960,6 +960,234 @@ void GLSL_DeleteGPUShader(shaderProgram_t *program)
 	}
 }
 
+/*
+============
+GLSL_InitLightallShader
+
+Build one lightall permutation, or return qfalse if that combination cannot
+occur. Split out of GLSL_InitGPUShaders so the permutations describing which
+material maps a surface carries can be built when one first turns up rather
+than all at once -- stock MOH:AA content ships no normal, specular or deluxe
+maps, so building every combination up front would spend nearly all of its time
+on programs the game never binds.
+============
+*/
+static qboolean GLSL_InitLightallShader(int i)
+{
+	char extradefines[1024];
+	int attribs;
+
+	int lightType = i & LIGHTDEF_LIGHTTYPE_MASK;
+	qboolean fastLight = !(r_normalMapping->integer || r_specularMapping->integer);
+
+	// skip impossible combos
+	if ((i & LIGHTDEF_USE_PARALLAXMAP) && !r_parallaxMapping->integer)
+		return qfalse;
+
+	// The material-map bits say what a stage actually carries, so they only
+	// ever appear on a lit stage, and only when the matching cvar allowed the
+	// map to be loaded at all.
+	if ((i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP)) && !lightType)
+		return qfalse;
+
+	if ((i & LIGHTDEF_USE_NORMALMAP) && !r_normalMapping->integer)
+		return qfalse;
+
+	if ((i & LIGHTDEF_USE_SPECULARMAP) && !r_specularMapping->integer)
+		return qfalse;
+
+	if ((i & LIGHTDEF_USE_DELUXEMAP) && (!r_deluxeMapping->integer || lightType != LIGHTDEF_USE_LIGHTMAP))
+		return qfalse;
+
+	// parallax height is sampled out of the normal map, so it cannot outlive it
+	if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_USE_NORMALMAP))
+		return qfalse;
+
+	if ((i & LIGHTDEF_USE_SHADOWMAP) && (!lightType || !r_sunlightMode->integer))
+		return qfalse;
+
+	if ((i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && (i & LIGHTDEF_ENTITY_BONE_ANIMATION))
+		return qfalse;
+
+	if ((i & LIGHTDEF_ENTITY_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
+		return qfalse;
+
+	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
+
+	extradefines[0] = '\0';
+
+	if (r_dlightMode->integer >= 2)
+		Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\n");
+
+	if (glRefConfig.swizzleNormalmap)
+		Q_strcat(extradefines, 1024, "#define SWIZZLE_NORMALMAP\n");
+
+	if (lightType)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_LIGHT\n");
+
+		if (fastLight)
+			Q_strcat(extradefines, 1024, "#define USE_FAST_LIGHT\n");
+
+		switch (lightType)
+		{
+			case LIGHTDEF_USE_LIGHTMAP:
+				Q_strcat(extradefines, 1024, "#define USE_LIGHTMAP\n");
+				if ((i & LIGHTDEF_USE_DELUXEMAP) && r_deluxeMapping->integer && !fastLight)
+					Q_strcat(extradefines, 1024, "#define USE_DELUXEMAP\n");
+				attribs |= ATTR_LIGHTCOORD | ATTR_LIGHTDIRECTION;
+				break;
+			case LIGHTDEF_USE_LIGHT_VECTOR:
+				Q_strcat(extradefines, 1024, "#define USE_LIGHT_VECTOR\n");
+				break;
+			case LIGHTDEF_USE_LIGHT_VERTEX:
+				Q_strcat(extradefines, 1024, "#define USE_LIGHT_VERTEX\n");
+				attribs |= ATTR_LIGHTDIRECTION;
+				break;
+			default:
+				break;
+		}
+
+		if ((i & LIGHTDEF_USE_NORMALMAP) && r_normalMapping->integer)
+		{
+			Q_strcat(extradefines, 1024, "#define USE_NORMALMAP\n");
+
+			attribs |= ATTR_TANGENT;
+
+			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && !(i & LIGHTDEF_ENTITY_BONE_ANIMATION) && r_parallaxMapping->integer)
+			{
+				Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP\n");
+				if (r_parallaxMapping->integer > 1)
+					Q_strcat(extradefines, 1024, "#define USE_RELIEFMAP\n");
+
+				if (r_parallaxMapShadows->integer)
+					Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP_SHADOWS\n");
+
+				Q_strcat(extradefines, 1024, va("#define r_parallaxMapOffset %f\n", r_parallaxMapOffset->value));
+			}
+		}
+
+		if ((i & LIGHTDEF_USE_SPECULARMAP) && r_specularMapping->integer)
+			Q_strcat(extradefines, 1024, "#define USE_SPECULARMAP\n");
+
+		if (r_cubeMapping->integer)
+		{
+			Q_strcat(extradefines, 1024, "#define USE_CUBEMAP\n");
+			if (r_cubeMapping->integer == 2)
+				Q_strcat(extradefines, 1024, "#define USE_BOX_CUBEMAP_PARALLAX\n");
+		}
+		else if (r_deluxeSpecular->value > 0.000001f)
+		{
+			Q_strcat(extradefines, 1024, va("#define r_deluxeSpecular %f\n", r_deluxeSpecular->value));
+		}
+
+		switch (r_glossType->integer)
+		{
+			case 0:
+			default:
+				Q_strcat(extradefines, 1024, "#define GLOSS_IS_GLOSS\n");
+				break;
+			case 1:
+				Q_strcat(extradefines, 1024, "#define GLOSS_IS_SMOOTHNESS\n");
+				break;
+			case 2:
+				Q_strcat(extradefines, 1024, "#define GLOSS_IS_ROUGHNESS\n");
+				break;
+			case 3:
+				Q_strcat(extradefines, 1024, "#define GLOSS_IS_SHININESS\n");
+				break;
+		}
+	}
+
+	if (i & LIGHTDEF_USE_SHADOWMAP)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\n");
+
+		if (r_sunlightMode->integer == 1)
+			Q_strcat(extradefines, 1024, "#define SHADOWMAP_MODULATE\n");
+		else if (r_sunlightMode->integer == 2)
+			Q_strcat(extradefines, 1024, "#define USE_PRIMARY_LIGHT\n");
+	}
+
+	if (i & LIGHTDEF_USE_TCGEN_AND_TCMOD)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_TCGEN\n");
+		Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
+	}
+
+	if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_MODELMATRIX\n");
+
+		if (glRefConfig.gpuVertexAnimation)
+		{
+			Q_strcat(extradefines, 1024, "#define USE_VERTEX_ANIMATION\n");
+			attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
+
+			if ((i & LIGHTDEF_USE_NORMALMAP) && r_normalMapping->integer)
+			{
+				attribs |= ATTR_TANGENT2;
+			}
+		}
+	}
+	else if (i & LIGHTDEF_ENTITY_BONE_ANIMATION)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_MODELMATRIX\n");
+		Q_strcat(extradefines, 1024, va("#define USE_BONE_ANIMATION\n#define MAX_GLSL_BONES %d\n", glRefConfig.glslMaxAnimatedBones));
+		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
+	}
+
+	if (!GLSL_InitGPUShader(&tr.lightallShader[i], "lightall", attribs, qtrue, extradefines, qtrue, fallbackShader_lightall_vp, fallbackShader_lightall_fp))
+	{
+		ri.Error(ERR_FATAL, "Could not load lightall shader!");
+	}
+
+	GLSL_InitUniforms(&tr.lightallShader[i]);
+
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_DIFFUSEMAP,  TB_DIFFUSEMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_LIGHTMAP,    TB_LIGHTMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_NORMALMAP,   TB_NORMALMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_DELUXEMAP,   TB_DELUXEMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SPECULARMAP, TB_SPECULARMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SHADOWMAP,   TB_SHADOWMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_CUBEMAP,     TB_CUBEMAP);
+
+	GLSL_FinishGPUShader(&tr.lightallShader[i]);
+
+
+	return qtrue;
+}
+
+/*
+============
+GLSL_GetLightallShader
+
+Hand back a lightall permutation, building it the first time it is asked for.
+============
+*/
+shaderProgram_t *GLSL_GetLightallShader(int index)
+{
+	if (!tr.lightallShader[index].program)
+	{
+		GLSL_InitLightallShader(index);
+
+		// The material cvars are all CVAR_LATCH, so a stage's bits and the
+		// permutations built for them cannot disagree without a vid_restart
+		// rebuilding both. Should some combination still slip through, drop
+		// the material maps rather than bind program zero: the result is the
+		// pre-change rendering path, not a black screen.
+		if (!tr.lightallShader[index].program)
+		{
+			index &= ~(LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP);
+
+			if (!tr.lightallShader[index].program)
+				GLSL_InitLightallShader(index);
+		}
+	}
+
+	return &tr.lightallShader[index];
+}
+
 void GLSL_InitGPUShaders(void)
 {
 	int             startTime, endTime;
@@ -1121,163 +1349,14 @@ void GLSL_InitGPUShaders(void)
 
 	for (i = 0; i < LIGHTDEF_COUNT; i++)
 	{
-		int lightType = i & LIGHTDEF_LIGHTTYPE_MASK;
-		qboolean fastLight = !(r_normalMapping->integer || r_specularMapping->integer);
-
-		// skip impossible combos
-		if ((i & LIGHTDEF_USE_PARALLAXMAP) && !r_parallaxMapping->integer)
+		// Pre-build every permutation a surface with no material maps can
+		// need, which covers all of stock MOH:AA. Anything carrying a normal,
+		// specular or deluxe map is left to GLSL_GetLightallShader.
+		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP))
 			continue;
 
-		if ((i & LIGHTDEF_USE_SHADOWMAP) && (!lightType || !r_sunlightMode->integer))
+		if (!GLSL_InitLightallShader(i))
 			continue;
-
-		if ((i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && (i & LIGHTDEF_ENTITY_BONE_ANIMATION))
-			continue;
-
-		if ((i & LIGHTDEF_ENTITY_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
-			continue;
-
-		attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
-
-		extradefines[0] = '\0';
-
-		if (r_dlightMode->integer >= 2)
-			Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\n");
-
-		if (glRefConfig.swizzleNormalmap)
-			Q_strcat(extradefines, 1024, "#define SWIZZLE_NORMALMAP\n");
-
-		if (lightType)
-		{
-			Q_strcat(extradefines, 1024, "#define USE_LIGHT\n");
-
-			if (fastLight)
-				Q_strcat(extradefines, 1024, "#define USE_FAST_LIGHT\n");
-
-			switch (lightType)
-			{
-				case LIGHTDEF_USE_LIGHTMAP:
-					Q_strcat(extradefines, 1024, "#define USE_LIGHTMAP\n");
-					if (r_deluxeMapping->integer && !fastLight)
-						Q_strcat(extradefines, 1024, "#define USE_DELUXEMAP\n");
-					attribs |= ATTR_LIGHTCOORD | ATTR_LIGHTDIRECTION;
-					break;
-				case LIGHTDEF_USE_LIGHT_VECTOR:
-					Q_strcat(extradefines, 1024, "#define USE_LIGHT_VECTOR\n");
-					break;
-				case LIGHTDEF_USE_LIGHT_VERTEX:
-					Q_strcat(extradefines, 1024, "#define USE_LIGHT_VERTEX\n");
-					attribs |= ATTR_LIGHTDIRECTION;
-					break;
-				default:
-					break;
-			}
-
-			if (r_normalMapping->integer)
-			{
-				Q_strcat(extradefines, 1024, "#define USE_NORMALMAP\n");
-
-				attribs |= ATTR_TANGENT;
-
-				if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && !(i & LIGHTDEF_ENTITY_BONE_ANIMATION) && r_parallaxMapping->integer)
-				{
-					Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP\n");
-					if (r_parallaxMapping->integer > 1)
-						Q_strcat(extradefines, 1024, "#define USE_RELIEFMAP\n");
-
-					if (r_parallaxMapShadows->integer)
-						Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP_SHADOWS\n");
-
-					Q_strcat(extradefines, 1024, va("#define r_parallaxMapOffset %f\n", r_parallaxMapOffset->value));
-				}
-			}
-
-			if (r_specularMapping->integer)
-				Q_strcat(extradefines, 1024, "#define USE_SPECULARMAP\n");
-
-			if (r_cubeMapping->integer)
-			{
-				Q_strcat(extradefines, 1024, "#define USE_CUBEMAP\n");
-				if (r_cubeMapping->integer == 2)
-					Q_strcat(extradefines, 1024, "#define USE_BOX_CUBEMAP_PARALLAX\n");
-			}
-			else if (r_deluxeSpecular->value > 0.000001f)
-			{
-				Q_strcat(extradefines, 1024, va("#define r_deluxeSpecular %f\n", r_deluxeSpecular->value));
-			}
-
-			switch (r_glossType->integer)
-			{
-				case 0:
-				default:
-					Q_strcat(extradefines, 1024, "#define GLOSS_IS_GLOSS\n");
-					break;
-				case 1:
-					Q_strcat(extradefines, 1024, "#define GLOSS_IS_SMOOTHNESS\n");
-					break;
-				case 2:
-					Q_strcat(extradefines, 1024, "#define GLOSS_IS_ROUGHNESS\n");
-					break;
-				case 3:
-					Q_strcat(extradefines, 1024, "#define GLOSS_IS_SHININESS\n");
-					break;
-			}
-		}
-
-		if (i & LIGHTDEF_USE_SHADOWMAP)
-		{
-			Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\n");
-
-			if (r_sunlightMode->integer == 1)
-				Q_strcat(extradefines, 1024, "#define SHADOWMAP_MODULATE\n");
-			else if (r_sunlightMode->integer == 2)
-				Q_strcat(extradefines, 1024, "#define USE_PRIMARY_LIGHT\n");
-		}
-
-		if (i & LIGHTDEF_USE_TCGEN_AND_TCMOD)
-		{
-			Q_strcat(extradefines, 1024, "#define USE_TCGEN\n");
-			Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
-		}
-
-		if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)
-		{
-			Q_strcat(extradefines, 1024, "#define USE_MODELMATRIX\n");
-
-			if (glRefConfig.gpuVertexAnimation)
-			{
-				Q_strcat(extradefines, 1024, "#define USE_VERTEX_ANIMATION\n");
-				attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
-
-				if (r_normalMapping->integer)
-				{
-					attribs |= ATTR_TANGENT2;
-				}
-			}
-		}
-		else if (i & LIGHTDEF_ENTITY_BONE_ANIMATION)
-		{
-			Q_strcat(extradefines, 1024, "#define USE_MODELMATRIX\n");
-			Q_strcat(extradefines, 1024, va("#define USE_BONE_ANIMATION\n#define MAX_GLSL_BONES %d\n", glRefConfig.glslMaxAnimatedBones));
-			attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
-		}
-
-		if (!GLSL_InitGPUShader(&tr.lightallShader[i], "lightall", attribs, qtrue, extradefines, qtrue, fallbackShader_lightall_vp, fallbackShader_lightall_fp))
-		{
-			ri.Error(ERR_FATAL, "Could not load lightall shader!");
-		}
-
-		GLSL_InitUniforms(&tr.lightallShader[i]);
-
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_DIFFUSEMAP,  TB_DIFFUSEMAP);
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_LIGHTMAP,    TB_LIGHTMAP);
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_NORMALMAP,   TB_NORMALMAP);
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_DELUXEMAP,   TB_DELUXEMAP);
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SPECULARMAP, TB_SPECULARMAP);
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SHADOWMAP,   TB_SHADOWMAP);
-		GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_CUBEMAP,     TB_CUBEMAP);
-
-		GLSL_FinishGPUShader(&tr.lightallShader[i]);
 
 		numLightShaders++;
 	}

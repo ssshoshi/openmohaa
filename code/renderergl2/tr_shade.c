@@ -1394,7 +1394,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 					index |= LIGHTDEF_USE_TCGEN_AND_TCMOD;
 				}
 
-				sp = &pStage->glslShaderGroup[index];
+				sp = GLSL_GetLightallShader(index);
 			}
 			else
 			{
@@ -1448,7 +1448,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				index = LIGHTDEF_USE_TCGEN_AND_TCMOD;
 			}
 
-			sp = &pStage->glslShaderGroup[index];
+			sp = GLSL_GetLightallShader(index);
 
 			backEnd.pc.c_lightallDraws++;
 		}

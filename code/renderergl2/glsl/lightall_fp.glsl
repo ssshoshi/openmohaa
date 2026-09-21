@@ -1,3 +1,9 @@
+// Mirrors lightall_vp.glsl: only normal and parallax mapping read the tangent
+// frame, so without a normal map neither the basis nor its varyings exist.
+#if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT) && defined(USE_NORMALMAP)
+  #define USE_TANGENT_FRAME
+#endif
+
 uniform sampler2D u_DiffuseMap;
 
 #if defined(USE_LIGHTMAP)
@@ -60,8 +66,12 @@ varying vec4      var_ColorAmbient;
 
 #if (defined(USE_LIGHT) && !defined(USE_FAST_LIGHT))
 varying vec4   var_Normal;
+  #if defined(USE_TANGENT_FRAME)
 varying vec4   var_Tangent;
 varying vec4   var_Bitangent;
+  #else
+varying vec3   var_ViewDir;
+  #endif
 #endif
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
@@ -269,8 +279,12 @@ void main()
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	vec3 surfNormal = (!gl_FrontFacing ? var_Normal : -var_Normal).xyz;
+  #if defined(USE_TANGENT_FRAME)
 	mat3 tangentToWorld = mat3(var_Tangent.xyz, var_Bitangent.xyz, surfNormal);
 	viewDir = vec3(var_Normal.w, var_Tangent.w, var_Bitangent.w);
+  #else
+	viewDir = var_ViewDir;
+  #endif
 	E = normalize(viewDir);
 #endif
 

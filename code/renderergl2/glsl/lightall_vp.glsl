@@ -1,3 +1,12 @@
+// Only normal and parallax mapping consume the tangent frame, and parallax
+// height lives in the normal map, so USE_NORMALMAP alone decides whether the
+// tangent attribute, the per-vertex basis and its two varyings are needed at
+// all. Stock MOH:AA content ships no normal maps, so on nearly every surface
+// this drops a vertex attribute, a cross product and eight interpolators.
+#if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT) && defined(USE_NORMALMAP)
+  #define USE_TANGENT_FRAME
+#endif
+
 attribute vec4 attr_TexCoord0;
 #if defined(USE_LIGHTMAP) || defined(USE_TCGEN)
 attribute vec4 attr_TexCoord1;
@@ -6,12 +15,16 @@ attribute vec4 attr_Color;
 
 attribute vec3 attr_Position;
 attribute vec3 attr_Normal;
+#if defined(USE_TANGENT_FRAME)
 attribute vec4 attr_Tangent;
+#endif
 
 #if defined(USE_VERTEX_ANIMATION)
 attribute vec3 attr_Position2;
 attribute vec3 attr_Normal2;
+  #if defined(USE_TANGENT_FRAME)
 attribute vec4 attr_Tangent2;
+  #endif
 #elif defined(USE_BONE_ANIMATION)
 attribute vec4 attr_BoneIndexes;
 attribute vec4 attr_BoneWeights;
@@ -85,8 +98,12 @@ varying vec4   var_ColorAmbient;
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 varying vec4   var_Normal;
+  #if defined(USE_TANGENT_FRAME)
 varying vec4   var_Tangent;
 varying vec4   var_Bitangent;
+  #else
+varying vec3   var_ViewDir;
+  #endif
 #endif
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
@@ -171,7 +188,7 @@ void main()
 #if defined(USE_VERTEX_ANIMATION)
 	vec3 position  = mix(attr_Position,    attr_Position2,    u_VertexLerp);
 	vec3 normal    = mix(attr_Normal,      attr_Normal2,      u_VertexLerp);
-  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = mix(attr_Tangent.xyz, attr_Tangent2.xyz, u_VertexLerp);
   #endif
 #elif defined(USE_BONE_ANIMATION)
@@ -183,13 +200,13 @@ void main()
 
 	vec3 position  = vec3(vtxMat * vec4(attr_Position, 1.0));
 	vec3 normal    = normalize(nrmMat * attr_Normal);
-  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = normalize(nrmMat * attr_Tangent.xyz);
   #endif
 #else
 	vec3 position  = attr_Position;
 	vec3 normal    = attr_Normal;
-  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = attr_Tangent.xyz;
   #endif
 #endif
@@ -220,7 +237,7 @@ void main()
 #if defined(USE_MODELMATRIX)
 	position  = (u_ModelMatrix * vec4(position, 1.0)).xyz;
 	normal    = (u_ModelMatrix * vec4(normal,   0.0)).xyz;
-  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_TANGENT_FRAME)
 	tangent   = (u_ModelMatrix * vec4(tangent,  0.0)).xyz;
   #endif
 #endif
@@ -235,7 +252,7 @@ void main()
 	var_FogDist = distance(position, u_LocalViewOrigin);
 #endif
 
-#if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+#if defined(USE_TANGENT_FRAME)
 	vec3 bitangent = cross(normal, tangent) * attr_Tangent.w;
 #endif
 
@@ -292,9 +309,14 @@ void main()
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	vec3 viewDir = u_ViewOrigin - position;
-	// store view direction in tangent space to save on varyings
+  #if defined(USE_TANGENT_FRAME)
+	// store view direction in the spare tangent frame components to save on varyings
 	var_Normal    = vec4(normal,    viewDir.x);
 	var_Tangent   = vec4(tangent,   viewDir.y);
 	var_Bitangent = vec4(bitangent, viewDir.z);
+  #else
+	var_Normal    = vec4(normal, 0.0);
+	var_ViewDir   = viewDir;
+  #endif
 #endif
 }

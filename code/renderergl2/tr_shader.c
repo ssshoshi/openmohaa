@@ -2830,7 +2830,11 @@ static void ComputeVertexAttribs(void)
 		{
 			shader.vertexAttribs |= ATTR_NORMAL;
 
-			if ((pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) && !(r_normalMapping->integer == 0 && r_specularMapping->integer == 0))
+			// Only a normal map (or the parallax/cubemap paths built on it)
+			// needs the tangent frame; a specular map alone does not.
+			if ((pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK)
+				&& (pStage->glslShaderIndex & LIGHTDEF_USE_NORMALMAP)
+				&& r_normalMapping->integer)
 			{
 				shader.vertexAttribs |= ATTR_TANGENT;
 			}
@@ -3044,6 +3048,31 @@ static void CollapseStagesToLightall(shaderStage_t *diffuse,
 	{
 		defs |= LIGHTDEF_USE_TCGEN_AND_TCMOD;
 	}
+
+	// Record which material maps this stage ended up with, so the permutation
+	// can leave out the ones it does not have. The shader's existing #else
+	// branches already produce what the absent-map fallbacks compute: a white
+	// specular texel is exactly the vec4(1.0) default, and a deluxe sample is
+	// multiplied by u_EnableTextures.y, which is zero without a deluxemap.
+	//
+	// The maps are only ever sampled by the lit path, so an unlit stage that
+	// happens to name one in its shader script gets no bit -- the permutation
+	// would be identical, and leaving it out keeps the compiled set small.
+	if (defs & LIGHTDEF_LIGHTTYPE_MASK)
+	{
+		if (diffuse->bundle[TB_NORMALMAP].image[0])
+			defs |= LIGHTDEF_USE_NORMALMAP;
+
+		if (diffuse->bundle[TB_SPECULARMAP].image[0])
+			defs |= LIGHTDEF_USE_SPECULARMAP;
+
+		if (diffuse->bundle[TB_DELUXEMAP].image[0])
+			defs |= LIGHTDEF_USE_DELUXEMAP;
+	}
+
+	// parallax height is sampled out of the normal map, so it cannot outlive it
+	if (!(defs & LIGHTDEF_USE_NORMALMAP))
+		defs &= ~LIGHTDEF_USE_PARALLAXMAP;
 
 	//ri.Printf(PRINT_ALL, ".\n");
 

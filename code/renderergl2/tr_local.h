@@ -734,8 +734,15 @@ enum
 	LIGHTDEF_USE_PARALLAXMAP     = 0x0010,
 	LIGHTDEF_USE_SHADOWMAP       = 0x0020,
 	LIGHTDEF_ENTITY_BONE_ANIMATION = 0x0040,
-	LIGHTDEF_ALL                 = 0x007F,
-	LIGHTDEF_COUNT               = 0x0080
+	// Whether the stage actually carries each material map. Without these the
+	// shader samples a flat normal / white specular / white deluxe and throws
+	// the result away, which costs three texture fetches and the tangent frame
+	// on every lit pixel of stock content that has none of them.
+	LIGHTDEF_USE_NORMALMAP       = 0x0080,
+	LIGHTDEF_USE_SPECULARMAP     = 0x0100,
+	LIGHTDEF_USE_DELUXEMAP       = 0x0200,
+	LIGHTDEF_ALL                 = 0x03FF,
+	LIGHTDEF_COUNT               = 0x0400
 };
 
 enum
@@ -3080,6 +3087,7 @@ GLSL
 void GLSL_InitGPUShaders(void);
 void GLSL_ShutdownGPUShaders(void);
 void GLSL_VertexAttribPointers(uint32_t attribBits);
+shaderProgram_t *GLSL_GetLightallShader(int index);
 void GLSL_BindProgram(shaderProgram_t * program);
 
 void GLSL_SetUniformInt(shaderProgram_t *program, int uniformNum, GLint value);
