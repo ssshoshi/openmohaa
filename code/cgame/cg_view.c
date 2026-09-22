@@ -906,6 +906,87 @@ static const char *const cgEntNames[CGE_COUNT] = {
     "lerp", "effects", "soundpos", "splash", "player", "modelanim"
 };
 
+double       cgEntTypeTime[CG_ENT_TYPES];
+int          cgEntTypeCount[CG_ENT_TYPES];
+cgEntWorst_t cgEntWorst[CG_ENT_WORST];
+
+// Short labels for the eType values CG_AddCEntity actually handles; anything
+// outside the table prints its number.
+static const char *CG_EntTypeName(int etype)
+{
+    switch (etype) {
+    case ET_MODELANIM_SKEL: return "MODELANIM_SKEL";
+    case ET_MODELANIM:      return "MODELANIM";
+    case ET_VEHICLE:        return "VEHICLE";
+    case ET_PLAYER:         return "PLAYER";
+    case ET_ITEM:           return "ITEM";
+    case ET_GENERAL:        return "GENERAL";
+    case ET_MOVER:          return "MOVER";
+    case ET_BEAM:           return "BEAM";
+    case ET_MULTIBEAM:      return "MULTIBEAM";
+    case ET_PORTAL:         return "PORTAL";
+    case ET_RAIN:           return "RAIN";
+    case ET_DECAL:          return "DECAL";
+    case ET_EMITTER:        return "EMITTER";
+    case ET_ROPE:           return "ROPE";
+    case ET_EXEC_COMMANDS:  return "EXEC_COMMANDS";
+    default:                return va("ET_%i", etype);
+    }
+}
+
+/*
+=================
+CG_EntTimerSample
+
+One entity's total time in CG_AddCEntity. Feeds the per-type totals and keeps
+the worst entities of the window, with the model they are drawing -- the name
+is what makes a finding actionable, since "MODELANIM cost 5ms" does not say
+whether it is one actor or forty.
+=================
+*/
+void CG_EntTimerSample(centity_t *cent, double usec)
+{
+    static cvar_t *cg_frameTimers;
+    int etype = cent->currentState.eType;
+    int i, worst;
+
+    if (!cg_frameTimers) {
+        cg_frameTimers = cgi.Cvar_Get("cg_frameTimers", "0", CVAR_ARCHIVE);
+    }
+
+    if (!cg_frameTimers->integer) {
+        return;
+    }
+
+    if (etype >= 0 && etype < CG_ENT_TYPES) {
+        cgEntTypeTime[etype] += usec;
+        cgEntTypeCount[etype]++;
+    }
+
+    // Keep the slowest CG_ENT_WORST of the window. Linear scan over six slots
+    // is cheaper than any ordering scheme at this size.
+    worst = 0;
+    for (i = 1; i < CG_ENT_WORST; i++) {
+        if (cgEntWorst[i].usec < cgEntWorst[worst].usec) {
+            worst = i;
+        }
+    }
+
+    if (usec > cgEntWorst[worst].usec) {
+        dtiki_t *tiki = cgi.R_Model_GetHandle(cgs.model_draw[cent->currentState.modelindex]);
+
+        cgEntWorst[worst].entnum = cent->currentState.number;
+        cgEntWorst[worst].etype  = etype;
+        cgEntWorst[worst].usec   = usec;
+
+        if (tiki && tiki->a && tiki->a->name[0]) {
+            Q_strncpyz(cgEntWorst[worst].name, tiki->a->name, sizeof(cgEntWorst[worst].name));
+        } else {
+            cgEntWorst[worst].name[0] = 0;
+        }
+    }
+}
+
 static double cgTimerAccum[CGT_COUNT];
 static double cgTimerOpen[CGT_COUNT];
 static int    cgTimerFrames;
@@ -927,6 +1008,9 @@ static void CG_ReportFrameTimers(void)
     if (!cg_frameTimers->integer) {
         memset(cgTimerAccum, 0, sizeof(cgTimerAccum));
         memset(cgEntAccum, 0, sizeof(cgEntAccum));
+        memset(cgEntTypeTime, 0, sizeof(cgEntTypeTime));
+        memset(cgEntTypeCount, 0, sizeof(cgEntTypeCount));
+        memset(cgEntWorst, 0, sizeof(cgEntWorst));
         cgEntCount = 0;
         cgTimerFrames = 0;
         return;
@@ -968,8 +1052,45 @@ static void CG_ReportFrameTimers(void)
         (cgTimerAccum[CGT_ENTITIES] - accounted) / cgTimerFrames / 1000.0,
         cgEntCount ? cgTimerAccum[CGT_ENTITIES] / cgEntCount : 0.0);
 
+    // By entity type: which kind of entity the time belongs to, with how many
+    // of them were submitted per frame.
+    Com_sprintf(line, sizeof(line), "cgame etype =");
+
+    for (i = 0; i < CG_ENT_TYPES; i++) {
+        if (cgEntTypeTime[i] / cgTimerFrames < 10.0) {
+            continue;   // under 0.01ms a frame, not worth the width
+        }
+
+        Q_strcat(line, sizeof(line), va(" %s %.2f(%i)", CG_EntTypeName(i),
+            cgEntTypeTime[i] / cgTimerFrames / 1000.0,
+            cgEntTypeCount[i] / cgTimerFrames));
+    }
+
+    cgi.Printf("%s\n", line);
+
+    // The individual worst entities. If one entity holds most of the cost this
+    // says so immediately; if the cost is spread evenly these will all be
+    // similar and close to the per-entity average.
+    Com_sprintf(line, sizeof(line), "cgame worst:");
+
+    for (i = 0; i < CG_ENT_WORST; i++) {
+        if (cgEntWorst[i].usec <= 0.0) {
+            continue;
+        }
+
+        Q_strcat(line, sizeof(line), va(" [#%i %s %.0fus %s]",
+            cgEntWorst[i].entnum, CG_EntTypeName(cgEntWorst[i].etype),
+            cgEntWorst[i].usec,
+            cgEntWorst[i].name[0] ? cgEntWorst[i].name : "?"));
+    }
+
+    cgi.Printf("%s\n", line);
+
     memset(cgTimerAccum, 0, sizeof(cgTimerAccum));
     memset(cgEntAccum, 0, sizeof(cgEntAccum));
+    memset(cgEntTypeTime, 0, sizeof(cgEntTypeTime));
+    memset(cgEntTypeCount, 0, sizeof(cgEntTypeCount));
+    memset(cgEntWorst, 0, sizeof(cgEntWorst));
     cgEntCount = 0;
     cgTimerFrames = 0;
 }

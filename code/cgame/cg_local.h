@@ -704,6 +704,26 @@ double CG_Microseconds(void);
 #define CG_ENT_TIMER_END(id)   (cgEntAccum[id] += CG_Microseconds() - cgEntOpen[id])
 #define CG_ENT_TIMER_COUNT()   (cgEntCount++)
 
+// Per-entity histogram. The per-entity average is over every entity submitted,
+// so a handful of very expensive ones reads identically to uniformly expensive
+// ones -- and those are different bugs. This splits the cost by entity type and
+// keeps the worst individual entities of the window.
+#define CG_ENT_TYPES 24
+#define CG_ENT_WORST 6
+
+typedef struct {
+    int    entnum;
+    int    etype;
+    double usec;
+    char   name[64];
+} cgEntWorst_t;
+
+extern double       cgEntTypeTime[CG_ENT_TYPES];
+extern int          cgEntTypeCount[CG_ENT_TYPES];
+extern cgEntWorst_t cgEntWorst[CG_ENT_WORST];
+
+void CG_EntTimerSample(centity_t *cent, double usec);
+
     void CG_AddPacketEntities(void);
     void CG_Beam(centity_t *cent);
     void CG_AdjustPositionForMover(const vec3_t in, int moverNum, int fromTime, int toTime, vec3_t out);

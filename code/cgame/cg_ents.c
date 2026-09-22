@@ -528,6 +528,8 @@ CG_AddCEntity
 
 ===============
 */
+static double cgEntWholeOpen;
+
 void CG_AddCEntity(centity_t *cent)
 {
     // event-only entities will have been dealt with already
@@ -540,6 +542,8 @@ void CG_AddCEntity(centity_t *cent)
     // while every other stage of CG_DrawActiveFrame stayed flat. The loop that
     // calls this is O(n) with a bounded parent walk, so the cost is in here.
     CG_ENT_TIMER_COUNT();
+
+    cgEntWholeOpen = CG_Microseconds();
 
     // calculate the current origin
     CG_ENT_TIMER_BEGIN(CGE_LERP);
@@ -627,6 +631,8 @@ void CG_AddCEntity(centity_t *cent)
         CG_ENT_TIMER_END(CGE_MODELANIM);
         break;
     }
+
+    CG_EntTimerSample(cent, CG_Microseconds() - cgEntWholeOpen);
 }
 
 /*
