@@ -68,6 +68,7 @@ mkdir -p "$OUT/main" "$SHOTDIR"
   echo "seta com_maxfps 0"
   echo "seta r_swapInterval 0"
   echo "seta r_gpuTimers $INTERVAL"
+  echo "seta com_frameTimers $INTERVAL"
   echo "seta logfile 2"
   echo "echo OMBENCH_START"
   echo "devmap $MAP"
@@ -208,6 +209,7 @@ sub_line="$(grep -a '^gpu submission:' "$clean" | tail -1)"
 fe_pf="$(grep -a '^frontend per frame:' "$clean" | tail -1)"
 fe_ms="$(grep -a '^frontend ms/frame:' "$clean" | tail -1)"
 cpu_wall="$(grep -a '^cpu .*ms wall =' "$clean" | tail -1)"
+eng_line="$(grep -a '^frame .*ms = sleep' "$clean" | tail -1)"
 cpu_back="$(grep -a '^cpu backend =' "$clean" | tail -1)"
 cpu_pass="$(grep -a '^cpu   in drawsurfs:' "$clean" | tail -1)"
 
@@ -224,6 +226,10 @@ if [ -n "$gpu_line" ]; then
   [ -n "$cpu_wall" ] && echo "CPU      : $cpu_wall"
   [ -n "$cpu_back" ] && echo "           $cpu_back"
   [ -n "$cpu_pass" ] && echo "           $cpu_pass"
+  # The engine ledger: client contains the renderer, so client minus the
+  # renderer's backend is what the renderer cannot see. Needs an exe with
+  # com_frameTimers; absent on older builds.
+  [ -n "$eng_line" ] && echo "engine   : $eng_line"
 
   # The headline. GPU frame time alone cannot say whether the card was the
   # limit -- a frame that spends 9ms on the GPU and 20ms on the main thread
@@ -278,6 +284,8 @@ if [ "$REPEATS" -gt 1 ]; then
       [ -n "$p" ] && echo "            $p"
       b="$(grep -a '^cpu backend =' <<<"$seg" | tail -1)"
       [ -n "$b" ] && echo "            $b"
+      e="$(grep -a '^frame .*ms = sleep' <<<"$seg" | tail -1)"
+      [ -n "$e" ] && echo "            $e"
     else
       echo "  window $w: <no report captured>"
     fi
