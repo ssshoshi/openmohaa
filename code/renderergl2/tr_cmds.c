@@ -253,7 +253,8 @@ void R_PerformanceCounters( void ) {
 		// sees a stale zero and is not representative.
 		static int    feFrames = 0;
 		static float  feWalks, fePrep, feTess, feStatic, feSplits, feMerges;
-		static double feShadow, feNode, feScan, fePrepT, feTerrT, feStatT, feMark;
+		static double feShadow, feNode, feScan, fePrepT, feTerrT, feStatT, feMark, feEnt;
+		static float  feEntN;
 
 		if (tr.pc.c_worldWalks)
 		{
@@ -266,6 +267,8 @@ void R_PerformanceCounters( void ) {
 			feShadow += tr.pc.t_shadowFrontend;
 			feNode   += tr.pc.t_worldNode;
 			feMark   += tr.pc.t_markLeaves;
+			feEnt    += tr.pc.t_entitySurfaces;
+			feEntN   += tr.pc.c_entitySubmissions;
 			feScan   += tr.pc.t_surfaceScan;
 			fePrepT  += tr.pc.t_terrainPrepare;
 			feTerrT  += tr.pc.t_terrainSurfaces;
@@ -283,15 +286,17 @@ void R_PerformanceCounters( void ) {
 
 			ri.Printf( PRINT_ALL,
 				"frontend ms/frame: shadowpasses %.2f | markleaves %.2f worldnode %.2f surfscan %.2f"
-				" terrprep %.2f terrsurf %.2f statmodels %.2f\n",
+				" terrprep %.2f terrsurf %.2f statmodels %.2f entities %.2f (%.0f/frame)\n",
 				feShadow / feFrames / 1000.0, feMark / feFrames / 1000.0,
 				feNode / feFrames / 1000.0,
 				feScan / feFrames / 1000.0, fePrepT / feFrames / 1000.0,
-				feTerrT / feFrames / 1000.0, feStatT / feFrames / 1000.0 );
+				feTerrT / feFrames / 1000.0, feStatT / feFrames / 1000.0,
+				feEnt / feFrames / 1000.0, feEntN / feFrames );
 
 			feFrames = 0;
 			feWalks = fePrep = feTess = feStatic = feSplits = feMerges = 0.0f;
-			feShadow = feNode = feScan = fePrepT = feTerrT = feStatT = feMark = 0.0;
+			feShadow = feNode = feScan = fePrepT = feTerrT = feStatT = feMark = feEnt = 0.0;
+			feEntN = 0.0f;
 		}
 
 		R_ReportGpuTimers( r_gpuTimers->integer );

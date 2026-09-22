@@ -1906,6 +1906,11 @@ typedef struct {
 	double	t_terrainSurfaces;
 	double	t_staticModels;
 	double	t_shadowFrontend;
+	// Entity submission, summed over every view. Skeletal entities repeat the
+	// per-bone work once per view they appear in, so with
+	// r_sunEntityShadowCascades 2 this is paid three times a frame.
+	double	t_entitySurfaces;
+	int		c_entitySubmissions;
 } frontEndCounters_t;
 
 // Wall clock in microseconds, for frontend attribution. SDL is already linked

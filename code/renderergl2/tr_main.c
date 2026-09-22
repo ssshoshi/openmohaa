@@ -1759,8 +1759,15 @@ void R_AddEntitySurfaces (void) {
     tr.shiftedIsStatic = 0;
     //=========================
 
-	for ( i = 0; i < tr.refdef.num_entities; i++)
-		R_AddEntitySurface(i);
+	{
+		double tStart = R_MicroSeconds();
+
+		for ( i = 0; i < tr.refdef.num_entities; i++)
+			R_AddEntitySurface(i);
+
+		tr.pc.t_entitySurfaces += R_MicroSeconds() - tStart;
+		tr.pc.c_entitySubmissions += tr.refdef.num_entities;
+	}
 }
 
 
