@@ -1132,7 +1132,14 @@ void SV_Frame( int msec ) {
 			const char *err;
 
 			// let everything in the world think and move
-			ge->RunFrame( svs.time, frameMsec );
+			// Timed at the call site rather than inside the game module: this
+			// is the exe, so it measures actor AI and script cost without
+			// needing the game DLL rebuilt to match.
+			{
+				double usGame = Sys_Microseconds();
+				ge->RunFrame( svs.time, frameMsec );
+				com_frameUsec[FRAMETIMER_GAME] += Sys_Microseconds() - usGame;
+			}
 
 			err = ge->errorMessage;
 			if( err )

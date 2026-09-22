@@ -262,6 +262,22 @@ Sys_Milliseconds
 ================
 */
 int sys_timeBase;
+double Sys_Microseconds (void)
+{
+	static LARGE_INTEGER freq, base;
+	LARGE_INTEGER        now;
+
+	if (!freq.QuadPart)
+	{
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&base);
+	}
+
+	QueryPerformanceCounter(&now);
+
+	return (double)(now.QuadPart - base.QuadPart) * 1000000.0 / (double)freq.QuadPart;
+}
+
 int Sys_Milliseconds (void)
 {
 	int             sys_curtime;

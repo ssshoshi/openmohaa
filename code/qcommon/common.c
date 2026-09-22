@@ -79,6 +79,8 @@ cvar_t	*config;
 cvar_t	*fps;
 cvar_t	*fps_location;
 cvar_t	*com_speeds;
+cvar_t	*com_frameTimers;
+double	com_frameUsec[FRAMETIMER_COUNT];
 cvar_t	*developer;
 cvar_t	*com_dedicated;
 cvar_t	*com_timescale;
@@ -1918,6 +1920,10 @@ void Com_Init( char *commandLine ) {
 	com_logfile = Cvar_Get("logfile", "0", CVAR_TEMP);
 	com_logfile_timestamps = Cvar_Get("logfile_timestamps", "1", CVAR_TEMP);
 	com_speeds = Cvar_Get( "com_speeds", "0", 0 );
+	// Microsecond frame ledger, averaged over this many frames per report.
+	// Archived and not a cheat cvar, matching r_gpuTimers: demo playback clears
+	// cheat cvars, which is exactly when a benchmark wants this.
+	com_frameTimers = Cvar_Get( "com_frameTimers", "0", CVAR_ARCHIVE );
 	com_timedemo = Cvar_Get( "timedemo", "0", CVAR_CHEAT );
 	com_dedicated = Cvar_Get( "dedicated", "0", CVAR_LATCH );
 	cl_packetdelay = Cvar_Get( "cl_packetdelay", "0", 0 );
@@ -2234,6 +2240,66 @@ int Com_TimeVal(int minMsec)
 
 /*
 =================
+Com_ReportFrameTimers
+
+Averaged microsecond ledger of where Com_Frame went, printed every
+com_frameTimers frames.
+
+Reads against the renderer's own "cpu ... wall" line: this one's client bucket
+contains the whole renderer, so client minus the renderer's backend is the
+client-side work the renderer does not account for. The sleep bucket is the one
+to check first -- a frame parked on its com_maxfps cap spends its time there and
+is not a frame with a problem, which is indistinguishable from a slow frame if
+the bucket is missing.
+
+game is nested inside server and is therefore excluded from the accounted sum
+rather than counted twice.
+=================
+*/
+void Com_ReportFrameTimers( void )
+{
+	static int    frames;
+	static double accum[FRAMETIMER_COUNT];
+	int           i;
+	double        accounted;
+
+	if ( !com_frameTimers->integer ) {
+		Com_Memset( com_frameUsec, 0, sizeof( com_frameUsec ) );
+		Com_Memset( accum, 0, sizeof( accum ) );
+		frames = 0;
+		return;
+	}
+
+	for ( i = 0 ; i < FRAMETIMER_COUNT ; i++ ) {
+		accum[i] += com_frameUsec[i];
+	}
+	frames++;
+
+	Com_Memset( com_frameUsec, 0, sizeof( com_frameUsec ) );
+
+	if ( frames < com_frameTimers->integer ) {
+		return;
+	}
+
+	for ( i = 0 ; i < FRAMETIMER_COUNT ; i++ ) {
+		accum[i] = accum[i] / frames / 1000.0;
+	}
+
+	accounted = accum[FRAMETIMER_SLEEP] + accum[FRAMETIMER_EVENTS]
+		+ accum[FRAMETIMER_SERVER] + accum[FRAMETIMER_CLIENT];
+
+	Com_Printf( "frame %6.2fms = sleep %.2f events %.2f server %.2f (game %.2f)"
+		" client %.2f other %.2f  (avg of %i frames)\n",
+		accum[FRAMETIMER_FRAME], accum[FRAMETIMER_SLEEP], accum[FRAMETIMER_EVENTS],
+		accum[FRAMETIMER_SERVER], accum[FRAMETIMER_GAME], accum[FRAMETIMER_CLIENT],
+		accum[FRAMETIMER_FRAME] - accounted, frames );
+
+	Com_Memset( accum, 0, sizeof( accum ) );
+	frames = 0;
+}
+
+/*
+=================
 Com_Frame
 =================
 */
@@ -2243,6 +2309,7 @@ void Com_Frame( void ) {
 	int		timeVal, timeValSV;
 	static int	lastTime = 0, bias = 0;
  
+	double	usFrameStart, usStage;
 	int		timeBeforeFirstEvents;
 	int		timeBeforeServer;
 	int		timeBeforeEvents;
@@ -2268,6 +2335,8 @@ void Com_Frame( void ) {
 	}
 #endif
 
+	usFrameStart = Sys_Microseconds();
+	usStage = usFrameStart;
 	timeBeforeFirstEvents =0;
 	timeBeforeServer =0;
 	timeBeforeEvents =0;
@@ -2324,6 +2393,8 @@ void Com_Frame( void ) {
     else
         minMsec = 1;
 
+    usStage = Sys_Microseconds();
+
     do
     {
         if (com_sv_running->integer)
@@ -2343,6 +2414,9 @@ void Com_Frame( void ) {
         else
             NET_Sleep(timeVal - 1);
     } while (Com_TimeVal(minMsec));
+
+    com_frameUsec[FRAMETIMER_SLEEP] += Sys_Microseconds() - usStage;
+    usStage = Sys_Microseconds();
 
     IN_Frame();
 
@@ -2376,11 +2450,17 @@ void Com_Frame( void ) {
     //
     // server side
     //
+    com_frameUsec[FRAMETIMER_EVENTS] += Sys_Microseconds() - usStage;
+    usStage = Sys_Microseconds();
+
     if (com_speeds->integer) {
         timeBeforeServer = Sys_Milliseconds();
     }
 
 	SV_Frame( msec );
+
+	com_frameUsec[FRAMETIMER_SERVER] += Sys_Microseconds() - usStage;
+	usStage = Sys_Microseconds();
 
 	// if "dedicated" has been modified, start up
 	// or shut down the client system.
@@ -2418,6 +2498,9 @@ void Com_Frame( void ) {
 	}
 
 
+	com_frameUsec[FRAMETIMER_EVENTS] += Sys_Microseconds() - usStage;
+	usStage = Sys_Microseconds();
+
 	//
 	// client side
 	//
@@ -2426,6 +2509,8 @@ void Com_Frame( void ) {
 	}
 
 	CL_Frame( msec );
+
+	com_frameUsec[FRAMETIMER_CLIENT] += Sys_Microseconds() - usStage;
 
 	if ( com_speeds->integer ) {
 		timeAfter = Sys_Milliseconds ();
@@ -2510,6 +2595,9 @@ void Com_Frame( void ) {
 	Com_ReadFromPipe();
 
     Sys_ProcessBackgroundTasks();
+
+	com_frameUsec[FRAMETIMER_FRAME] += Sys_Microseconds() - usFrameStart;
+	Com_ReportFrameTimers();
 
 	com_frameNumber++;
 }

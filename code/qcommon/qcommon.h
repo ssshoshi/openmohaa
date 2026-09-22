@@ -1028,6 +1028,26 @@ extern	cvar_t	*fps_location;
 extern	cvar_t	*developer;
 extern	cvar_t	*com_dedicated;
 extern	cvar_t	*com_speeds;
+extern	cvar_t	*com_frameTimers;
+
+// Microsecond frame ledger. com_speeds reports whole milliseconds, which on a
+// ~10ms frame rounds most stages to 0 or 1 and cannot show the game simulation
+// growing from 1ms to 7ms as a level populates. Indexed by frameTimerId_t and
+// accumulated over com_frameTimers frames before being averaged and printed.
+typedef enum {
+	FRAMETIMER_FRAME,		// wall clock for the whole Com_Frame
+	FRAMETIMER_SLEEP,		// throttle wait holding com_maxfps
+	FRAMETIMER_EVENTS,		// input and both event loop passes
+	FRAMETIMER_SERVER,		// SV_Frame, game simulation included
+	FRAMETIMER_GAME,		// ge->RunFrame, nested inside SERVER
+	FRAMETIMER_CLIENT,		// CL_Frame, renderer included
+
+	FRAMETIMER_COUNT
+} frameTimerId_t;
+
+extern	double	com_frameUsec[FRAMETIMER_COUNT];
+
+void	Com_ReportFrameTimers( void );
 extern	cvar_t	*com_timescale;
 extern	cvar_t	*com_sv_running;
 extern	cvar_t	*com_cl_running;
@@ -1384,6 +1404,10 @@ void	Sys_Print( const char *msg );
 // Sys_Milliseconds should only be used for profiling purposes,
 // any game related timing information should come from event timestamps
 int		Sys_Milliseconds (void);
+// Microseconds since the first call. Sys_Milliseconds is whole milliseconds off
+// gettimeofday / timeGetTime, which cannot resolve stages of a frame that is
+// itself only about ten of them.
+double	Sys_Microseconds (void);
 
 qboolean Sys_RandomBytes( byte *string, int len );
 
