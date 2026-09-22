@@ -1041,6 +1041,8 @@ typedef enum {
 	FRAMETIMER_SERVER,		// SV_Frame, game simulation included
 	FRAMETIMER_GAME,		// ge->RunFrame, nested inside SERVER
 	FRAMETIMER_CLIENT,		// CL_Frame, renderer included
+	FRAMETIMER_CGAME,		// cge->CG_DrawActiveFrame, nested inside CLIENT
+	FRAMETIMER_SOUND,		// S_Update, nested inside CLIENT
 
 	FRAMETIMER_COUNT
 } frameTimerId_t;

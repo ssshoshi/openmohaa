@@ -1005,7 +1005,11 @@ void CL_CGameRendering( stereoFrame_t stereo ) {
 		cl.oldServerTime = cl.serverStartTime;
 	}
 
-	cge->CG_DrawActiveFrame( cl.serverTime, cl.serverTime - cl.oldServerTime, stereo, clc.demoplaying );
+	{
+		double usCgame = Sys_Microseconds();
+		cge->CG_DrawActiveFrame( cl.serverTime, cl.serverTime - cl.oldServerTime, stereo, clc.demoplaying );
+		com_frameUsec[FRAMETIMER_CGAME] += Sys_Microseconds() - usCgame;
+	}
 
 	cl.oldServerTime = cl.serverTime;
 	//

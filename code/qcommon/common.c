@@ -2289,9 +2289,10 @@ void Com_ReportFrameTimers( void )
 		+ accum[FRAMETIMER_SERVER] + accum[FRAMETIMER_CLIENT];
 
 	Com_Printf( "frame %6.2fms = sleep %.2f events %.2f server %.2f (game %.2f)"
-		" client %.2f other %.2f  (avg of %i frames)\n",
+		" client %.2f (cgame %.2f sound %.2f) other %.2f  (avg of %i frames)\n",
 		accum[FRAMETIMER_FRAME], accum[FRAMETIMER_SLEEP], accum[FRAMETIMER_EVENTS],
 		accum[FRAMETIMER_SERVER], accum[FRAMETIMER_GAME], accum[FRAMETIMER_CLIENT],
+		accum[FRAMETIMER_CGAME], accum[FRAMETIMER_SOUND],
 		accum[FRAMETIMER_FRAME] - accounted, frames );
 
 	Com_Memset( accum, 0, sizeof( accum ) );

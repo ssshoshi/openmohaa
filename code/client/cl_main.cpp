@@ -2840,7 +2840,11 @@ void CL_Frame ( int msec ) {
 	SCR_UpdateScreen();
 
 	// update audio
-	S_Update();
+	{
+		double usSnd = Sys_Microseconds();
+		S_Update();
+		com_frameUsec[FRAMETIMER_SOUND] += Sys_Microseconds() - usSnd;
+	}
 
 	// advance local effects for next frame
 	SCR_RunCinematic();
