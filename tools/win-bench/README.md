@@ -33,6 +33,7 @@ OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
 | `OMBENCH_CVARS`    | -- | extra cvars, applied on the launch line: `"r_vaoCache 1; r_finish 1"` |
 | `OMBENCH_REPEATS`  | `1` | measurement windows inside one process |
 | `OMBENCH_RESTART`  | `none` | between windows: `none`, `vid_restart` or `map` |
+| `OMBENCH_SEEDCFG`  | -- | an `omconfig.cfg` to copy in first, to reproduce a specific player's settings instead of defaults |
 
 ## How it works
 

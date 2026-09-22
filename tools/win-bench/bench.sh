@@ -40,6 +40,12 @@ CVARS="${OMBENCH_CVARS:-}"
 # only appear after the renderer has been up a while. OMBENCH_RESTART picks
 # what happens between windows: none, vid_restart (tears down and rebuilds the
 # GL context) or map (reloads the map).
+# A config to copy into the scratch homepath before the run, so a measurement
+# can reproduce what a particular player actually sees rather than the defaults.
+# Needed more often than it looks: cg_shadows is registered by the renderer with
+# default 1 before cgame registers it with 0, so a default run takes the
+# expensive per-entity blob shadow path that a player on cg_shadows 3 does not.
+SEEDCFG="${OMBENCH_SEEDCFG:-}"
 REPEATS="${OMBENCH_REPEATS:-1}"
 RESTART="${OMBENCH_RESTART:-none}"
 TIMEOUT="${OMBENCH_TIMEOUT:-140}"
@@ -134,6 +140,7 @@ echo "bench: install   $INSTALL"
 echo "bench: map       $MAP @ ${WIDTH}x${HEIGHT}, gpuTimers interval ${INTERVAL} frames"
 [ "$REPEATS" -gt 1 ] && echo "bench: repeats   $REPEATS windows, '$RESTART' between"
 [ -n "$CVARS" ] && echo "bench: cvars     $CVARS"
+[ -n "$SEEDCFG" ] && echo "bench: seedcfg   $SEEDCFG"
 echo "bench: clearing previous run"
 taskkill.exe /IM "$PROC.exe" /F >/dev/null 2>&1
 rm -f "$LOG" "$SHOTDIR"/*.jpg "$SHOTDIR"/*.tga 2>/dev/null
@@ -146,7 +153,19 @@ rm -f "$LOG" "$SHOTDIR"/*.jpg "$SHOTDIR"/*.tga 2>/dev/null
 # Start each run from a known file holding nothing but the renderer choice.
 CFGFILE="$OUT/main/configs/omconfig.cfg"
 mkdir -p "$(dirname "$CFGFILE")"
-echo 'seta cl_renderer "opengl2"' > "$CFGFILE"
+if [ -n "$SEEDCFG" ]; then
+  [ -f "$SEEDCFG" ] || { echo "bench: FAIL - OMBENCH_SEEDCFG '$SEEDCFG' not found"; exit 1; }
+  cp "$SEEDCFG" "$CFGFILE"
+  # cl_renderer is CVAR_ARCHIVE|CVAR_LATCH and outranks the launch line, so a
+  # seeded config carrying opengl1 would silently load GL1 and report no timers.
+  if grep -q 'cl_renderer' "$CFGFILE"; then
+    sed -i 's/^seta cl_renderer .*/seta cl_renderer "opengl2"/' "$CFGFILE"
+  else
+    echo 'seta cl_renderer "opengl2"' >> "$CFGFILE"
+  fi
+else
+  echo 'seta cl_renderer "opengl2"' > "$CFGFILE"
+fi
 
 wait_for() {   # marker deadline_epoch
   local marker="$1" deadline="$2"
@@ -222,6 +241,7 @@ echo "renderer : ${renderer:-<not found>}"
 echo "gl       : ${glver:-<not found>}"
 echo "map      : $MAP @ ${WIDTH}x${HEIGHT}"
 [ -n "$CVARS" ] && echo "cvars    : $CVARS"
+[ -n "$SEEDCFG" ] && echo "seedcfg  : $SEEDCFG"
 if [ -n "$gpu_line" ]; then
   frame_ms="$(sed -E 's/^gpu +([0-9.]+)ms.*/\1/' <<<"$gpu_line")"
   wall_ms="$(sed -E 's/^cpu +([0-9.]+)ms wall.*/\1/' <<<"${cpu_wall:-}")"
