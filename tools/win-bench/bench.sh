@@ -26,6 +26,16 @@ WIDTH="${OMBENCH_WIDTH:-1280}"
 HEIGHT="${OMBENCH_HEIGHT:-720}"
 INTERVAL="${OMBENCH_INTERVAL:-100}"
 MEASURE_MS="${OMBENCH_MEASURE_MS:-16000}"
+# Single player campaign maps take far longer to spawn than a DM map -- m1l1
+# was 30s in a captured log, against a couple of seconds for dm/mohdm1 -- and
+# finishloadingscreen issued before the load finishes does nothing.
+LOADWAIT="${OMBENCH_LOADWAIT:-9000}"
+# Extra cvars, e.g. OMBENCH_CVARS="r_vaoCache 1". Semicolon separated for more
+# than one: "r_vaoCache 1; r_finish 1". Applied on the launch line rather than
+# in the cfg because several of the interesting ones are CVAR_LATCH -- notably
+# r_sunShadows -- and a latched cvar set after GL init does nothing until the
+# next vid_restart, which reads as "the setting had no effect".
+CVARS="${OMBENCH_CVARS:-}"
 TIMEOUT="${OMBENCH_TIMEOUT:-140}"
 PROC="openmohaa"
 
@@ -55,7 +65,7 @@ seta r_gpuTimers $INTERVAL
 seta logfile 2
 echo OMBENCH_START
 devmap $MAP
-wait 9000
+wait $LOADWAIT
 echo OMBENCH_MAPLOADED
 finishloadingscreen
 wait 3000
@@ -69,28 +79,36 @@ CFG
 
 # --- Windows launcher (native paths; r_mode/customres are LATCH so set pre-init).
 #     cl_playintro 0 + ui_skip_* keep the EA/title/legal intro videos from playing.
+cvar_args=""
+if [ -n "$CVARS" ]; then
+  while IFS= read -r kv; do
+    kv="$(echo "$kv" | sed 's/^ *//;s/ *$//')"
+    [ -n "$kv" ] && cvar_args="$cvar_args +set $kv"
+  done <<< "$(echo "$CVARS" | tr ';' '\n')"
+fi
+
 cat > "$OUT/run.bat" <<BAT
 @echo off
 cd /d "$win_install"
-openmohaa.exe +set cl_renderer opengl2 +set fs_basepath "$win_base" +set fs_homepath "$win_out" +set logfile 2 +set cl_playintro 0 +set ui_skip_eamovie 1 +set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set r_fullscreen 0 +set r_mode -1 +set r_customwidth $WIDTH +set r_customheight $HEIGHT +exec bench.cfg
+openmohaa.exe$cvar_args +set cl_renderer opengl2 +set fs_basepath "$win_base" +set fs_homepath "$win_out" +set logfile 2 +set cl_playintro 0 +set ui_skip_eamovie 1 +set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set r_fullscreen 0 +set r_mode -1 +set r_customwidth $WIDTH +set r_customheight $HEIGHT +exec bench.cfg
 BAT
 
 echo "bench: install   $INSTALL"
 echo "bench: map       $MAP @ ${WIDTH}x${HEIGHT}, gpuTimers interval ${INTERVAL} frames"
+[ -n "$CVARS" ] && echo "bench: cvars     $CVARS"
 echo "bench: clearing previous run"
 taskkill.exe /IM "$PROC.exe" /F >/dev/null 2>&1
 rm -f "$LOG" "$SHOTDIR"/*.jpg "$SHOTDIR"/*.tga 2>/dev/null
 # cl_renderer is CVAR_ARCHIVE|CVAR_LATCH and defaults to opengl1; a stale value in this
 # homepath's omconfig.cfg silently loads GL1 (no r_gpuTimers) and outranks the launch +set.
 # Force GL2 in the persisted config so the GL2 renderer is what actually loads.
+# Every cvar this run sets is CVAR_ARCHIVE and gets written back here on exit,
+# so leaving the file in place makes the next run inherit it. A sweep that does
+# not wipe it measures the union of everything tried so far, not one variable.
+# Start each run from a known file holding nothing but the renderer choice.
 CFGFILE="$OUT/main/configs/omconfig.cfg"
-if [ -f "$CFGFILE" ]; then
-  if grep -q 'cl_renderer' "$CFGFILE"; then
-    sed -i 's/^seta cl_renderer .*/seta cl_renderer "opengl2"/' "$CFGFILE"
-  else
-    echo 'seta cl_renderer "opengl2"' >> "$CFGFILE"
-  fi
-fi
+mkdir -p "$(dirname "$CFGFILE")"
+echo 'seta cl_renderer "opengl2"' > "$CFGFILE"
 
 wait_for() {   # marker deadline_epoch
   local marker="$1" deadline="$2"
@@ -138,17 +156,43 @@ gpu_line="$(grep -a '^gpu .*ms =' "$clean" | tail -1)"
 sub_line="$(grep -a '^gpu submission:' "$clean" | tail -1)"
 fe_pf="$(grep -a '^frontend per frame:' "$clean" | tail -1)"
 fe_ms="$(grep -a '^frontend ms/frame:' "$clean" | tail -1)"
+cpu_wall="$(grep -a '^cpu .*ms wall =' "$clean" | tail -1)"
+cpu_back="$(grep -a '^cpu backend =' "$clean" | tail -1)"
+cpu_pass="$(grep -a '^cpu   in drawsurfs:' "$clean" | tail -1)"
 
 echo
 echo "======================= openmohaa GL2 win-bench ======================="
 echo "renderer : ${renderer:-<not found>}"
 echo "gl       : ${glver:-<not found>}"
 echo "map      : $MAP @ ${WIDTH}x${HEIGHT}"
+[ -n "$CVARS" ] && echo "cvars    : $CVARS"
 if [ -n "$gpu_line" ]; then
   frame_ms="$(sed -E 's/^gpu +([0-9.]+)ms.*/\1/' <<<"$gpu_line")"
-  fps="$(awk -v m="$frame_ms" 'BEGIN{ if(m>0) printf "%.0f", 1000.0/m; else print "n/a" }')"
+  wall_ms="$(sed -E 's/^cpu +([0-9.]+)ms wall.*/\1/' <<<"${cpu_wall:-}")"
   echo "GPU      : $gpu_line"
-  echo "           ~${fps} fps GPU-bound (1000 / ${frame_ms}ms)"
+  [ -n "$cpu_wall" ] && echo "CPU      : $cpu_wall"
+  [ -n "$cpu_back" ] && echo "           $cpu_back"
+  [ -n "$cpu_pass" ] && echo "           $cpu_pass"
+
+  # The headline. GPU frame time alone cannot say whether the card was the
+  # limit -- a frame that spends 9ms on the GPU and 20ms on the main thread
+  # has a 9ms GPU frame. Only wall clock, measured swap to swap, settles it,
+  # so report the measured rate and name the bound rather than assuming one.
+  if [ -n "$wall_ms" ]; then
+    awk -v w="$wall_ms" -v g="$frame_ms" 'BEGIN{
+      if (w <= 0) exit
+      printf "rate     : %.0f fps measured (%.2fms wall)", 1000.0/w, w
+      printf " vs %.0f fps if GPU bound (%.2fms)\n", (g>0 ? 1000.0/g : 0), g
+      if (g > 0 && w > g * 1.10)
+        printf "           CPU bound: %.2fms/frame the card is not waited on for\n", w - g
+      else
+        printf "           GPU bound: the main thread keeps up with the card\n"
+    }'
+  else
+    fps="$(awk -v m="$frame_ms" 'BEGIN{ if(m>0) printf "%.0f", 1000.0/m; else print "n/a" }')"
+    echo "rate     : ~${fps} fps if GPU bound (no cpu report - old renderer DLL?)"
+  fi
+
   [ -n "$sub_line" ] && echo "submit   : $sub_line"
   [ -n "$fe_pf" ]    && echo "frontend : $fe_pf"
   [ -n "$fe_ms" ]    && echo "           $fe_ms"

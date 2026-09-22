@@ -28,6 +28,7 @@ OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
 | `OMBENCH_WIDTH/HEIGHT` | `1280`/`720` | render resolution (`r_mode -1` custom) |
 | `OMBENCH_INTERVAL` | `300` | `r_gpuTimers` averaging window, in frames |
 | `OMBENCH_MEASURE_MS` | `16000` | length of the measurement window |
+| `OMBENCH_LOADWAIT` | `9000` | ms to wait for the map to spawn before `finishloadingscreen`; raise well past this for single player campaign maps |
 | `OMBENCH_TIMEOUT`  | `140` | hard ceiling (s) before the run is force-killed |
 
 ## How it works
