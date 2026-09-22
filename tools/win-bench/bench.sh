@@ -212,6 +212,7 @@ fe_ms="$(grep -a '^frontend ms/frame:' "$clean" | tail -1)"
 cpu_wall="$(grep -a '^cpu .*ms wall =' "$clean" | tail -1)"
 eng_line="$(grep -a '^frame .*ms = sleep' "$clean" | tail -1)"
 cg_line="$(grep -a '^cgame .*ms =' "$clean" | tail -1)"
+cge_line="$(grep -a '^cgame ents ' "$clean" | tail -1)"
 cpu_back="$(grep -a '^cpu backend =' "$clean" | tail -1)"
 cpu_pass="$(grep -a '^cpu   in drawsurfs:' "$clean" | tail -1)"
 
@@ -233,6 +234,7 @@ if [ -n "$gpu_line" ]; then
   # com_frameTimers; absent on older builds.
   [ -n "$eng_line" ] && echo "engine   : $eng_line"
   [ -n "$cg_line" ] && echo "cgame    : $cg_line"
+  [ -n "$cge_line" ] && echo "           $cge_line"
 
   # The headline. GPU frame time alone cannot say whether the card was the
   # limit -- a frame that spends 9ms on the GPU and 20ms on the main thread
@@ -291,6 +293,8 @@ if [ "$REPEATS" -gt 1 ]; then
       [ -n "$e" ] && echo "            $e"
       cg="$(grep -a '^cgame .*ms =' <<<"$seg" | tail -1)"
       [ -n "$cg" ] && echo "            $cg"
+      cge="$(grep -a '^cgame ents ' <<<"$seg" | tail -1)"
+      [ -n "$cge" ] && echo "            $cge"
     else
       echo "  window $w: <no report captured>"
     fi
