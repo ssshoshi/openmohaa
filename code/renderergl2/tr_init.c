@@ -235,6 +235,7 @@ cvar_t	*r_marksOnTriangleMeshes;
 cvar_t	*r_vaoCache;
 cvar_t	*r_gpuTimerSync;
 cvar_t	*r_gpuTimers;
+cvar_t	*r_frameHitchMsec;
 cvar_t	*r_tessOrphan;
 
 cvar_t	*r_aviMotionJpegQuality;
@@ -1614,6 +1615,11 @@ void R_Register( void )
 	r_tessOrphan = ri.Cvar_Get("r_tessOrphan", "0", CVAR_ARCHIVE);
 	// see tr_gputimer.c -- forces a pipeline drain at each scope boundary
 	r_gpuTimerSync = ri.Cvar_Get("r_gpuTimerSync", "0", CVAR_CHEAT);
+	// Wall frame time in ms above which a frame prints its own CPU breakdown.
+	// The averaged report cannot show a hitch: a single 200ms frame inside a
+	// 300 frame window moves the mean by 0.6ms and vanishes. Archived and not
+	// CVAR_CHEAT for the same reason as r_gpuTimers.
+	r_frameHitchMsec = ri.Cvar_Get("r_frameHitchMsec", "0", CVAR_ARCHIVE);
 
 	r_aviMotionJpegQuality = ri.Cvar_Get("r_aviMotionJpegQuality", "90", CVAR_ARCHIVE);
 	r_screenshotJpegQuality = ri.Cvar_Get("r_screenshotJpegQuality", "90", CVAR_ARCHIVE);

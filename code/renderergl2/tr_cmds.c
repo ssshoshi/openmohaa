@@ -134,6 +134,21 @@ static void R_ReportCpuTimers( int interval )
 		cpu[CPUTIMER_FRAME], cpu[CPUTIMER_BACKEND],
 		cpu[CPUTIMER_FRAME] - cpu[CPUTIMER_BACKEND], numFrames );
 
+	// The mean above cannot show a hitch and will not be moved much by one:
+	// a single 200ms frame inside a 300 frame window shifts it by 0.6ms. The
+	// spread is what says whether a frame rate is a ceiling or a stutter.
+	{
+		double p50, p95, p99, worst;
+		int    n;
+
+		if (R_CpuTimerPercentiles( &p50, &p95, &p99, &worst, &n ))
+		{
+			ri.Printf( PRINT_ALL,
+				"cpu frames: p50 %.2f p95 %.2f p99 %.2f max %.2f ms over %i\n",
+				p50, p95, p99, worst, n );
+		}
+	}
+
 	Com_sprintf( line, sizeof(line), "cpu backend =" );
 
 	// One entry per render command, so this line sums to backend. What it
@@ -171,11 +186,48 @@ static void R_ReportCpuTimers( int interval )
 		line, cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD] );
 }
 
+/*
+================
+R_ReportCpuHitch
+
+One line per frame that blew past r_frameHitchMsec, printed as it happens
+rather than averaged away.
+
+CPU only, deliberately. GPU query results are read back GPUTIMER_FRAMES late
+and never waited on, so by the time a hitch is detected the card's numbers for
+that frame do not exist yet -- printing whatever the GPU ring currently holds
+would attribute some other frame's work to this one. The CPU buckets are exact
+for the frame they describe.
+================
+*/
+static void R_ReportCpuHitch( void )
+{
+	double cpu[CPUTIMER_COUNT];
+
+	R_CpuTimerLastFrame( cpu );
+
+	if (cpu[CPUTIMER_FRAME] < (double)r_frameHitchMsec->integer)
+		return;
+
+	ri.Printf( PRINT_ALL,
+		"cpu HITCH %.2fms = backend %.2f (drawsurfs %.2f: sunshadow %.2f prepass %.2f"
+		" shadowmask %.2f main3d %.2f; tessbuild %.2f tessupload %.2f)"
+		" post %.2f sprites %.2f 2d %.2f present %.2f swap %.2f | other %.2f\n",
+		cpu[CPUTIMER_FRAME], cpu[CPUTIMER_BACKEND], cpu[CPUTIMER_DRAWSURFS],
+		cpu[CPUTIMER_SUNSHADOW], cpu[CPUTIMER_DEPTHPREPASS],
+		cpu[CPUTIMER_SHADOWMASK], cpu[CPUTIMER_MAIN3D],
+		cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD],
+		cpu[CPUTIMER_POSTPROCESS], cpu[CPUTIMER_SPRITES], cpu[CPUTIMER_2D],
+		cpu[CPUTIMER_PRESENT], cpu[CPUTIMER_SWAPBUFFERS],
+		cpu[CPUTIMER_FRAME] - cpu[CPUTIMER_BACKEND] );
+}
+
 void R_PerformanceCounters( void ) {
 	// Every frame, cvar or not: this latches whether the timers are live and
 	// resets the frame being built, so a frame rendered while they were off
 	// cannot leak into the first window after they are switched on.
-	R_CpuTimerFrameEnd();
+	if (R_CpuTimerFrameEnd() && r_frameHitchMsec->integer)
+		R_ReportCpuHitch();
 
 	if (r_fps->integer) {
 		ri.SetPerformanceCounters(

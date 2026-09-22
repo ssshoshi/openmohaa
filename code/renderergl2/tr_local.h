@@ -2026,7 +2026,12 @@ extern const char *const cpuTimerNames[CPUTIMER_COUNT];
 
 void     R_CpuTimerMark(int id, qboolean isEnd);
 void     R_CpuTimerSwap(void);		// stamp wall frame time at the buffer swap
-void     R_CpuTimerFrameEnd(void);	// fold the finished frame into the average
+qboolean R_CpuTimerFrameEnd(void);	// fold the finished frame into the average
+// The frame R_CpuTimerFrameEnd just folded, in ms, for hitch reporting.
+void     R_CpuTimerLastFrame(double *out);
+// p50/p95/p99/max of wall frame time over the window, in ms. Drains, like the
+// averages, so one report window is one sample set.
+qboolean R_CpuTimerPercentiles(double *p50, double *p95, double *p99, double *max, int *numFrames);
 qboolean R_CpuTimerReport(double *out, int *numFrames, int minFrames);
 
 #define R_CpuTimerBegin(id) R_CpuTimerMark((id), qfalse)
@@ -2679,6 +2684,7 @@ extern cvar_t* r_showportal;
 extern cvar_t *r_vaoCache;
 extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
+extern cvar_t *r_frameHitchMsec;
 extern cvar_t *r_tessOrphan;
 
 //====================================================================

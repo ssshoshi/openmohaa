@@ -354,9 +354,18 @@ const char *const cpuTimerNames[CPUTIMER_COUNT] = {
 static double   cpuFrame[CPUTIMER_COUNT];	// the frame being built
 static double   cpuOpen[CPUTIMER_COUNT];	// start stamp of an open scope
 static double   cpuAccum[CPUTIMER_COUNT];	// running total for the average
+static double   cpuLast[CPUTIMER_COUNT];	// the frame just folded, for hitches
 static int      cpuAccumFrames;
 static double   cpuLastSwap;
 static qboolean cpuActive;
+
+// Wall frame times kept individually as well as summed, because an average
+// cannot show a hitch: one 200ms frame inside a 300 frame window moves the
+// mean by 0.6ms. Percentiles are what distinguish "everything is slow" from
+// "almost everything is fine".
+#define CPUTIMER_RING 4096
+static float    cpuRing[CPUTIMER_RING];
+static int      cpuRingCount;
 
 /*
 ================
@@ -428,11 +437,13 @@ them in drags every pass towards zero, which is the same reason the GPU side
 counts marks before accumulating.
 ================
 */
-void R_CpuTimerFrameEnd(void)
+qboolean R_CpuTimerFrameEnd(void)
 {
-	int i;
+	qboolean worldFrame;
+	int      i;
 
-	cpuActive = r_gpuTimers->integer || r_speeds->integer == 8;
+	cpuActive = r_gpuTimers->integer || r_speeds->integer == 8
+		|| r_frameHitchMsec->integer;
 
 	if (!cpuActive)
 	{
@@ -440,18 +451,82 @@ void R_CpuTimerFrameEnd(void)
 		Com_Memset(cpuOpen, 0, sizeof(cpuOpen));
 		Com_Memset(cpuAccum, 0, sizeof(cpuAccum));
 		cpuAccumFrames = 0;
-		return;
+		cpuRingCount = 0;
+		return qfalse;
 	}
 
-	if (cpuFrame[CPUTIMER_MAIN3D] > 0.0)
+	worldFrame = (cpuFrame[CPUTIMER_MAIN3D] > 0.0);
+
+	if (worldFrame)
 	{
 		for (i = 0; i < CPUTIMER_COUNT; i++)
+		{
 			cpuAccum[i] += cpuFrame[i];
+			cpuLast[i] = cpuFrame[i] / 1000.0;
+		}
+
+		if (cpuRingCount < CPUTIMER_RING)
+			cpuRing[cpuRingCount++] = (float)(cpuFrame[CPUTIMER_FRAME] / 1000.0);
 
 		cpuAccumFrames++;
 	}
 
 	Com_Memset(cpuFrame, 0, sizeof(cpuFrame));
+
+	return worldFrame;
+}
+
+/*
+================
+R_CpuTimerLastFrame
+================
+*/
+void R_CpuTimerLastFrame(double *out)
+{
+	int i;
+
+	for (i = 0; i < CPUTIMER_COUNT; i++)
+		out[i] = cpuLast[i];
+}
+
+static int R_CpuTimerSortFrames(const void *a, const void *b)
+{
+	float fa = *(const float *)a;
+	float fb = *(const float *)b;
+
+	return (fa > fb) - (fa < fb);
+}
+
+/*
+================
+R_CpuTimerPercentiles
+
+Sorted once per report rather than per frame, so the cost lands on the report
+and not on what is being measured. The ring is capped: once it is full the
+window stops sampling rather than evicting, which keeps the percentiles honest
+about how many frames they describe instead of silently sliding.
+================
+*/
+qboolean R_CpuTimerPercentiles(double *p50, double *p95, double *p99, double *max, int *numFrames)
+{
+	static float sorted[CPUTIMER_RING];
+	int n = cpuRingCount;
+
+	if (n < 1)
+		return qfalse;
+
+	Com_Memcpy(sorted, cpuRing, n * sizeof(sorted[0]));
+	qsort(sorted, n, sizeof(sorted[0]), R_CpuTimerSortFrames);
+
+	*p50 = sorted[(int)(n * 0.50)];
+	*p95 = sorted[(int)(n * 0.95)];
+	*p99 = sorted[(int)(n * 0.99)];
+	*max = sorted[n - 1];
+	*numFrames = n;
+
+	cpuRingCount = 0;
+
+	return qtrue;
 }
 
 /*
