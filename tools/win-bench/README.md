@@ -1,0 +1,81 @@
+# win-bench — unattended GL2 GPU benchmark of the Windows build, from WSL2
+
+Runs the **real Windows `openmohaa.exe` on the native NVIDIA driver** via WSL2 Windows
+interop, with no user interaction, and reports the per-pass GPU frame timings from
+`r_gpuTimers`. Use this instead of the Linux/WSLg run when you want numbers that match the
+user's actual machine — the Linux path renders on Mesa (llvmpipe, or D3D12-translated GL
+with `GALLIUM_DRIVER=d3d12`), neither of which is comparable to the native driver.
+
+## Usage
+
+```bash
+tools/win-bench/bench.sh
+```
+
+Override anything via env:
+
+```bash
+OMBENCH_MAP=dm/mohdm2 OMBENCH_WIDTH=1920 OMBENCH_HEIGHT=1080 \
+OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
+```
+
+| var | default | meaning |
+|-----|---------|---------|
+| `OMBENCH_INSTALL`  | `/mnt/d/Medal of Honor/openmohaa-ragdoll` | dir with `openmohaa.exe` + `renderer_opengl2.dll` |
+| `OMBENCH_BASEPATH` | `/mnt/d/Medal of Honor` | `fs_basepath` (holds `main/Pak*.pk3`) |
+| `OMBENCH_OUT`      | `/mnt/d/Medal of Honor/bench-out` | scratch `fs_homepath`; log + screenshots land here |
+| `OMBENCH_MAP`      | `dm/mohdm1` | map loaded via `devmap` |
+| `OMBENCH_WIDTH/HEIGHT` | `1280`/`720` | render resolution (`r_mode -1` custom) |
+| `OMBENCH_INTERVAL` | `300` | `r_gpuTimers` averaging window, in frames |
+| `OMBENCH_MEASURE_MS` | `16000` | length of the measurement window |
+| `OMBENCH_TIMEOUT`  | `140` | hard ceiling (s) before the run is force-killed |
+
+## How it works
+
+1. Generates `run.bat` + `bench.cfg` into `OMBENCH_OUT`, pointing `fs_homepath` there so the
+   console log (`qconsole.log`) and screenshots are readable from WSL.
+2. Launches `openmohaa.exe` in the background through `cmd.exe /c`.
+3. Waits (by polling `qconsole.log`) for the `OMBENCH_MAPLOADED` marker.
+4. The cfg itself issues **`finishloadingscreen`** — the console command MOHAA's CONTINUE
+   button runs (`stuffcommand` in `ui/loadingbar.txt`; it calls `UI_ActivateView3D`). That
+   clears the post-load **CONTINUE** card in-engine, so no synthetic input or window focus is
+   needed. This is the "no user intervention" part. (`dismiss.ps1` is a keypress fallback,
+   unused by default.)
+5. Lets the world render for `OMBENCH_MEASURE_MS`; `r_gpuTimers` prints an averaged per-pass
+   breakdown every `OMBENCH_INTERVAL` frames.
+6. Quits, force-kills any straggler, and parses the **last** GPU report block (steady state —
+   the first world frame's timings are stale by design).
+
+The boot intro videos (EA / title / legal) are suppressed with `+set cl_playintro 0` and the
+`ui_skip_*` cvars on the launch line, so nothing sits in front of the map load.
+
+Exit status is 0 only if a `gpu … ms =` line was captured.
+
+## The report
+
+`r_gpuTimers` passes (from `tr_gputimer.c`): `frame` (total) = `sunshadow` (`sun0..sun3`
+nested) + `prepass` + `shadowmask` + `main3d` + `post` + `present` + `other`. The `other`
+column is unattributed frame time; a breakdown that is mostly `other` means passes are
+mis-attributed. `gpu submission: N draws N uploads` are counts, not times — immune to GPU
+clock drift between runs, so they're the most stable thing to diff across builds.
+
+## Gotchas
+
+- **`cl_renderer` must be `opengl2`.** It defaults to `opengl1` and is `CVAR_ARCHIVE|CVAR_LATCH`,
+  so a stale `seta cl_renderer "opengl1"` in the homepath's `omconfig.cfg` silently loads the GL1
+  renderer — which renders fine and prints `r_speeds`, but has **no `r_gpuTimers`** at all. bench.sh
+  forces GL2 both on the launch line and by normalizing that cfg line. If a run shows no gpu report,
+  first confirm the log says `Trying to load "renderer_opengl2.dll"` and `using GLSL version ...`.
+
+- **CONTINUE card.** `devmap` loads the map but MOHAA holds on a "CONTINUE" card until a key
+  is pressed; until then no world frames render and `r_gpuTimers` prints nothing. `dismiss.ps1`
+  handles it. If a run reports "world likely never rendered", check the screenshot — if it
+  shows the framed level photo, the keypress didn't land (window focus stolen, or a second
+  menu gate); re-run, or extend the wait before the keypress in `bench.cfg`.
+- **Renderer/exe API version.** The install must be the ragdoll-line build (REF_API v15). The
+  freshly cross-built `feat/opengl2` renderer DLL is v14 and won't load against that exe — see
+  the `windows-build-deploy` skill and the REF_API memory note.
+- **Not comparable to the Linux run.** Numbers here are the native NVIDIA driver; the WSL/GL
+  runs are Mesa. Only compare win-bench to win-bench.
+- **Resolution matters.** GPU pass times scale with resolution — hold `WIDTH`/`HEIGHT` fixed
+  when diffing builds.
