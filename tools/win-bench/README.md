@@ -30,6 +30,9 @@ OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
 | `OMBENCH_MEASURE_MS` | `16000` | length of the measurement window |
 | `OMBENCH_LOADWAIT` | `9000` | ms to wait for the map to spawn before `finishloadingscreen`; raise well past this for single player campaign maps |
 | `OMBENCH_TIMEOUT`  | `140` | hard ceiling (s) before the run is force-killed |
+| `OMBENCH_CVARS`    | -- | extra cvars, applied on the launch line: `"r_vaoCache 1; r_finish 1"` |
+| `OMBENCH_REPEATS`  | `1` | measurement windows inside one process |
+| `OMBENCH_RESTART`  | `none` | between windows: `none`, `vid_restart` or `map` |
 
 ## How it works
 
@@ -80,3 +83,13 @@ clock drift between runs, so they're the most stable thing to diff across builds
   runs are Mesa. Only compare win-bench to win-bench.
 - **Resolution matters.** GPU pass times scale with resolution — hold `WIDTH`/`HEIGHT` fixed
   when diffing builds.
+
+- **The scene gets heavier the longer a map has been up**, so *when* a window is measured
+  matters as much as what it is measuring. On `m1l1` with a static camera, four consecutive
+  15s windows went 111 → 76 → 59 → 60 fps with no cvar changed and no restart, while draws
+  went 513 → 1012 and sun cascade surfaces 203 → 460: AI actors populating the level, each
+  submitted to the main view, the depth prepass and two shadow cascades. This is why the
+  default is one window per process. Never A/B two settings by running them back to back in
+  one process — that was how a previous cascade sweep concluded "no difference" when the
+  runs simply were not comparable. Use `OMBENCH_REPEATS` to *study* the effect, not to
+  collect a sweep.

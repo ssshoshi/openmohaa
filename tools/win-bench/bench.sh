@@ -36,6 +36,12 @@ LOADWAIT="${OMBENCH_LOADWAIT:-9000}"
 # r_sunShadows -- and a latched cvar set after GL init does nothing until the
 # next vid_restart, which reads as "the setting had no effect".
 CVARS="${OMBENCH_CVARS:-}"
+# Repeated measurement windows inside ONE process, to reproduce effects that
+# only appear after the renderer has been up a while. OMBENCH_RESTART picks
+# what happens between windows: none, vid_restart (tears down and rebuilds the
+# GL context) or map (reloads the map).
+REPEATS="${OMBENCH_REPEATS:-1}"
+RESTART="${OMBENCH_RESTART:-none}"
 TIMEOUT="${OMBENCH_TIMEOUT:-140}"
 PROC="openmohaa"
 
@@ -58,7 +64,36 @@ mkdir -p "$OUT/main" "$SHOTDIR"
 #     the CONTINUE button runs (stuffcommand in ui/loadingbar.txt -> UI_ActivateView3D),
 #     so we dismiss the post-load card in-engine instead of faking a keypress. `wait` is
 #     milliseconds on this engine, so markers fire on a wall-clock schedule.
-cat > "$OUT/main/bench.cfg" <<CFG
+{
+  echo "seta com_maxfps 0"
+  echo "seta r_swapInterval 0"
+  echo "seta r_gpuTimers $INTERVAL"
+  echo "seta logfile 2"
+  echo "echo OMBENCH_START"
+  echo "devmap $MAP"
+  echo "wait $LOADWAIT"
+  echo "echo OMBENCH_MAPLOADED"
+  echo "finishloadingscreen"
+  echo "wait 3000"
+  i=1
+  while [ "$i" -le "$REPEATS" ]; do
+    echo "echo OMBENCH_WIN_$i"
+    echo "wait $MEASURE_MS"
+    echo "echo OMBENCH_ENDWIN_$i"
+    if [ "$i" -lt "$REPEATS" ]; then
+      case "$RESTART" in
+        vid_restart) echo "vid_restart"; echo "wait 8000" ;;
+        map)         echo "devmap $MAP"; echo "wait $LOADWAIT"; echo "finishloadingscreen"; echo "wait 3000" ;;
+        none)        : ;;
+      esac
+    fi
+    i=$(( i + 1 ))
+  done
+  echo "echo OMBENCH_ALLDONE"
+  echo "screenshotJPEG"
+  echo "wait 500"
+  echo "quit"
+} > "$OUT/main/bench.cfg"
 seta com_maxfps 0
 seta r_swapInterval 0
 seta r_gpuTimers $INTERVAL
@@ -95,6 +130,7 @@ BAT
 
 echo "bench: install   $INSTALL"
 echo "bench: map       $MAP @ ${WIDTH}x${HEIGHT}, gpuTimers interval ${INTERVAL} frames"
+[ "$REPEATS" -gt 1 ] && echo "bench: repeats   $REPEATS windows, '$RESTART' between"
 [ -n "$CVARS" ] && echo "bench: cvars     $CVARS"
 echo "bench: clearing previous run"
 taskkill.exe /IM "$PROC.exe" /F >/dev/null 2>&1
@@ -134,9 +170,24 @@ echo "bench: map loaded (cfg runs finishloadingscreen); foregrounding window so 
 # so the window must be foreground during the measurement window.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$SCRIPT_DIR/focus.ps1")" "$PROC" 2>&1 | tr -d '\r' | sed 's/^/bench:   /'
 
-if ! wait_for OMBENCH_DONE "$hard_deadline"; then
+focus_loop_pid=""
+if [ "$REPEATS" -gt 1 ] && [ "$RESTART" = "vid_restart" ]; then
+  # vid_restart tears down and recreates the window, which drops foreground.
+  # Re-assert it for the whole run rather than once at the start.
+  ( while :; do
+      powershell.exe -NoProfile -ExecutionPolicy Bypass \
+        -File "$(wslpath -w "$SCRIPT_DIR/focus.ps1")" "$PROC" >/dev/null 2>&1
+      sleep 4
+    done ) &
+  focus_loop_pid=$!
+fi
+
+if ! wait_for OMBENCH_ALLDONE "$hard_deadline"; then
+  [ -n "$focus_loop_pid" ] && kill "$focus_loop_pid" 2>/dev/null
   echo "bench: FAIL - measurement window did not complete"; taskkill.exe /IM "$PROC.exe" /F >/dev/null 2>&1; exit 1
 fi
+
+[ -n "$focus_loop_pid" ] && kill "$focus_loop_pid" 2>/dev/null
 
 # let it quit cleanly, then make sure it's gone
 for _ in $(seq 1 20); do
@@ -200,6 +251,41 @@ else
   echo "GPU      : <no gpuTimers report captured>"
   echo "           world likely never rendered - check the screenshot below."
 fi
+if [ "$REPEATS" -gt 1 ]; then
+  echo "-----------------------------------------------------------------------"
+  echo "per window ('$RESTART' between):"
+  w=1
+  while [ "$w" -le "$REPEATS" ]; do
+    seg="$(awk -v s="OMBENCH_WIN_$w\$" -v e="OMBENCH_ENDWIN_$w\$" \
+             '$0 ~ s {f=1; next} $0 ~ e {f=0} f' "$clean")"
+    g="$(grep -a '^gpu .*ms =' <<<"$seg" | tail -1)"
+    c="$(grep -a '^cpu .*ms wall =' <<<"$seg" | tail -1)"
+    if [ -n "$c" ] || [ -n "$g" ]; then
+      gm="$(sed -E 's/^gpu +([0-9.]+)ms.*/\1/' <<<"${g:-}")"
+      cm="$(sed -E 's/^cpu +([0-9.]+)ms wall.*/\1/' <<<"${c:-}")"
+      awk -v w="$w" -v cm="$cm" -v gm="$gm" 'BEGIN{
+        printf "  window %d: ", w
+        if (cm+0 > 0) printf "%.2fms wall (%.0f fps)", cm, 1000.0/cm; else printf "wall n/a"
+        if (gm+0 > 0) printf "  |  %.2fms gpu", gm
+        printf "\n" }'
+      # Draw and upload counts, not times: these are what distinguish the
+      # renderer getting slower from the scene getting bigger, and unlike the
+      # ms figures they cannot drift with the card's clocks.
+      sm="$(grep -a '^gpu submission:' <<<"$seg" | tail -1)"
+      cs="$(grep -a '^gpu cascade surfs:' <<<"$seg" | tail -1)"
+      [ -n "$sm" ] && echo "            ${sm}${cs:+  |  $cs}"
+      p="$(grep -a '^cpu frames:' <<<"$seg" | tail -1)"
+      [ -n "$p" ] && echo "            $p"
+      b="$(grep -a '^cpu backend =' <<<"$seg" | tail -1)"
+      [ -n "$b" ] && echo "            $b"
+    else
+      echo "  window $w: <no report captured>"
+    fi
+    w=$(( w + 1 ))
+  done
+  echo "-----------------------------------------------------------------------"
+fi
+
 shot="$(ls -t "$SHOTDIR"/*.jpg 2>/dev/null | head -1)"
 echo "screenshot: ${shot:-<none>}"
 echo "log       : $LOG"
