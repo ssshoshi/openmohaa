@@ -679,6 +679,31 @@ extern "C" {
     //
     void BG_EvaluateTrajectory(const trajectory_t *tr, int atTime, const vec3_t base, vec3_t result);
     void CG_SetEntitySoundPosition(centity_t *cent);
+// Per-entity timers, see cg_view.c. CG_AddPacketEntities is where a populated
+// map's frame time goes, so CG_AddCEntity is split by what it actually does to
+// each entity. Storage and the clock live in cg_view.c with the rest of the
+// cgame ledger.
+typedef enum {
+    CGE_LERP,
+    CGE_EFFECTS,
+    CGE_SOUNDPOS,
+    CGE_SPLASH,
+    CGE_PLAYER,
+    CGE_MODELANIM,
+
+    CGE_COUNT
+} cgEntTimerId_t;
+
+extern double cgEntAccum[CGE_COUNT];
+extern double cgEntOpen[CGE_COUNT];
+extern int    cgEntCount;
+
+double CG_Microseconds(void);
+
+#define CG_ENT_TIMER_BEGIN(id) (cgEntOpen[id] = CG_Microseconds())
+#define CG_ENT_TIMER_END(id)   (cgEntAccum[id] += CG_Microseconds() - cgEntOpen[id])
+#define CG_ENT_TIMER_COUNT()   (cgEntCount++)
+
     void CG_AddPacketEntities(void);
     void CG_Beam(centity_t *cent);
     void CG_AdjustPositionForMover(const vec3_t in, int moverNum, int fromTime, int toTime, vec3_t out);

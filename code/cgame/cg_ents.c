@@ -535,13 +535,25 @@ void CG_AddCEntity(centity_t *cent)
         return;
     }
 
+    // CG_AddPacketEntities measured 0.14 -> 5.42ms across three windows as a
+    // map populates, roughly 123us per entity and superlinear in the count,
+    // while every other stage of CG_DrawActiveFrame stayed flat. The loop that
+    // calls this is O(n) with a bounded parent walk, so the cost is in here.
+    CG_ENT_TIMER_COUNT();
+
     // calculate the current origin
+    CG_ENT_TIMER_BEGIN(CGE_LERP);
     CG_CalcEntityLerpPositions(cent);
+    CG_ENT_TIMER_END(CGE_LERP);
 
     // add automatic effects
+    CG_ENT_TIMER_BEGIN(CGE_EFFECTS);
     CG_EntityEffects(cent);
+    CG_ENT_TIMER_END(CGE_EFFECTS);
 
+    CG_ENT_TIMER_BEGIN(CGE_SOUNDPOS);
     CG_SetEntitySoundPosition(cent);
+    CG_ENT_TIMER_END(CGE_SOUNDPOS);
 
     switch (cent->currentState.eType) {
     default:
@@ -550,22 +562,38 @@ void CG_AddCEntity(centity_t *cent)
         // intentional fallthrough
     case ET_MODELANIM_SKEL:
     case ET_MODELANIM:
+        CG_ENT_TIMER_BEGIN(CGE_SPLASH);
         CG_Splash(cent);
+        CG_ENT_TIMER_END(CGE_SPLASH);
+        CG_ENT_TIMER_BEGIN(CGE_MODELANIM);
         CG_ModelAnim(cent, qfalse);
+        CG_ENT_TIMER_END(CGE_MODELANIM);
         break;
     case ET_VEHICLE:
         CG_Vehicle(cent);
+        CG_ENT_TIMER_BEGIN(CGE_SPLASH);
         CG_Splash(cent);
+        CG_ENT_TIMER_END(CGE_SPLASH);
+        CG_ENT_TIMER_BEGIN(CGE_MODELANIM);
         CG_ModelAnim(cent, qtrue);
+        CG_ENT_TIMER_END(CGE_MODELANIM);
         break;
     case ET_PLAYER:
+        CG_ENT_TIMER_BEGIN(CGE_PLAYER);
         CG_Player(cent);
+        CG_ENT_TIMER_END(CGE_PLAYER);
+        CG_ENT_TIMER_BEGIN(CGE_SPLASH);
         CG_Splash(cent);
+        CG_ENT_TIMER_END(CGE_SPLASH);
+        CG_ENT_TIMER_BEGIN(CGE_MODELANIM);
         CG_ModelAnim(cent, qfalse);
+        CG_ENT_TIMER_END(CGE_MODELANIM);
         CG_UpdateRadarClient(cent);
         break;
     case ET_ITEM:
+        CG_ENT_TIMER_BEGIN(CGE_MODELANIM);
         CG_ModelAnim(cent, qfalse);
+        CG_ENT_TIMER_END(CGE_MODELANIM);
         break;
     case ET_GENERAL:
         CG_General(cent);
@@ -594,7 +622,9 @@ void CG_AddCEntity(centity_t *cent)
         CG_Rope(cent);
         break;
     case ET_EXEC_COMMANDS:
+        CG_ENT_TIMER_BEGIN(CGE_MODELANIM);
         CG_ModelAnim(cent, qfalse);
+        CG_ENT_TIMER_END(CGE_MODELANIM);
         break;
     }
 }

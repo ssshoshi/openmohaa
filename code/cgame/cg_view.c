@@ -845,7 +845,7 @@ renderer frontend; everything else here is cgame's own work.
 */
 #ifdef _WIN32
 #include <windows.h>
-static double CG_Microseconds(void)
+double CG_Microseconds(void)
 {
     static LARGE_INTEGER freq, base;
     LARGE_INTEGER        now;
@@ -861,7 +861,7 @@ static double CG_Microseconds(void)
 }
 #else
 #include <time.h>
-static double CG_Microseconds(void)
+double CG_Microseconds(void)
 {
     static struct timespec base;
     struct timespec        now;
@@ -898,6 +898,14 @@ static const char *const cgTimerNames[CGT_COUNT] = {
     "entities", "marks", "effects", "tempmodels", "vss", "renderscene"
 };
 
+double cgEntAccum[CGE_COUNT];
+double cgEntOpen[CGE_COUNT];
+int    cgEntCount;
+
+static const char *const cgEntNames[CGE_COUNT] = {
+    "lerp", "effects", "soundpos", "splash", "player", "modelanim"
+};
+
 static double cgTimerAccum[CGT_COUNT];
 static double cgTimerOpen[CGT_COUNT];
 static int    cgTimerFrames;
@@ -918,6 +926,8 @@ static void CG_ReportFrameTimers(void)
 
     if (!cg_frameTimers->integer) {
         memset(cgTimerAccum, 0, sizeof(cgTimerAccum));
+        memset(cgEntAccum, 0, sizeof(cgEntAccum));
+        cgEntCount = 0;
         cgTimerFrames = 0;
         return;
     }
@@ -940,7 +950,27 @@ static void CG_ReportFrameTimers(void)
     cgi.Printf("%s other %.2f  (avg of %i frames)\n", line,
         (cgTimerAccum[CGT_TOTAL] - accounted) / cgTimerFrames / 1000.0, cgTimerFrames);
 
+    // Inside the entities bucket: what CG_AddCEntity spends on each one. The
+    // per-entity figure is the one to watch -- the count grows only about 1.6x
+    // across a populating map while the bucket grows far more, so a flat
+    // per-entity cost would mean the count is the whole story, and it is not.
+    accounted = 0.0;
+    Com_sprintf(line, sizeof(line), "cgame ents %.0f/frame =",
+        (double)cgEntCount / cgTimerFrames);
+
+    for (i = 0; i < CGE_COUNT; i++) {
+        accounted += cgEntAccum[i];
+        Q_strcat(line, sizeof(line), va(" %s %.2f",
+            cgEntNames[i], cgEntAccum[i] / cgTimerFrames / 1000.0));
+    }
+
+    cgi.Printf("%s other %.2f | %.0fus per entity\n", line,
+        (cgTimerAccum[CGT_ENTITIES] - accounted) / cgTimerFrames / 1000.0,
+        cgEntCount ? cgTimerAccum[CGT_ENTITIES] / cgEntCount : 0.0);
+
     memset(cgTimerAccum, 0, sizeof(cgTimerAccum));
+    memset(cgEntAccum, 0, sizeof(cgEntAccum));
+    cgEntCount = 0;
     cgTimerFrames = 0;
 }
 
