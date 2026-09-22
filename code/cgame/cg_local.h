@@ -724,6 +724,27 @@ extern cgEntWorst_t cgEntWorst[CG_ENT_WORST];
 
 void CG_EntTimerSample(centity_t *cent, double usec);
 
+// Inside CG_ModelAnim. Grouped by what each block asks the engine for rather
+// than by individual cgi call, because the question is which of two candidates
+// is growing -- the foot IK ground checks or the animation blending -- and
+// grouping keeps this portable instead of needing statement expressions.
+typedef enum {
+    CGM_ANIMPARMS,      // CG_InterpolateAnimParms: blend of the frameInfo channels
+    CGM_ATTACH,         // parent/tag attachment resolution
+    CGM_SHADOW,         // CG_EntityShadow, per entity
+    CGM_ANIMFLAGS,      // cgi.Anim_Flags over MAX_FRAMEINFOS
+    CGM_FOOTIK,         // TAF_AUTOSTEPS block: Tag_NumForName + TIKI_IsOnGround
+    CGM_ADDREF,         // cgi.R_AddRefEntityToScene
+
+    CGM_COUNT
+} cgModelAnimTimerId_t;
+
+extern double cgmAccum[CGM_COUNT];
+extern double cgmOpen[CGM_COUNT];
+
+#define CGM_BEGIN(id) (cgmOpen[id] = CG_Microseconds())
+#define CGM_END(id)   (cgmAccum[id] += CG_Microseconds() - cgmOpen[id])
+
     void CG_AddPacketEntities(void);
     void CG_Beam(centity_t *cent);
     void CG_AdjustPositionForMover(const vec3_t in, int moverNum, int fromTime, int toTime, vec3_t out);

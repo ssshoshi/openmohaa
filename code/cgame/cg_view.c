@@ -906,6 +906,13 @@ static const char *const cgEntNames[CGE_COUNT] = {
     "lerp", "effects", "soundpos", "splash", "player", "modelanim"
 };
 
+double cgmAccum[CGM_COUNT];
+double cgmOpen[CGM_COUNT];
+
+static const char *const cgmNames[CGM_COUNT] = {
+    "animparms", "attach", "shadow", "animflags", "footik", "addref"
+};
+
 double       cgEntTypeTime[CG_ENT_TYPES];
 int          cgEntTypeCount[CG_ENT_TYPES];
 cgEntWorst_t cgEntWorst[CG_ENT_WORST];
@@ -1011,6 +1018,7 @@ static void CG_ReportFrameTimers(void)
         memset(cgEntTypeTime, 0, sizeof(cgEntTypeTime));
         memset(cgEntTypeCount, 0, sizeof(cgEntTypeCount));
         memset(cgEntWorst, 0, sizeof(cgEntWorst));
+        memset(cgmAccum, 0, sizeof(cgmAccum));
         cgEntCount = 0;
         cgTimerFrames = 0;
         return;
@@ -1071,6 +1079,22 @@ static void CG_ReportFrameTimers(void)
     // The individual worst entities. If one entity holds most of the cost this
     // says so immediately; if the cost is spread evenly these will all be
     // similar and close to the per-entity average.
+    // Inside CG_ModelAnim, which is 98% of the entities bucket. Distinguishes
+    // the foot IK ground checks from the animation blending -- the two
+    // candidates left after the histogram showed a flat actor count with each
+    // actor growing 30us -> 1800us.
+    accounted = 0.0;
+    Com_sprintf(line, sizeof(line), "cgame modelanim =");
+
+    for (i = 0; i < CGM_COUNT; i++) {
+        accounted += cgmAccum[i];
+        Q_strcat(line, sizeof(line), va(" %s %.2f",
+            cgmNames[i], cgmAccum[i] / cgTimerFrames / 1000.0));
+    }
+
+    cgi.Printf("%s other %.2f\n", line,
+        (cgEntAccum[CGE_MODELANIM] - accounted) / cgTimerFrames / 1000.0);
+
     Com_sprintf(line, sizeof(line), "cgame worst:");
 
     for (i = 0; i < CG_ENT_WORST; i++) {
@@ -1091,6 +1115,7 @@ static void CG_ReportFrameTimers(void)
     memset(cgEntTypeTime, 0, sizeof(cgEntTypeTime));
     memset(cgEntTypeCount, 0, sizeof(cgEntTypeCount));
     memset(cgEntWorst, 0, sizeof(cgEntWorst));
+    memset(cgmAccum, 0, sizeof(cgmAccum));
     cgEntCount = 0;
     cgTimerFrames = 0;
 }

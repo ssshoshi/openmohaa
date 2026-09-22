@@ -1180,8 +1180,11 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     model.renderfx |= s1->renderfx;
     cgi.TIKI_SetEyeTargetPos(model.tiki, model.entityNumber, s1->eyeVector);
 
+    CGM_BEGIN(CGM_ANIMPARMS);
     CG_InterpolateAnimParms(s1, sNext, &model);
+    CGM_END(CGM_ANIMPARMS);
 
+    CGM_BEGIN(CGM_ATTACH);
     if (cent->currentState.parent != ENTITYNUM_NONE) {
         int          iTagNum;
         refEntity_t *parent;
@@ -1269,6 +1272,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         model.renderfx &= ~(RF_THIRD_PERSON | RF_THIRD_PERSON | RF_DEPTHHACK);
         model.renderfx |= parent->renderfx & (RF_THIRD_PERSON | RF_THIRD_PERSON | RF_DEPTHHACK);
     }
+    CGM_END(CGM_ATTACH);
 
     for (i = 0; i < 3; i++) {
         model.shaderRGBA[i] = cent->color[i] * 255;
@@ -1290,9 +1294,12 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         && !CG_SimpleDistanceCull(model.origin, Square(1400))
         && !CG_FrustumCullSphere(model.origin, model.radius + 64)) {
         // add the shadow
+        CGM_BEGIN(CGM_SHADOW);
         CG_EntityShadow(cent, &model);
+        CGM_END(CGM_SHADOW);
     }
 
+    CGM_BEGIN(CGM_ANIMFLAGS);
     iAnimFlags = 0;
 
     // combine anim flags from all frame infos
@@ -1302,6 +1309,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         }
     }
 
+    CGM_END(CGM_ANIMFLAGS);
+
+    CGM_BEGIN(CGM_FOOTIK);
     if (iAnimFlags & TAF_AUTOSTEPS) {
         int iTagNum;
         // Automatically calculate the footsteps sounds
@@ -1360,6 +1370,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         cent->bFootOnGround_Left  = qtrue;
         cent->bFootOnGround_Right = qtrue;
     }
+    CGM_END(CGM_FOOTIK);
 
     if (cent->currentState.eType == ET_PLAYER && !(cent->currentState.eFlags & EF_DEAD)) {
         CG_PlayerTeamIcon(&model, &cent->currentState);
@@ -1519,7 +1530,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         }
 
         // add to refresh list
+        CGM_BEGIN(CGM_ADDREF);
         cgi.R_AddRefEntityToScene(&model, s1->parent);
+        CGM_END(CGM_ADDREF);
     }
 
     CG_UpdateEntityEmitters(s1->number, &model, cent);
