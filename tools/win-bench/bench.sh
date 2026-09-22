@@ -297,6 +297,8 @@ if [ "$REPEATS" -gt 1 ]; then
       [ -n "$cge" ] && echo "            $cge"
       cgt="$(grep -a '^cgame etype =' <<<"$seg" | tail -1)"
       [ -n "$cgt" ] && echo "            $cgt"
+      cgm="$(grep -a '^cgame modelanim =' <<<"$seg" | tail -1)"
+      [ -n "$cgm" ] && echo "            $cgm"
       cgw="$(grep -a '^cgame worst:' <<<"$seg" | tail -1)"
       [ -n "$cgw" ] && echo "            $cgw"
     else

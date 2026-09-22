@@ -84,6 +84,16 @@ clock drift between runs, so they're the most stable thing to diff across builds
 - **Resolution matters.** GPU pass times scale with resolution — hold `WIDTH`/`HEIGHT` fixed
   when diffing builds.
 
+- **Runs are at DEFAULTS, not at your config.** The scratch `omconfig.cfg` is rewritten
+  every run, which is what keeps a sweep honest — but it also means the run does not
+  reproduce what the player actually sees unless you pass their settings via
+  `OMBENCH_CVARS`. This is not hypothetical: `cg_shadows` is registered by the *renderer*
+  with default `1` (`renderergl2/tr_init.c:1595`) before cgame registers it with default
+  `0` (`cg_main.c:160`), so the effective default is `1` — the expensive per-entity blob
+  shadow path, worth ~5.3ms/frame on a populated `m1l1`. A user running `cg_shadows 3`
+  takes an early return and pays ~0.05ms. Benching at the default and reporting it as the
+  user's experience is a whole wasted investigation.
+
 - **The scene gets heavier the longer a map has been up**, so *when* a window is measured
   matters as much as what it is measuring. On `m1l1` with a static camera, four consecutive
   15s windows went 111 → 76 → 59 → 60 fps with no cvar changed and no restart, while draws
