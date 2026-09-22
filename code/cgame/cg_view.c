@@ -824,6 +824,126 @@ CG_DrawActiveFrame
 Generates and draws a game scene and status information at the given time.
 =================
 */
+/*
+=================
+cgame frame timers
+
+The engine ledger (com_frameTimers) brackets CG_DrawActiveFrame from the exe and
+showed it growing 0.6ms to 6.1ms as a map populates, while the game simulation
+stayed flat at 0.1ms and the renderer backend grew only 1.4x. Every cvar that
+looked like a candidate -- vss_draw, cg_marks_max, cg_effectdetail,
+r_sunEntityShadowCascades, r_sunShadows -- left that curve within 1%, so the
+cost is inside here and needed splitting up.
+
+cgame links only q_math and q_shared out of qcommon, so Sys_Microseconds is not
+available and the clock is local. cg_frameTimers is the report interval in
+frames, matching r_gpuTimers and com_frameTimers.
+
+CG_DrawActive calls R_RenderScene, so the renderscene bucket holds the whole
+renderer frontend; everything else here is cgame's own work.
+=================
+*/
+#ifdef _WIN32
+#include <windows.h>
+static double CG_Microseconds(void)
+{
+    static LARGE_INTEGER freq, base;
+    LARGE_INTEGER        now;
+
+    if (!freq.QuadPart) {
+        QueryPerformanceFrequency(&freq);
+        QueryPerformanceCounter(&base);
+    }
+
+    QueryPerformanceCounter(&now);
+
+    return (double)(now.QuadPart - base.QuadPart) * 1000000.0 / (double)freq.QuadPart;
+}
+#else
+#include <time.h>
+static double CG_Microseconds(void)
+{
+    static struct timespec base;
+    struct timespec        now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    if (!base.tv_sec) {
+        base = now;
+    }
+
+    return (double)(now.tv_sec - base.tv_sec) * 1000000.0
+        + (double)(now.tv_nsec - base.tv_nsec) / 1000.0;
+}
+#endif
+
+typedef enum {
+    CGT_TOTAL,
+    CGT_SNAPSHOTS,
+    CGT_PREDICT,
+    CGT_VIEWVALUES,
+    CGT_PLAYERMODEL,
+    CGT_ENTITIES,
+    CGT_MARKS,
+    CGT_EFFECTS,
+    CGT_TEMPMODELS,
+    CGT_VSS,
+    CGT_RENDERSCENE,
+
+    CGT_COUNT
+} cgTimerId_t;
+
+static const char *const cgTimerNames[CGT_COUNT] = {
+    "total", "snapshots", "predict", "viewvalues", "playermodel",
+    "entities", "marks", "effects", "tempmodels", "vss", "renderscene"
+};
+
+static double cgTimerAccum[CGT_COUNT];
+static double cgTimerOpen[CGT_COUNT];
+static int    cgTimerFrames;
+
+#define CG_TIMER_BEGIN(id) (cgTimerOpen[id] = CG_Microseconds())
+#define CG_TIMER_END(id)   (cgTimerAccum[id] += CG_Microseconds() - cgTimerOpen[id])
+
+static void CG_ReportFrameTimers(void)
+{
+    static cvar_t *cg_frameTimers;
+    char           line[512];
+    double         accounted = 0.0;
+    int            i;
+
+    if (!cg_frameTimers) {
+        cg_frameTimers = cgi.Cvar_Get("cg_frameTimers", "0", CVAR_ARCHIVE);
+    }
+
+    if (!cg_frameTimers->integer) {
+        memset(cgTimerAccum, 0, sizeof(cgTimerAccum));
+        cgTimerFrames = 0;
+        return;
+    }
+
+    cgTimerFrames++;
+
+    if (cgTimerFrames < cg_frameTimers->integer) {
+        return;
+    }
+
+    Com_sprintf(line, sizeof(line), "cgame %6.2fms =",
+        cgTimerAccum[CGT_TOTAL] / cgTimerFrames / 1000.0);
+
+    for (i = CGT_SNAPSHOTS; i < CGT_COUNT; i++) {
+        accounted += cgTimerAccum[i];
+        Q_strcat(line, sizeof(line), va(" %s %.2f",
+            cgTimerNames[i], cgTimerAccum[i] / cgTimerFrames / 1000.0));
+    }
+
+    cgi.Printf("%s other %.2f  (avg of %i frames)\n", line,
+        (cgTimerAccum[CGT_TOTAL] - accounted) / cgTimerFrames / 1000.0, cgTimerFrames);
+
+    memset(cgTimerAccum, 0, sizeof(cgTimerAccum));
+    cgTimerFrames = 0;
+}
+
 void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView, qboolean demoPlayback)
 {
     cg.time         = serverTime;
@@ -838,7 +958,11 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
     cgi.R_ClearScene();
 
     // set up cg.snap and possibly cg.nextSnap
+    CG_TIMER_BEGIN(CGT_TOTAL);
+
+    CG_TIMER_BEGIN(CGT_SNAPSHOTS);
     CG_ProcessSnapshots();
+    CG_TIMER_END(CGT_SNAPSHOTS);
 
     // if we haven't received any snapshots yet, all
     // we can draw is the information screen
@@ -874,10 +998,14 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
     }
 
     // update cg.predicted_player_state
+    CG_TIMER_BEGIN(CGT_PREDICT);
     CG_PredictPlayerState();
+    CG_TIMER_END(CGT_PREDICT);
 
     // build cg.refdef
+    CG_TIMER_BEGIN(CGT_VIEWVALUES);
     CG_CalcViewValues();
+    CG_TIMER_END(CGT_VIEWVALUES);
 
     // display the intermission
     if (cg.snap->ps.pm_flags & PMF_INTERMISSION) {
@@ -989,12 +1117,18 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
     }
 
     // Added in OPM
+    CG_TIMER_BEGIN(CGT_PLAYERMODEL);
     CG_ProcessPlayerModel();
+    CG_TIMER_END(CGT_PLAYERMODEL);
 
     // build the render lists
     if (!cg.hyperspace) {
+        CG_TIMER_BEGIN(CGT_ENTITIES);
         CG_AddPacketEntities(); // after calcViewValues, so predicted player state is correct
+        CG_TIMER_END(CGT_ENTITIES);
+        CG_TIMER_BEGIN(CGT_MARKS);
         CG_AddMarks();
+        CG_TIMER_END(CGT_MARKS);
     }
 
     // finish up the rest of the refdef
@@ -1012,14 +1146,20 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
     }
 
     CG_UpdateTestEmitter();
+    CG_TIMER_BEGIN(CGT_EFFECTS);
     CG_AddPendingEffects();
+    CG_TIMER_END(CGT_EFFECTS);
 
     if (!cg_hidetempmodels->integer) {
+        CG_TIMER_BEGIN(CGT_TEMPMODELS);
         CG_AddTempModels();
+        CG_TIMER_END(CGT_TEMPMODELS);
     }
 
     if (vss_draw->integer) {
+        CG_TIMER_BEGIN(CGT_VSS);
         CG_AddVSSSources();
+        CG_TIMER_END(CGT_VSS);
     }
 
     CG_AddBulletTracers();
@@ -1032,7 +1172,12 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
     }
 
     // actually issue the rendering calls
+    CG_TIMER_BEGIN(CGT_RENDERSCENE);
     CG_DrawActive(stereoView);
+    CG_TIMER_END(CGT_RENDERSCENE);
+
+    CG_TIMER_END(CGT_TOTAL);
+    CG_ReportFrameTimers();
 
     if (cg_stats->integer) {
         cgi.Printf("cg.clientFrame:%i\n", cg.clientFrame);
