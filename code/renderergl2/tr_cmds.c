@@ -100,7 +100,83 @@ static void R_ReportGpuTimers( int interval )
 	}
 }
 
+/*
+================
+R_ReportCpuTimers
+
+The companion to R_ReportGpuTimers, and the one that says whether the GPU
+numbers matter. "wall" is swap to swap; "backend" is the main thread inside
+RB_ExecuteRenderCommands. Subtract them and what is left is everything else the
+main thread did -- renderer frontend, event loop, server frame, game VM -- plus
+any time Com_Frame slept to hold com_maxfps. That last one matters when reading
+this: a frame sitting on its fps cap shows a large "other" and is not a problem,
+so uncap before concluding anything from it.
+
+Against the GPU report: wall at or near the GPU frame time means the card is the
+limit. Wall well above it means the main thread is, and the pass breakdown says
+where. present is the interesting column either way -- with r_swapInterval 0 and
+r_finish 0 nothing explicitly syncs, so a driver throttling a full command queue
+shows up as CPU time attributed to whichever call it chose to block in.
+================
+*/
+static void R_ReportCpuTimers( int interval )
+{
+	double cpu[CPUTIMER_COUNT];
+	int    numFrames = 0;
+	int    i;
+	char   line[256];
+	double accounted = 0.0;
+
+	if (!R_CpuTimerReport( cpu, &numFrames, interval ))
+		return;
+
+	ri.Printf( PRINT_ALL, "cpu %6.2fms wall = backend %.2f other %.2f  (avg of %i frames)\n",
+		cpu[CPUTIMER_FRAME], cpu[CPUTIMER_BACKEND],
+		cpu[CPUTIMER_FRAME] - cpu[CPUTIMER_BACKEND], numFrames );
+
+	Com_sprintf( line, sizeof(line), "cpu backend =" );
+
+	// One entry per render command, so this line sums to backend. What it
+	// misses shows as unattributed, which is the honest place for it.
+	for (i = CPUTIMER_DRAWSURFS; i <= CPUTIMER_SWAPBUFFERS; i++)
+	{
+		accounted += cpu[i];
+		Q_strcat( line, sizeof(line), va(" %s %.2f", cpuTimerNames[i], cpu[i]) );
+	}
+
+	ri.Printf( PRINT_ALL, "%s unattributed %.2f\n",
+		line, cpu[CPUTIMER_BACKEND] - accounted );
+
+	Com_sprintf( line, sizeof(line), "cpu   in drawsurfs:" );
+	accounted = 0.0;
+
+	for (i = CPUTIMER_SUNSHADOW; i <= CPUTIMER_MAIN3D; i++)
+	{
+		accounted += cpu[i];
+		Q_strcat( line, sizeof(line), va(" %s %.2f", cpuTimerNames[i], cpu[i]) );
+	}
+
+	// Setup either side of the passes: FBO binds, clears and blits. A driver
+	// that defers rasterisation to its next flush lands the deferred work
+	// here rather than in the pass that issued it, which is what a software
+	// rasteriser does and what r_gpuTimerSync 1 exists to check for.
+	Q_strcat( line, sizeof(line),
+		va(" other %.2f", cpu[CPUTIMER_DRAWSURFS] - accounted) );
+
+	// tessbuild and tessupload are nested deeper again -- inside whichever of
+	// the passes above is drawing -- so they are a share of those, not an
+	// addition to them. r_vaoCache 0 is what routes static world geometry
+	// through both, once per batch, per pass, every frame.
+	ri.Printf( PRINT_ALL, "%s | per batch: tessbuild %.2f tessupload %.2f\n",
+		line, cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD] );
+}
+
 void R_PerformanceCounters( void ) {
+	// Every frame, cvar or not: this latches whether the timers are live and
+	// resets the frame being built, so a frame rendered while they were off
+	// cannot leak into the first window after they are switched on.
+	R_CpuTimerFrameEnd();
+
 	if (r_fps->integer) {
 		ri.SetPerformanceCounters(
 			backEnd.pc.c_totalIndexes / 3,
@@ -125,7 +201,7 @@ void R_PerformanceCounters( void ) {
 		// sees a stale zero and is not representative.
 		static int    feFrames = 0;
 		static float  feWalks, fePrep, feTess, feStatic, feSplits, feMerges;
-		static double feShadow, feNode, feScan, fePrepT, feTerrT, feStatT;
+		static double feShadow, feNode, feScan, fePrepT, feTerrT, feStatT, feMark;
 
 		if (tr.pc.c_worldWalks)
 		{
@@ -137,6 +213,7 @@ void R_PerformanceCounters( void ) {
 			feMerges += tr.pc.c_terrainMerges;
 			feShadow += tr.pc.t_shadowFrontend;
 			feNode   += tr.pc.t_worldNode;
+			feMark   += tr.pc.t_markLeaves;
 			feScan   += tr.pc.t_surfaceScan;
 			fePrepT  += tr.pc.t_terrainPrepare;
 			feTerrT  += tr.pc.t_terrainSurfaces;
@@ -153,18 +230,20 @@ void R_PerformanceCounters( void ) {
 				feStatic / feFrames, feSplits / feFrames, feMerges / feFrames, feFrames );
 
 			ri.Printf( PRINT_ALL,
-				"frontend ms/frame: shadowpasses %.2f | worldnode %.2f surfscan %.2f"
+				"frontend ms/frame: shadowpasses %.2f | markleaves %.2f worldnode %.2f surfscan %.2f"
 				" terrprep %.2f terrsurf %.2f statmodels %.2f\n",
-				feShadow / feFrames / 1000.0, feNode / feFrames / 1000.0,
+				feShadow / feFrames / 1000.0, feMark / feFrames / 1000.0,
+				feNode / feFrames / 1000.0,
 				feScan / feFrames / 1000.0, fePrepT / feFrames / 1000.0,
 				feTerrT / feFrames / 1000.0, feStatT / feFrames / 1000.0 );
 
 			feFrames = 0;
 			feWalks = fePrep = feTess = feStatic = feSplits = feMerges = 0.0f;
-			feShadow = feNode = feScan = fePrepT = feTerrT = feStatT = 0.0;
+			feShadow = feNode = feScan = fePrepT = feTerrT = feStatT = feMark = 0.0;
 		}
 
 		R_ReportGpuTimers( r_gpuTimers->integer );
+		R_ReportCpuTimers( r_gpuTimers->integer );
 	}
 
 	if ( !r_speeds->integer ) {

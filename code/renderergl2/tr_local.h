@@ -1952,7 +1952,12 @@ typedef enum {
 
 // GPU pass timers, see tr_gputimer.c. r_speeds 8 reports these.
 #define GPUTIMER_FRAMES     4
-#define GPUTIMER_MAX_MARKS  32
+// A four-cascade frame spends 2 (frame) + 16 (4 cascades x sunshadow+sunN)
+// + 2 (prepass) + 2 (shadowmask) + 2 (main3d) + 2 (post) + 2 (present) = 28.
+// Any extra view -- a portal sky or a mirror -- adds its own prepass and
+// main3d pair on top, which is what pushed 32 over the edge and started
+// dropping marks on exactly the busiest frames.
+#define GPUTIMER_MAX_MARKS  64
 
 typedef enum {
 	GPUTIMER_FRAME,
@@ -1978,6 +1983,54 @@ typedef struct {
 } gpuTimerResults_t;
 
 extern const char *const gpuTimerNames[GPUTIMER_COUNT];
+
+// CPU pass timers. Deliberately the same passes as gpuTimerId_t above, so a
+// pass can be read down both columns and compared: GPU time is what the card
+// spent, CPU time is what the main thread spent handing it the work. The
+// frame here is wall clock between swaps, which is the only number that can
+// show the main thread waiting -- every other timer in this renderer measures
+// work, and a thread blocked in the driver is doing none.
+typedef enum {
+	CPUTIMER_FRAME,			// wall clock, swap to swap
+	CPUTIMER_BACKEND,		// all of RB_ExecuteRenderCommands
+
+	// One per render command, so these are siblings and sum to BACKEND
+	// (less whatever the small commands cost). Anything BACKEND has that
+	// these do not is reported as unattributed rather than hidden.
+	CPUTIMER_DRAWSURFS,		// RC_DRAW_SURFS
+	CPUTIMER_POSTPROCESS,	// RC_POSTPROCESS
+	CPUTIMER_SPRITES,		// RC_SPRITE_SURFS
+	CPUTIMER_2D,			// RC_STRETCH_PIC + the flush that actually draws it
+	CPUTIMER_PRESENT,		// RB_PresentToScreen
+	// The buffer swap and the optional qglFinish before it. This is where a
+	// main thread waiting on the GPU ends up, so it is the bucket that
+	// separates "the CPU is busy" from "the CPU is blocked": under
+	// r_finish 1 essentially all GPU wait concentrates here.
+	CPUTIMER_SWAPBUFFERS,
+
+	// Nested inside DRAWSURFS. Reported on their own line and left out of
+	// the sibling sum rather than double counted.
+	CPUTIMER_SUNSHADOW,
+	CPUTIMER_DEPTHPREPASS,
+	CPUTIMER_SHADOWMASK,
+	CPUTIMER_MAIN3D,
+
+	// Nested deeper still, inside whichever pass is drawing.
+	CPUTIMER_TESSBUILD,		// deform, colour and alpha gen per batch
+	CPUTIMER_TESSUPLOAD,	// RB_UpdateTessVao: the per-batch buffer uploads
+
+	CPUTIMER_COUNT
+} cpuTimerId_t;
+
+extern const char *const cpuTimerNames[CPUTIMER_COUNT];
+
+void     R_CpuTimerMark(int id, qboolean isEnd);
+void     R_CpuTimerSwap(void);		// stamp wall frame time at the buffer swap
+void     R_CpuTimerFrameEnd(void);	// fold the finished frame into the average
+qboolean R_CpuTimerReport(double *out, int *numFrames, int minFrames);
+
+#define R_CpuTimerBegin(id) R_CpuTimerMark((id), qfalse)
+#define R_CpuTimerEnd(id)   R_CpuTimerMark((id), qtrue)
 
 void R_GpuTimerInit(void);
 void R_GpuTimerShutdown(void);
@@ -2064,6 +2117,11 @@ typedef struct {
 	int     c_dlightDraws;
 
 	int		msec;			// total msec for backend run
+
+	// Microseconds, indexed by cpuTimerId_t. Same reason as the frontend's
+	// t_* fields: msec above is whole milliseconds and the whole frame is
+	// only about ten of them.
+	double	t_cpu[CPUTIMER_COUNT];
 
 	//
 	// OPENMOHAA-specific stuff

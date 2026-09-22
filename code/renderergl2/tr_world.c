@@ -807,8 +807,14 @@ void R_AddWorldSurfaces (void) {
 	tr.pc.c_worldWalks++;
 
 	// determine which leaves are in the PVS / areamask
+	// Shadow cascades skip this, which is why the timer is worth having: it
+	// separates the one view that pays for PVS from the several that do not.
 	if (!(tr.viewParms.flags & VPF_DEPTHSHADOW))
+	{
+		double tStart = R_MicroSeconds();
 		R_MarkLeaves ();
+		tr.pc.t_markLeaves += R_MicroSeconds() - tStart;
+	}
 
 	// clear out the visible min/max
 	ClearBounds( tr.viewParms.visBounds[0], tr.viewParms.visBounds[1] );

@@ -1109,11 +1109,13 @@ const void	*RB_DrawSurfs( const void *data ) {
 		backEnd.depthFill = qtrue;
 		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 		R_GpuTimerBegin(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
+		R_CpuTimerBegin(isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS);
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerBegin(GPUTIMER_SUN0 + sunLevel);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerEnd(GPUTIMER_SUN0 + sunLevel);
+		R_CpuTimerEnd(isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS);
 		R_GpuTimerEnd(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
 		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 		backEnd.depthFill = qfalse;
@@ -1153,6 +1155,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 				vec4_t box;
 
 				R_GpuTimerBegin(GPUTIMER_SHADOWMASK);
+				R_CpuTimerBegin(CPUTIMER_SHADOWMASK);
 
 				FBO_Bind(tr.screenShadowFbo);
 
@@ -1256,6 +1259,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 					RB_InstantQuad2(quadVerts, texCoords);
 				}
 
+				R_CpuTimerEnd(CPUTIMER_SHADOWMASK);
 				R_GpuTimerEnd(GPUTIMER_SHADOWMASK);
 			}
 
@@ -1342,12 +1346,14 @@ const void	*RB_DrawSurfs( const void *data ) {
 	if (!isShadowView)
 	{
 		R_GpuTimerBegin(GPUTIMER_MAIN3D);
+		R_CpuTimerBegin(CPUTIMER_MAIN3D);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 
 		if (r_drawSun->integer)
 		{
 			RB_DrawSun(0.1f, tr.sunShader);
 		}
+		R_CpuTimerEnd(CPUTIMER_MAIN3D);
 		R_GpuTimerEnd(GPUTIMER_MAIN3D);
 
 		if (glRefConfig.framebufferObject && r_drawSunRays->integer)
@@ -1684,8 +1690,12 @@ const void	*RB_SwapBuffers( const void *data ) {
 	}
 
 	R_GpuTimerBegin(GPUTIMER_PRESENT);
+	R_CpuTimerBegin(CPUTIMER_PRESENT);
 	RB_PresentToScreen();
+	R_CpuTimerEnd(CPUTIMER_PRESENT);
 	R_GpuTimerEnd(GPUTIMER_PRESENT);
+
+	R_CpuTimerBegin(CPUTIMER_SWAPBUFFERS);
 
 	if ( !glState.finishCalled ) {
 		qglFinish();
@@ -1697,6 +1707,9 @@ const void	*RB_SwapBuffers( const void *data ) {
 	R_GpuTimerFrameEnd();
 
 	GLimp_EndFrame();
+
+	R_CpuTimerEnd(CPUTIMER_SWAPBUFFERS);
+	R_CpuTimerSwap();
 
 	backEnd.projection2D = qfalse;
 
@@ -2041,6 +2054,7 @@ void RB_ExecuteRenderCommands( const void *data ) {
 	int		t1, t2;
 
 	t1 = ri.Milliseconds ();
+	R_CpuTimerBegin(CPUTIMER_BACKEND);
 
 	while ( 1 ) {
 		data = PADP(data, sizeof(void *));
@@ -2050,10 +2064,14 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			data = RB_SetColor( data );
 			break;
 		case RC_STRETCH_PIC:
+			R_CpuTimerBegin(CPUTIMER_2D);
 			data = RB_StretchPic( data );
+			R_CpuTimerEnd(CPUTIMER_2D);
 			break;
 		case RC_DRAW_SURFS:
+			R_CpuTimerBegin(CPUTIMER_DRAWSURFS);
 			data = RB_DrawSurfs( data );
+			R_CpuTimerEnd(CPUTIMER_DRAWSURFS);
 			break;
 		case RC_DRAW_BUFFER:
 			data = RB_DrawBuffer( data );
@@ -2077,7 +2095,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			data = RB_CapShadowMap(data);
 			break;
 		case RC_POSTPROCESS:
+			R_CpuTimerBegin(CPUTIMER_POSTPROCESS);
 			data = RB_PostProcess(data);
+			R_CpuTimerEnd(CPUTIMER_POSTPROCESS);
 			break;
 		case RC_EXPORT_CUBEMAPS:
 			data = RB_ExportCubemaps(data);
@@ -2086,18 +2106,23 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		// OPENMOHAA-specific stuff
 		//=========================
 		case RC_SPRITE_SURFS:
+			R_CpuTimerBegin(CPUTIMER_SPRITES);
 			data = RB_SpriteSurfs( data );
+			R_CpuTimerEnd(CPUTIMER_SPRITES);
 			break;
 		//=========================
 		case RC_END_OF_LIST:
 		default:
 			// finish any 2D drawing if needed
+			R_CpuTimerBegin(CPUTIMER_2D);
 			if(tess.numIndexes)
 				RB_EndSurface();
+			R_CpuTimerEnd(CPUTIMER_2D);
 
 			// stop rendering
 			t2 = ri.Milliseconds ();
 			backEnd.pc.msec = t2 - t1;
+			R_CpuTimerEnd(CPUTIMER_BACKEND);
 			return;
 		}
 	}

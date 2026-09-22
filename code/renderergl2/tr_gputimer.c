@@ -317,3 +317,166 @@ qboolean R_GpuTimerReport(gpuTimerResults_t *out, int *numFrames, int minFrames)
 
 	return qtrue;
 }
+
+// ---------------------------------------------------------------------------
+// CPU pass timers
+//
+// The GPU timers above answer "what did the card spend the frame on". They
+// cannot answer "was the card the limit at all", because a main thread that is
+// blocked in the driver looks identical to one that is idle: both leave the
+// GPU numbers unchanged. The wall clock frame time here is the number that
+// settles it. If wall matches the GPU frame, the card is the limit; if wall is
+// materially larger, the gap is the main thread and the passes below say where
+// it went.
+//
+// No queries, no ring, no readback latency: these are straight
+// SDL_GetPerformanceCounter deltas on the calling thread, so unlike the GPU
+// side they are exact for the frame they are reported against.
+// ---------------------------------------------------------------------------
+
+const char *const cpuTimerNames[CPUTIMER_COUNT] = {
+	"frame",
+	"backend",
+	"drawsurfs",
+	"post",
+	"sprites",
+	"2d",
+	"present",
+	"swapbuffers",
+	"sunshadow",
+	"prepass",
+	"shadowmask",
+	"main3d",
+	"tessbuild",
+	"tessupload"
+};
+
+static double   cpuFrame[CPUTIMER_COUNT];	// the frame being built
+static double   cpuOpen[CPUTIMER_COUNT];	// start stamp of an open scope
+static double   cpuAccum[CPUTIMER_COUNT];	// running total for the average
+static int      cpuAccumFrames;
+static double   cpuLastSwap;
+static qboolean cpuActive;
+
+/*
+================
+R_CpuTimerMark
+
+Scopes of the same id repeat within a frame (one sunshadow pair per cascade,
+one tessupload pair per batch) but never nest inside themselves, so a single
+open stamp per id is enough.
+================
+*/
+void R_CpuTimerMark(int id, qboolean isEnd)
+{
+	if (!cpuActive)
+		return;
+
+	if (!isEnd)
+	{
+		cpuOpen[id] = R_MicroSeconds();
+		return;
+	}
+
+	// A scope that was opened while the timers were off would measure from a
+	// stale stamp, which on the frame the cvar is set reads as a spike.
+	if (cpuOpen[id] == 0.0)
+		return;
+
+	cpuFrame[id] += R_MicroSeconds() - cpuOpen[id];
+	cpuOpen[id] = 0.0;
+}
+
+/*
+================
+R_CpuTimerSwap
+
+Wall clock, swap to swap. Measured here rather than around the backend because
+everything outside the renderer -- the event loop, the server frame, the game
+VM, com_maxfps throttling -- lands in the gap between two swaps, and that gap
+is exactly what "the game is only getting N fps" means.
+================
+*/
+void R_CpuTimerSwap(void)
+{
+	double now;
+
+	if (!cpuActive)
+	{
+		cpuLastSwap = 0.0;
+		return;
+	}
+
+	now = R_MicroSeconds();
+
+	if (cpuLastSwap != 0.0)
+		cpuFrame[CPUTIMER_FRAME] = now - cpuLastSwap;
+
+	cpuLastSwap = now;
+}
+
+/*
+================
+R_CpuTimerFrameEnd
+
+Called at the top of the next frame, once the previous frame's backend has
+fully unwound -- the backend total closes after the swap command, so folding
+this in at the swap itself would drop it.
+
+Frames that never ran main3d are menu, console and loading frames. Averaging
+them in drags every pass towards zero, which is the same reason the GPU side
+counts marks before accumulating.
+================
+*/
+void R_CpuTimerFrameEnd(void)
+{
+	int i;
+
+	cpuActive = r_gpuTimers->integer || r_speeds->integer == 8;
+
+	if (!cpuActive)
+	{
+		Com_Memset(cpuFrame, 0, sizeof(cpuFrame));
+		Com_Memset(cpuOpen, 0, sizeof(cpuOpen));
+		Com_Memset(cpuAccum, 0, sizeof(cpuAccum));
+		cpuAccumFrames = 0;
+		return;
+	}
+
+	if (cpuFrame[CPUTIMER_MAIN3D] > 0.0)
+	{
+		for (i = 0; i < CPUTIMER_COUNT; i++)
+			cpuAccum[i] += cpuFrame[i];
+
+		cpuAccumFrames++;
+	}
+
+	Com_Memset(cpuFrame, 0, sizeof(cpuFrame));
+}
+
+/*
+================
+R_CpuTimerReport
+
+Average in milliseconds over every world frame since the last call. Mirrors
+R_GpuTimerReport so the two can be printed against each other.
+================
+*/
+qboolean R_CpuTimerReport(double *out, int *numFrames, int minFrames)
+{
+	int i;
+
+	if (cpuAccumFrames < minFrames || !cpuAccumFrames)
+		return qfalse;
+
+	for (i = 0; i < CPUTIMER_COUNT; i++)
+	{
+		out[i] = cpuAccum[i] / cpuAccumFrames / 1000.0;
+		cpuAccum[i] = 0.0;
+	}
+
+	*numFrames = cpuAccumFrames;
+	cpuAccumFrames = 0;
+
+	return qtrue;
+}

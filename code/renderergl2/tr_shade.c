@@ -2115,19 +2115,29 @@ void RB_StageIteratorGeneric( void )
 		return;
 	}
 
+	// Split so the two halves of the internal-VAO path can be told apart: the
+	// build is CPU work this renderer chose to do, the upload is what it then
+	// costs to hand to the driver. r_vaoCache 0 routes static world geometry
+	// through both of them, once per batch, once per pass, every frame.
 	if (tess.useInternalVao)
 	{
+		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
 		RB_DeformTessGeometry();
+		R_CpuTimerEnd(CPUTIMER_TESSBUILD);
 	}
 
 	vertexAttribs = RB_CalcShaderVertexAttribs( input );
 
 	if (tess.useInternalVao)
 	{
+		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
 		RB_ComputeEntityLightColors();
 		RB_ComputeVertexAlphaGen();
+		R_CpuTimerEnd(CPUTIMER_TESSBUILD);
 
+		R_CpuTimerBegin(CPUTIMER_TESSUPLOAD);
 		RB_UpdateTessVao(vertexAttribs);
+		R_CpuTimerEnd(CPUTIMER_TESSUPLOAD);
 	}
 	else
 	{
