@@ -295,6 +295,10 @@ if [ "$REPEATS" -gt 1 ]; then
       [ -n "$cg" ] && echo "            $cg"
       cge="$(grep -a '^cgame ents ' <<<"$seg" | tail -1)"
       [ -n "$cge" ] && echo "            $cge"
+      cgt="$(grep -a '^cgame etype =' <<<"$seg" | tail -1)"
+      [ -n "$cgt" ] && echo "            $cgt"
+      cgw="$(grep -a '^cgame worst:' <<<"$seg" | tail -1)"
+      [ -n "$cgw" ] && echo "            $cgw"
     else
       echo "  window $w: <no report captured>"
     fi
