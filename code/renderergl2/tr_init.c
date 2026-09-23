@@ -1597,9 +1597,25 @@ void R_Register( void )
 	r_marksOnTriangleMeshes = ri.Cvar_Get("r_marksOnTriangleMeshes", "0", CVAR_ARCHIVE);
 
 	// Upstream ioquake3 turned this off for GLES drivers where glBufferSubData
-	// is pathologically slow. On desktop GL it is a real CPU win, but a cached
-	// patch bypasses the LOD in RB_SurfaceGrid, so the frame is not identical
-	// to the uncached one -- which is why it stays opt-in rather than on.
+	// is pathologically slow. On desktop GL it is a large win: measured
+	// 127 -> 145 fps on m1l1 and 168 -> 217 on dm/mohdm1 at 1440p, with GPU
+	// frame time down as well, because not re-uploading static world geometry
+	// once per pass outweighs the extra triangles.
+	//
+	// A cached patch bypasses the LOD in RB_SurfaceGrid and renders at full
+	// tessellation, so the frame is not identical to the uncached one. What
+	// that difference actually is was characterised later: a per-pixel diff of
+	// a deterministic m1l1 spawn is 2.5% of pixels above a threshold of 24,
+	// but the heat map puts nearly all of it on swaying foliage, the HUD
+	// objective arrow and sky stars -- animation between the two captures. The
+	// only geometry term is a thin silhouette edge on curved surfaces, shifted
+	// a pixel or two, and it shifts towards *more* tessellation. So the delta
+	// is refinement, not degradation.
+	//
+	// It stays opt-in only because that characterisation rests on one map;
+	// dm/mohdm1 and dm/mohdm6, which the original 1.6%/2.6% figures came from,
+	// could not be re-checked because DM spawn points are picked at random and
+	// two runs do not share a camera.
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
