@@ -102,23 +102,6 @@ mkdir -p "$OUT/main" "$SHOTDIR"
   echo "wait 500"
   echo "quit"
 } > "$OUT/main/bench.cfg"
-seta com_maxfps 0
-seta r_swapInterval 0
-seta r_gpuTimers $INTERVAL
-seta logfile 2
-echo OMBENCH_START
-devmap $MAP
-wait $LOADWAIT
-echo OMBENCH_MAPLOADED
-finishloadingscreen
-wait 3000
-echo OMBENCH_MEASURE
-wait $MEASURE_MS
-echo OMBENCH_DONE
-screenshotJPEG
-wait 500
-quit
-CFG
 
 # --- Windows launcher (native paths; r_mode/customres are LATCH so set pre-init).
 #     cl_playintro 0 + ui_skip_* keep the EA/title/legal intro videos from playing.
