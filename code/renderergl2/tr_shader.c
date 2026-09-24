@@ -4008,6 +4008,7 @@ static shader_t *FinishShader( void ) {
 	//=========================
 	shader.needsLGrid = qfalse;
 	shader.needsLSpherical = qfalse;
+	shader.animMapFromSpawn = qfalse;
 
 	if ( shader.isPortalSky ) {
 		shader.sort = SS_PORTALSKY;
@@ -4039,6 +4040,16 @@ static shader_t *FinishShader( void ) {
 			shader.needsLGrid = qtrue;
 		} else if ( pStage->rgbGen == CGEN_LIGHTING_SPHERICAL || pStage->rgbGen == CGEN_STATIC ) {
 			shader.needsLSpherical = qtrue;
+		}
+
+		{
+			int b;
+
+			for ( b = 0; b < NUM_TEXTURE_BUNDLES; b++ ) {
+				if ( pStage->bundle[b].numImageAnimations > 1 ) {
+					shader.animMapFromSpawn = qtrue;
+				}
+			}
 		}
 		//=========================
 

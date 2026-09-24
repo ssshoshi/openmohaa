@@ -727,6 +727,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
         if (*drawSurf->surface == SF_SPRITE) {
             backEnd.shaderStartTime = ((refSprite_t*)drawSurf->surface)->shaderTime;
+
+            // see RB_RenderSpriteSurfList
+            if (tess.shader->animMapFromSpawn) {
+                tess.shaderTime = backEnd.refdef.floatTime - backEnd.shaderStartTime;
+            }
         }
 
 		// add the triangles for this surface
@@ -2223,6 +2228,13 @@ void RB_RenderSpriteSurfList(drawSurf_t* drawSurfs, int numDrawSurfs) {
         }
 
         backEnd.shaderStartTime = ((refSprite_t*)drawSurf->surface)->shaderTime;
+
+        // As GL1 does, run an animMap on a sprite from when the sprite was
+        // spawned, so an explosion or an impact puff starts on its first
+        // frame. A batch takes the time of its last sprite, also as in GL1.
+        if (tess.shader->animMapFromSpawn) {
+            tess.shaderTime = backEnd.refdef.floatTime - backEnd.shaderStartTime;
+        }
 
         // add the triangles for this surface
         rb_surfaceTable[*drawSurf->surface](drawSurf->surface);

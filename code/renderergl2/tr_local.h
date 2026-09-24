@@ -651,6 +651,10 @@ typedef struct shader_s {
     int needsLSpherical;
     // Set when a stage's alpha is worked out per vertex on the CPU each frame
     qboolean needsCPUVertexAlpha;
+    // Set when any stage uses animMap. As in GL1, such a shader's animation
+    // on a sprite starts when the sprite was spawned, not at an arbitrary
+    // point in the level's clock.
+    qboolean animMapFromSpawn;
 } shader_t;
 
 enum

@@ -87,17 +87,25 @@ static void R_BindAnimatedImageToTMU( textureBundle_t *bundle, int tmu ) {
 
 	// it is necessary to do this messy calc to make sure animations line up
 	// exactly with waveforms of the same frequency
-	index = tess.shaderTime * bundle->imageAnimationSpeed * FUNCTABLE_SIZE;
+	// MOH:AA's animMapPhase starts the animation part way through, and
+	// animMapOnce plays it once and holds the last frame, as in GL1.
+	index = ( tess.shaderTime + bundle->imageAnimationPhase ) * bundle->imageAnimationSpeed * FUNCTABLE_SIZE;
 	index >>= FUNCTABLE_SIZE2;
 
 	if ( index < 0 ) {
 		index = 0;	// may happen with shader time offsets
 	}
 
-	// Windows x86 doesn't load renderer DLL with 64 bit modulus
-	//index %= bundle->numImageAnimations;
-	while ( index >= bundle->numImageAnimations ) {
-		index -= bundle->numImageAnimations;
+	if ( bundle->flags & BUNDLE_ANIMATE_ONCE ) {
+		if ( index >= bundle->numImageAnimations ) {
+			index = bundle->numImageAnimations - 1;
+		}
+	} else {
+		// Windows x86 doesn't load renderer DLL with 64 bit modulus
+		//index %= bundle->numImageAnimations;
+		while ( index >= bundle->numImageAnimations ) {
+			index -= bundle->numImageAnimations;
+		}
 	}
 
 	GL_BindToTMU( bundle->image[ index ], tmu );
