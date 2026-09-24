@@ -796,7 +796,14 @@ void R_AddWorldSurfaces (void) {
 	//
 	// OPENMOHAA-specific stuff
 	//=========================
-    if (r_drawterrain->integer && tr.refdef.render_terrain && !tr.viewParms.isPortalSky) {
+    // Not from a sun cascade. The prep measures how far the camera moved
+    // since the previous call and only updates its cull state when it has,
+    // and the cascades are drawn before the main view. So they made that
+    // update, with no farplane of their own, which switched the terrain's
+    // fog distance cull off for the main view. The cascades draw the patches
+    // the main view picked last frame instead.
+    if (r_drawterrain->integer && tr.refdef.render_terrain && !tr.viewParms.isPortalSky
+        && !(tr.viewParms.flags & VPF_DEPTHSHADOW)) {
         double tStart = R_MicroSeconds();
         tr.pc.c_terrainPrepares++;
         R_TerrainPrepareFrame();
