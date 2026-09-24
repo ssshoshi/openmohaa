@@ -3027,6 +3027,8 @@ static void ComputeVertexAttribs(void)
 				break;
 
 			case CGEN_LIGHTING_DIFFUSE:
+			case CGEN_DOT:
+			case CGEN_ONE_MINUS_DOT:
 				shader.vertexAttribs |= ATTR_NORMAL;
 				break;
 
@@ -3037,6 +3039,8 @@ static void ComputeVertexAttribs(void)
 		switch(pStage->alphaGen)
 		{
 			case AGEN_LIGHTING_SPECULAR:
+			case AGEN_DOT:
+			case AGEN_ONE_MINUS_DOT:
 				shader.vertexAttribs |= ATTR_NORMAL;
 				break;
 
@@ -3303,10 +3307,19 @@ static int CollapseStagesToGLSL(void)
 				// only the generic program works these out
 				case AGEN_SCOORD:
 				case AGEN_TCOORD:
+				case AGEN_DOT:
+				case AGEN_ONE_MINUS_DOT:
 					skip = qtrue;
 					break;
 				default:
 					break;
+			}
+
+			// only the generic program works these out either
+			if (pStage->rgbGen == CGEN_DOT || pStage->rgbGen == CGEN_ONE_MINUS_DOT)
+			{
+				skip = qtrue;
+				break;
 			}
 		}
 	}

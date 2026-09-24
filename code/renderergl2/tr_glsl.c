@@ -388,8 +388,12 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 					 va("#ifndef colorGen_t\n"
 						"#define colorGen_t\n"
 						"#define CGEN_LIGHTING_DIFFUSE %i\n"
+						"#define CGEN_DOT %i\n"
+						"#define CGEN_ONE_MINUS_DOT %i\n"
 						"#endif\n",
-						CGEN_LIGHTING_DIFFUSE));
+						CGEN_LIGHTING_DIFFUSE,
+						CGEN_DOT,
+						CGEN_ONE_MINUS_DOT));
 
 	Q_strcat(dest, size,
 							 va("#ifndef alphaGen_t\n"
@@ -398,11 +402,15 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 								"#define AGEN_PORTAL %i\n"
 								"#define AGEN_SCOORD %i\n"
 								"#define AGEN_TCOORD %i\n"
+								"#define AGEN_DOT %i\n"
+								"#define AGEN_ONE_MINUS_DOT %i\n"
 								"#endif\n",
 								AGEN_LIGHTING_SPECULAR,
 								AGEN_PORTAL,
 								AGEN_SCOORD,
-								AGEN_TCOORD));
+								AGEN_TCOORD,
+								AGEN_DOT,
+								AGEN_ONE_MINUS_DOT));
 
 	fbufWidthScale = 1.0f / ((float)glConfig.vidWidth);
 	fbufHeightScale = 1.0f / ((float)glConfig.vidHeight);
@@ -1727,6 +1735,8 @@ shaderProgram_t *GLSL_GetGenericShaderProgram(int stage)
 	switch (pStage->rgbGen)
 	{
 		case CGEN_LIGHTING_DIFFUSE:
+		case CGEN_DOT:
+		case CGEN_ONE_MINUS_DOT:
 			shaderAttribs |= GENERICDEF_USE_RGBAGEN;
 			break;
 		default:
@@ -1739,6 +1749,8 @@ shaderProgram_t *GLSL_GetGenericShaderProgram(int stage)
 		case AGEN_PORTAL:
 		case AGEN_SCOORD:
 		case AGEN_TCOORD:
+		case AGEN_DOT:
+		case AGEN_ONE_MINUS_DOT:
 			shaderAttribs |= GENERICDEF_USE_RGBAGEN;
 			break;
 		default:

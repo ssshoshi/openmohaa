@@ -730,6 +730,19 @@ static void RB_SetGlobalFogUniforms( shaderProgram_t *sp, const shaderStage_t *p
 }
 
 
+/*
+** RB_StageUsesDotGen
+**
+** MOH:AA's rgbGen and alphaGen dot and oneMinusDot, which the generic vertex
+** program works out per vertex.
+*/
+static qboolean RB_StageUsesDotGen( const shaderStage_t *pStage )
+{
+	return pStage->rgbGen == CGEN_DOT || pStage->rgbGen == CGEN_ONE_MINUS_DOT
+		|| pStage->alphaGen == AGEN_DOT || pStage->alphaGen == AGEN_ONE_MINUS_DOT;
+}
+
+
 static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t vertColor, int blend )
 {
 	qboolean isBlend = ((blend & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_DST_COLOR)
@@ -871,10 +884,13 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			baseColor[2] = backEnd.color2D[2] / 255.0f;
 			baseColor[3] = backEnd.color2D[3] / 255.0f;
 			break;
+		// worked out per vertex in the generic vertex program, see below
+		case CGEN_DOT:
+		case CGEN_ONE_MINUS_DOT:
+			break;
 		default:
-			// CGEN_DOT, CGEN_ONE_MINUS_DOT, CGEN_SCOORD and CGEN_TCOORD are all
-			// evaluated per vertex and cannot be expressed as a base/vertex color
-			// pair, so they still need doing.
+			// CGEN_SCOORD and CGEN_TCOORD are evaluated per vertex and cannot be
+			// expressed as a base/vertex color pair, so they still need doing.
 			RB_WarnUnhandledGen( &s_warnedRgbGen, "rgbGen", pStage->rgbGen,
 				s_colorGenNames, ARRAY_LEN( s_colorGenNames ) );
 			break;
@@ -957,15 +973,34 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			baseColor[3] = 1.0f;
 			vertColor[3] = 0.0f;
 			break;
+		// GL1 writes the colour for these and leaves the alpha to the rgbGen,
+		// see below
+		case AGEN_DOT:
+		case AGEN_ONE_MINUS_DOT:
+			break;
 		default:
-			// The distance and height fades, and the dot and texture coordinate
-			// driven alphas, are all per vertex and still need doing.
+			// The view direction driven alphas are per vertex and still need
+			// doing.
 			RB_WarnUnhandledGen( &s_warnedAlphaGen, "alphaGen", pStage->alphaGen,
 				s_alphaGenNames, ARRAY_LEN( s_alphaGenNames ) );
 			break;
 		//=========================
 	}
 
+	// The dot gens replace the colour with a grey the generic vertex program
+	// works out per vertex, which it then scales by the base colour. GL1's
+	// grey is on the same 0-255 scale as its rgbGen identity, so it gets the
+	// same scale as identity has here.
+	if ( RB_StageUsesDotGen( pStage ) )
+	{
+		baseColor[0] =
+		baseColor[1] =
+		baseColor[2] = overbright;
+
+		vertColor[0] =
+		vertColor[1] =
+		vertColor[2] = 0.0f;
+	}
 }
 
 
@@ -1619,8 +1654,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformFloat(sp, UNIFORM_PORTALRANGE, tess.shader->portalRange);
 		}
 
-		// the ramp the generic vertex program works out per vertex, see CalcColor
-		if (pStage->alphaGen == AGEN_SCOORD || pStage->alphaGen == AGEN_TCOORD)
+		// the ramps the generic vertex program works out per vertex, see CalcColor
+		if (pStage->alphaGen == AGEN_SCOORD || pStage->alphaGen == AGEN_TCOORD
+			|| RB_StageUsesDotGen(pStage))
 		{
 			vec4_t params;
 

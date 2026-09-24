@@ -852,7 +852,8 @@ typedef enum
 	UNIFORM_GLOBALFOGCOLOR,
 	UNIFORM_GLOBALFOGPARAMS,
 
-	// MOH:AA's alphaGen sCoord / tCoord: min, max, lower and upper cap
+	// MOH:AA's per vertex ramps, alphaGen sCoord / tCoord and the dot gens:
+	// min, max, and for sCoord / tCoord the lower and upper cap
 	UNIFORM_ALPHAGENPARAMS,
 
 	// MOH:AA's nextBundle: a second texture in the same stage

@@ -241,7 +241,25 @@ vec4 CalcColor(vec3 position, vec3 normal)
 
 		color.a = clamp(floor(f) / 255.0, 0.0, 1.0);
 	}
-	
+
+	// MOH:AA's dot gens: the squared cosine between the normal and the
+	// direction to the viewer, ramped between min and max, which is what makes
+	// the truck headlight beams fade out when seen from the side. GL1 writes
+	// the colour for alphaGen dot too and leaves the alpha alone, and the alpha
+	// gen wins over the colour gen when a stage has both.
+	if (u_ColorGen == CGEN_DOT || u_ColorGen == CGEN_ONE_MINUS_DOT
+		|| u_AlphaGen == AGEN_DOT || u_AlphaGen == AGEN_ONE_MINUS_DOT)
+	{
+		bool oneMinus = (u_AlphaGen == AGEN_DOT || u_AlphaGen == AGEN_ONE_MINUS_DOT)
+			? (u_AlphaGen == AGEN_ONE_MINUS_DOT) : (u_ColorGen == CGEN_ONE_MINUS_DOT);
+		float d = dot(normal, normalize(viewer));
+		float f = oneMinus ? 1.0 - d * d : d * d;
+
+		f = ((u_AlphaGenParams.y - u_AlphaGenParams.x) * f + u_AlphaGenParams.x) * 255.0;
+
+		color.rgb = u_BaseColor.rgb * (clamp(floor(f), 0.0, 255.0) / 255.0);
+	}
+
 	return color;
 }
 #endif
