@@ -833,6 +833,11 @@ typedef struct {
     qboolean isHard;
 } rdConstraint_t;
 
+// How many brush entities a sleeping corpse keeps an eye on, and how far past
+// its own bounds they may be. The margin catches the lift the body is lying on.
+#define RD_MAX_MOVERS    8
+#define RD_MOVER_MARGIN  8.0f
+
 typedef struct {
     rdState_t state;
 
@@ -1029,6 +1034,13 @@ typedef struct {
     // When the body this trace follows went to sleep, so the file can be let go
     // shortly after rather than held for the corpse's whole life.
     int dumpSleepAt;
+
+    // The doors, lifts and other brush entities touching the body when it
+    // fell asleep, and where they were then. See CG_RagdollMoversChanged.
+    int    numMovers;
+    int    moverNum[RD_MAX_MOVERS];
+    vec3_t moverOrigin[RD_MAX_MOVERS];
+    vec3_t moverAngles[RD_MAX_MOVERS];
 } cg_ragdoll_t;
 
 static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
@@ -5569,6 +5581,62 @@ static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
     return NULL;
 }
 
+// The brush entities within reach of the body, in snapshot order.
+static int CG_RagdollNearbyMovers(const cg_ragdoll_t *rd, centity_t **movers)
+{
+    vec3_t mins, maxs;
+    float  reach = rd->boundRadius + RD_MOVER_MARGIN;
+
+    VectorSet(mins, rd->boundCentre[0] - reach, rd->boundCentre[1] - reach, rd->boundCentre[2] - reach);
+    VectorSet(maxs, rd->boundCentre[0] + reach, rd->boundCentre[1] + reach, rd->boundCentre[2] + reach);
+
+    return CG_GetBrushEntitiesInBounds(RD_MAX_MOVERS, movers, mins, maxs);
+}
+
+// Remembered as the body falls asleep.
+static void CG_RagdollNoteMovers(cg_ragdoll_t *rd)
+{
+    centity_t *movers[RD_MAX_MOVERS];
+    int        i;
+
+    rd->numMovers = CG_RagdollNearbyMovers(rd, movers);
+
+    for (i = 0; i < rd->numMovers; i++) {
+        rd->moverNum[i] = movers[i]->currentState.number;
+        VectorCopy(movers[i]->lerpOrigin, rd->moverOrigin[i]);
+        VectorCopy(movers[i]->lerpAngles, rd->moverAngles[i]);
+    }
+}
+
+// Whether a door or a lift near a sleeping body has moved, or a new one has
+// come within reach, since it fell asleep.
+//
+// Asleep, the body is frozen where it settled. A lift going down would leave
+// it hanging where the floor used to be, and a door swinging open would pass
+// straight through it, so it is woken to fall, or to be pushed aside by what
+// hit it: every trace it makes already includes these entities.
+static qboolean CG_RagdollMoversChanged(const cg_ragdoll_t *rd)
+{
+    centity_t *movers[RD_MAX_MOVERS];
+    int        num, i;
+
+    num = CG_RagdollNearbyMovers(rd, movers);
+
+    if (num != rd->numMovers) {
+        return qtrue;
+    }
+
+    for (i = 0; i < num; i++) {
+        if (movers[i]->currentState.number != rd->moverNum[i]
+            || DistanceSquared(movers[i]->lerpOrigin, rd->moverOrigin[i]) > Square(0.1f)
+            || DistanceSquared(movers[i]->lerpAngles, rd->moverAngles[i]) > Square(0.1f)) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
 static void CG_RagdollNoteEvicted(const cg_ragdoll_t *rd)
 {
     if (rd->entityNum >= 0 && rd->entityNum < MAX_GENTITIES) {
@@ -5888,6 +5956,10 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // exactly what the next body has to land on.
     CG_RagdollUpdateBounds(rd);
 
+    if (rd->state == RD_SLEEPING && CG_RagdollMoversChanged(rd)) {
+        CG_RagdollWake(rd);
+    }
+
     if (rd->state != RD_SLEEPING) {
         // Everything below reads the animation pose, so gather it once here
         // rather than per bone per substep.
@@ -5965,6 +6037,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
             if (supported && cg.time - rd->quietSince > cg_ragdoll_sleeptime->integer) {
                 rd->state = RD_SLEEPING;
+                CG_RagdollNoteMovers(rd);
             } else if (cg_ragdoll_duration->integer > 0 && elapsed > cg_ragdoll_duration->integer
                        && cg.time > rd->wakeUntil) {
                 // The lifetime cap is a budget, not a statement about the body.
@@ -5975,6 +6048,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 // far beyond any real settling time overrides that.
                 if (supported || elapsed > cg_ragdoll_duration->integer * RD_SLEEP_BACKSTOP) {
                     rd->state = RD_SLEEPING;
+                    CG_RagdollNoteMovers(rd);
                 }
             }
         }
