@@ -951,6 +951,12 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			baseColor[3] = 0.0f;
 			vertColor[3] = 1.0f;
 			break;
+		// worked out per stage in the generic vertex program, see CalcColor
+		case AGEN_SCOORD:
+		case AGEN_TCOORD:
+			baseColor[3] = 1.0f;
+			vertColor[3] = 0.0f;
+			break;
 		default:
 			// The distance and height fades, and the dot and texture coordinate
 			// driven alphas, are all per vertex and still need doing.
@@ -1611,6 +1617,15 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		if (pStage->alphaGen == AGEN_PORTAL)
 		{
 			GLSL_SetUniformFloat(sp, UNIFORM_PORTALRANGE, tess.shader->portalRange);
+		}
+
+		// the ramp the generic vertex program works out per vertex, see CalcColor
+		if (pStage->alphaGen == AGEN_SCOORD || pStage->alphaGen == AGEN_TCOORD)
+		{
+			vec4_t params;
+
+			VectorSet4(params, pStage->alphaMin, pStage->alphaMax, pStage->alphaConstMin, pStage->alphaConst);
+			GLSL_SetUniformVec4(sp, UNIFORM_ALPHAGENPARAMS, params);
 		}
 
 		GLSL_SetUniformInt(sp, UNIFORM_COLORGEN, pStage->rgbGen);

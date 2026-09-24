@@ -132,6 +132,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_GlobalFogColor",  GLSL_VEC4 },
 	{ "u_GlobalFogParams", GLSL_VEC2 },
 
+	{ "u_AlphaGenParams",  GLSL_VEC4 },
+
 	{ "u_Texture1Env",     GLSL_INT },
 	{ "u_TCGen1",          GLSL_INT },
 	{ "u_Texture1Matrix0", GLSL_VEC4 },
@@ -394,9 +396,13 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 								"#define alphaGen_t\n"
 								"#define AGEN_LIGHTING_SPECULAR %i\n"
 								"#define AGEN_PORTAL %i\n"
+								"#define AGEN_SCOORD %i\n"
+								"#define AGEN_TCOORD %i\n"
 								"#endif\n",
 								AGEN_LIGHTING_SPECULAR,
-								AGEN_PORTAL));
+								AGEN_PORTAL,
+								AGEN_SCOORD,
+								AGEN_TCOORD));
 
 	fbufWidthScale = 1.0f / ((float)glConfig.vidWidth);
 	fbufHeightScale = 1.0f / ((float)glConfig.vidHeight);
@@ -1731,6 +1737,8 @@ shaderProgram_t *GLSL_GetGenericShaderProgram(int stage)
 	{
 		case AGEN_LIGHTING_SPECULAR:
 		case AGEN_PORTAL:
+		case AGEN_SCOORD:
+		case AGEN_TCOORD:
 			shaderAttribs |= GENERICDEF_USE_RGBAGEN;
 			break;
 		default:

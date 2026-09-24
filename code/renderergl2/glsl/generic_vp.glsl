@@ -73,6 +73,7 @@ uniform vec3   u_AmbientLight;
 uniform vec3   u_DirectedLight;
 uniform vec3   u_ModelLightDir;
 uniform float  u_PortalRange;
+uniform vec4   u_AlphaGenParams;
 #endif
 
 #if defined(USE_VERTEX_ANIMATION)
@@ -226,6 +227,19 @@ vec4 CalcColor(vec3 position, vec3 normal)
 	else if (u_AlphaGen == AGEN_PORTAL)
 	{
 		color.a = clamp(length(viewer) / u_PortalRange, 0.0, 1.0);
+	}
+	else if (u_AlphaGen == AGEN_SCOORD || u_AlphaGen == AGEN_TCOORD)
+	{
+		// MOH:AA's ramp along the surface's own texture coordinates, which
+		// is how the shorelines fade the sea out onto the sand. GL1's
+		// arithmetic, whole steps and caps (in 0-255) included.
+		float f = (u_AlphaGen == AGEN_SCOORD) ? attr_TexCoord0.s : attr_TexCoord0.t;
+
+		f = ((u_AlphaGenParams.y - u_AlphaGenParams.x) * f + u_AlphaGenParams.x) * 255.0;
+		f = f - max(floor(f - u_AlphaGenParams.w), 0.0);
+		f = u_AlphaGenParams.z + max(floor(f - u_AlphaGenParams.z), 0.0);
+
+		color.a = clamp(floor(f) / 255.0, 0.0, 1.0);
 	}
 	
 	return color;

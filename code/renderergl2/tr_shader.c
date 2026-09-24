@@ -3300,6 +3300,9 @@ static int CollapseStagesToGLSL(void)
 			{
 				case AGEN_LIGHTING_SPECULAR:
 				case AGEN_PORTAL:
+				// only the generic program works these out
+				case AGEN_SCOORD:
+				case AGEN_TCOORD:
 					skip = qtrue;
 					break;
 				default:
