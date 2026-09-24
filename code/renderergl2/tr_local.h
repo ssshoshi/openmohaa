@@ -638,6 +638,8 @@ typedef struct shader_s {
     // backend knows which of MOH:AA's two entity lighting models to set up.
     int needsLGrid;
     int needsLSpherical;
+    // Set when a stage's alpha is worked out per vertex on the CPU each frame
+    qboolean needsCPUVertexAlpha;
 } shader_t;
 
 enum

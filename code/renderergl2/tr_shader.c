@@ -2792,6 +2792,7 @@ static void ComputeVertexAttribs(void)
 
 	// dlights always need ATTR_NORMAL
 	shader.vertexAttribs = ATTR_POSITION | ATTR_NORMAL;
+	shader.needsCPUVertexAlpha = qfalse;
 
 	// portals always need normals, for SurfIsOffscreen()
 	if (shader.isPortal)
@@ -2936,19 +2937,24 @@ static void ComputeVertexAttribs(void)
 
 			case AGEN_VERTEX:
 			case AGEN_ONE_MINUS_VERTEX:
+				shader.vertexAttribs |= ATTR_COLOR;
+				break;
+
 			//
 			// OPENMOHAA-specific stuff
 			//=========================
-			// The distance and height fades are computed per vertex on the CPU
-			// and handed over in the vertex alpha.
+			// The distance and height fades are computed per vertex on the
+			// CPU and handed over in the vertex alpha, so the vertices cannot
+			// come from a cache made earlier.
 			case AGEN_DIST_FADE:
 			case AGEN_ONE_MINUS_DIST_FADE:
 			case AGEN_TIKI_DIST_FADE:
 			case AGEN_ONE_MINUS_TIKI_DIST_FADE:
 			case AGEN_HEIGHT_FADE:
-			//=========================
+				shader.needsCPUVertexAlpha = qtrue;
 				shader.vertexAttribs |= ATTR_COLOR;
 				break;
+			//=========================
 
 			default:
 				break;

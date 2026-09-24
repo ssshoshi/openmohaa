@@ -415,6 +415,10 @@ static qboolean RB_SurfaceVaoCached(int numVerts, srfVert_t *verts, int numIndex
 	if (!(!ShaderRequiresCPUDeforms(tess.shader) && !tess.shader->isSky && !tess.shader->isPortal))
 		return qfalse;
 
+	// the cached vertices would carry the alpha from when they were cached
+	if (tess.shader->needsCPUVertexAlpha)
+		return qfalse;
+
 	if (!numIndexes || !numVerts)
 		return qfalse;
 
