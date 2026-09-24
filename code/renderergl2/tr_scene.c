@@ -557,7 +557,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 	}
 
 	// playing with even more shadows
-	if(glRefConfig.framebufferObject && r_sunlightMode->integer && !( fd->rdflags & RDF_NOWORLDMODEL ) && (r_forceSun->integer || tr.sunShadows))
+	// Only the screen shadow mask reads the cascades, and it is built as part
+	// of the depth prepass (VPF_USESUNLIGHT below), so without the prepass
+	// they were rendered every frame and thrown away.
+	if(glRefConfig.framebufferObject && r_sunlightMode->integer && r_depthPrepass->value && !( fd->rdflags & RDF_NOWORLDMODEL ) && (r_forceSun->integer || tr.sunShadows))
 	{
 		double tShadowStart = R_MicroSeconds();
 
