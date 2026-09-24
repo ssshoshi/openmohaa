@@ -2592,6 +2592,7 @@ extern  cvar_t  *r_shadowCascadeZBias;
 extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
+extern  cvar_t  *r_skelCull;
 extern  cvar_t  *r_ignoreDstAlpha;
 
 extern	cvar_t	*r_greyscale;

@@ -34,6 +34,7 @@ static int entityNumIndexes[MAX_REFENTITIES];
 static int staticModelNumIndexes[4095];
 
 static int R_CullSkelModel(dtiki_t *tiki, refEntity_t *e, skelAnimFrame_t *newFrame, float fScale, float *vLocalOrg);
+static int R_CullSkelBones(const skelAnimFrame_t *frame, int numBones, float fScale, const vec3_t vLocalOrg);
 
 /*
 ** R_GetModelByHandle
@@ -722,6 +723,19 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
         sizeof(skelAnimFrame_t) + ri.TIKI_GetNumChannels(tiki) * sizeof(SkelMat4)
     );
     R_GetFrame(&ent->e, newFrame);
+
+    // Nothing here ever skipped a model outside the view: it was posed,
+    // skinned and drawn regardless, and every sun cascade that takes entities
+    // is a view of its own. A model is left out of a cascade only when both
+    // the animation's own sphere and its bones are outside that cascade: a
+    // ragdoll's bones can lie well away from the sphere, which follows the
+    // entity and not the body. The main view is left as it was.
+    if (r_skelCull->integer && !lod_tool->integer && iRadiusCull == CULL_OUT
+        && (tr.viewParms.flags & VPF_DEPTHSHADOW)
+        && R_CullSkelBones(newFrame, num_tags, tiki_scale, tiki_localorigin) == CULL_OUT) {
+        ri.Hunk_FreeTempMemory(newFrame);
+        return;
+    }
 
     if (lod_tool->integer || iRadiusCull != CULL_CLIP
         || R_CullSkelModel(tiki, &ent->e, newFrame, tiki_scale, tiki_localorigin) != CULL_OUT) {
@@ -1725,6 +1739,43 @@ R_CalcLod
 float R_CalcLod(const vec3_t origin, float radius)
 {
     return ProjectRadius(radius, origin);
+}
+
+/*
+=============
+R_CullSkelBones
+
+Culls a sphere around where the bones of the given frame actually are. The
+mesh reaches past the joints (a skull above the head bone, a torso around the
+spine), hence the margin, which is in world units.
+=============
+*/
+#define SKEL_BONE_CULL_MARGIN 32.0f
+
+static int R_CullSkelBones(const skelAnimFrame_t *frame, int numBones, float fScale, const vec3_t vLocalOrg)
+{
+    vec3_t mins, maxs, local, center, half;
+    int    i;
+
+    if (numBones <= 0) {
+        return CULL_OUT;
+    }
+
+    ClearBounds(mins, maxs);
+
+    for (i = 0; i < numBones; i++) {
+        local[0] = frame->bones[i][3][0] * fScale + vLocalOrg[0];
+        local[1] = frame->bones[i][3][1] * fScale + vLocalOrg[1];
+        local[2] = frame->bones[i][3][2] * fScale + vLocalOrg[2];
+        AddPointToBounds(local, mins, maxs);
+    }
+
+    VectorAdd(mins, maxs, local);
+    VectorScale(local, 0.5f, local);
+    VectorSubtract(maxs, local, half);
+    R_LocalPointToWorld(local, center);
+
+    return R_CullPointAndRadius(center, VectorLength(half) + SKEL_BONE_CULL_MARGIN);
 }
 
 /*

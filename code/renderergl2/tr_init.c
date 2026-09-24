@@ -167,6 +167,7 @@ cvar_t  *r_shadowCascadeZBias;
 cvar_t  *r_sunEntityShadowCascades;
 cvar_t  *r_sunCascade2CacheDist;
 cvar_t  *r_sunCascade2CacheAngle;
+cvar_t  *r_skelCull;
 cvar_t  *r_ignoreDstAlpha;
 
 cvar_t	*r_ignoreGLErrors;
@@ -1498,6 +1499,10 @@ void R_Register( void )
 	// stock behaviour.
 	r_sunCascade2CacheDist = ri.Cvar_Get( "r_sunCascade2CacheDist", "48", CVAR_ARCHIVE );
 	r_sunCascade2CacheAngle = ri.Cvar_Get( "r_sunCascade2CacheAngle", "0.97", CVAR_ARCHIVE );
+	// Leave a skeletal model out of a sun cascade it lies wholly outside of,
+	// instead of skinning and drawing it into every cascade that takes
+	// entities. 0 restores that. Not archived, so it stays an A/B switch.
+	r_skelCull = ri.Cvar_Get( "r_skelCull", "1", 0 );
 	r_ignoreDstAlpha = ri.Cvar_Get( "r_ignoreDstAlpha", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	//
