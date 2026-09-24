@@ -2178,8 +2178,9 @@ void RB_StageIteratorGeneric( void )
 		if ( backEnd.viewParms.isMirror )
 			cullFront = !cullFront;
 
-		if ( backEnd.currentEntity && backEnd.currentEntity->mirrored )
-			cullFront = !cullFront;
+		// Unlike Q3, GL1 does not flip culling for an entity placed with a
+		// mirrored axis, and MOH:AA's content was built against GL1. Flipping
+		// it here culls the faces that GL1 draws for such an entity.
 
 		if (cullFront)
 			GL_Cull( CT_FRONT_SIDED );
