@@ -1344,6 +1344,40 @@ static unsigned int RB_CalcShaderVertexAttribs( shaderCommands_t *input )
 	return vertexAttribs;
 }
 
+/*
+** RB_SetSecondBundle
+**
+** MOH:AA's nextBundle draws a second texture in the same pass, with its own
+** texture coordinates and tcMods, modulated or added onto the first, as GL1's
+** multitexture does. The generic program keeps these uniforms between draws,
+** so every draw through it has to say whether it wants the second texture.
+*/
+static void RB_SetSecondBundle( shaderProgram_t *sp, shaderStage_t *pStage, qboolean use )
+{
+	vec4_t texMatrix[8];
+
+	if ( !use || !pStage->multitextureEnv || !pStage->bundle[1].image[0] ) {
+		GLSL_SetUniformInt( sp, UNIFORM_TEXTURE1ENV, 0 );
+		return;
+	}
+
+	R_BindAnimatedImageToTMU( &pStage->bundle[1], TB_LIGHTMAP );
+
+	ComputeTexMods( pStage, 1, texMatrix );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX0, texMatrix[0] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX1, texMatrix[1] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX2, texMatrix[2] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX3, texMatrix[3] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX4, texMatrix[4] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX5, texMatrix[5] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX6, texMatrix[6] );
+	GLSL_SetUniformVec4( sp, UNIFORM_TEXTURE1MATRIX7, texMatrix[7] );
+
+	GLSL_SetUniformInt( sp, UNIFORM_TCGEN1, pStage->bundle[1].tcGen );
+	GLSL_SetUniformInt( sp, UNIFORM_TEXTURE1ENV, pStage->multitextureEnv == GL_ADD ? 2 : 1 );
+}
+
+
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
@@ -1627,6 +1661,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				GL_BindToTMU( tr.whiteImage, TB_COLORMAP );
 			else if ( pStage->bundle[TB_COLORMAP].image[0] != 0 )
 				R_BindAnimatedImageToTMU( &pStage->bundle[TB_COLORMAP], TB_COLORMAP );
+
+			// the second texture's alpha counts towards the alpha test
+			RB_SetSecondBundle( sp, pStage, ( pStage->stateBits & GLS_ATEST_BITS ) != 0 );
 		}
 		else if ( pStage->glslShaderGroup == tr.lightallShader )
 		{
@@ -1728,17 +1765,14 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 
 			GLSL_SetUniformVec4(sp, UNIFORM_ENABLETEXTURES, enableTextures);
 		}
-		else if ( pStage->bundle[1].image[0] != 0 )
-		{
-			R_BindAnimatedImageToTMU( &pStage->bundle[0], 0 );
-			R_BindAnimatedImageToTMU( &pStage->bundle[1], 1 );
-		}
 		else 
 		{
 			//
 			// set state
 			//
 			R_BindAnimatedImageToTMU( &pStage->bundle[0], 0 );
+
+			RB_SetSecondBundle( sp, pStage, qtrue );
 		}
 
 		//

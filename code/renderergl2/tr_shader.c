@@ -29,7 +29,9 @@ static char *s_shaderText;
 // dynamically allocated memory if it is valid.
 static	shaderStage_t	stages[MAX_SHADER_STAGES];		
 static	shader_t		shader;
-static	texModInfo_t	texMods[MAX_SHADER_STAGES][TR_MAX_TEXMODS];
+// MOH:AA's nextBundle gives a stage a second texture with tcMods of its own,
+// so each bundle needs its own.
+static	texModInfo_t	texMods[MAX_SHADER_STAGES][NUM_TEXTURE_BUNDLES][TR_MAX_TEXMODS];
 static	int				shader_realLightmapIndex;
 
 #define FILE_HASH_SIZE		1024
@@ -397,19 +399,20 @@ static void ParseWaveForm( char **text, waveForm_t *wave )
 ParseTexMod
 ===================
 */
-static void ParseTexMod( char *_text, shaderStage_t *stage )
+static void ParseTexMod( char *_text, shaderStage_t *stage, int cntBundle )
 {
 	const char *token;
 	char **text = &_text;
 	texModInfo_t *tmi;
+	textureBundle_t *bundle = &stage->bundle[cntBundle];
 
-	if ( stage->bundle[0].numTexMods == TR_MAX_TEXMODS ) {
+	if ( bundle->numTexMods == TR_MAX_TEXMODS ) {
 		ri.Error( ERR_DROP, "ERROR: too many tcMod stages in shader '%s'", shader.name );
 		return;
 	}
 
-	tmi = &stage->bundle[0].texMods[stage->bundle[0].numTexMods];
-	stage->bundle[0].numTexMods++;
+	tmi = &bundle->texMods[bundle->numTexMods];
+	bundle->numTexMods++;
 
 	token = COM_ParseExt( text, qfalse );
 
@@ -1736,7 +1739,7 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 				Q_strcat( buffer, sizeof (buffer), " " );
 			}
 
-			ParseTexMod( buffer, stage );
+			ParseTexMod( buffer, stage, cntBundle );
 
 			continue;
 		}
@@ -1850,13 +1853,13 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 
 			token = COM_ParseExt(text, qfalse);
 			if (token[0] && !Q_stricmp(token, "add")) {
-				//stage->multitextureEnv = GL_ADD;
+				stage->multitextureEnv = GL_ADD;
 			} else {
-				//stage->multitextureEnv = GL_MODULATE;
+				stage->multitextureEnv = GL_MODULATE;
 			}
 
 			cntBundle++;
-			if (cntBundle > NUM_TEXTURE_BUNDLES) {
+			if (cntBundle >= NUM_TEXTURE_BUNDLES) {
 				ri.Printf(PRINT_WARNING, "WARNING: too many nextBundle commands in shader '%s'\n", shader.name);
 				return qfalse;
 			}
@@ -3813,9 +3816,13 @@ Puts one of the working stages back to its unparsed state
 ===============
 */
 static void InitShaderStage( int i ) {
+	int b;
+
 	Com_Memset( &stages[i], 0, sizeof( stages[i] ) );
 
-	stages[i].bundle[0].texMods = texMods[i];
+	for ( b = 0; b < NUM_TEXTURE_BUNDLES; b++ ) {
+		stages[i].bundle[b].texMods = texMods[i][b];
+	}
 
 	// default normal/specular
 	VectorSet4(stages[i].normalScale, 0.0f, 0.0f, 0.0f, 0.0f);
@@ -4986,12 +4993,39 @@ static void CreateMultistageFromBundle() {
 
 	for (stage = 0; stage < MAX_SHADER_STAGES; stage++ ) {
 		shaderStage_t* pStage = &stages[stage];
+		int blendBits;
 
 		if (!pStage->active) {
 			break;
 		}
 
-		if (pStage->bundle[TB_LIGHTMAP].isLightmap) {
+		if (!pStage->bundle[1].image[0]) {
+			pStage->multitextureEnv = 0;
+			continue;
+		}
+
+		// GL1 gives every bundle a default tcGen, not just the first
+		for (bundle = 0; bundle < 2; bundle++) {
+			if (pStage->bundle[bundle].tcGen == TCGEN_BAD) {
+				pStage->bundle[bundle].tcGen = pStage->bundle[bundle].isLightmap ? TCGEN_LIGHTMAP : TCGEN_TEXTURE;
+			}
+		}
+
+		// and, like GL1, puts a lightmap given first behind the texture
+		// that follows it, so the texture is what gets drawn
+		if (pStage->bundle[0].isLightmap) {
+			textureBundle_t swapBundle = pStage->bundle[0];
+
+			pStage->bundle[0] = pStage->bundle[1];
+			pStage->bundle[1] = swapBundle;
+		}
+
+		blendBits = pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
+
+		if (pStage->bundle[TB_LIGHTMAP].isLightmap && !blendBits && pStage->multitextureEnv != GL_ADD) {
+			// An opaque texture times a lightmap, which is most of the world:
+			// split into a lightmap filter pass, which CollapseStagesToGLSL
+			// turns back into one lit draw, normal and specular maps and all.
 			shaderStage_t* newStage = NULL;
 
 			for (i = stage; i < MAX_SHADER_STAGES; i++) {
@@ -5008,7 +5042,20 @@ static void CreateMultistageFromBundle() {
 				newStage->bundle[TB_COLORMAP] = pStage->bundle[TB_LIGHTMAP];
 				memset(&newStage->bundle[TB_LIGHTMAP], 0, sizeof(textureBundle_t));
 				memset(&pStage->bundle[TB_LIGHTMAP], 0, sizeof(textureBundle_t));
+				newStage->multitextureEnv = 0;
+				pStage->multitextureEnv = 0;
 				stage = i;
+			}
+		} else {
+			// Anything else is drawn in one pass with both textures, as GL1
+			// does. That covers two-texture stages (oceans, fire, smoke), which
+			// used to lose their second texture, and blended stages with a
+			// lightmap (bullet holes and other decals), whose split lightmap
+			// pass darkened the whole quad rather than just the decal.
+			// ST_GLSL keeps CollapseStagesToGLSL from taking the stage apart.
+			pStage->type = ST_GLSL;
+			if (!pStage->multitextureEnv) {
+				pStage->multitextureEnv = GL_MODULATE;
 			}
 		}
 	}

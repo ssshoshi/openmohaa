@@ -35,6 +35,18 @@ uniform vec3   u_LocalViewOrigin;
 uniform int    u_TCGen0;
 uniform vec3   u_TCGen0Vector0;
 uniform vec3   u_TCGen0Vector1;
+
+// MOH:AA's nextBundle: a second texture with coordinates of its own
+uniform int    u_Texture1Env;
+uniform int    u_TCGen1;
+uniform vec4   u_Texture1Matrix0;
+uniform vec4   u_Texture1Matrix1;
+uniform vec4   u_Texture1Matrix2;
+uniform vec4   u_Texture1Matrix3;
+uniform vec4   u_Texture1Matrix4;
+uniform vec4   u_Texture1Matrix5;
+uniform vec4   u_Texture1Matrix6;
+uniform vec4   u_Texture1Matrix7;
 #endif
 
 #if defined(USE_FOG)
@@ -72,6 +84,10 @@ uniform mat4 u_BoneMatrix[MAX_GLSL_BONES];
 varying vec2   var_DiffuseTex;
 varying vec4   var_Color;
 varying float  var_FogDist;
+
+#if defined(USE_TCGEN)
+varying vec2   var_Tex2;
+#endif
 
 #if defined(USE_DEFORM_VERTEXES)
 vec3 DeformPosition(const vec3 pos, const vec3 normal, const vec2 st)
@@ -269,6 +285,26 @@ void main()
 	var_DiffuseTex = ModTexCoords(tex, position, diffuseTexMatrix);
 #else
     var_DiffuseTex = tex;
+#endif
+
+#if defined(USE_TCGEN)
+	if (u_Texture1Env != 0)
+	{
+		vec4 texture1Matrix[8];
+		texture1Matrix[0] = u_Texture1Matrix0;
+		texture1Matrix[1] = u_Texture1Matrix1;
+		texture1Matrix[2] = u_Texture1Matrix2;
+		texture1Matrix[3] = u_Texture1Matrix3;
+		texture1Matrix[4] = u_Texture1Matrix4;
+		texture1Matrix[5] = u_Texture1Matrix5;
+		texture1Matrix[6] = u_Texture1Matrix6;
+		texture1Matrix[7] = u_Texture1Matrix7;
+		var_Tex2 = ModTexCoords(GenTexCoords(u_TCGen1, position, normal, vec3(0.0), vec3(0.0)), position, texture1Matrix);
+	}
+	else
+	{
+		var_Tex2 = vec2(0.0);
+	}
 #endif
 
 #if defined(USE_RGBAGEN)

@@ -1,5 +1,12 @@
 uniform sampler2D u_DiffuseMap;
 
+#if defined(USE_TCGEN)
+// MOH:AA's nextBundle: 1 modulates the second texture in, 2 adds it
+uniform sampler2D u_LightMap;
+uniform int       u_Texture1Env;
+varying vec2      var_Tex2;
+#endif
+
 uniform int       u_AlphaTest;
 
 uniform vec4      u_GlobalFogColor;
@@ -16,6 +23,25 @@ void main()
 	vec4 color  = texture2D(u_DiffuseMap, var_DiffuseTex);
 
 	float alpha = color.a * var_Color.a;
+	vec3  rgb   = color.rgb * var_Color.rgb;
+
+#if defined(USE_TCGEN)
+	// As GL1's texture environment does it: the first texture takes the
+	// vertex colour, then the second is modulated or added on top. Adding
+	// still multiplies alpha.
+	if (u_Texture1Env != 0)
+	{
+		vec4 color2 = texture2D(u_LightMap, var_Tex2);
+
+		if (u_Texture1Env == 2)
+			rgb += color2.rgb;
+		else
+			rgb *= color2.rgb;
+
+		alpha *= color2.a;
+	}
+#endif
+
 	if (u_AlphaTest == 1)
 	{
 		if (alpha == 0.0)
@@ -32,7 +58,7 @@ void main()
 			discard;
 	}
 	
-	gl_FragColor.rgb = color.rgb * var_Color.rgb;
+	gl_FragColor.rgb = rgb;
 	gl_FragColor.a = alpha;
 
 	// MOH:AA global distance fog, linear between the two params. When it is off

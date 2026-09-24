@@ -528,6 +528,10 @@ typedef struct {
     byte			colorConst[4];			// for CGEN_CONST and AGEN_CONST
 	byte			alphaConst;
 	byte			alphaConstMin;
+
+	// How nextBundle's second texture combines with the first: GL_MODULATE,
+	// GL_ADD, or 0 when the stage has only one
+	int				multitextureEnv;
 } shaderStage_t;
 
 struct shaderCommands_s;
@@ -836,6 +840,18 @@ typedef enum
 	// MOH:AA global distance fog
 	UNIFORM_GLOBALFOGCOLOR,
 	UNIFORM_GLOBALFOGPARAMS,
+
+	// MOH:AA's nextBundle: a second texture in the same stage
+	UNIFORM_TEXTURE1ENV,
+	UNIFORM_TCGEN1,
+	UNIFORM_TEXTURE1MATRIX0,
+	UNIFORM_TEXTURE1MATRIX1,
+	UNIFORM_TEXTURE1MATRIX2,
+	UNIFORM_TEXTURE1MATRIX3,
+	UNIFORM_TEXTURE1MATRIX4,
+	UNIFORM_TEXTURE1MATRIX5,
+	UNIFORM_TEXTURE1MATRIX6,
+	UNIFORM_TEXTURE1MATRIX7,
 
 	UNIFORM_MODELMATRIX,
 	UNIFORM_MODELVIEWPROJECTIONMATRIX,

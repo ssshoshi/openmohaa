@@ -132,6 +132,17 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_GlobalFogColor",  GLSL_VEC4 },
 	{ "u_GlobalFogParams", GLSL_VEC2 },
 
+	{ "u_Texture1Env",     GLSL_INT },
+	{ "u_TCGen1",          GLSL_INT },
+	{ "u_Texture1Matrix0", GLSL_VEC4 },
+	{ "u_Texture1Matrix1", GLSL_VEC4 },
+	{ "u_Texture1Matrix2", GLSL_VEC4 },
+	{ "u_Texture1Matrix3", GLSL_VEC4 },
+	{ "u_Texture1Matrix4", GLSL_VEC4 },
+	{ "u_Texture1Matrix5", GLSL_VEC4 },
+	{ "u_Texture1Matrix6", GLSL_VEC4 },
+	{ "u_Texture1Matrix7", GLSL_VEC4 },
+
 	{ "u_ModelMatrix",               GLSL_MAT16 },
 	{ "u_ModelViewProjectionMatrix", GLSL_MAT16 },
 
@@ -1744,6 +1755,12 @@ shaderProgram_t *GLSL_GetGenericShaderProgram(int stage)
 	}
 
 	if (pStage->bundle[0].numTexMods)
+	{
+		shaderAttribs |= GENERICDEF_USE_TCGEN_AND_TCMOD;
+	}
+
+	// nextBundle's second texture lives in this permutation
+	if (pStage->multitextureEnv)
 	{
 		shaderAttribs |= GENERICDEF_USE_TCGEN_AND_TCMOD;
 	}
