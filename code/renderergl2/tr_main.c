@@ -1674,6 +1674,32 @@ static void R_AddEntitySurface (int entityNum)
 		return;
 	}
 
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// GL1's visibility rules, which the sprites here already follow. The
+	// server marks what can only be seen through the sky portal, and what it
+	// only reached through a portal. Without them the sky room's entities
+	// were drawn in every view and every entity was drawn again in the sky
+	// portal, while a portal-only entity showed up in the main view, through
+	// the wall, where the portal PVS found it.
+	if (tr.viewParms.isPortalSky) {
+		if (!(ent->e.renderfx & RF_SKYENTITY)) {
+			return;
+		}
+	} else if (ent->e.renderfx & RF_SKYENTITY) {
+		return;
+	}
+
+	if (tr.viewParms.isPortal) {
+		if (!(ent->e.renderfx & (RF_WRAP_FRAMES | RF_SHADOW_PLANE))) {
+			return;
+		}
+	} else if (ent->e.renderfx & RF_SHADOW_PLANE) {
+		return;
+	}
+	//=========================
+
 	// simple generated models, like sprites and beams, are not culled
 	switch ( ent->e.reType ) {
 	case RT_PORTALSURFACE:
