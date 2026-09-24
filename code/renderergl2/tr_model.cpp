@@ -29,7 +29,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define LL(x) x = LittleLong(x)
 
 qboolean   g_bInfoworldtris = qfalse;
-static int entityNumIndexes[MAX_ENTITIES];
+// indexed by slot in the scene, which runs to MAX_REFENTITIES
+static int entityNumIndexes[MAX_REFENTITIES];
 static int staticModelNumIndexes[4095];
 
 static int R_CullSkelModel(dtiki_t *tiki, refEntity_t *e, skelAnimFrame_t *newFrame, float fScale, float *vLocalOrg);
