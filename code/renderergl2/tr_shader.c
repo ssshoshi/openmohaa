@@ -722,6 +722,9 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 	int depthTestBits = 0;
 	int fogBits = 0;
 	qboolean shouldProcess = qtrue;
+	// MOH:AA lets a stage turn these off for itself, on top of the shader
+	qboolean stageNoMipMaps = shader.noMipMaps;
+	qboolean stageNoPicMip = shader.noPicMip;
 	//=========================
 
 	stage->active = qtrue;
@@ -788,10 +791,10 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 				imgType_t type = IMGTYPE_COLORALPHA;
 				imgFlags_t flags = IMGFLAG_NONE;
 
-				if (!shader.noMipMaps)
+				if (!stageNoMipMaps)
 					flags |= IMGFLAG_MIPMAP;
 
-				if (!shader.noPicMip)
+				if (!stageNoPicMip)
 					flags |= IMGFLAG_PICMIP;
 
 				if (stage->type == ST_NORMALMAP || stage->type == ST_NORMALPARALLAXMAP)
@@ -844,10 +847,10 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 				return qfalse;
 			}
 
-			if (!shader.noMipMaps)
+			if (!stageNoMipMaps)
 				flags |= IMGFLAG_MIPMAP;
 
-			if (!shader.noPicMip)
+			if (!stageNoPicMip)
 				flags |= IMGFLAG_PICMIP;
 
 			if (stage->type == ST_NORMALMAP || stage->type == ST_NORMALPARALLAXMAP)
@@ -899,10 +902,10 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 				if ( num < MAX_IMAGE_ANIMATIONS ) {
 					imgFlags_t flags = IMGFLAG_NONE;
 
-					if (!shader.noMipMaps)
+					if (!stageNoMipMaps)
 						flags |= IMGFLAG_MIPMAP;
 
-					if (!shader.noPicMip)
+					if (!stageNoPicMip)
 						flags |= IMGFLAG_PICMIP;
 
 					stage->bundle[cntBundle].image[num] = R_FindImageFile( token, IMGTYPE_COLORALPHA, flags );
@@ -1877,10 +1880,10 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 				if ( num < MAX_IMAGE_ANIMATIONS ) {
 					imgFlags_t flags = IMGFLAG_NONE;
 
-					if (!shader.noMipMaps)
+					if (!stageNoMipMaps)
 						flags |= IMGFLAG_MIPMAP;
 
-					if (!shader.noPicMip)
+					if (!stageNoPicMip)
 						flags |= IMGFLAG_PICMIP;
 
 					stage->bundle[cntBundle].image[num] = R_FindImageFile( token, IMGTYPE_COLORALPHA, flags );
@@ -1921,6 +1924,19 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 		else if (!Q_stricmp(token, "noDepthTest"))
 		{
 			depthFuncBits = GLS_DEPTHTEST_DISABLE;
+			continue;
+		}
+		// Per stage, as in GL1. Anything unknown fails the whole shader, and
+		// the D-Day and North Africa oceans and the tank tracks all use these,
+		// so those surfaces used to fall back to the default image.
+		else if (!Q_stricmp(token, "nomipmaps"))
+		{
+			stageNoMipMaps = qtrue;
+			continue;
+		}
+		else if (!Q_stricmp(token, "nopicmip"))
+		{
+			stageNoPicMip = qtrue;
 			continue;
 		}
 		else if (!Q_stricmp(token, "nextBundle"))
