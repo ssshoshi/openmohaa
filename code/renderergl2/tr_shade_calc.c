@@ -1129,6 +1129,62 @@ void RB_CalcTransformTexMatrix( const texModInfo_t *tmi, float *matrix  )
 }
 
 /*
+** RB_CalcTransWaveTexMatrix
+**
+** MOH:AA's tcMod wavetrans and wavetrant: s, or t, slides by a waveform.
+*/
+void RB_CalcTransWaveTexMatrix( const waveForm_t *wf, qboolean onT, float *matrix )
+{
+	float p = EvalWaveForm( wf );
+
+	matrix[0] = 1.0f; matrix[2] = 0.0f; matrix[4] = onT ? 0.0f : p;
+	matrix[1] = 0.0f; matrix[3] = 1.0f; matrix[5] = onT ? p : 0.0f;
+}
+
+/*
+** RB_CalcParallaxTexMatrix
+**
+** MOH:AA's tcMod parallax: the texture slides with the viewer's position.
+*/
+void RB_CalcParallaxTexMatrix( const float *rate, float *matrix )
+{
+	matrix[0] = 1.0f; matrix[2] = 0.0f; matrix[4] = backEnd.refdef.vieworg[0] * rate[0];
+	matrix[1] = 0.0f; matrix[3] = 1.0f; matrix[5] = backEnd.refdef.vieworg[1] * rate[1];
+}
+
+/*
+** RB_CalcOffsetTexMatrix
+**
+** MOH:AA's tcMod offset. Either value may be "fromEntity", stored as 1234567,
+** which takes it from the entity's shader data, or for a static model from the
+** r_static_shaderdata cvars. As in GL1, only the first value is looked at to
+** decide that, for both.
+*/
+void RB_CalcOffsetTexMatrix( const float *offset, float *matrix )
+{
+	float offsetS, offsetT;
+
+	if ( offset[0] != 1234567 ) {
+		offsetS = offset[0];
+		offsetT = offset[1];
+	} else if ( backEnd.currentEntity ) {
+		offsetS = backEnd.currentEntity->e.shader_data[0];
+		offsetT = backEnd.currentEntity->e.shader_data[1];
+	} else {
+		offsetS = r_static_shaderdata0->value;
+		offsetT = r_static_shaderdata1->value;
+	}
+
+	if ( !backEnd.currentEntity ) {
+		offsetS *= r_static_shadermultiplier0->value;
+		offsetT *= r_static_shadermultiplier1->value;
+	}
+
+	matrix[0] = 1.0f; matrix[2] = 0.0f; matrix[4] = offsetS;
+	matrix[1] = 0.0f; matrix[3] = 1.0f; matrix[5] = offsetT;
+}
+
+/*
 ** RB_CalcRotateTexMatrix
 */
 void RB_CalcRotateTexMatrix( float degsPerSecond, float *matrix )

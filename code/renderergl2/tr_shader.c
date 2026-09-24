@@ -618,6 +618,85 @@ static void ParseTexMod( char *_text, shaderStage_t *stage, int cntBundle )
 	{
 		tmi->type = TMOD_ENTITY_TRANSLATE;
 	}
+	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// wavetrans / wavetrant <func> <base> <amp> <phase> <freq>: slide s or t
+	// by a waveform, as the surf does up the D-Day and Africa shorelines
+	else if ( !Q_stricmp( token, "wavetrans" ) )
+	{
+		ParseWaveForm( text, &tmi->wave );
+		tmi->type = TMOD_WAVETRANS;
+	}
+	else if ( !Q_stricmp( token, "wavetrant" ) )
+	{
+		ParseWaveForm( text, &tmi->wave );
+		tmi->type = TMOD_WAVETRANT;
+	}
+	// offset <s|fromEntity> <t|fromEntity> [s jitter] [t jitter]
+	else if ( !Q_stricmp( token, "offset" ) )
+	{
+		int i;
+
+		for ( i = 0; i < 2; i++ )
+		{
+			token = COM_ParseExt( text, qfalse );
+			if ( token[0] == 0 )
+			{
+				ri.Printf( PRINT_WARNING, "WARNING: missing offset parms in shader '%s'\n", shader.name );
+				return;
+			}
+
+			tmi->scroll[i] = !Q_stricmp( token, "fromEntity" ) ? 1234567 : atof( token );
+		}
+
+		// GL1 then jitters each by a random amount up to the given size
+		for ( i = 0; i < 2; i++ )
+		{
+			float jitter;
+
+			token = COM_ParseExt( text, qfalse );
+			if ( !token[0] ) {
+				continue;
+			}
+
+			jitter = atof( token );
+			if ( jitter < 0 ) {
+				tmi->scroll[i] -= ( rand() % (int)( jitter * 1000.0 + 1.0 ) ) / 1000.0;
+			} else if ( jitter > 0 ) {
+				tmi->scroll[i] += ( rand() % (int)( jitter * 1000.0 + 1.0 ) ) / 1000.0;
+			}
+		}
+
+		tmi->type = TMOD_OFFSET;
+	}
+	// parallax <s rate> <t rate>: slides with the viewer's position
+	else if ( !Q_stricmp( token, "parallax" ) )
+	{
+		int i;
+
+		for ( i = 0; i < 2; i++ )
+		{
+			token = COM_ParseExt( text, qfalse );
+			if ( token[0] == 0 )
+			{
+				ri.Printf( PRINT_WARNING, "WARNING: missing rate parms in shader '%s'\n", shader.name );
+				return;
+			}
+
+			tmi->scale[i] = atof( token );
+		}
+
+		tmi->type = TMOD_PARALLAX;
+	}
+	// bulge <width> <amplitude> <frequency> <phase>: GL1 parses it and then
+	// works out an offset it never applies, so it changes nothing there either
+	else if ( !Q_stricmp( token, "bulge" ) )
+	{
+		SkipRestOfLine( text );
+		tmi->type = TMOD_BULGETRANS;
+	}
+	//=========================
 	else
 	{
 		ri.Printf( PRINT_WARNING, "WARNING: unknown tcMod '%s' in shader '%s'\n", token, shader.name );

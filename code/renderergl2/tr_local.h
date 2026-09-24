@@ -389,7 +389,13 @@ typedef enum {
 	TMOD_SCALE,
 	TMOD_STRETCH,
 	TMOD_ROTATE,
-	TMOD_ENTITY_TRANSLATE
+	TMOD_ENTITY_TRANSLATE,
+	// MOH:AA's own, appended so nothing above renumbers
+	TMOD_WAVETRANS,
+	TMOD_WAVETRANT,
+	TMOD_OFFSET,
+	TMOD_PARALLAX,
+	TMOD_BULGETRANS
 } texMod_t;
 
 #define	MAX_SHADER_DEFORMS	3
@@ -3539,6 +3545,9 @@ void	RB_DeformTessGeometry( void );
 // static-model surfaces, from the r_static_shaderdata*/r_static_shadermultiplier*
 // cvars. Mirrors the GL1 renderer's EvalWaveForm().
 void	RB_ResolveWaveForm( const waveForm_t *in, waveForm_t *out );
+void	RB_CalcOffsetTexMatrix( const float *offset, float *matrix );
+void	RB_CalcTransWaveTexMatrix( const waveForm_t *wf, qboolean onT, float *matrix );
+void	RB_CalcParallaxTexMatrix( const float *rate, float *matrix );
 
 void	RB_CalcFogTexCoords( float *dstTexCoords );
 

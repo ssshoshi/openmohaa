@@ -378,6 +378,31 @@ static void ComputeTexMods( shaderStage_t *pStage, int bundleNum, vec4_t outMatr
 									matrix );
 			break;
 
+		//
+		// OPENMOHAA-specific stuff
+		//=========================
+		// All of these just move the texture, the way GL1 adds to s and t
+		case TMOD_WAVETRANS:
+		case TMOD_WAVETRANT:
+			RB_CalcTransWaveTexMatrix( &bundle->texMods[tm].wave,
+									   bundle->texMods[tm].type == TMOD_WAVETRANT, matrix );
+			break;
+
+		case TMOD_OFFSET:
+			RB_CalcOffsetTexMatrix( bundle->texMods[tm].scroll, matrix );
+			break;
+
+		case TMOD_PARALLAX:
+			RB_CalcParallaxTexMatrix( bundle->texMods[tm].scale, matrix );
+			break;
+
+		case TMOD_BULGETRANS:
+			// does nothing in GL1 either, see ParseTexMod
+			matrix[0] = 1.0f; matrix[2] = 0.0f; matrix[4] = 0.0f;
+			matrix[1] = 0.0f; matrix[3] = 1.0f; matrix[5] = 0.0f;
+			break;
+		//=========================
+
 		default:
 			ri.Error( ERR_DROP, "ERROR: unknown texmod '%d' in shader '%s'", bundle->texMods[tm].type, tess.shader->name );
 			break;
