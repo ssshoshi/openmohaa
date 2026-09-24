@@ -44,6 +44,8 @@ static char **shaderTextHashTable[MAX_SHADERTEXT_HASH];
 static void CreateMultistageFromBundle();
 //=========================
 
+static void InitShaderStage( int i );
+
 /*
 ================
 return a hash value for the filename
@@ -1906,6 +1908,19 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 	}
 
 	//
+	// OPENMOHAA-specific stuff
+	//=========================
+	// A stage whose ifCvar / ifCvarnot test failed is dropped, which GL1
+	// marks with CGEN_BAD. Drawing it anyway, as this used to, puts both
+	// halves of a cvar-switched shader on screen at once.
+	if ( !shouldProcess ) {
+		stage->active = qfalse;
+		stage->rgbGen = CGEN_BAD;
+		return qtrue;
+	}
+	//=========================
+
+	//
 	// if cgen isn't explicitly specified, use either identity or identitylighting
 	//
 	if ( stage->rgbGen == CGEN_BAD ) {
@@ -2409,6 +2424,18 @@ static qboolean ParseShader( char **text )
 			{
 				return qfalse;
 			}
+
+			// OPENMOHAA-specific stuff
+			//=========================
+			// Dropped by its ifCvar / ifCvarnot. GL1 leaves a hole here, but
+			// every loop past this point stops at the first inactive stage,
+			// so clear the slot and let the next stage take it.
+			if ( stages[s].rgbGen == CGEN_BAD ) {
+				InitShaderStage( s );
+				continue;
+			}
+			//=========================
+
 			stages[s].active = qtrue;
 			s++;
 
@@ -3768,6 +3795,33 @@ static void FixFatLightmapTexCoords(void)
 
 /*
 ===============
+InitShaderStage
+
+Puts one of the working stages back to its unparsed state
+===============
+*/
+static void InitShaderStage( int i ) {
+	Com_Memset( &stages[i], 0, sizeof( stages[i] ) );
+
+	stages[i].bundle[0].texMods = texMods[i];
+
+	// default normal/specular
+	VectorSet4(stages[i].normalScale, 0.0f, 0.0f, 0.0f, 0.0f);
+	if (r_pbr->integer)
+	{
+		stages[i].specularScale[0] = r_baseGloss->value;
+	}
+	else
+	{
+		stages[i].specularScale[0] =
+		stages[i].specularScale[1] =
+		stages[i].specularScale[2] = r_baseSpecular->value;
+		stages[i].specularScale[3] = r_baseGloss->value;
+	}
+}
+
+/*
+===============
 InitShader
 ===============
 */
@@ -3776,28 +3830,13 @@ static void InitShaderEx( const char *name, int lightmapIndex, int realLightmapI
 
 	// clear the global shader
 	Com_Memset( &shader, 0, sizeof( shader ) );
-	Com_Memset( &stages, 0, sizeof( stages ) );
 
 	Q_strncpyz( shader.name, name, sizeof( shader.name ) );
 	shader.lightmapIndex = lightmapIndex;
 	shader_realLightmapIndex = realLightmapIndex;
 
 	for ( i = 0 ; i < MAX_SHADER_STAGES ; i++ ) {
-		stages[i].bundle[0].texMods = texMods[i];
-
-		// default normal/specular
-		VectorSet4(stages[i].normalScale, 0.0f, 0.0f, 0.0f, 0.0f);
-		if (r_pbr->integer)
-		{
-			stages[i].specularScale[0] = r_baseGloss->value;
-		}
-		else
-		{
-			stages[i].specularScale[0] =
-			stages[i].specularScale[1] =
-			stages[i].specularScale[2] = r_baseSpecular->value;
-			stages[i].specularScale[3] = r_baseGloss->value;
-		}
+		InitShaderStage( i );
 	}
 }
 
