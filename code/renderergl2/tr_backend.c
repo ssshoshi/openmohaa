@@ -485,7 +485,19 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 	// OPENMOHAA-specific stuff
 	//=========================
-	backEnd.numSpheresUsed = 0;
+	// A light sphere depends on the entity and the lights, not on the view,
+	// and an entity keeps the slot it is given until it is added to another
+	// scene. So slots are handed out afresh per scene, not per list: the
+	// prepass, each sun cascade and the main view all draw the same scene,
+	// and restarting the count for each of them gave later entities slots
+	// that earlier ones still held, lighting them with each other's lights.
+	if (backEnd.viewParms.frameCount != backEnd.sphereFrameCount
+		|| backEnd.viewParms.frameSceneNum != backEnd.sphereFrameSceneNum)
+	{
+		backEnd.sphereFrameCount = backEnd.viewParms.frameCount;
+		backEnd.sphereFrameSceneNum = backEnd.viewParms.frameSceneNum;
+		backEnd.numSpheresUsed = 0;
+	}
 	//=========================
 
 	for (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {

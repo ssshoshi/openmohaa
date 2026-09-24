@@ -252,6 +252,9 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	backEndData->entities[r_numentities].lightingCalculated = qfalse;
 	backEndData->entities[r_numentities].bLightGridCalculated = qfalse;
 	backEndData->entities[r_numentities].sphereCalculated = qfalse;
+	// cgame clears its refEntity_t, so the field arrives as 0, which is a
+	// real scene slot. RE_AddRefEntityToScene2 fills in an actual parent.
+	backEndData->entities[r_numentities].e.parentEntity = ENTITYNUM_NONE;
 
 	CrossProduct(ent->axis[0], ent->axis[1], cross);
 	backEndData->entities[r_numentities].mirrored = (DotProduct(ent->axis[2], cross) < 0.f);
@@ -752,7 +755,25 @@ RE_AddRefEntityToScene2
 =====================
 */
 void RE_AddRefEntityToScene2( const refEntity_t *ent, int parentEntityNumber ) {
+	int entityIndex = r_numentities;
+	int i;
+
 	RE_AddRefEntityToScene(ent);
+
+	if ( r_numentities == entityIndex || parentEntityNumber == ENTITYNUM_NONE ) {
+		return;
+	}
+
+	// As GL1 does: the caller names the parent by its game entity number,
+	// while the lighting code walks the chain by slot in this scene. Without
+	// this, every model's light grid colour and light trace origin came from
+	// whichever entity happened to be first in the scene.
+	for ( i = r_firstSceneEntity; i < entityIndex; i++ ) {
+		if ( backEndData->entities[i].e.entityNumber == parentEntityNumber ) {
+			backEndData->entities[entityIndex].e.parentEntity = i - r_firstSceneEntity;
+			break;
+		}
+	}
 }
 
 void RE_AddRefSpriteToScene(const refEntity_t* ent) {

@@ -2166,6 +2166,9 @@ typedef struct {
 	//
     sphereor_t spheres[MAX_SPHERE_LIGHTS];
     unsigned short numSpheresUsed;
+    // the scene the spheres above were handed out for
+    int sphereFrameCount;
+    int sphereFrameSceneNum;
     sphereor_t* currentSphere;
     sphereor_t spareSphere;
     sphereor_t hudSphere;
