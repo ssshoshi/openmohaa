@@ -74,7 +74,14 @@ void Draw_StretchPic(float x, float y, float w, float h, float s1, float t1, flo
     // draw the pic
     RB_BeginSurface(shader, 0, 0);
 
-    RB_Color4bv(backEnd.color2D);
+    // Exactly as GL1 does it, byte colour and all. RB_Color4f scales a 0-1
+    // colour, so this scales the bytes again and they wrap: full alpha
+    // becomes 1. MOH:AA's HUD shaders use alphaGen oneMinusVertex, which
+    // inverts it back, and were authored against that. Fed the bytes as they
+    // are, the health meter and the compass came out transparent, and the
+    // meter's red flash layer showed in their place. The same goes for every
+    // other 2D draw here.
+    RB_Color4f(backEnd.color2D[0], backEnd.color2D[1], backEnd.color2D[2], backEnd.color2D[3]);
 
     RB_Texcoord2f(s1, t1);
     RB_Vertex2f(x, y);
@@ -130,7 +137,7 @@ void Draw_StretchPic2(float x, float y, float w, float h, float s1, float t1, fl
     scaledHeight2 = halfHeight * sy;
 
     // draw the pic
-    RB_Color4bv(backEnd.color2D);
+    RB_Color4f(backEnd.color2D[0], backEnd.color2D[1], backEnd.color2D[2], backEnd.color2D[3]);
     RB_BeginSurface(shader, 0, 0);
 
     RB_Texcoord2f(s1, t1);
@@ -179,7 +186,7 @@ void Draw_TilePic(float x, float y, float w, float h, qhandle_t hShader) {
     pich = shader->stages[0]->bundle[0].image[0]->uploadHeight;
 
     // draw the pic
-    RB_Color4bv(backEnd.color2D);
+    RB_Color4f(backEnd.color2D[0], backEnd.color2D[1], backEnd.color2D[2], backEnd.color2D[3]);
 
     RB_StreamBegin(shader);
 
@@ -228,7 +235,7 @@ void Draw_TilePicOffset(float x, float y, float w, float h, qhandle_t hShader, i
     pich = shader->stages[0]->bundle[0].image[0]->uploadHeight;
 
     // draw the pic
-    RB_Color4bv(backEnd.color2D);
+    RB_Color4f(backEnd.color2D[0], backEnd.color2D[1], backEnd.color2D[2], backEnd.color2D[3]);
 
     RB_StreamBegin(shader);
 
@@ -269,7 +276,7 @@ void Draw_TrianglePic(const vec2_t vPoints[3], const vec2_t vTexCoords[3], qhand
     }
 
     // draw the pic
-    RB_Color4bv(backEnd.color2D);
+    RB_Color4f(backEnd.color2D[0], backEnd.color2D[1], backEnd.color2D[2], backEnd.color2D[3]);
 
     RB_BeginSurface(shader, 0, 0);
 
@@ -497,10 +504,15 @@ Set2DWindow
 ================
 */
 void Set2DWindow(int x, int y, int w, int h, float left, float right, float bottom, float top, float n, float f) {
-    mat4_t matrix;
+    mat4_t   matrix;
+    qboolean wasIn2D;
 
     R_IssuePendingRenderCommands();
 
+    // Remembered before it is raised, so the shader clock below is reset on
+    // the way into 2D. It used to be tested after being set, which left every
+    // animated menu and HUD shader running on the last 3D scene's time.
+    wasIn2D = backEnd.projection2D;
     backEnd.projection2D = qtrue;
     backEnd.last2DFBO = glState.currentFBO;
 
@@ -519,11 +531,11 @@ void Set2DWindow(int x, int y, int w, int h, float left, float right, float bott
 
     GL_Cull(CT_TWO_SIDED);
 
-    if (!backEnd.projection2D)
+    if (!wasIn2D)
     {
         backEnd.refdef.time = ri.Milliseconds();
-        backEnd.projection2D = qtrue;
         backEnd.refdef.floatTime = backEnd.refdef.time / 1000.0;
+        backEnd.shaderStartTime = 0;
     }
 }
 

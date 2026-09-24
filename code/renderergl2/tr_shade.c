@@ -1485,7 +1485,14 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformFloat(sp, UNIFORM_FOGEYET, eyeT);
 		}
 
-		GL_State( pStage->stateBits );
+		// GL1 never depth tests anything drawn in 2D. Scripted menu and HUD
+		// shaders keep Q3's default depth test, and the view weapon leaves
+		// near depth behind it, so without this the ESC menu and the HUD are
+		// cut away wherever the gun was last drawn.
+		if (backEnd.projection2D)
+			GL_State( pStage->stateBits | GLS_DEPTHTEST_DISABLE );
+		else
+			GL_State( pStage->stateBits );
 		if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GT_0)
 		{
 			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 1);

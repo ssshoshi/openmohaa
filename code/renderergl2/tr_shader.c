@@ -4310,10 +4310,13 @@ shader_t *R_FindShaderEx( const char *name, int lightmapIndex, qboolean mipRawIm
 		stages[0].stateBits = GLS_DEFAULT;
 	} else if ( shader.lightmapIndex == LIGHTMAP_2D ) {
 		// GUI elements
+		// Coloured by the 2D colour itself, as in GL1, not through the vertex
+		// colour: GL1 feeds that in a form only oneMinusVertex shaders expect
+		// (see Draw_StretchPic), which would leave these transparent.
 		stages[0].bundle[0].image[0] = image;
 		stages[0].active = qtrue;
-		stages[0].rgbGen = CGEN_VERTEX;
-		stages[0].alphaGen = AGEN_VERTEX;
+		stages[0].rgbGen = CGEN_GLOBAL_COLOR;
+		stages[0].alphaGen = AGEN_GLOBAL_ALPHA;
 		stages[0].stateBits = GLS_DEPTHTEST_DISABLE |
 			  GLS_SRCBLEND_SRC_ALPHA |
 			  GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
@@ -4395,11 +4398,11 @@ qhandle_t RE_RegisterShaderFromImage(const char *name, int lightmapIndex, image_
 		stages[0].alphaGen = AGEN_SKIP;
 		stages[0].stateBits = GLS_DEFAULT;
 	} else if ( shader.lightmapIndex == LIGHTMAP_2D ) {
-		// GUI elements
+		// GUI elements, coloured as in R_FindShader
 		stages[0].bundle[0].image[0] = image;
 		stages[0].active = qtrue;
-		stages[0].rgbGen = CGEN_VERTEX;
-		stages[0].alphaGen = AGEN_VERTEX;
+		stages[0].rgbGen = CGEN_GLOBAL_COLOR;
+		stages[0].alphaGen = AGEN_GLOBAL_ALPHA;
 		stages[0].stateBits = GLS_DEPTHTEST_DISABLE |
 			  GLS_SRCBLEND_SRC_ALPHA |
 			  GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;

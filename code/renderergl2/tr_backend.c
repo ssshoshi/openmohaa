@@ -1435,6 +1435,20 @@ const void	*RB_DrawBuffer( const void *data ) {
 
 	qglDrawBuffer( cmd->buffer );
 
+	// The render target outlives the frame, unlike GL1's back buffer. A frame
+	// that draws only 2D (a fullscreen menu) would otherwise show the last 3D
+	// frame, view weapon and all, through every translucent part of the UI.
+	// A 3D frame covers the whole target anyway, so this changes nothing there.
+	if (glRefConfig.framebufferObject && tr.renderFbo) {
+		FBO_Bind(tr.renderFbo);
+		// The UI may have left a small scissor box behind; whatever draws
+		// next sets its own.
+		qglScissor( 0, 0, tr.renderFbo->width, tr.renderFbo->height );
+		qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+		qglClear( GL_COLOR_BUFFER_BIT );
+		FBO_Bind(NULL);
+	}
+
 	// clear screen for debugging
 	if ( r_clear->integer ) {
 		if (glRefConfig.framebufferObject && tr.renderFbo) {
