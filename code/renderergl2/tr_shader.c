@@ -4082,11 +4082,17 @@ the given shader name.
 return NULL if not found
 
 If found, it will return a valid shader
+
+When a name is defined more than once, the last definition wins, as it does
+in GL1. The files are joined lowest priority first, so the last one is from
+the highest-priority pak, and taking the first made every pak that overrides
+a shader from another file lose to the one it overrides.
 =====================
 */
 static char *FindShaderInShaderText( const char *shadername ) {
 
 	char *token, *p;
+	char *found = NULL;
 
 	int i, hash;
 
@@ -4094,14 +4100,18 @@ static char *FindShaderInShaderText( const char *shadername ) {
 
 	if(shaderTextHashTable[hash])
 	{
+		// the table is filled in text order
 		for (i = 0; shaderTextHashTable[hash][i]; i++)
 		{
 			p = shaderTextHashTable[hash][i];
 			token = COM_ParseExt(&p, qtrue);
-		
+
 			if(!Q_stricmp(token, shadername))
-				return p;
+				found = p;
 		}
+
+		if (found)
+			return found;
 	}
 
 	p = s_shaderText;
@@ -4118,15 +4128,14 @@ static char *FindShaderInShaderText( const char *shadername ) {
 		}
 
 		if ( !Q_stricmp( token, shadername ) ) {
-			return p;
+			found = p;
 		}
-		else {
-			// skip the definition
-			SkipBracedSection( &p, 0 );
-		}
+
+		// skip the definition
+		SkipBracedSection( &p, 0 );
 	}
 
-	return NULL;
+	return found;
 }
 
 
