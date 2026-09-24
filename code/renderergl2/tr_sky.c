@@ -477,6 +477,19 @@ static void DrawSkySide( struct image_s *image, const int mins[2], const int max
 		GLSL_SetUniformVec4(sp, UNIFORM_DIFFUSETEXMATRIX7, st[1]);
 
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
+
+		// GL1 draws the box under GL_State( 0 ), which switches the global
+		// fog off, so the sky shows its own image. Nothing set the fog here,
+		// so the box took whatever the last lightall draw had left: on a
+		// fogged map usually the black fog of an additive stage, at full
+		// strength since the box lies beyond the fog, blacking the sky out.
+		{
+			vec4_t noFogColor  = { 0.0f, 0.0f, 0.0f, 0.0f };
+			vec2_t noFogParams = { 0.0f, 0.0f };
+
+			GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, noFogColor);
+			GLSL_SetUniformVec2(sp, UNIFORM_GLOBALFOGPARAMS, noFogParams);
+		}
 	}
 
 	R_DrawElements(tess.numIndexes - tess.firstIndex, tess.firstIndex);
