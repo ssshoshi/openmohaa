@@ -2107,6 +2107,26 @@ static void RB_ComputeVertexAlphaGen( void )
 
 
 /*
+** RB_ShaderAlphaTests
+*/
+static qboolean RB_ShaderAlphaTests( const shader_t *shader )
+{
+	int i;
+
+	for ( i = 0; i < MAX_SHADER_STAGES; i++ ) {
+		if ( !shader->stages[i] || !shader->stages[i]->active ) {
+			break;
+		}
+		if ( shader->stages[i]->stateBits & GLS_ATEST_BITS ) {
+			return qtrue;
+		}
+	}
+
+	return qfalse;
+}
+
+
+/*
 ** RB_ComputeEntityLightColors
 **
 ** MOH:AA evaluates spherical and light grid lighting per vertex on the CPU.
@@ -2256,7 +2276,12 @@ void RB_StageIteratorGeneric( void )
 	if (tess.useInternalVao)
 	{
 		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
-		RB_ComputeEntityLightColors();
+		// A depth only pass (the prepass and every sun cascade) reads the
+		// vertex colour for nothing but an alpha test, so a model is only lit
+		// again there if its shader alpha tests. Lighting it is per vertex per
+		// light, and was otherwise done five times a frame to be thrown away.
+		if (!backEnd.depthFill || RB_ShaderAlphaTests(tess.shader))
+			RB_ComputeEntityLightColors();
 		RB_ComputeVertexAlphaGen();
 		R_CpuTimerEnd(CPUTIMER_TESSBUILD);
 
