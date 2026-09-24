@@ -5581,6 +5581,35 @@ static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
     return NULL;
 }
 
+// How far a joint may get from its entity before the body is given up on. A
+// corpse ends up a few hundred units from it on a staircase and a hard throw
+// can take it a thousand or two; one that has dropped out through the bottom
+// of the map just keeps going, drawn where nobody can see it and costing its
+// traces for as long as it lives. One in a thousand traced corpses did.
+#define RD_RUNAWAY_DIST 4096.0f
+
+// Whether the simulation has left the world or its numbers have gone bad, in
+// which case nothing it produces is worth drawing.
+static qboolean CG_RagdollRunaway(const cg_ragdoll_t *rd)
+{
+    int i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        const float *p = rd->part[i].p;
+
+        if (Q_isnan(p[0]) || Q_isnan(p[1]) || Q_isnan(p[2])) {
+            return qtrue;
+        }
+
+        // an infinite coordinate fails this too
+        if (!(DistanceSquared(p, rd->entOrigin) <= Square(RD_RUNAWAY_DIST))) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
 // The brush entities within reach of the body, in snapshot order.
 static int CG_RagdollNearbyMovers(const cg_ragdoll_t *rd, centity_t **movers)
 {
@@ -6014,6 +6043,15 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
             rd->lastDisp  = maxDisp;
             rd->lastSteps = steps;
+        }
+
+        // The body goes back to the pose its animation gives it, where its
+        // entity is, and does not get another ragdoll.
+        if (CG_RagdollRunaway(rd)) {
+            cgi.DPrintf("ragdoll: gave up on entity %d, it left the world\n", rd->entityNum);
+            CG_RagdollNoteEvicted(rd);
+            CG_RagdollFree(rd);
+            return;
         }
 
         // Build the pose before falling asleep, so the matrices that get
