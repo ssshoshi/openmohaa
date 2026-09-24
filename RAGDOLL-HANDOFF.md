@@ -1275,6 +1275,30 @@ after the last ended. **If dumps ever outnumber deaths again, suspect this.**
 `CG_RagdollWasEvicted` now refuses a second ragdoll; the record clears in
 `CG_RagdollEntityReset`, when the entity number is reused by a different body.
 
+### Doors and lifts wake a corpse; a body that leaves the world is dropped
+
+Both taken from the MOHCoopTrilogy fork's ragdoll (2026-09-24).
+
+**Movers.** A sleeping corpse is frozen where it settled, so a lift going down
+would leave it hanging where the floor used to be, and a door swinging open would
+pass straight through it. On falling asleep it records up to `RD_MAX_MOVERS` (8)
+brush entities within `RD_MOVER_MARGIN` (8 units) of its bounds and where they
+were (`CG_RagdollNoteMovers`). Every frame asleep it checks again
+(`CG_RagdollMoversChanged`) and wakes if one moved or turned, or a new one came
+within reach. Waking is enough: every trace already includes those entities.
+**The harness stubs `CG_GetBrushEntitiesInBounds` to return nothing, so this path
+has never run. Check a corpse on a lift or behind a door in a real map.**
+
+**Runaway bodies.** 1 of 991 corpses in the thousand-corpse run, and 1 of 349
+explosive deaths, fell out of the world (pelvis z 177 → −6120) and kept
+simulating. `CG_RagdollRunaway` frees the ragdoll when a joint gets more than
+`RD_RUNAWAY_DIST` (4096) from its entity, or any coordinate is NaN or infinite.
+The body goes back to its animation's pose and, through `CG_RagdollNoteEvicted`,
+never gets another ragdoll. Logs `ragdoll: gave up on entity N, it left the world`
+with developer on.
+
+Harness output is byte-identical with both changes.
+
 ### cg_ragdoll_maxcount caps *solving*, not corpses
 
 Sleeping bodies do not count against it (`c88…`, see git log). They cost nothing:
