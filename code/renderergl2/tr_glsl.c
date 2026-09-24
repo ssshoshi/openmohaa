@@ -373,12 +373,14 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 						"#define TCGEN_ENVIRONMENT_MAPPED %i\n"
 						"#define TCGEN_FOG %i\n"
 						"#define TCGEN_VECTOR %i\n"
+						"#define TCGEN_ENVIRONMENT_MAPPED2 %i\n"
 						"#endif\n",
 						TCGEN_LIGHTMAP,
 						TCGEN_TEXTURE,
 						TCGEN_ENVIRONMENT_MAPPED,
 						TCGEN_FOG,
-						TCGEN_VECTOR));
+						TCGEN_VECTOR,
+						TCGEN_ENVIRONMENT_MAPPED2));
 
 	Q_strcat(dest, size,
 					 va("#ifndef colorGen_t\n"

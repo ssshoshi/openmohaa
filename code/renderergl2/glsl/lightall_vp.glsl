@@ -130,6 +130,16 @@ vec2 GenTexCoords(int TCGen, vec3 position, vec3 normal, vec3 TCGenVector0, vec3
 		tex.s = ref.x * -0.5 + 0.5;
 		tex.t = ref.y *  0.5 + 0.5;
 	}
+	else if (TCGen == TCGEN_ENVIRONMENT_MAPPED2)
+	{
+		// MOH:AA's environmentmodel, as GL1 has it: where the surface faces
+		// the viewer the view direction itself is used, not its reflection
+		vec3 viewer = normalize(u_LocalViewOrigin - position);
+		float d = dot(normal, viewer);
+		vec3 ref = (d > 0.0) ? viewer : viewer - 2.0 * d * normal;
+		tex.s = 0.5 + ref.y * 0.5;
+		tex.t = 0.5 - ref.z * 0.5;
+	}
 	else if (TCGen == TCGEN_VECTOR)
 	{
 		tex = vec2(dot(position, TCGenVector0), dot(position, TCGenVector1));

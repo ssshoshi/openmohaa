@@ -1785,6 +1785,12 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 			{
 				stage->bundle[cntBundle].tcGen = TCGEN_ENVIRONMENT_MAPPED;
 			}
+			// MOH:AA's model space environment map: vehicles, windows,
+			// glasses, scope lenses
+			else if ( !Q_stricmp( token, "environmentmodel" ) )
+			{
+				stage->bundle[cntBundle].tcGen = TCGEN_ENVIRONMENT_MAPPED2;
+			}
 			else if ( !Q_stricmp( token, "lightmap" ) )
 			{
 				stage->bundle[cntBundle].tcGen = TCGEN_LIGHTMAP;
@@ -2992,6 +2998,7 @@ static void ComputeVertexAttribs(void)
 					shader.vertexAttribs |= ATTR_LIGHTCOORD;
 					break;
 				case TCGEN_ENVIRONMENT_MAPPED:
+				case TCGEN_ENVIRONMENT_MAPPED2:
 					shader.vertexAttribs |= ATTR_NORMAL;
 					break;
 
@@ -3281,6 +3288,7 @@ static int CollapseStagesToGLSL(void)
 				case TCGEN_TEXTURE:
 				case TCGEN_LIGHTMAP:
 				case TCGEN_ENVIRONMENT_MAPPED:
+				case TCGEN_ENVIRONMENT_MAPPED2:
 				case TCGEN_VECTOR:
 					break;
 				default:
@@ -3382,6 +3390,7 @@ static int CollapseStagesToGLSL(void)
 
 			tcgen = qfalse;
 			if (diffuse->bundle[0].tcGen == TCGEN_ENVIRONMENT_MAPPED
+				|| diffuse->bundle[0].tcGen == TCGEN_ENVIRONMENT_MAPPED2
 				|| diffuse->bundle[0].tcGen == TCGEN_LIGHTMAP
 				|| diffuse->bundle[0].tcGen == TCGEN_VECTOR)
 			{
