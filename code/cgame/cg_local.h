@@ -266,6 +266,9 @@ extern "C" {
         qhandle_t hPlayerFPSModelHandle;
         qboolean  bFPSModelLastFrame;
         qboolean  bFPSOnGround;
+        // the world body that casts the player's shadow in first person
+        refEntity_t playerShadowBody;
+        int         iPlayerShadowBodyTime;
         dtiki_t  *pAlliedPlayerModel;
         qhandle_t hAlliedPlayerModelHandle;
         dtiki_t  *pAxisPlayerModel;
@@ -477,6 +480,7 @@ extern "C" {
     extern cvar_t *dm_playergermanmodel;
     extern cvar_t *cg_forceModel;
     extern cvar_t *cg_animationviewmodel;
+    extern cvar_t *cg_firstPersonShadow;
     extern cvar_t *cg_hitmessages;
     extern cvar_t *cg_acidtrip;
     extern cvar_t *cg_hud;
