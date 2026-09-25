@@ -656,10 +656,20 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
         vmEntity = ri.Cvar_Get("viewmodelentity", "", 0);
     }
 
-    R_UpdatePoseInternal(&ent->e);
-
     // don't add third_person objects if in a portal
-    personalModel = (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal;
+    // Third person objects still go into the sun cascades and personal
+    // shadows, as the md3 path in tr_mesh.c does: that is how the player's
+    // own body casts a shadow in first person (cg_firstPersonShadow). They
+    // stay out of the dlight cube maps, whose light is often the player's
+    // own muzzle flash.
+    personalModel = (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal
+                 && (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) != VPF_DEPTHSHADOW;
+    if (personalModel) {
+        // nothing of it is drawn in this view, so don't pose it
+        return;
+    }
+
+    R_UpdatePoseInternal(&ent->e);
 
     outbones = &TIKI_Skel_Bones[TIKI_Skel_Bones_Index];
 

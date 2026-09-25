@@ -998,6 +998,8 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     const char    *szTagName;
     int            iAnimFlags;
     qboolean       bThirdPerson = qfalse;
+    qboolean       bShadowAttach = qfalse;
+    refEntity_t    preAttach;
 
     s1 = &cent->currentState;
 
@@ -1186,6 +1188,13 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
 
     CGM_BEGIN(CGM_ATTACH);
     if (cent->currentState.parent != ENTITYNUM_NONE) {
+        if (s1->parent == cg.snap->ps.clientNum && !bThirdPerson && cg_firstPersonShadow->integer
+            && cg.iPlayerShadowBodyTime == cg.time) {
+            // held by the first person model: a copy goes on the shadow body too
+            bShadowAttach = qtrue;
+            preAttach     = model;
+        }
+
         int          iTagNum;
         refEntity_t *parent;
         dtiki_t     *tiki;
@@ -1406,6 +1415,20 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         if (!bThirdPerson) {
             // first person view
 
+            if (cg_firstPersonShadow->integer && !(s1->renderfx & RF_DONTDRAW)) {
+                // The world body, drawn only into the shadow maps so the
+                // player casts a shadow of their own. It goes without an
+                // entity number: the first person model keeps the player's,
+                // so attached weapons still find it, and the two would
+                // otherwise share one per-frame pose.
+                cg.playerShadowBody              = model;
+                cg.playerShadowBody.entityNumber = ENTITYNUM_NONE;
+                cg.playerShadowBody.renderfx &= ~(RF_FIRST_PERSON | RF_DEPTHHACK);
+                cg.playerShadowBody.renderfx |= RF_THIRD_PERSON;
+                cgi.R_AddRefEntityToScene(&cg.playerShadowBody, ENTITYNUM_NONE);
+                cg.iPlayerShadowBodyTime = cg.time;
+            }
+
             if (!(cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW)
                 && (cg.snap->ps.stats[STAT_HEALTH] <= 0 || cg_animationviewmodel->integer)) {
                 // use world position for this case
@@ -1532,6 +1555,30 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         // add to refresh list
         CGM_BEGIN(CGM_ADDREF);
         cgi.R_AddRefEntityToScene(&model, s1->parent);
+
+        if (bShadowAttach) {
+            refEntity_t shadowModel = model;
+
+            VectorCopy(preAttach.origin, shadowModel.origin);
+            VectorCopy(preAttach.lightingOrigin, shadowModel.lightingOrigin);
+            AxisCopy(preAttach.axis, shadowModel.axis);
+            shadowModel.scale = preAttach.scale;
+            // the server attached it to a tag of the world body
+            CG_AttachEntity(
+                &shadowModel,
+                &cg.playerShadowBody,
+                cg.playerShadowBody.tiki,
+                s1->tag_num & TAG_MASK,
+                s1->attach_use_angles,
+                s1->attach_offset
+            );
+            // shown even when the view weapon is hidden
+            memcpy(shadowModel.surfaces, s1->surfaces, MAX_MODEL_SURFACES);
+            shadowModel.entityNumber = ENTITYNUM_NONE;
+            shadowModel.renderfx &= ~(RF_FIRST_PERSON | RF_DEPTHHACK);
+            shadowModel.renderfx |= RF_THIRD_PERSON;
+            cgi.R_AddRefEntityToScene(&shadowModel, ENTITYNUM_NONE);
+        }
         CGM_END(CGM_ADDREF);
     }
 
