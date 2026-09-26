@@ -1590,6 +1590,8 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
     }
 
     indexes = surf->numTriangles * 3;
+    // ends a batch the VAO cache started, see RB_SurfaceVaoCached
+    RB_CheckVao(tess.vao);
     RB_CHECKOVERFLOW(render_count, surf->numTriangles);
 
     collapse_map = surf->pCollapse;

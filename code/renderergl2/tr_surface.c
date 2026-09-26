@@ -422,6 +422,17 @@ static qboolean RB_SurfaceVaoCached(int numVerts, srfVert_t *verts, int numIndex
 	if (!numIndexes || !numVerts)
 		return qfalse;
 
+	// A batch draws from one vertex source. Terrain patches, static decals
+	// and static models share shaders with brush faces but are never cached,
+	// so a batch can already hold their vertices in tess. Switching it to the
+	// cache would drop them and draw their index count out of the cache
+	// instead, which is other surfaces' triangles in this shader.
+	if (tess.numIndexes && !tess.useCacheVao)
+	{
+		RB_EndSurface();
+		RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+	}
+
 	VaoCache_BindVao();
 
 	tess.dlightBits |= dlightBits;
@@ -1332,6 +1343,8 @@ void RB_SurfaceMarkFragment(srfMarkFragment_t* p) {
 	int i;
 	int numv;
 
+	// ends a batch the VAO cache started, see RB_SurfaceVaoCached
+	RB_CheckVao(tess.vao);
 	RB_CHECKOVERFLOW( p->numVerts, 3*(p->numVerts - 2) );
 
 	if (p->iIndex <= 0 || R_TerrainHeightForPoly(&tr.world->terraPatches[p->iIndex - 1], p->verts, p->numVerts))
@@ -1446,6 +1459,8 @@ void RB_DrawTerrainTris(srfTerrain_t* p) {
 	// handle to it. The per-sample normals live there.
 	const cTerraPatchUnpacked_t *patch = (const cTerraPatchUnpacked_t *)p;
 
+	// ends a batch the VAO cache started, see RB_SurfaceVaoCached
+	RB_CheckVao(tess.vao);
 	RB_CHECKOVERFLOW(p->nVerts, p->nTris * 3);
 
 	dlightBits = p->dlightBits[0];
