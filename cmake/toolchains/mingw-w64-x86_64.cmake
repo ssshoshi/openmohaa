@@ -1,35 +1,42 @@
-# Cross compile Windows x86_64 binaries from a Unix host using mingw-w64.
+# Cross-compile OpenMoHAA for 64-bit Windows from Linux using mingw-w64.
 #
-#   cmake -S . -B build/win64 \
-#       -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64-x86_64.cmake \
-#       -DBUILD_RENDERER_GL2=ON -DUSE_RENDERER_DLOPEN=ON
+#   cmake -S . -B .cmake-win -G Ninja \
+#         -DCMAKE_TOOLCHAIN_FILE=<this file> \
+#         -DCMAKE_BUILD_TYPE=RelWithDebInfo
 #
-# The Windows SDL2 import libraries and DLL are already in the tree under
-# code/thirdparty/libs/win64, so USE_INTERNAL_SDL (on by default) is enough and
-# no Windows SDK or prebuilt dependency tree is needed.
+# Flex and Bison deliberately resolve to the host binaries: they generate C
+# source at build time and must run on the build machine, not the target.
+# OpenAL and cURL are both loaded at runtime and only need their headers, which
+# the repository bundles, so no Windows import libraries are required for them.
+# SDL2 links against the MinGW import libraries already in
+# code/thirdparty/libs/win64.
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
-set(MINGW_TARGET x86_64-w64-mingw32)
+set(TOOLCHAIN_PREFIX x86_64-w64-mingw32)
 
-set(CMAKE_C_COMPILER   ${MINGW_TARGET}-gcc)
-set(CMAKE_CXX_COMPILER ${MINGW_TARGET}-g++)
-set(CMAKE_RC_COMPILER  ${MINGW_TARGET}-windres)
+# The -posix variants are required: the default win32 thread model has no
+# C++11 threading, and code/sys/sys_update_checker.cpp uses std::thread,
+# std::mutex and std::condition_variable.
+set(CMAKE_C_COMPILER   ${TOOLCHAIN_PREFIX}-gcc-posix)
+set(CMAKE_CXX_COMPILER ${TOOLCHAIN_PREFIX}-g++-posix)
+set(CMAKE_RC_COMPILER  ${TOOLCHAIN_PREFIX}-windres)
+set(CMAKE_AR           ${TOOLCHAIN_PREFIX}-ar)
+set(CMAKE_RANLIB       ${TOOLCHAIN_PREFIX}-ranlib)
 
-set(CMAKE_FIND_ROOT_PATH /usr/${MINGW_TARGET})
+set(CMAKE_FIND_ROOT_PATH /usr/${TOOLCHAIN_PREFIX})
 
-# Link the GCC and C++ runtimes in, so the binaries do not need
-# libgcc_s_seh-1.dll and libstdc++-6.dll sitting next to them. This matches how
-# the shipped Windows binaries behave -- they import only SDL2, KERNEL32 and
-# msvcrt -- and keeps a renderer DLL a drop-in file on its own.
-set(CMAKE_EXE_LINKER_FLAGS_INIT    "-static-libgcc -static-libstdc++")
-set(CMAKE_SHARED_LINKER_FLAGS_INIT "-static-libgcc -static-libstdc++")
-set(CMAKE_MODULE_LINKER_FLAGS_INIT "-static-libgcc -static-libstdc++")
-
-# Look for headers and libraries in the target tree, but run build tools such as
-# flex and bison from the host.
+# Programs come from the host (flex, bison); everything else from the target
+# sysroot, so a stray Linux libcurl or libopenal cannot be picked up.
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+
+# Keep the runtime self-contained so the binaries drop straight into an
+# existing install without needing libgcc/libstdc++ DLLs alongside them.
+# -static also pulls in libwinpthread, which the posix thread model would
+# otherwise require as a separate DLL next to the binaries.
+set(CMAKE_EXE_LINKER_FLAGS_INIT    "-static")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-static")

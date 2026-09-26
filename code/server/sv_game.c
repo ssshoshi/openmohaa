@@ -1105,7 +1105,11 @@ PF_SetPoseInternal
 void PF_SetPoseInternal( dtiki_t *tiki, int entnum, const frameInfo_t *frameInfo, int *bone_tag, vec4_t *bone_quat, float actionWeight )
 {
 	assert(tiki);
-	TIKI_SetPoseInternal( TIKI_GetSkeletor( tiki, entnum ), frameInfo, bone_tag, bone_quat, actionWeight );
+	// Changed in OPM
+	//  The server never overrides bones. On a listen server it shares the
+	//  skeletor with the renderer, so passing NULL here is what keeps the
+	//  client-side ragdoll pose out of server-side hit detection.
+	TIKI_SetPoseInternal( TIKI_GetSkeletor( tiki, entnum ), frameInfo, bone_tag, bone_quat, actionWeight, NULL, 0 );
 }
 
 /*

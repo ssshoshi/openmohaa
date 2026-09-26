@@ -84,7 +84,10 @@ functions imported from the main executable
 ==================================================================
 */
 
-#define CGAME_IMPORT_API_VERSION 3
+// Added in OPM
+//  4: the engine sets apiversion, and R_GetSkinnedMesh is present. An older
+//  engine leaves apiversion at zero, so cgame can tell the entry is missing.
+#define CGAME_IMPORT_API_VERSION 4
 
     /*
 ==================================================================
@@ -444,6 +447,12 @@ functions exported to the main executable
         hdelement_t  *HudDrawElements;
         clientAnim_t *anim;
         stopWatch_t  *stopWatch;
+
+        // Added in OPM, API version 4
+        //  Only valid when apiversion >= 4. See refexport_t::GetSkinnedMesh.
+        int (*R_GetSkinnedMesh)(
+            refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris
+        );
 
     } clientGameImport_t;
 

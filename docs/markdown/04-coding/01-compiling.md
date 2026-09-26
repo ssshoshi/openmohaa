@@ -75,6 +75,42 @@ Usually binaries get installed inside the `Program Files (x86)` folder.
 
 afterwards you can can append `-DCURL_ROOT=path\to\curl\install` to specify the install path to cURL.
 
+### Cross-compiling for Windows from Linux
+
+Windows binaries can also be produced from a Linux host with mingw-w64, which
+avoids needing a Visual Studio installation. On Debian and Ubuntu:
+
+```sh
+sudo apt-get install -y mingw-w64
+```
+
+Then configure with the bundled toolchain file:
+
+```sh
+cmake -S . -B build-win -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64-x86_64.cmake \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-win
+```
+
+This produces `openmohaa.exe`, `omohaaded.exe`, `cgame.dll`, `game.dll` and
+`renderer_opengl1.dll`, alongside the `SDL2.dll` that is copied from the
+prebuilt libraries in `code/thirdparty/libs/win64`.
+
+Notes:
+
+- Flex and Bison run on the build host, so the Linux packages are used; no
+  Windows build of either is needed.
+- OpenAL and cURL are loaded at runtime and only their headers are required,
+  both of which are bundled, so no Windows import libraries are needed for them.
+- The toolchain selects the `-posix` compiler variants deliberately. The default
+  `win32` thread model has no C++11 threading, which `sys_update_checker.cpp`
+  requires.
+- The binaries are linked with `-static`, so libgcc, libstdc++ and libwinpthread
+  are built in rather than shipped as separate DLLs.
+- Continuous integration builds Windows with MSVC, so this path is not covered
+  by CI.
+
 ## Tweaking the build
 
 - `-DBUILD_CLIENT=0` Build without the client program. This will only build the dedicated server binaries alongside the game & cgame modules.

@@ -1058,6 +1058,137 @@ inline static void SkelWeightMorphGetXyz(skelWeight_t *weight, skelBoneCache_t *
 
 /*
 =============
+RE_GetSkinnedMesh
+
+Added in OPM.
+Skins every visible surface of a skeletal model the way RB_SkelMesh does, from
+the same pose, but at full detail rather than the drawn LOD and out to world
+space, for the client game to measure and trace against: ragdoll bullet hits
+and fitting its collision to the model. Morphs are left out; they only move the
+face. Each vertex also says which bone carries most of its weight.
+=============
+*/
+int RE_GetSkinnedMesh(refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris)
+{
+    dtiki_t         *tiki = model->tiki;
+    skelAnimFrame_t *frame;
+    const byte      *bsurf;
+    float            scale;
+    int              numVerts = 0;
+    int              mesh, surf, i, k;
+
+    *numTris = 0;
+
+    if (!tiki || !tiki->numMeshes) {
+        return 0;
+    }
+
+    frame = (skelAnimFrame_t *)ri.Hunk_AllocateTempMemory(
+        sizeof(skelAnimFrame_t) + ri.TIKI_GetNumChannels(tiki) * sizeof(SkelMat4)
+    );
+    R_GetFrame(model, frame);
+
+    scale = tiki->load_scale * model->scale;
+    bsurf = &model->surfaces[0];
+
+    for (mesh = 0; mesh < tiki->numMeshes; mesh++) {
+        skelHeaderGame_t  *skelmodel = ri.TIKI_GetSkel(tiki->mesh[mesh]);
+        skelSurfaceGame_t *surface;
+
+        if (!skelmodel) {
+            numVerts = 0;
+            break;
+        }
+
+        surface = skelmodel->pSurfaces;
+        for (surf = 0; surf < skelmodel->numSurfaces; surf++, bsurf++, surface = surface->pNext) {
+            skeletorVertex_t *vert;
+
+            // hidden, as R_AddSkelSurfaces treats it
+            if (*bsurf & 4) {
+                continue;
+            }
+
+            if (numVerts + surface->numVerts > maxVerts || *numTris + surface->numTriangles > maxTris) {
+                numVerts = 0;
+                *numTris = 0;
+                goto done;
+            }
+
+            for (i = 0; i < surface->numTriangles * 3; i++) {
+                tris[*numTris * 3 + i] = numVerts + surface->pTriangles[i];
+            }
+            *numTris += surface->numTriangles;
+
+            vert = surface->pVerts;
+            for (i = 0; i < surface->numVerts; i++) {
+                skelWeight_t  *weight;
+                skinnedVert_t *out = &verts[numVerts + i];
+                vec3_t         local;
+                float          heaviest = -1;
+
+                weight = (skelWeight_t *)((byte *)vert + sizeof(skeletorVertex_t)
+                                          + sizeof(skeletorMorph_t) * vert->numMorphs);
+
+                VectorClear(local);
+                out->bone = -1;
+
+                for (k = 0; k < vert->numWeights; k++, weight++) {
+                    int boneNum;
+
+                    if (mesh > 0) {
+                        boneNum = ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[weight->boneIndex].channel);
+                    } else {
+                        boneNum = weight->boneIndex;
+                    }
+
+                    local[0] += (weight->offset[0] * frame->bones[boneNum][0][0]
+                                 + weight->offset[1] * frame->bones[boneNum][1][0]
+                                 + weight->offset[2] * frame->bones[boneNum][2][0] + frame->bones[boneNum][3][0])
+                              * weight->boneWeight;
+                    local[1] += (weight->offset[0] * frame->bones[boneNum][0][1]
+                                 + weight->offset[1] * frame->bones[boneNum][1][1]
+                                 + weight->offset[2] * frame->bones[boneNum][2][1] + frame->bones[boneNum][3][1])
+                              * weight->boneWeight;
+                    local[2] += (weight->offset[0] * frame->bones[boneNum][0][2]
+                                 + weight->offset[1] * frame->bones[boneNum][1][2]
+                                 + weight->offset[2] * frame->bones[boneNum][2][2] + frame->bones[boneNum][3][2])
+                              * weight->boneWeight;
+
+                    if (weight->boneWeight > heaviest) {
+                        heaviest  = weight->boneWeight;
+                        out->bone = boneNum;
+                    }
+                }
+
+                VectorScale(local, scale, local);
+
+                VectorCopy(model->origin, out->xyz);
+                VectorMA(out->xyz, local[0], model->axis[0], out->xyz);
+                VectorMA(out->xyz, local[1], model->axis[1], out->xyz);
+                VectorMA(out->xyz, local[2], model->axis[2], out->xyz);
+
+                vert = (skeletorVertex_t *)((byte *)vert + sizeof(skeletorVertex_t)
+                                            + sizeof(skeletorMorph_t) * vert->numMorphs
+                                            + sizeof(skelWeight_t) * vert->numWeights);
+            }
+
+            numVerts += surface->numVerts;
+        }
+    }
+
+done:
+    ri.Hunk_FreeTempMemory(frame);
+
+    if (!numVerts) {
+        *numTris = 0;
+    }
+
+    return numVerts;
+}
+
+/*
+=============
 RB_SkelMesh
 =============
 */
@@ -1765,7 +1896,9 @@ void R_UpdatePoseInternal(refEntity_t *model)
         model->frameInfo,
         model->bone_tag,
         model->bone_quat,
-        model->actionWeight
+        model->actionWeight,
+        model->bone_override,
+        model->num_bone_overrides
     );
 }
 
@@ -1785,7 +1918,9 @@ void RE_ForceUpdatePose(refEntity_t *model)
         model->frameInfo,
         model->bone_tag,
         model->bone_quat,
-        model->actionWeight
+        model->actionWeight,
+        model->bone_override,
+        model->num_bone_overrides
     );
 }
 

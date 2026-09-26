@@ -80,6 +80,9 @@ extern cvar_t *sv_showcameras;
 extern cvar_t *sv_showentnums;
 extern cvar_t *sv_stopspeed;
 extern cvar_t *sv_friction;
+// Added in OPM
+extern cvar_t *sv_ragdoll;
+extern cvar_t *g_keepcorpses;
 extern cvar_t *sv_waterfriction;
 extern cvar_t *sv_waterspeed;
 extern cvar_t *sv_traceinfo;

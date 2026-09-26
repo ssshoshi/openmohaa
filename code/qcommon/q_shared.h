@@ -1970,6 +1970,22 @@ typedef struct frameInfo_s {
     float weight;
 } frameInfo_t;
 
+// Added in OPM
+//  Maximum number of bones a caller may override on a single skeleton.
+#define MAX_BONE_OVERRIDES 32
+
+// Added in OPM
+//  A model-space transform replacing the evaluated transform of one skeleton
+//  bone. Used by the client-side ragdoll simulation to drive a whole skeleton
+//  without needing an animation for the pose.
+//
+//  The matrix layout is deliberately identical to SkelMat4::val: rows 0..2 are
+//  the X/Y/Z basis axes, row 3 is the model-space origin.
+typedef struct boneOverride_s {
+    int   boneIndex; // local channel index for the entity's tiki, -1 when unused
+    float matrix[4][3];
+} boneOverride_t;
+
 typedef enum {
 	TR_STATIONARY,
 	TR_INTERPOLATE,				// non-parametric, but interpolate between snapshots

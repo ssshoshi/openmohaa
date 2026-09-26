@@ -2193,6 +2193,7 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.GetModelName = RE_GetModelName;
 	re.GetGraphicsInfo = RE_GetGraphicsInfo;
 	re.ForceUpdatePose = RE_ForceUpdatePose;
+	re.GetSkinnedMesh = RE_GetSkinnedMesh;
 	re.TIKI_Orientation = RE_TIKI_Orientation;
 	re.TIKI_IsOnGround = RE_TIKI_IsOnGround;
 	re.SetFrameNumber = RE_SetFrameNumber;

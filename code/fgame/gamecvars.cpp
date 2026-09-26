@@ -75,6 +75,9 @@ cvar_t *sv_showcameras;
 cvar_t *sv_showentnums;
 cvar_t *sv_stopspeed;
 cvar_t *sv_friction;
+// Added in OPM
+cvar_t *sv_ragdoll;
+cvar_t *g_keepcorpses;
 cvar_t *sv_waterfriction;
 cvar_t *sv_waterspeed;
 cvar_t *sv_traceinfo;
@@ -381,6 +384,15 @@ void CVAR_Init(void)
     sv_showentnums = gi.Cvar_Get("sv_showentnums", "0", 0);
 
     sv_friction      = gi.Cvar_Get("sv_friction", "4", 0);
+    // Added in OPM
+    //  Lets a server turn off client-side ragdolls for everyone. It rides the
+    //  serverinfo string, so vanilla clients simply ignore the extra key and
+    //  vanilla servers simply never send it.
+    sv_ragdoll       = gi.Cvar_Get("sv_ragdoll", "1", CVAR_ARCHIVE | CVAR_SERVERINFO);
+    // Added in OPM
+    //  Single player only: dead actors stay where they fell for the rest of
+    //  the level instead of being queued five deep and removed out of sight.
+    g_keepcorpses    = gi.Cvar_Get("g_keepcorpses", "1", CVAR_ARCHIVE);
     sv_stopspeed     = gi.Cvar_Get("sv_stopspeed", "100", 0);
     sv_waterfriction = gi.Cvar_Get("sv_waterfriction", "1", 0);
     sv_waterspeed    = gi.Cvar_Get("sv_waterspeed", "400", 0);

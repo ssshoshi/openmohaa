@@ -399,6 +399,11 @@ extern "C" {
         gametype_t gametype;
         int        dmflags;
         int        teamflags;
+        // Added in OPM
+        //  Mirrors the server's sv_ragdoll, which arrives through the
+        //  serverinfo configstring. Servers that predate the setting simply
+        //  omit the key, so it defaults to enabled.
+        qboolean   ragdollAllowed;
         int        fraglimit;
         int        timelimit;
         int        maxclients;

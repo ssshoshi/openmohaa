@@ -151,6 +151,16 @@ void CG_ParseServerinfo(void)
     cgi.Cvar_Set("cg_timelimit", Info_ValueForKey(info, "timelimit"));
     cgi.Cvar_Set("cg_maxclients", Info_ValueForKey(info, "sv_gametype"));
     cgi.Cvar_Set("cg_allowvote", Info_ValueForKey(info, "g_allowvote"));
+
+    // Added in OPM
+    //  Servers that predate sv_ragdoll simply omit the key, and Info_ValueForKey
+    //  hands back an empty string for it, so an absent value must read as
+    //  enabled rather than as disabled.
+    {
+        const char *ragdollValue = Info_ValueForKey(info, "sv_ragdoll");
+
+        cgs.ragdollAllowed = (!ragdollValue || !ragdollValue[0] || atoi(ragdollValue)) ? qtrue : qfalse;
+    }
     cgi.Cvar_Set("cg_obj_alliedtext1", Info_ValueForKey(info, "g_obj_alliedtext1"));
     cgi.Cvar_Set("cg_obj_alliedtext2", Info_ValueForKey(info, "g_obj_alliedtext2"));
     cgi.Cvar_Set("cg_obj_alliedtext3", Info_ValueForKey(info, "g_obj_alliedtext3"));

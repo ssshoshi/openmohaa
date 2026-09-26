@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // text commands typed in at the local console, or executed by a key binding
 
 #include "cg_local.h"
+#include "cg_ragdoll.h"
 #include "../fgame/bg_voteoptions.h"
 
 void CG_TargetCommand_f(void);
@@ -489,6 +490,13 @@ static consoleCommand_t commands[] = {
     {"toggleitem",             &CG_ToggleItem_f            },
     {"+scores",                &CG_ScoresDown_f            },
     {"-scores",                &CG_ScoresUp_f              },
+    // Added in OPM
+    //  The ragdoll grabber
+    {"+rdgrab",                &CG_RagdollGrabDown_f       },
+    {"-rdgrab",                &CG_RagdollGrabUp_f         },
+    {"rdgrab_nearer",          &CG_RagdollGrabNearer_f     },
+    {"rdgrab_farther",         &CG_RagdollGrabFarther_f    },
+    {"rdpunt",                 &CG_RagdollPunt_f           },
     {"viewpos",                &CG_Viewpos_f               },
     {"sizeup",                 &CG_SizeUp_f                },
     {"sizedown",               &CG_SizeDown_f              },
