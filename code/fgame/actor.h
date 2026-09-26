@@ -962,6 +962,8 @@ public:
     void                SetEnemyPos(Vector vPos);
     static void         ResetBodyQueue(void);
     void                AddToBodyQue(void);
+    static bool         KeepCorpses(void);
+    static void         MakeRoomForCorpse(void);
     Vector              GetAntiBunchPoint(void);
     static void         InitVoid(GlobalFuncs_t *func);
     virtual const char *DumpCallTrace(const char *pszFmt, ...) const override;

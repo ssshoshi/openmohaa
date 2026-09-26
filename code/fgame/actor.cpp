@@ -5314,7 +5314,90 @@ void Actor::DeathSinkStart(Event *ev)
 {
     setMoveType(MOVETYPE_NONE);
     flags &= ~FL_THINK;
+
+    // Added in OPM
+    //  A kept corpse still comes to rest and stops thinking here, but is not
+    //  sunk: in single player sinking means removal once out of sight.
+    if (KeepCorpses()) {
+        return;
+    }
+
     Entity::DeathSinkStart(ev);
+}
+
+/*
+===============
+Actor::KeepCorpses
+
+Added in OPM.
+Whether dead actors are kept for the rest of the level. Single player only:
+multiplayer corpses are the server's business and keep their own cleanup.
+===============
+*/
+bool Actor::KeepCorpses(void)
+{
+    return g_gametype->integer == GT_SINGLE_PLAYER && g_keepcorpses->integer;
+}
+
+// How many entity slots a kept corpse must leave free. The game drops the map
+// with "no free edicts" when it runs out, and gunfire, effects and scripted
+// spawns all need slots, so corpses give way long before that.
+#define CORPSE_EDICT_RESERVE 128
+
+/*
+===============
+Actor::MakeRoomForCorpse
+
+Added in OPM.
+Called as each kept corpse settles. When the level is close to running out of
+entities, removes the kept corpse farthest from the player, which is the one
+least likely to be missed.
+===============
+*/
+void Actor::MakeRoomForCorpse(void)
+{
+    Entity *player = G_GetEntity(0);
+    Actor  *farthest = NULL;
+    float   farthestDist = -1;
+    int     freeSlots = 0;
+    int     i;
+
+    for (i = game.maxclients; i < globals.max_entities - 2; i++) {
+        if (!g_entities[i].inuse) {
+            freeSlots++;
+        }
+    }
+
+    if (freeSlots > CORPSE_EDICT_RESERVE) {
+        return;
+    }
+
+    for (i = game.maxclients; i < globals.num_entities; i++) {
+        gentity_t *ed = &g_entities[i];
+        Actor     *actor;
+        float      dist;
+
+        if (!ed->inuse || !ed->entity || !ed->entity->IsSubclassOfActor()) {
+            continue;
+        }
+
+        actor = static_cast<Actor *>(ed->entity);
+        // only corpses that have already settled (see DeathSinkStart), so a
+        // script waiting on a death is never cut short
+        if (!actor->IsDead() || (actor->flags & FL_THINK)) {
+            continue;
+        }
+
+        dist = player ? (actor->origin - player->origin).lengthSquared() : 0;
+        if (dist > farthestDist) {
+            farthest     = actor;
+            farthestDist = dist;
+        }
+    }
+
+    if (farthest) {
+        farthest->PostEvent(EV_Remove, 0);
+    }
 }
 
 /*
@@ -11869,7 +11952,14 @@ Actor::BecomeCorpse
 */
 void Actor::BecomeCorpse(void)
 {
-    AddToBodyQue();
+    // Added in OPM
+    //  A kept corpse never enters the body queue, which is what would remove
+    //  it again five deaths later.
+    if (KeepCorpses()) {
+        MakeRoomForCorpse();
+    } else {
+        AddToBodyQue();
+    }
 
     // Added in OPM
     //  Normally already set by Begin_Killed, but actors can reach this without
