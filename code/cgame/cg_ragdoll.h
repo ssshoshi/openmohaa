@@ -52,7 +52,17 @@ extern "C" {
     // shot. dir is the outward normal, as the message parser stores it.
     void CG_RagdollNoteFleshImpact(const vec3_t pos, const vec3_t dir, int large);
     void CG_RagdollNoteExplosion(const vec3_t pos, int kind);
-    void CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large);
+    // A round's path, after the fact. Shoves the corpses it passes through and
+    // returns qtrue, with stopAt filled in, if it went into one and stopped.
+    qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large, vec3_t stopAt);
+
+    // The grabber, a tractor beam for handling corpses by hand. See the grabber
+    // section of cg_ragdoll.cpp.
+    void CG_RagdollGrabDown_f(void);
+    void CG_RagdollGrabUp_f(void);
+    void CG_RagdollGrabNearer_f(void);
+    void CG_RagdollGrabFarther_f(void);
+    void CG_RagdollPunt_f(void);
 
     extern cvar_t *cg_ragdoll;
     extern cvar_t *cg_ragdoll_maxcount;

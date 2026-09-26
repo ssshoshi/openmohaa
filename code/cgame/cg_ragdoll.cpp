@@ -35,6 +35,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_parsemsg.h"
+
+#include <chrono>
 
 cvar_t *cg_ragdoll;
 cvar_t *cg_ragdoll_maxcount;
@@ -57,6 +60,14 @@ cvar_t *cg_ragdoll_limbpush;
 cvar_t *cg_ragdoll_armfree;
 cvar_t *cg_ragdoll_legfree;
 cvar_t *cg_ragdoll_dumplabel;
+cvar_t *cg_ragdoll_log;
+cvar_t *cg_ragdoll_meshhits;
+cvar_t *cg_ragdoll_meshfit;
+cvar_t *cg_ragdoll_grab;
+cvar_t *cg_ragdoll_grabsaved;
+cvar_t *cg_ragdoll_grabrange;
+cvar_t *cg_ragdoll_grabspring;
+cvar_t *cg_ragdoll_puntspeed;
 cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_spinetwist;
 cvar_t *cg_ragdoll_pinsleep;
@@ -604,19 +615,47 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // the pool turned over roughly every second and a half however the allocator
 // chose, so bodies were still being taken away shortly after they settled.
 //
-// A slot is ten and a half kilobytes, so this pool is under seven hundred, and
-// nothing walks it per frame except the expiry sweep.
-#define MAX_RAGDOLLS 64
+// And sixty four was too few for single player, where corpses are kept for
+// the whole level (g_keepcorpses) and every one of them is meant to stay the
+// way it fell. A long level leaves a few hundred. A slot is ten and a half
+// kilobytes, so this pool is a little over five megabytes; the walks over it
+// are either once a frame or bounded by a sphere test per slot.
+#define MAX_RAGDOLLS 512
 
 // How close a fresh corpse entity must be to a just-orphaned ragdoll for it to
 // adopt it. Body::Body copies the player's origin verbatim, so the match is
 // effectively exact and this only guards against float noise.
 #define RD_ADOPT_DIST 4.0f
 
-// A ragdoll whose entity has been gone this long is recycled outright. It is
-// only a backstop against stale state piling up over a long session: the usual
-// way a slot comes back is the allocator evicting a settled corpse.
-#define RD_ORPHAN_MAX 30000
+// A stand-in for a corpse (see CG_RagdollAdopt) has to turn up within this
+// long of the corpse going away. The swap is made on one server frame, so
+// both are seen in the same snapshot and the gap is a single client frame.
+#define RD_STANDIN_WINDOW 250
+
+// And this close to where the corpse was. Tight is not needed: by then it has
+// already been matched on model, on tiki and on timing. The copy is dropped to
+// the floor as it is shown, and the mod can also place it where the corpse
+// was when it started dying rather than where it ended up.
+#define RD_STANDIN_DIST 64.0f
+
+// How fast the grabber can carry the joint it holds, in units per second.
+// Fast enough to swing a body round and throw it, not so fast that one frame's
+// flick of the mouse teleports it.
+#define RD_GRAB_SPEED 1200.0f
+
+// The spring the grabber holds a body on (its stiffness is
+// cg_ragdoll_grabspring): a little under critically damped, so a body that is
+// swung and stopped runs on and settles back once rather than stopping dead,
+// and the share of gravity it is left to sag by. At the default stiffness a
+// body hangs about four units under the aim and trails a swing by about a
+// seventh of a second.
+#define RD_GRAB_DAMPING 0.6f
+#define RD_GRAB_SAG     0.25f
+
+// A ragdoll whose entity has been gone longer than this can be picked up again
+// only by that same entity, coming back into view. Anything else arriving there
+// later is another man's corpse and must not inherit this one's pose.
+#define RD_ORPHAN_ADOPT_WINDOW 250
 
 // MASK_DEADSOLID without CONTENTS_CORPSE: corpses must not shove each other
 // around, which is both expensive and visibly jittery.
@@ -845,6 +884,23 @@ typedef struct {
     dtiki_t *tiki;       // the tiki the bone indices were resolved against
     int      modelIndex; // for corpse adoption
     int      orphanTime; // cg.time the owning entity went away
+    int      lastEntityNum; // the entity it last belonged to, kept while orphaned
+    qboolean standIn;    // carried on by a live entity swapped in for the corpse
+    qboolean gone;       // its entity has left the snapshot (for the log only)
+
+    // The entity as it was last handed to the renderer, pose and all, so a
+    // bullet arriving later in the frame is traced against what was drawn.
+    refEntity_t drawn;
+    qboolean    haveDrawn;
+
+    // Set as the body falls asleep; the drawn mesh is checked against the world
+    // once the sleeping pose is installed. See CG_RagdollMeasureClipping.
+    qboolean measureClip;
+
+    // The joint the grabber is holding, or -1, and where it is being carried
+    // to. See the grabber section.
+    int    grabJoint;
+    vec3_t grabTarget;
 
     int   startTime;
     int   lastTime;
@@ -1058,6 +1114,39 @@ static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
 // it had, which is the same thing that happens to a corpse that never got a
 // slot in the first place.
 static int rd_evictedAt[MAX_GENTITIES];
+
+// When each entity last came into the snapshot, or jumped, which is when a
+// stand-in for a corpse appears. Zero is never.
+static int rd_appearedAt[MAX_GENTITIES];
+
+static const char *rd_stateNames[] = {"free", "blending", "active", "sleeping"};
+
+// See cg_ragdoll_log.
+static void CG_RagdollLog(const cg_ragdoll_t *rd, const char *fmt, ...) Q_PRINTF_FUNC(2, 3);
+
+static void CG_RagdollLog(const cg_ragdoll_t *rd, const char *fmt, ...)
+{
+    char    text[256];
+    va_list ap;
+
+    if (!cg_ragdoll_log || !cg_ragdoll_log->integer) {
+        return;
+    }
+
+    va_start(ap, fmt);
+    Q_vsnprintf(text, sizeof(text), fmt, ap);
+    va_end(ap);
+
+    cgi.Printf(
+        "ragdoll %d [slot %d, entity %d, %s%s]: %s\n",
+        cg.time,
+        (int)(rd - cg_ragdolls),
+        rd->entityNum == ENTITYNUM_NONE ? -1 : rd->entityNum,
+        (unsigned)rd->state < ARRAY_LEN(rd_stateNames) ? rd_stateNames[rd->state] : "?",
+        rd->standIn ? ", stand-in" : "",
+        text
+    );
+}
 
 
 // The animation pose of the entity being processed, in world space. Reading a
@@ -2257,6 +2346,8 @@ static void CG_RagdollFindImpulse(cg_ragdoll_t *rd)
     rd->hasImpulse   = qtrue;
 }
 
+static void CG_RagdollFitToMesh(cg_ragdoll_t *rd, refEntity_t *model);
+
 static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *model)
 {
     vec3_t   worldPos[RD_NUM_JOINTS];
@@ -2441,6 +2532,10 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
         rd->trunkWide[i] = r * RD_TRUNK_WIDE_RATIO;
         rd->trunkDeep[i] = r * RD_TRUNK_DEEP_RATIO;
     }
+
+    // Everything measured below works from these sizes, so the mesh has its say
+    // first.
+    CG_RagdollFitToMesh(rd, model);
 
     if (!CG_RagdollMeasureLimits(rd) || !CG_RagdollMeasureClearances(rd) || !CG_RagdollMeasureHinges(rd)) {
         return qfalse;
@@ -4002,6 +4097,39 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
 
+        // Carried by the grabber, on a spring toward the end of the beam, and
+        // made immovable to everything else, so the constraints hang the rest
+        // of the body from it rather than pulling it back.
+        //
+        // A spring rather than being moved straight there is what gives a body
+        // weight: it lags behind a swing, runs on a little past where the swing
+        // stops, and hangs a few units below the aim, and the beam bends to
+        // follow it. Its velocity is kept, so letting go mid swing throws it.
+        if (i == rd->grabJoint) {
+            const float k = cg_ragdoll_grabspring->value;
+            const float c = 2.0f * RD_GRAB_DAMPING * sqrtf(k);
+            vec3_t      pull;
+            float       speed;
+
+            VectorSubtract(rd->grabTarget, part->p, pull);
+            VectorScale(pull, k, pull);
+            VectorMA(pull, -c, part->v, pull);
+            pull[2] -= gravity * RD_GRAB_SAG;
+
+            VectorMA(part->v, dt, pull, part->v);
+
+            speed = VectorLength(part->v);
+            if (speed > RD_GRAB_SPEED) {
+                VectorScale(part->v, RD_GRAB_SPEED / speed, part->v);
+            }
+
+            VectorCopy(part->p, part->pPrev);
+            VectorMA(part->p, dt, part->v, part->p);
+            VectorClear(part->solved);
+            part->invMass = 0.0f;
+            continue;
+        }
+
         // A joint that has given up getting out of the world is held where it
         // is. Pinning it in the push out alone was not enough: that runs once,
         // at the end of the step, and gravity and the bone sticks move it again
@@ -4904,6 +5032,605 @@ static void CG_RagdollDebugDraw(const cg_ragdoll_t *rd)
 #define RD_BULLET_SPEED 220.0f
 
 
+// What a bullet is tested against: the game's own hit model, the one a live
+// soldier is shot with (cm_trace_lbd.cpp, CL_TraceDeep and SV_TraceDeep). It is
+// a sphere or two on each of nineteen bones, placed in that bone's own frame,
+// so evaluated against the bones as the ragdoll draws them it covers the same
+// body a live man's does. The collision capsules are no use for this: they are
+// cut thin on purpose and stop at the base of the skull, the wrists and the
+// ankles.
+//
+// Copied rather than called. CL_TraceDeep is in the engine, out of cgame's
+// reach, and returns the first bone in table order rather than the nearest.
+typedef struct {
+    const char *boneName;
+    float       radius;
+    vec3_t      offset;
+    float       radius2; // a second sphere on the same bone, if non-zero
+    vec3_t      offset2;
+} rdHitSphere_t;
+
+static const rdHitSphere_t rd_hitSpheres[] = {
+    {"Bip01 Head",       5.0f, {2.5f, 3.5f, 0.0f},  0.0f, {0.0f, 0.0f, 0.0f}  }, // head
+    {"Bip01 Head",       5.5f, {8.5f, 1.0f, 0.0f},  5.5f, {7.0f, -2.5f, 0.0f} }, // helmet
+    {"Bip01 Neck",       4.0f, {3.5f, -1.0f, 0.0f}, 4.0f, {2.0f, 2.0f, 0.0f}  },
+    {"Bip01 Spine2",     9.0f, {5.0f, 1.0f, 3.0f},  9.0f, {5.0f, 1.0f, -3.0f} },
+    {"Bip01 Spine1",     8.0f, {2.0f, 1.0f, 3.0f},  8.0f, {2.0f, 1.0f, -3.0f} },
+    {"Bip01 Spine",      9.0f, {1.0f, 1.0f, 3.0f},  9.0f, {1.0f, 1.0f, -3.0f} },
+    {"Bip01 Pelvis",     9.0f, {-3.0f, 1.0f, 4.0f}, 9.0f, {-3.0f, 1.0f, -4.0f}},
+    {"Bip01 R UpperArm", 7.0f, {4.0f, 0.0f, 0.0f},  6.0f, {11.5f, 0.0f, 0.0f} },
+    {"Bip01 L UpperArm", 7.0f, {4.0f, 0.0f, 0.0f},  6.0f, {11.5f, 0.0f, 0.0f} },
+    {"Bip01 R Thigh",    8.0f, {12.0f, 0.0f, 0.0f}, 8.0f, {22.0f, 0.0f, 0.0f} },
+    {"Bip01 L Thigh",    8.0f, {12.0f, 0.0f, 0.0f}, 8.0f, {22.0f, 0.0f, 0.0f} },
+    {"Bip01 R Forearm",  5.5f, {5.0f, 1.0f, 0.0f},  5.0f, {11.5f, 0.0f, 0.0f} },
+    {"Bip01 L Forearm",  5.5f, {5.0f, 1.0f, 0.0f},  5.0f, {11.5f, 0.0f, 0.0f} },
+    {"Bip01 R Calf",     7.5f, {8.0f, 0.0f, 0.0f},  6.5f, {19.0f, 0.0f, 0.0f} },
+    {"Bip01 L Calf",     7.5f, {8.0f, 0.0f, 0.0f},  6.5f, {19.0f, 0.0f, 0.0f} },
+    {"Bip01 R Hand",     6.0f, {5.0f, 1.0f, 0.0f},  0.0f, {0.0f, 0.0f, 0.0f}  },
+    {"Bip01 L Hand",     6.0f, {5.0f, 1.0f, 0.0f},  0.0f, {0.0f, 0.0f, 0.0f}  },
+    {"Bip01 R Foot",     6.0f, {3.0f, 2.0f, 0.0f},  5.0f, {4.0f, 9.0f, 0.0f}  },
+    {"Bip01 L Foot",     6.0f, {3.0f, 2.0f, 0.0f},  5.0f, {4.0f, 9.0f, 0.0f}  }
+};
+
+#define RD_NUM_HIT_SPHERES ((int)(sizeof(rd_hitSpheres) / sizeof(rd_hitSpheres[0])))
+
+// How far the hit spheres can reach past the joints the bounding sphere is
+// built from: the helmet, eight and a half units up the head bone and five and
+// a half across, is the farthest.
+#define RD_HIT_BOUND_MARGIN 12.0f
+
+// Which of rd_bones each hit sphere sits on, found once by name.
+static int rd_hitSphereBone[RD_NUM_HIT_SPHERES];
+static qboolean rd_hitSphereBonesFound;
+
+static void CG_RagdollFindHitSphereBones(void)
+{
+    int i, b;
+
+    for (i = 0; i < RD_NUM_HIT_SPHERES; i++) {
+        rd_hitSphereBone[i] = -1;
+
+        for (b = 0; b < RD_NUM_BONES; b++) {
+            if (!Q_stricmp(rd_bones[b].boneName, rd_hitSpheres[i].boneName)) {
+                rd_hitSphereBone[i] = b;
+                break;
+            }
+        }
+    }
+
+    rd_hitSphereBonesFound = qtrue;
+}
+
+// How far along a bullet it enters one sphere, if it does.
+static qboolean CG_RagdollBulletSphere(
+    const vec3_t start, const vec3_t dir, float length, const vec3_t centre, float radius, float *entry
+)
+{
+    vec3_t rel;
+    float  along, missSq, depth, in;
+
+    VectorSubtract(centre, start, rel);
+    along  = DotProduct(rel, dir);
+    missSq = DotProduct(rel, rel) - along * along;
+
+    if (missSq > radius * radius) {
+        return qfalse;
+    }
+
+    depth = sqrtf(radius * radius - missSq);
+    in    = along - depth;
+
+    // Behind the start or past the end of this stretch of the bullet.
+    if (along + depth < 0.0f || in > length) {
+        return qfalse;
+    }
+
+    *entry = in < 0.0f ? 0.0f : in;
+    return qtrue;
+}
+
+// The drawn mesh, skinned by the renderer on request (GetSkinnedMesh). One
+// scratch buffer serves every use: bullet hits, fitting the collision to the
+// model, and the clipping measurement.
+#define RD_SKIN_MAX_VERTS 8192
+#define RD_SKIN_MAX_TRIS  12288
+
+static skinnedVert_t rd_skinVerts[RD_SKIN_MAX_VERTS];
+static int           rd_skinTris[RD_SKIN_MAX_TRIS * 3];
+static int           rd_skinNumVerts;
+static int           rd_skinNumTris;
+
+// What is in the buffer: several rounds into one body in one frame skin it once.
+static const cg_ragdoll_t *rd_skinOwner;
+static int                 rd_skinTime;
+
+// Whether this engine and renderer can hand the mesh over at all.
+static qboolean CG_RagdollCanSkin(void)
+{
+    return cgi.apiversion >= 4 && cgi.R_GetSkinnedMesh ? qtrue : qfalse;
+}
+
+// Skins model into the scratch buffer. owner, if given, lets a second call for
+// the same corpse in the same frame reuse the result.
+static qboolean CG_RagdollSkin(refEntity_t *model, const cg_ragdoll_t *owner)
+{
+    if (!CG_RagdollCanSkin()) {
+        return qfalse;
+    }
+
+    if (owner && owner == rd_skinOwner && cg.time == rd_skinTime && rd_skinNumVerts) {
+        return qtrue;
+    }
+
+    rd_skinNumVerts = cgi.R_GetSkinnedMesh(
+        model, rd_skinVerts, RD_SKIN_MAX_VERTS, rd_skinTris, RD_SKIN_MAX_TRIS, &rd_skinNumTris
+    );
+    rd_skinOwner = owner;
+    rd_skinTime  = cg.time;
+
+    return rd_skinNumVerts > 0 && rd_skinNumTris > 0 ? qtrue : qfalse;
+}
+
+// For cg_ragdoll_debug 3: the last triangle a round went into, and where.
+static vec3_t rd_lastHitTri[3];
+static vec3_t rd_lastHitPoint;
+static int    rd_lastHitTime;
+
+// For cg_ragdoll_log: what the mesh traces are costing.
+static int    rd_meshTraces;
+static double rd_meshTraceUs;
+
+// Where a bullet first enters the skinned mesh in the scratch buffer, by
+// Moller-Trumbore against every triangle. Either face counts: a bullet can go
+// in through a sleeve from inside a crooked arm as easily as from outside.
+static qboolean CG_RagdollMeshEntry(const vec3_t start, const vec3_t dir, float length, float *entry)
+{
+    qboolean hit = qfalse;
+    int      best = -1;
+    int      i;
+
+    for (i = 0; i < rd_skinNumTris; i++) {
+        const float *v0 = rd_skinVerts[rd_skinTris[i * 3]].xyz;
+        const float *v1 = rd_skinVerts[rd_skinTris[i * 3 + 1]].xyz;
+        const float *v2 = rd_skinVerts[rd_skinTris[i * 3 + 2]].xyz;
+        vec3_t       e1, e2, p, t, q;
+        float        det, inv, u, v, along;
+
+        VectorSubtract(v1, v0, e1);
+        VectorSubtract(v2, v0, e2);
+        CrossProduct(dir, e2, p);
+        det = DotProduct(e1, p);
+
+        if (det > -1e-6f && det < 1e-6f) {
+            continue;
+        }
+
+        inv = 1.0f / det;
+        VectorSubtract(start, v0, t);
+        u = DotProduct(t, p) * inv;
+
+        if (u < 0.0f || u > 1.0f) {
+            continue;
+        }
+
+        CrossProduct(t, e1, q);
+        v = DotProduct(dir, q) * inv;
+
+        if (v < 0.0f || u + v > 1.0f) {
+            continue;
+        }
+
+        along = DotProduct(e2, q) * inv;
+
+        if (along < 0.0f || along > length) {
+            continue;
+        }
+
+        if (!hit || along < *entry) {
+            *entry = along;
+            best   = i;
+            hit    = qtrue;
+        }
+    }
+
+    if (hit) {
+        for (i = 0; i < 3; i++) {
+            VectorCopy(rd_skinVerts[rd_skinTris[best * 3 + i]].xyz, rd_lastHitTri[i]);
+        }
+        VectorMA(start, *entry, dir, rd_lastHitPoint);
+        rd_lastHitTime = cg.time;
+    }
+
+    return hit;
+}
+
+// The model's own thickness, measured from its mesh once per model and kept.
+// Sizes are stored per unit of rd->radius, which is three units at full size,
+// so one measurement serves the same model at any scale.
+typedef struct {
+    dtiki_t *tiki;
+    qboolean valid;
+    float    limb[RD_NUM_LIMB_SEGMENTS];   // 0: too few vertices, keep the default
+    float    trunkWide[RD_NUM_TRUNK_SEGMENTS];
+    float    trunkDeep[RD_NUM_TRUNK_SEGMENTS];
+    float    joint[RD_NUM_JOINTS];
+} rdMeshFit_t;
+
+#define RD_MAX_MESH_FITS 64
+
+// Fewer vertices than this on a bone and the figure is left alone.
+#define RD_FIT_MIN_VERTS 12
+
+// Of a bone's vertices, how far out the one this far through them sits. The
+// very outermost are pouches, straps and the rim of a helmet, which the body
+// should not be held off the floor by.
+#define RD_FIT_PERCENTILE 0.85f
+
+static rdMeshFit_t rd_meshFits[RD_MAX_MESH_FITS];
+static int         rd_numMeshFits;
+static float       rd_fitScratch[RD_SKIN_MAX_VERTS];
+static float       rd_fitScratch2[RD_SKIN_MAX_VERTS];
+static float       rd_fitScratch3[RD_SKIN_MAX_VERTS];
+
+static int CG_RagdollCompareFloat(const void *a, const void *b)
+{
+    const float fa = *(const float *)a;
+    const float fb = *(const float *)b;
+
+    return fa < fb ? -1 : (fa > fb ? 1 : 0);
+}
+
+static float CG_RagdollPercentile(float *values, int count)
+{
+    qsort(values, count, sizeof(float), CG_RagdollCompareFloat);
+    return values[(int)((count - 1) * RD_FIT_PERCENTILE)];
+}
+
+// The ends of the head, hands and feet, measured around the bone into their
+// tip joint and given to both joints.
+static const short rd_fitExtremities[][2] = {
+    {RD_HEAD,  RD_HEADTIP },
+    {RD_LHAND, RD_LHANDTIP},
+    {RD_RHAND, RD_RHANDTIP},
+    {RD_LFOOT, RD_LTOE    },
+    {RD_RFOOT, RD_RTOE    },
+};
+
+#define RD_NUM_FIT_EXTREMITIES ((int)(sizeof(rd_fitExtremities) / sizeof(rd_fitExtremities[0])))
+
+// Every stretch of body a vertex can be counted against: the limbs, then the
+// trunk, then the extremities above.
+#define RD_NUM_FIT_SEGMENTS (RD_NUM_LIMB_SEGMENTS + RD_NUM_TRUNK_SEGMENTS + RD_NUM_FIT_EXTREMITIES)
+
+static void CG_RagdollFitSegment(int n, int *a, int *b)
+{
+    if (n < RD_NUM_LIMB_SEGMENTS) {
+        *a = rd_limbSegments[n].a;
+        *b = rd_limbSegments[n].b;
+    } else if (n < RD_NUM_LIMB_SEGMENTS + RD_NUM_TRUNK_SEGMENTS) {
+        *a = rd_trunkSegments[n - RD_NUM_LIMB_SEGMENTS].a;
+        *b = rd_trunkSegments[n - RD_NUM_LIMB_SEGMENTS].b;
+    } else {
+        *a = rd_fitExtremities[n - RD_NUM_LIMB_SEGMENTS - RD_NUM_TRUNK_SEGMENTS][0];
+        *b = rd_fitExtremities[n - RD_NUM_LIMB_SEGMENTS - RD_NUM_TRUNK_SEGMENTS][1];
+    }
+}
+
+// Which segment each skinned vertex was counted against, -1 for none.
+static short rd_fitOwner[RD_SKIN_MAX_VERTS];
+
+// The high percentile of the values on one side of zero, or 0 if there are
+// too few of them to go by.
+static float CG_RagdollOneSided(const float *values, int count, qboolean positive)
+{
+    int n = 0;
+    int i;
+
+    for (i = 0; i < count; i++) {
+        if (positive ? values[i] > 0.0f : values[i] < 0.0f) {
+            rd_fitScratch2[n++] = fabsf(values[i]);
+        }
+    }
+
+    if (n < RD_FIT_MIN_VERTS / 2) {
+        return 0.0f;
+    }
+
+    return CG_RagdollPercentile(rd_fitScratch2, n);
+}
+
+// The smaller of the two sides, where both could be measured. Gear is carried
+// on one side of a man, a pack on his back or a pouch at his hip, and taking
+// the other side is what keeps it out: the collision stays the size of the
+// body, and the pack sinks into the floor a little rather than propping the
+// whole corpse up off it.
+static float CG_RagdollBodySide(const float *values, int count)
+{
+    const float pos = CG_RagdollOneSided(values, count, qtrue);
+    const float neg = CG_RagdollOneSided(values, count, qfalse);
+
+    if (pos > 0.0f && neg > 0.0f) {
+        return pos < neg ? pos : neg;
+    }
+
+    return pos > 0.0f ? pos : neg;
+}
+
+// Measures a model from its mesh in the pose the corpse is being seeded in.
+//
+// Each vertex is counted against whichever stretch of the body it lies
+// nearest, not against the bone that moves it. The weights are no guide: much
+// of a soldier's mesh follows helper bones ("helper Rhip" and the like) that
+// the ragdoll knows nothing about, and counted by weight the upper arms of
+// every model measured came out empty.
+static void CG_RagdollMeasureMesh(cg_ragdoll_t *rd, refEntity_t *model, rdMeshFit_t *fit)
+{
+    vec3_t shift;
+    vec3_t torso[3];
+    float  unit = rd->radius;
+    int    i, n, k;
+
+    // The drawn mesh leaves out the model's load origin and the joints do not,
+    // so the mesh is moved onto the joints before anything is compared.
+    VectorClear(shift);
+    for (k = 0; k < 3; k++) {
+        VectorMA(shift, model->tiki->load_origin[k] * model->tiki->load_scale * model->scale, model->axis[k], shift);
+    }
+
+    if (!CG_RagdollTorsoFrame(rd, torso)) {
+        return;
+    }
+
+    for (i = 0; i < rd_skinNumVerts; i++) {
+        vec3_t p;
+        float  best = 0.0f;
+
+        VectorAdd(rd_skinVerts[i].xyz, shift, p);
+        rd_fitOwner[i] = -1;
+
+        for (n = 0; n < RD_NUM_FIT_SEGMENTS; n++) {
+            vec3_t d, rel, closest;
+            float  lengthSq, t, dist;
+            int    a, b;
+
+            CG_RagdollFitSegment(n, &a, &b);
+            VectorSubtract(rd->part[b].p, rd->part[a].p, d);
+            VectorSubtract(p, rd->part[a].p, rel);
+            lengthSq = DotProduct(d, d);
+
+            if (lengthSq < 0.0001f) {
+                continue;
+            }
+
+            t = Q_clamp_float(DotProduct(rel, d) / lengthSq, 0.0f, 1.0f);
+            VectorMA(rd->part[a].p, t, d, closest);
+            dist = Distance(p, closest);
+
+            if (rd_fitOwner[i] < 0 || dist < best) {
+                rd_fitOwner[i] = n;
+                best           = dist;
+            }
+        }
+    }
+
+    for (n = 0; n < RD_NUM_FIT_SEGMENTS; n++) {
+        vec3_t axis, side, front;
+        float  length;
+        int    count = 0;
+        int    a, b;
+
+        CG_RagdollFitSegment(n, &a, &b);
+        VectorSubtract(rd->part[b].p, rd->part[a].p, axis);
+        length = VectorNormalize(axis);
+
+        if (length < 0.001f) {
+            continue;
+        }
+
+        VectorMA(torso[1], -DotProduct(torso[1], axis), axis, side);
+        if (VectorNormalize(side) < 0.001f) {
+            continue;
+        }
+        CrossProduct(axis, side, front);
+
+        for (i = 0; i < rd_skinNumVerts; i++) {
+            vec3_t rel, off;
+            float  along;
+
+            if (rd_fitOwner[i] != n) {
+                continue;
+            }
+
+            VectorAdd(rd_skinVerts[i].xyz, shift, rel);
+            VectorSubtract(rel, rd->part[a].p, rel);
+            along = DotProduct(rel, axis);
+
+            // Only what surrounds the stretch, not what caps either end of it.
+            if (along < 0.0f || along > length) {
+                continue;
+            }
+
+            VectorMA(rel, -along, axis, off);
+
+            if (n >= RD_NUM_LIMB_SEGMENTS && n < RD_NUM_LIMB_SEGMENTS + RD_NUM_TRUNK_SEGMENTS) {
+                // signed, so each side of the trunk can be told apart
+                rd_fitScratch[count]  = DotProduct(off, side);
+                rd_fitScratch3[count] = DotProduct(off, front);
+            } else {
+                rd_fitScratch[count] = VectorLength(off);
+            }
+            count++;
+        }
+
+        if (count < RD_FIT_MIN_VERTS) {
+            continue;
+        }
+
+        if (n < RD_NUM_LIMB_SEGMENTS) {
+            fit->limb[n] = CG_RagdollPercentile(rd_fitScratch, count) / unit;
+        } else if (n < RD_NUM_LIMB_SEGMENTS + RD_NUM_TRUNK_SEGMENTS) {
+            const float wide = CG_RagdollBodySide(rd_fitScratch, count);
+            const float deep = CG_RagdollBodySide(rd_fitScratch3, count);
+
+            if (wide > 0.0f && deep > 0.0f) {
+                fit->trunkWide[n - RD_NUM_LIMB_SEGMENTS] = wide / unit;
+                fit->trunkDeep[n - RD_NUM_LIMB_SEGMENTS] = deep / unit;
+            }
+        } else {
+            const float r = CG_RagdollPercentile(rd_fitScratch, count) / unit;
+
+            fit->joint[a] = r;
+            fit->joint[b] = r;
+        }
+    }
+}
+
+// Sizes the corpse's collision from its model's mesh (cg_ragdoll_meshfit).
+// The hand-set figures in rd_joints are for one average man; this is the man
+// actually lying there, greatcoat, pack and all.
+static void CG_RagdollFitToMesh(cg_ragdoll_t *rd, refEntity_t *model)
+{
+    const float  scale = cg_ragdoll_meshfit->value;
+    rdMeshFit_t *fit   = NULL;
+    int          i;
+
+    if (scale <= 0.0f || !model->tiki || !CG_RagdollCanSkin()) {
+        return;
+    }
+
+    for (i = 0; i < rd_numMeshFits; i++) {
+        if (rd_meshFits[i].tiki == model->tiki) {
+            fit = &rd_meshFits[i];
+            break;
+        }
+    }
+
+    if (!fit) {
+        // A full table is only a missed saving: measure into the last slot.
+        fit = &rd_meshFits[rd_numMeshFits < RD_MAX_MESH_FITS ? rd_numMeshFits++ : RD_MAX_MESH_FITS - 1];
+        memset(fit, 0, sizeof(*fit));
+        fit->tiki = model->tiki;
+
+        if (CG_RagdollSkin(model, NULL)) {
+            CG_RagdollMeasureMesh(rd, model, fit);
+            fit->valid = qtrue;
+
+            if (cg_ragdoll_log->integer) {
+                cgi.Printf(
+                    "ragdoll %d: measured %s from %d vertices: upper arm %.1f (was %.1f), thigh %.1f (was %.1f), "
+                    "chest %.1f x %.1f (was %.1f x %.1f), head %.1f (was %.1f)\n",
+                    cg.time,
+                    cgi.TIKI_Name(model->tiki),
+                    rd_skinNumVerts,
+                    fit->limb[0] * rd->radius,
+                    rd->limbRadius[0],
+                    fit->limb[RD_FIRST_LEG_SEGMENT] * rd->radius,
+                    rd->limbRadius[RD_FIRST_LEG_SEGMENT],
+                    fit->trunkWide[2] * rd->radius,
+                    fit->trunkDeep[2] * rd->radius,
+                    rd->trunkWide[2],
+                    rd->trunkDeep[2],
+                    fit->joint[RD_HEAD] * rd->radius,
+                    rd->jointRadius[RD_HEAD]
+                );
+            }
+        }
+    }
+
+    if (!fit->valid) {
+        return;
+    }
+
+    for (i = 0; i < RD_NUM_LIMB_SEGMENTS; i++) {
+        if (fit->limb[i] > 0.0f) {
+            rd->limbRadius[i] = fit->limb[i] * rd->radius * scale;
+        }
+    }
+
+    for (i = 0; i < RD_NUM_TRUNK_SEGMENTS; i++) {
+        if (fit->trunkWide[i] > 0.0f) {
+            rd->trunkWide[i] = fit->trunkWide[i] * rd->radius * scale;
+            rd->trunkDeep[i] = fit->trunkDeep[i] * rd->radius * scale;
+        }
+    }
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        if (fit->joint[i] > 0.0f) {
+            rd->jointRadius[i] = fit->joint[i] * rd->radius * scale;
+        }
+    }
+}
+
+// Where a bullet running from start along dir for length first enters the
+// body as drawn. Returns qfalse if it misses it altogether.
+static qboolean CG_RagdollBulletEntry(cg_ragdoll_t *rd, const vec3_t start, const vec3_t dir, float length, float *entry)
+{
+    vec3_t   drop = {0.0f, 0.0f, 0.0f};
+    qboolean hit  = qfalse;
+    int      i;
+
+    if (!rd_hitSphereBonesFound) {
+        CG_RagdollFindHitSphereBones();
+    }
+
+    // A sleeping corpse is drawn this far below where it settled, riding its
+    // entity down as it sinks.
+    if (rd->state == RD_SLEEPING && rd->sleepPinned) {
+        drop[2] = rd->sleepDrop;
+    }
+
+    for (i = 0; i < RD_NUM_HIT_SPHERES; i++) {
+        const rdHitSphere_t *hs = &rd_hitSpheres[i];
+        const int            b  = rd_hitSphereBone[i];
+        int                  k;
+
+        if (b < 0 || rd->boneIndex[b] < 0) {
+            continue;
+        }
+
+        for (k = 0; k < 2; k++) {
+            const float  radius = k ? hs->radius2 : hs->radius;
+            const float *offset = k ? hs->offset2 : hs->offset;
+            vec3_t       centre;
+            float        in;
+
+            if (radius <= 0.0f) {
+                continue;
+            }
+
+            VectorAdd(rd->bonePos[b], drop, centre);
+            VectorMA(centre, offset[0], rd->boneAxis[b][0], centre);
+            VectorMA(centre, offset[1], rd->boneAxis[b][1], centre);
+            VectorMA(centre, offset[2], rd->boneAxis[b][2], centre);
+
+            if (CG_RagdollBulletSphere(start, dir, length, centre, radius, &in) && (!hit || in < *entry)) {
+                *entry = in;
+                hit    = qtrue;
+            }
+        }
+    }
+
+    // The spheres only say the round came close enough to be worth checking.
+    // Where the mesh can be had, it decides: a round through the gap between an
+    // arm and the chest misses, and one that clips a boot hits the boot.
+    if (hit && cg_ragdoll_meshhits->integer && rd->haveDrawn) {
+        auto     began = std::chrono::steady_clock::now();
+        qboolean onMesh;
+
+        if (CG_RagdollSkin(&rd->drawn, rd)) {
+            onMesh = CG_RagdollMeshEntry(start, dir, length, entry);
+
+            rd_meshTraces++;
+            rd_meshTraceUs +=
+                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - began).count();
+
+            return onMesh;
+        }
+    }
+
+    return hit;
+}
+
 // Puts a settled corpse back to work.
 static void CG_RagdollWake(cg_ragdoll_t *rd)
 {
@@ -4914,6 +5641,8 @@ static void CG_RagdollWake(cg_ragdoll_t *rd)
     }
 
     if (rd->state == RD_SLEEPING) {
+        CG_RagdollLog(rd, "woken");
+
         // While it slept the drawn body followed the entity down as it sank,
         // and the particles did not. Carrying that across means the corpse
         // starts moving from where it was last seen rather than jumping back up
@@ -4956,28 +5685,89 @@ static void CG_RagdollWake(cg_ragdoll_t *rd)
 
 // A bullet passing through a body that is already dead.
 //
-// The shot is not traced against the corpse and nothing here changes what the
-// bullet hits: this is handed the line the bullet actually took, after the fact,
-// and moves whatever it happened to pass through. That is deliberate. Corpses
-// are built on the client and the server knows nothing about them, so a corpse
-// that stopped bullets would stop them on one machine and not another, and a
+// This is handed the line the bullet actually took, after the fact, and moves
+// whatever it happened to pass through. The server never traces against the
+// corpse and nothing here changes what the bullet hits or damages: corpses are
+// built on the client and the server knows nothing about them, so a corpse that
+// stopped bullets for real would stop them on one machine and not another, and a
 // man could be sheltered by a body his killer cannot see.
-void CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large)
-{
-    const float strength = cg_ragdoll_shove->value * (large ? 1.6f : 1.0f);
-    vec3_t      dir;
-    float       length;
-    int         n, i;
+//
+// What it does change is what is seen and heard. A round that goes into a
+// corpse draws blood there and makes no impact on whatever lay behind it.
 
-    if (strength <= 0.0f) {
-        return;
-    }
+// Whether a round can be stopped by this corpse, drawing blood where it goes
+// in. Only a body that is being drawn, and only once the server has stopped
+// colliding with it: while it is still solid the server reports the hit itself,
+// and the two would play on top of each other.
+static qboolean CG_RagdollCanStopBullet(const cg_ragdoll_t *rd)
+{
+    return rd->state != RD_FREE && rd->boundRadius && rd->entityNum != ENTITYNUM_NONE
+            && cg_entities[rd->entityNum].currentValid && !cg_entities[rd->entityNum].currentState.solid
+             ? qtrue
+             : qfalse;
+}
+
+qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large, vec3_t stopAt)
+{
+    const float   strength = cg_ragdoll_shove->value * (large ? 1.6f : 1.0f);
+    cg_ragdoll_t *stopper  = NULL;
+    float         stopDist = 0.0f;
+    vec3_t        dir;
+    float         length;
+    int           n, i;
 
     VectorSubtract(end, start, dir);
     length = VectorNormalize(dir);
 
     if (length < 1.0f) {
-        return;
+        return qfalse;
+    }
+
+    // The first corpse the round goes into is where it ends. Nothing beyond
+    // is shoved or bloodied, and the caller drops the impact on whatever was
+    // behind the body: a shot into a corpse lying on the ground must not also
+    // kick up the dirt under it.
+    for (n = 0; n < MAX_RAGDOLLS; n++) {
+        cg_ragdoll_t *rd = &cg_ragdolls[n];
+        vec3_t        toCentre, nearest;
+        float         centreAlong, entry;
+
+        if (!CG_RagdollCanStopBullet(rd)) {
+            continue;
+        }
+
+        VectorSubtract(rd->boundCentre, start, toCentre);
+        centreAlong = DotProduct(toCentre, dir);
+
+        if (centreAlong < -rd->boundRadius - RD_HIT_BOUND_MARGIN
+            || centreAlong > length + rd->boundRadius + RD_HIT_BOUND_MARGIN) {
+            continue;
+        }
+
+        VectorMA(start, Q_clamp_float(centreAlong, 0.0f, length), dir, nearest);
+        if (Distance(rd->boundCentre, nearest) > rd->boundRadius + RD_HIT_BOUND_MARGIN) {
+            continue;
+        }
+
+        if (CG_RagdollBulletEntry(rd, start, dir, length, &entry) && (!stopper || entry < stopDist)) {
+            stopper  = rd;
+            stopDist = entry;
+        }
+    }
+
+    if (stopper) {
+        vec3_t norm;
+
+        VectorMA(start, stopDist, dir, stopAt);
+        VectorNegate(dir, norm);
+        CG_AddCorpseFleshImpact(stopAt, norm, large);
+
+        // Far enough on to push the whole of the body it went into.
+        length = Q_min(length, stopDist + RD_BULLET_REACH * 2.0f);
+    }
+
+    if (strength <= 0.0f) {
+        return stopper ? qtrue : qfalse;
     }
 
     for (n = 0; n < MAX_RAGDOLLS; n++) {
@@ -5043,6 +5833,521 @@ void CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large)
             CG_RagdollWake(rd);
         }
     }
+
+    return stopper ? qtrue : qfalse;
+}
+
+//=============================================================
+// The grabber
+//=============================================================
+
+// A tractor beam for handling corpses, after the physics gun in the Half-Life 2
+// beta, for testing the ragdolls by hand: pick a body up by whatever part is
+// under the crosshair, carry it, swing it, drop it on things and throw it.
+// Entirely client side, like the ragdolls themselves, so it works in any game
+// and nobody else sees it. Bound to keys rather than being a weapon, and off
+// until cg_ragdoll_grab is set, which binds them (see rd_grabBinds):
+//
+//   mouse2       +rdgrab          hold to carry the body under the crosshair
+//   mouse3       rdpunt           throw what is held, or knock what is aimed at
+//   mwheeldown   rdgrab_nearer
+//   mwheelup     rdgrab_farther
+static struct {
+    qboolean held;
+    int      slot;
+    int      startTime; // tells the corpse apart from a later one in the same slot
+    int      joint;
+    float    dist;
+} rd_grab;
+
+// How much nearer or farther one turn of the wheel carries a body.
+#define RD_GRAB_WHEEL 16.0f
+
+// How near the eye a held body may be brought.
+#define RD_GRAB_MIN_DIST 24.0f
+
+// The beam drawn while holding: how wide, in how many pieces its curve is
+// drawn, how far along the aim its curve is pulled, and how many units of beam
+// one repeat of its texture covers.
+#define RD_GRAB_BEAM_WIDTH    1.2f
+#define RD_GRAB_BEAM_SEGMENTS 20
+#define RD_GRAB_BEAM_PULL     0.66f
+#define RD_GRAB_BEAM_REPEAT   96.0f
+
+// scripts/opm_ragdoll.shader in zzzzzzzzz-opm-ragdoll.pk3. The game has no
+// beam texture of its own: the retail beam shaders name images it never
+// shipped, and draw as the missing texture.
+#define RD_GRAB_BEAM_SHADER "opm/grabbeam"
+
+static void CG_RagdollViewRay(vec3_t start, vec3_t dir)
+{
+    VectorCopy(cg.refdef.vieworg, start);
+    VectorCopy(cg.refdef.viewaxis[0], dir);
+}
+
+// The drawn corpse the crosshair is on, nearest first and not behind a wall,
+// with how far along the view it is hit.
+static cg_ragdoll_t *CG_RagdollUnderCrosshair(float *entry)
+{
+    cg_ragdoll_t *best = NULL;
+    vec3_t        start, dir, end;
+    trace_t       tr;
+    float         length;
+    int           n;
+
+    if (!cg.snap) {
+        return NULL;
+    }
+
+    CG_RagdollViewRay(start, dir);
+    VectorMA(start, cg_ragdoll_grabrange->value, dir, end);
+
+    // Only as far as the first wall.
+    CG_Trace(&tr, start, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, RD_CLIPMASK, qfalse, qfalse, "ragdoll grab");
+    length = cg_ragdoll_grabrange->value * tr.fraction;
+
+    for (n = 0; n < MAX_RAGDOLLS; n++) {
+        cg_ragdoll_t *rd = &cg_ragdolls[n];
+        float         in;
+
+        if (rd->state == RD_FREE || !rd->haveDrawn || rd->entityNum == ENTITYNUM_NONE
+            || !cg_entities[rd->entityNum].currentValid) {
+            continue;
+        }
+
+        if (CG_RagdollBulletEntry(rd, start, dir, length, &in) && (!best || in < *entry)) {
+            best   = rd;
+            *entry = in;
+        }
+    }
+
+    return best;
+}
+
+// The joint nearest a point, which is the one the beam takes hold of.
+static int CG_RagdollNearestJoint(const cg_ragdoll_t *rd, const vec3_t point)
+{
+    float bestDist = 0.0f;
+    int   best     = 0;
+    int   i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        const float d = DistanceSquared(rd->part[i].p, point);
+
+        if (!i || d < bestDist) {
+            best     = i;
+            bestDist = d;
+        }
+    }
+
+    return best;
+}
+
+static cg_ragdoll_t *CG_RagdollHeld(void)
+{
+    cg_ragdoll_t *rd;
+
+    if (!rd_grab.held) {
+        return NULL;
+    }
+
+    rd = &cg_ragdolls[rd_grab.slot];
+
+    // Gone, or the slot now holds somebody else.
+    if (rd->state == RD_FREE || rd->startTime != rd_grab.startTime) {
+        rd_grab.held = qfalse;
+        return NULL;
+    }
+
+    return rd;
+}
+
+static void CG_RagdollRelease(void)
+{
+    cg_ragdoll_t *rd = CG_RagdollHeld();
+
+    if (rd) {
+        rd->part[rd->grabJoint].invMass = rd_joints[rd->grabJoint].invMass;
+        rd->grabJoint                   = -1;
+    }
+
+    rd_grab.held = qfalse;
+}
+
+// Keeps a body awake and moving; asleep, it would ignore the beam.
+static void CG_RagdollKeepAwake(cg_ragdoll_t *rd)
+{
+    if (rd->state == RD_SLEEPING) {
+        CG_RagdollWake(rd);
+    }
+
+    rd->quietSince = cg.time;
+    rd->wakeUntil  = cg.time + RD_WAKE_TIME;
+}
+
+extern "C" void CG_RagdollGrabDown_f(void)
+{
+    cg_ragdoll_t *rd;
+    vec3_t        start, dir, point;
+    float         entry;
+
+    CG_RagdollRelease();
+
+    if (!cg_ragdoll_grab->integer) {
+        return;
+    }
+
+    rd = CG_RagdollUnderCrosshair(&entry);
+    if (!rd) {
+        return;
+    }
+
+    CG_RagdollViewRay(start, dir);
+    VectorMA(start, entry, dir, point);
+
+    rd_grab.held      = qtrue;
+    rd_grab.slot      = (int)(rd - cg_ragdolls);
+    rd_grab.startTime = rd->startTime;
+    rd_grab.joint     = CG_RagdollNearestJoint(rd, point);
+    rd_grab.dist      = Q_max(entry, RD_GRAB_MIN_DIST);
+
+    rd->grabJoint = rd_grab.joint;
+    VectorCopy(rd->part[rd_grab.joint].p, rd->grabTarget);
+    CG_RagdollKeepAwake(rd);
+
+    CG_RagdollLog(rd, "grabbed by joint %d, %.0f units away", rd_grab.joint, rd_grab.dist);
+}
+
+extern "C" void CG_RagdollGrabUp_f(void)
+{
+    CG_RagdollRelease();
+}
+
+extern "C" void CG_RagdollGrabNearer_f(void)
+{
+    if (!cg_ragdoll_grab->integer) {
+        return;
+    }
+
+    rd_grab.dist = Q_max(rd_grab.dist - RD_GRAB_WHEEL, RD_GRAB_MIN_DIST);
+}
+
+extern "C" void CG_RagdollGrabFarther_f(void)
+{
+    if (!cg_ragdoll_grab->integer) {
+        return;
+    }
+
+    rd_grab.dist = Q_min(rd_grab.dist + RD_GRAB_WHEEL, cg_ragdoll_grabrange->value);
+}
+
+// Throws the body being carried, or knocks the one the crosshair is on: the
+// whole body is sent along the view, the part hit hardest.
+extern "C" void CG_RagdollPunt_f(void)
+{
+    cg_ragdoll_t *rd = CG_RagdollHeld();
+    vec3_t        start, dir, point;
+    float         entry = 0.0f;
+    int           i;
+
+    if (!cg_ragdoll_grab->integer) {
+        return;
+    }
+
+    CG_RagdollViewRay(start, dir);
+
+    if (rd) {
+        VectorCopy(rd->part[rd->grabJoint].p, point);
+        CG_RagdollRelease();
+    } else {
+        rd = CG_RagdollUnderCrosshair(&entry);
+        if (!rd) {
+            return;
+        }
+        VectorMA(start, entry, dir, point);
+    }
+
+    CG_RagdollKeepAwake(rd);
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        // Full speed at the part hit, down to half of it a body's length away,
+        // so a punt to the legs turns the body over rather than sliding it.
+        const float falloff = 1.0f - 0.5f * Q_min(Distance(rd->part[i].p, point) / 64.0f, 1.0f);
+
+        VectorMA(rd->part[i].v, cg_ragdoll_puntspeed->value * falloff, dir, rd->part[i].v);
+    }
+
+    CG_RagdollLog(rd, "punted");
+}
+
+// The keys cg_ragdoll_grab takes over, what it binds them to, and what a
+// stock game has on them, which is what they go back to when what they did
+// before cannot be found.
+static const struct {
+    const char *key;
+    const char *command;
+    const char *stock;
+} rd_grabBinds[] = {
+    {"MOUSE2",     "+rdgrab",        "+attacksecondary"},
+    {"MOUSE3",     "rdpunt",         ""                },
+    {"MWHEELDOWN", "rdgrab_nearer",  "weapprev"        },
+    {"MWHEELUP",   "rdgrab_farther", "weapnext"        },
+};
+
+#define RD_NUM_GRAB_BINDS ((int)(sizeof(rd_grabBinds) / sizeof(rd_grabBinds[0])))
+
+// Whether a bound command is one of the grabber's own, which is never worth
+// putting back.
+static qboolean CG_RagdollIsGrabCommand(const char *command)
+{
+    return !Q_stricmpn(command, "+rdgrab", 7) || !Q_stricmpn(command, "-rdgrab", 7)
+                || !Q_stricmpn(command, "rdgrab", 6) || !Q_stricmpn(command, "rdpunt", 6)
+             ? qtrue
+             : qfalse;
+}
+
+// What each of the grabber's keys is bound to now. cgame cannot ask the engine
+// for a key's binding, but the engine rewrites the config as soon as a bind
+// changes, so it is read from there. Fills saved with "KEY=command|..." and
+// uses the stock binding for any key that holds one of the grabber's own
+// commands already, or something that would not survive the round trip.
+static void CG_RagdollReadBinds(char *saved, int size)
+{
+    char *buf = NULL;
+    int   i;
+
+    saved[0] = 0;
+    cgi.FS_ReadFile("configs/" CONFIG_PREFIX ".cfg", (void **)&buf, qtrue);
+
+    for (i = 0; i < RD_NUM_GRAB_BINDS; i++) {
+        char        command[MAX_STRING_CHARS];
+        const char *found = rd_grabBinds[i].stock;
+
+        if (buf) {
+            char        needle[64];
+            const char *line;
+
+            Com_sprintf(needle, sizeof(needle), "\nbind %s ", rd_grabBinds[i].key);
+            line = Q_stristr(buf, needle);
+
+            if (line) {
+                const char *p = line + strlen(needle);
+                int         n = 0;
+
+                if (*p == '"') {
+                    p++;
+                }
+                while (*p && *p != '"' && *p != '\r' && *p != '\n' && n < (int)sizeof(command) - 1) {
+                    command[n++] = *p++;
+                }
+                command[n] = 0;
+
+                if (!CG_RagdollIsGrabCommand(command) && !strchr(command, '|')) {
+                    found = command;
+                }
+            }
+        }
+
+        Q_strcat(saved, size, va("%s%s=%s", i ? "|" : "", rd_grabBinds[i].key, found));
+    }
+
+    if (buf) {
+        cgi.FS_FreeFile(buf);
+    }
+}
+
+// Puts back the bindings in saved, or the stock ones if there are none.
+static void CG_RagdollRestoreBinds(const char *saved)
+{
+    int i;
+
+    for (i = 0; i < RD_NUM_GRAB_BINDS; i++) {
+        char        command[MAX_STRING_CHARS];
+        const char *entry;
+
+        Q_strncpyz(command, rd_grabBinds[i].stock, sizeof(command));
+
+        entry = Q_stristr(saved, va("%s=", rd_grabBinds[i].key));
+        if (entry) {
+            const char *p = entry + strlen(rd_grabBinds[i].key) + 1;
+            int         n = 0;
+
+            while (*p && *p != '|' && n < (int)sizeof(command) - 1) {
+                command[n++] = *p++;
+            }
+            command[n] = 0;
+        }
+
+        if (command[0]) {
+            cgi.Cmd_Execute(EXEC_APPEND, va("bind %s \"%s\"\n", rd_grabBinds[i].key, command));
+        } else {
+            cgi.Cmd_Execute(EXEC_APPEND, va("unbind %s\n", rd_grabBinds[i].key));
+        }
+    }
+}
+
+// Once a frame: follows cg_ragdoll_grab. Turned on, what the keys did is kept
+// and the grabber's commands are bound; turned off, it is let go of and the
+// keys are given back.
+static void CG_RagdollGrabBindings(void)
+{
+    static int applied = -1;
+    const int  wanted  = cg_ragdoll_grab->integer ? 1 : 0;
+    int        i;
+
+    if (wanted == applied) {
+        return;
+    }
+
+    if (wanted) {
+        // Kept only the first time: on a later map, or a later launch with it
+        // still on, the keys already hold the grabber's commands.
+        if (!cg_ragdoll_grabsaved->string[0]) {
+            char saved[MAX_STRING_CHARS];
+
+            CG_RagdollReadBinds(saved, sizeof(saved));
+            cgi.Cvar_Set("cg_ragdoll_grabsaved", saved);
+        }
+
+        for (i = 0; i < RD_NUM_GRAB_BINDS; i++) {
+            cgi.Cmd_Execute(EXEC_APPEND, va("bind %s \"%s\"\n", rd_grabBinds[i].key, rd_grabBinds[i].command));
+        }
+
+        if (applied == 0) {
+            cgi.Printf("Ragdoll grabber on: hold mouse2 to grab, mouse3 punts, the wheel moves it nearer and farther\n");
+        }
+    } else {
+        CG_RagdollRelease();
+
+        // Nothing to give back if it was never on.
+        if (cg_ragdoll_grabsaved->string[0]) {
+            CG_RagdollRestoreBinds(cg_ragdoll_grabsaved->string);
+            cgi.Cvar_Set("cg_ragdoll_grabsaved", "");
+
+            if (applied == 1) {
+                cgi.Printf("Ragdoll grabber off: the keys are back to what they were\n");
+            }
+        }
+    }
+
+    applied = wanted;
+}
+
+// The point t of the way along the grabber's curve, and the direction it runs.
+static void CG_RagdollGrabCurve(
+    const vec3_t from, const vec3_t control, const vec3_t to, float t, vec3_t point, vec3_t tangent
+)
+{
+    const float u = 1.0f - t;
+    int         k;
+
+    for (k = 0; k < 3; k++) {
+        point[k]   = u * u * from[k] + 2.0f * u * t * control[k] + t * t * to[k];
+        tangent[k] = 2.0f * u * (control[k] - from[k]) + 2.0f * t * (to[k] - control[k]);
+    }
+}
+
+static void CG_RagdollDrawGrabBeam(const vec3_t muzzle, const vec3_t dir, const vec3_t target, const vec3_t held)
+{
+    static qhandle_t shader;
+    polyVert_t       quad[4];
+    vec3_t           control, point, tangent, side;
+    vec3_t           prevPoint, prevSide;
+    float            along = 0.0f;
+    int              n, k;
+
+    if (!shader) {
+        shader = cgi.R_RegisterShader(RD_GRAB_BEAM_SHADER);
+    }
+
+    VectorMA(muzzle, RD_GRAB_BEAM_PULL * Distance(muzzle, target), dir, control);
+
+    for (n = 0; n <= RD_GRAB_BEAM_SEGMENTS; n++) {
+        vec3_t toEye;
+
+        CG_RagdollGrabCurve(muzzle, control, held, (float)n / RD_GRAB_BEAM_SEGMENTS, point, tangent);
+
+        // Across the beam, square to both its run and the line to the eye, so
+        // the strip is seen face on from wherever the eye is.
+        VectorSubtract(cg.refdef.vieworg, point, toEye);
+        CrossProduct(tangent, toEye, side);
+        if (VectorNormalize(side) < 0.0001f) {
+            VectorCopy(cg.refdef.viewaxis[1], side);
+        }
+        VectorScale(side, RD_GRAB_BEAM_WIDTH, side);
+
+        if (n) {
+            const float from = along;
+
+            along += Distance(prevPoint, point) / RD_GRAB_BEAM_REPEAT;
+
+            VectorAdd(prevPoint, prevSide, quad[0].xyz);
+            VectorSubtract(prevPoint, prevSide, quad[1].xyz);
+            VectorSubtract(point, side, quad[2].xyz);
+            VectorAdd(point, side, quad[3].xyz);
+
+            quad[0].st[0] = from;
+            quad[0].st[1] = 0.0f;
+            quad[1].st[0] = from;
+            quad[1].st[1] = 1.0f;
+            quad[2].st[0] = along;
+            quad[2].st[1] = 1.0f;
+            quad[3].st[0] = along;
+            quad[3].st[1] = 0.0f;
+
+            for (k = 0; k < 4; k++) {
+                quad[k].modulate[0] = quad[k].modulate[1] = quad[k].modulate[2] = quad[k].modulate[3] = 255;
+            }
+
+            cgi.R_AddPolyToScene(shader, 4, quad, 0);
+        }
+
+        VectorCopy(point, prevPoint);
+        VectorCopy(side, prevSide);
+    }
+}
+
+// Once a frame, before any body is stepped: moves the end of the beam with the
+// view, and draws it.
+static void CG_RagdollGrabUpdate(void)
+{
+    cg_ragdoll_t *rd = CG_RagdollHeld();
+    vec3_t        start, dir, target, muzzle;
+    trace_t       tr;
+
+    if (!rd || !cg.snap) {
+        return;
+    }
+
+    CG_RagdollViewRay(start, dir);
+    VectorMA(start, rd_grab.dist, dir, target);
+
+    // Never carried into a wall: the end of the beam stops short of it.
+    CG_Trace(&tr, start, vec3_origin, vec3_origin, target, cg.snap->ps.clientNum, RD_CLIPMASK, qfalse, qfalse, "ragdoll grab");
+    if (tr.fraction < 1.0f) {
+        VectorMA(tr.endpos, -4.0f, dir, target);
+    }
+
+    VectorCopy(target, rd->grabTarget);
+    rd->grabJoint = rd_grab.joint;
+    CG_RagdollKeepAwake(rd);
+
+    // A beam from about where the gun is to the part being held.
+    //
+    // It bends the way the physics gun's does: it leaves the muzzle straight
+    // along the aim and curves round to wherever the body actually is. A
+    // quadratic curve with its middle point out along the view does that, and
+    // it is straight whenever the body is where the aim is, bowing only while
+    // the body lags behind a swing or hangs below the aim.
+    //
+    // Drawn here as strips that face the eye rather than through the game's
+    // beams, which widen only along the screen's horizontal and so show a beam
+    // running away from the eye almost edge on.
+    VectorMA(start, 12.0f, dir, muzzle);
+    VectorMA(muzzle, -6.0f, cg.refdef.viewaxis[1], muzzle);
+    VectorMA(muzzle, -6.0f, cg.refdef.viewaxis[2], muzzle);
+
+    CG_RagdollDrawGrabBeam(muzzle, dir, target, rd->part[rd_grab.joint].p);
 }
 
 //=============================================================
@@ -5157,6 +6462,20 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         cg_ragdoll_sleeptime->integer,
         cg_ragdoll_duration->integer,
         CG_RagdollGravity()
+    );
+    CG_RagdollDumpLine(rd, line);
+
+    // Kept apart from the header above, whose buffer it would overflow.
+    Com_sprintf(
+        line,
+        sizeof(line),
+        "# meshhits %d  meshfit %.2f  skinnedmesh %s\n"
+        "# M <buried> <vertices> <deepest> <bone> <gap>   as the body fell asleep: drawn mesh vertices\n"
+        "#     more than a unit inside the world, the deepest (shorter of straight up and back toward\n"
+        "#     its bone) and whose bone it is, and how far the underside is held above the ground\n",
+        cg_ragdoll_meshhits->integer,
+        cg_ragdoll_meshfit->value,
+        CG_RagdollCanSkin() ? "yes" : "no (engine too old)"
     );
     CG_RagdollDumpLine(rd, line);
 
@@ -5355,6 +6674,7 @@ static void CG_RagdollFree(cg_ragdoll_t *rd)
     memset(rd, 0, sizeof(*rd));
     rd->state     = RD_FREE;
     rd->entityNum = ENTITYNUM_NONE;
+    rd->grabJoint = -1;
 }
 
 void CG_InitRagdoll(void)
@@ -5369,6 +6689,11 @@ void CG_InitRagdoll(void)
     }
 
     memset(rd_evictedAt, 0, sizeof(rd_evictedAt));
+    memset(rd_appearedAt, 0, sizeof(rd_appearedAt));
+    // Models are reloaded with the map, and a tiki pointer can be reused.
+    memset(rd_meshFits, 0, sizeof(rd_meshFits));
+    memset(&rd_grab, 0, sizeof(rd_grab));
+    rd_numMeshFits = 0;
     rd_openTraces = 0;
 
     // cgs is zeroed on init, so this has to be turned on explicitly: a server
@@ -5469,6 +6794,30 @@ void CG_InitRagdoll(void)
     cg_ragdoll_armfree   = cgi.Cvar_Get("cg_ragdoll_armfree", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_legfree   = cgi.Cvar_Get("cg_ragdoll_legfree", "0.4", CVAR_ARCHIVE);
     cg_ragdoll_dumplabel = cgi.Cvar_Get("cg_ragdoll_dumplabel", "1", CVAR_ARCHIVE);
+    // One console line per thing that happens to a corpse's ragdoll: started,
+    // handed to another entity, lost, recycled, put to sleep, woken. Not
+    // archived, so it cannot be left on by accident.
+    cg_ragdoll_log = cgi.Cvar_Get("cg_ragdoll_log", "0", 0);
+    // Bullets are tested against the corpse's drawn mesh, not just the game's
+    // hit spheres. Needs an engine and renderer that can hand the mesh over;
+    // without them, or at 0, the spheres decide on their own.
+    cg_ragdoll_meshhits = cgi.Cvar_Get("cg_ragdoll_meshhits", "1", CVAR_ARCHIVE);
+    // Collision sized from the model's own mesh, measured once per model,
+    // scaled by this. 0 keeps the hand-set sizes in rd_joints. Off until the
+    // clipping metric says it helps: fatter shapes have hurt before (99fad083).
+    cg_ragdoll_meshfit = cgi.Cvar_Get("cg_ragdoll_meshfit", "0", CVAR_ARCHIVE);
+    // The grabber (+rdgrab, rdpunt): how far it reaches, and how hard a punt
+    // throws a body, in units per second.
+    // The grabber is off until this is set, and setting it binds its keys.
+    // What the keys did before is kept in cg_ragdoll_grabsaved and put back
+    // when it is cleared. See CG_RagdollGrabBindings.
+    cg_ragdoll_grab      = cgi.Cvar_Get("cg_ragdoll_grab", "0", CVAR_ARCHIVE);
+    cg_ragdoll_grabsaved = cgi.Cvar_Get("cg_ragdoll_grabsaved", "", CVAR_ARCHIVE);
+    cg_ragdoll_grabrange = cgi.Cvar_Get("cg_ragdoll_grabrange", "1024", CVAR_ARCHIVE);
+    // How stiffly the grabber holds a body. Lower is heavier: it lags further
+    // behind a swing and hangs lower under the aim.
+    cg_ragdoll_grabspring = cgi.Cvar_Get("cg_ragdoll_grabspring", "50", CVAR_ARCHIVE);
+    cg_ragdoll_puntspeed = cgi.Cvar_Get("cg_ragdoll_puntspeed", "700", CVAR_ARCHIVE);
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
@@ -5540,6 +6889,7 @@ static cg_ragdoll_t *CG_RagdollForEntity(int entityNum)
 // hides the player, which drops it out of the snapshot entirely. Let the new
 // corpse take over the running simulation so it does not visibly pop back to
 // the frozen animation pose.
+//
 static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
 {
     int i;
@@ -5569,16 +6919,90 @@ static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
             continue;
         }
 
+        if (rd->lastEntityNum != cent->currentState.number && cg.time - rd->orphanTime > RD_ORPHAN_ADOPT_WINDOW) {
+            continue;
+        }
+
         VectorSubtract(rd->entOrigin, cent->lerpOrigin, d);
         if (VectorLengthSquared(d) > RD_ADOPT_DIST * RD_ADOPT_DIST) {
             continue;
         }
 
+        CG_RagdollLog(rd, "adopted by entity %d", cent->currentState.number);
         rd->entityNum = cent->currentState.number;
         return rd;
     }
 
     return NULL;
+}
+
+// Single player has its own version of this, from a mod rather than the game.
+// CorpseStay SP (in HRRTM, among others) keeps corpses past the engine's body
+// queue by spawning a second actor for each one, hidden, playing the same
+// death animation. When that animation ends it hides the real corpse and shows
+// the copy on the same server frame. The copy is a live actor with its AI
+// turned off, not a corpse, so it carries no EF_DEAD, and drawn as it is it
+// snaps the body back to the last frame of the animation.
+//
+// It is let take over as a stand-in, but only under the conditions that mark
+// that swap: it came into view just as the corpse left it, near where the
+// corpse was, with the same model. Of several that fit, the nearest.
+static cg_ragdoll_t *CG_RagdollAdoptStandIn(centity_t *cent, const refEntity_t *model)
+{
+    cg_ragdoll_t *best     = NULL;
+    float         bestDist = 0.0f;
+    int           i;
+
+    for (i = 0; i < MAX_RAGDOLLS; i++) {
+        cg_ragdoll_t *rd = &cg_ragdolls[i];
+        float         dist;
+
+        if (rd->state == RD_FREE) {
+            continue;
+        }
+
+        if (rd->entityNum != ENTITYNUM_NONE && cg_entities[rd->entityNum].currentValid) {
+            continue;
+        }
+
+        if (rd->modelIndex != cent->currentState.modelindex) {
+            continue;
+        }
+
+        dist = Distance(rd->entOrigin, cent->lerpOrigin);
+
+        // Nothing else checks the tiki for a stand-in: if it differed, the
+        // ragdoll would be thrown away and a live actor seeded in its place.
+        if (rd->tiki != model->tiki || cg.time - rd->orphanTime > RD_STANDIN_WINDOW || dist > RD_STANDIN_DIST) {
+            CG_RagdollLog(
+                rd,
+                "not taken by entity %d: tiki %s, orphaned %d ms ago, %.1f units away",
+                cent->currentState.number,
+                rd->tiki == model->tiki ? "same" : "different",
+                cg.time - rd->orphanTime,
+                dist
+            );
+            continue;
+        }
+
+        if (!best || dist < bestDist) {
+            best     = rd;
+            bestDist = dist;
+        }
+    }
+
+    if (!best) {
+        return NULL;
+    }
+
+    CG_RagdollLog(best, "taken over by stand-in entity %d, %.1f units away", cent->currentState.number, bestDist);
+
+    best->entityNum = cent->currentState.number;
+    best->standIn   = qtrue;
+    // Pinned afresh to the stand-in, whose origin may not be the corpse's.
+    best->sleepPinned = qfalse;
+
+    return best;
 }
 
 // How far a joint may get from its entity before the body is given up on. A
@@ -5687,9 +7111,10 @@ static qboolean CG_RagdollWasEvicted(int entityNum)
 
 static cg_ragdoll_t *CG_RagdollAlloc(void)
 {
-    cg_ragdoll_t *oldest  = NULL;
-    int           used    = 0;
-    int           solving = 0;
+    cg_ragdoll_t *oldest       = NULL;
+    cg_ragdoll_t *oldestOrphan = NULL;
+    int           used         = 0;
+    int           solving      = 0;
     int           i;
 
     for (i = 0; i < MAX_RAGDOLLS; i++) {
@@ -5701,6 +7126,18 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
         }
 
         used++;
+
+        // A body whose entity has gone is not being solved either: nothing
+        // calls it until something adopts it. Counted, it held the budget
+        // against the living, and single player loses one on every corpse the
+        // CorpseStay handover misses. Enough of those and every new death
+        // evicted a settled corpse, which then snapped back to its animation.
+        if (rd->entityNum == ENTITYNUM_NONE || !cg_entities[rd->entityNum].currentValid) {
+            if (!oldestOrphan || rd->startTime < oldestOrphan->startTime) {
+                oldestOrphan = rd;
+            }
+            continue;
+        }
 
         // What cg_ragdoll_maxcount is for is the cost of solving, and a
         // sleeping corpse is not solved: the whole step is skipped for it and
@@ -5716,12 +7153,9 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
         }
 
         // Only ever recycle a corpse that has finished moving, or one whose
-        // entity is already gone. Evicting a body that is still falling is
-        // very visible; running out of slots is not.
-        recyclable =
-            (rd->state == RD_SLEEPING || rd->entityNum == ENTITYNUM_NONE || !cg_entities[rd->entityNum].currentValid)
-                ? qtrue
-                : qfalse;
+        // entity is already gone (taken first, above). Evicting a body that is
+        // still falling is very visible; running out of slots is not.
+        recyclable = rd->state == RD_SLEEPING ? qtrue : qfalse;
 
         if (recyclable && (!oldest || rd->startTime < oldest->startTime)) {
             oldest = rd;
@@ -5736,11 +7170,21 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
         }
     }
 
+    // Nobody can see an orphan, so it goes before any corpse that is drawn.
+    if (oldestOrphan) {
+        CG_RagdollLog(oldestOrphan, "recycled while orphaned (%d in use, %d solving)", used, solving);
+        CG_RagdollFree(oldestOrphan);
+        return oldestOrphan;
+    }
+
     if (oldest) {
+        CG_RagdollLog(oldest, "EVICTED, it will keep its animation pose (%d in use, %d solving)", used, solving);
         CG_RagdollNoteEvicted(oldest);
         CG_RagdollFree(oldest);
         return oldest;
     }
+
+    CG_RagdollLog(&cg_ragdolls[0], "no slot for a new corpse (%d in use, %d solving)", used, solving);
 
     return NULL;
 }
@@ -5754,7 +7198,8 @@ void CG_RagdollEntityReset(centity_t *cent)
     // ahead of the early return below, because a body that lost its ragdoll
     // has no ragdoll to find.
     if (cent->currentState.number >= 0 && cent->currentState.number < MAX_GENTITIES) {
-        rd_evictedAt[cent->currentState.number] = 0;
+        rd_evictedAt[cent->currentState.number]  = 0;
+        rd_appearedAt[cent->currentState.number] = cg.time ? cg.time : 1;
     }
 
     if (!rd) {
@@ -5763,13 +7208,67 @@ void CG_RagdollEntityReset(centity_t *cent)
 
     // Orphan rather than free: in multiplayer this fires on the respawn that
     // also spawns the Body which is about to adopt the simulation.
+    CG_RagdollLog(rd, "orphaned: its entity was reset");
     rd->entityNum  = ENTITYNUM_NONE;
     rd->orphanTime = cg.time;
 }
 
+// Once a second, what the mesh traces for bullet hits cost (cg_ragdoll_log),
+// and for a few seconds after a hit, the triangle it went into and where
+// (cg_ragdoll_debug 3).
+static void CG_RagdollMeshReport(void)
+{
+    static int reportedAt;
+
+    if (cg.time - reportedAt >= 1000 || cg.time < reportedAt) {
+        if (rd_meshTraces && cg_ragdoll_log->integer) {
+            cgi.Printf(
+                "ragdoll %d: %d mesh traces in the last second, %.1f us each, %.1f us in all\n",
+                cg.time,
+                rd_meshTraces,
+                rd_meshTraceUs / rd_meshTraces,
+                rd_meshTraceUs
+            );
+        }
+
+        rd_meshTraces  = 0;
+        rd_meshTraceUs = 0.0;
+        reportedAt     = cg.time;
+    }
+
+    if (cg_ragdoll_debug->integer >= 3 && rd_lastHitTime && cg.time - rd_lastHitTime < 3000
+        && cg.time >= rd_lastHitTime && CG_RagdollDebugReady()) {
+        vec3_t a, b;
+        int    k;
+
+        for (k = 0; k < 3; k++) {
+            cgi.R_DebugLine(rd_lastHitTri[k], rd_lastHitTri[(k + 1) % 3], 1.0f, 0.2f, 0.2f, 1.0f);
+        }
+
+        for (k = 0; k < 3; k++) {
+            VectorCopy(rd_lastHitPoint, a);
+            VectorCopy(rd_lastHitPoint, b);
+            a[k] -= 2.0f;
+            b[k] += 2.0f;
+            cgi.R_DebugLine(a, b, 1.0f, 1.0f, 0.0f, 1.0f);
+        }
+    }
+}
+
 static void CG_RagdollExpire(void)
 {
-    int i;
+    static int lastTime = -1;
+    int        i;
+
+    // Once a frame is enough, and this is called for every entity.
+    if (cg.time == lastTime) {
+        return;
+    }
+    lastTime = cg.time;
+
+    CG_RagdollMeshReport();
+    CG_RagdollGrabBindings();
+    CG_RagdollGrabUpdate();
 
     for (i = 0; i < MAX_RAGDOLLS; i++) {
         cg_ragdoll_t *rd = &cg_ragdolls[i];
@@ -5783,16 +7282,20 @@ static void CG_RagdollExpire(void)
 
         if (!gone) {
             rd->orphanTime = cg.time;
+            rd->gone       = qfalse;
             continue;
         }
 
-        // Deliberately generous: a corpse the player walks past and comes back
-        // to should still be lying the way it settled rather than snapping
-        // back to the frozen death animation. The allocator reclaims slots
-        // long before this fires.
-        if (cg.time - rd->orphanTime > RD_ORPHAN_MAX) {
-            CG_RagdollFree(rd);
+        if (!rd->gone) {
+            rd->gone = qtrue;
+            CG_RagdollLog(rd, "its entity left the snapshot");
         }
+
+        // An orphan is not timed out. Its entity is usually just out of view,
+        // and a corpse the player comes back to, however much later, should
+        // still be lying the way it settled rather than snapping back to its
+        // death animation. The allocator takes orphans first when it needs a
+        // slot, so ones whose corpse really has gone cost nothing but memory.
     }
 }
 
@@ -5800,7 +7303,18 @@ static void CG_RagdollExpire(void)
 // Per-entity entry point
 //=============================================================
 
-static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson)
+// Whether this entity came into the snapshot recently enough to be a corpse's
+// stand-in.
+static qboolean CG_RagdollStandInArrived(int entityNum)
+{
+    if (entityNum < 0 || entityNum >= MAX_GENTITIES || !rd_appearedAt[entityNum]) {
+        return qfalse;
+    }
+
+    return cg.time - rd_appearedAt[entityNum] <= RD_STANDIN_WINDOW ? qtrue : qfalse;
+}
+
+static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson, qboolean standIn)
 {
     const entityState_t *s1 = &cent->currentState;
 
@@ -5808,7 +7322,7 @@ static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean
         return qfalse;
     }
 
-    if (!(s1->eFlags & EF_DEAD)) {
+    if (!(s1->eFlags & EF_DEAD) && !standIn) {
         return qfalse;
     }
 
@@ -5835,6 +7349,150 @@ static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean
     return qtrue;
 }
 
+// How much of the body as drawn has ended up inside the world, and how far the
+// body as drawn is held up off it, measured once as it falls asleep and only
+// when someone is looking (a trace or the log).
+//
+// Every other measurement here is of the particles or the bones, and the
+// defects the screenshots keep finding are neither: the bone lies where it
+// should and the sleeve is in the floor, or a man lying on his pack is propped
+// up off the ground by it. This checks the mesh itself, vertex by vertex.
+//
+// A vertex counts as buried only past RD_CLIP_TOLERANCE: the underside of a
+// body lying on the floor sits a hair into it, and counting that made every
+// corpse on flat ground read ten percent buried. Depth is the shorter of two
+// ways out, straight up and back toward the bone the vertex hangs from; the
+// bone line alone runs slantwise through a floor and reads several times too
+// deep.
+#define RD_CLIP_TOLERANCE 1.0f
+
+// How far above and below a vertex the floor is looked for.
+#define RD_CLIP_PROBE 64.0f
+
+// Only the underside is checked for a gap, which is the vertices this close to
+// the lowest one.
+#define RD_CLIP_UNDERSIDE 8.0f
+
+static void CG_RagdollMeasureClipping(cg_ragdoll_t *rd, refEntity_t *model, int entityNum)
+{
+    vec3_t boneWorld[TIKI_MAX_BONES];
+    byte   boneKnown[TIKI_MAX_BONES];
+    char   line[256];
+    float  worst     = 0.0f;
+    float  lowest    = 0.0f;
+    float  gap       = RD_CLIP_PROBE;
+    int    worstBone = -1;
+    int    buried    = 0;
+    int    i;
+
+    if (!rd->dumpFile && !cg_ragdoll_log->integer) {
+        return;
+    }
+
+    if (!CG_RagdollSkin(model, NULL)) {
+        return;
+    }
+
+    memset(boneKnown, 0, sizeof(boneKnown));
+
+    for (i = 0; i < rd_skinNumVerts; i++) {
+        if (!i || rd_skinVerts[i].xyz[2] < lowest) {
+            lowest = rd_skinVerts[i].xyz[2];
+        }
+    }
+
+    for (i = 0; i < rd_skinNumVerts; i++) {
+        const skinnedVert_t *v = &rd_skinVerts[i];
+        trace_t              tr;
+        vec3_t               probe;
+        float                depth;
+
+        if (!(CG_PointContents(v->xyz, entityNum) & RD_CLIPMASK)) {
+            // How far the underside is held off whatever is below it.
+            if (v->xyz[2] <= lowest + RD_CLIP_UNDERSIDE && gap > 0.0f) {
+                VectorCopy(v->xyz, probe);
+                probe[2] -= RD_CLIP_PROBE;
+                CG_Trace(&tr, v->xyz, vec3_origin, vec3_origin, probe, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll gap");
+
+                if (!tr.startsolid && tr.fraction < 1.0f && tr.fraction * RD_CLIP_PROBE < gap) {
+                    gap = tr.fraction * RD_CLIP_PROBE;
+                }
+            }
+            continue;
+        }
+
+        // Straight up: from above, down to the vertex.
+        depth = RD_CLIP_PROBE;
+        VectorCopy(v->xyz, probe);
+        probe[2] += RD_CLIP_PROBE;
+        CG_Trace(&tr, probe, vec3_origin, vec3_origin, v->xyz, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll clipping");
+        if (!tr.startsolid) {
+            depth = RD_CLIP_PROBE * (1.0f - tr.fraction);
+        }
+
+        // Back toward its bone, which is inside the body.
+        if (v->bone >= 0 && v->bone < TIKI_MAX_BONES) {
+            float length;
+
+            if (!boneKnown[v->bone]) {
+                orientation_t ori = cgi.TIKI_Orientation(model, v->bone);
+                int           k;
+
+                VectorCopy(model->origin, boneWorld[v->bone]);
+                for (k = 0; k < 3; k++) {
+                    VectorMA(boneWorld[v->bone], ori.origin[k], model->axis[k], boneWorld[v->bone]);
+                }
+                boneKnown[v->bone] = 1;
+            }
+
+            length = Distance(boneWorld[v->bone], v->xyz);
+            CG_Trace(&tr, boneWorld[v->bone], vec3_origin, vec3_origin, v->xyz, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll clipping");
+
+            if (!tr.startsolid && length * (1.0f - tr.fraction) < depth) {
+                depth = length * (1.0f - tr.fraction);
+            }
+        }
+
+        // Touching, not buried.
+        if (depth <= RD_CLIP_TOLERANCE) {
+            gap = 0.0f;
+            continue;
+        }
+
+        gap = 0.0f;
+        buried++;
+
+        if (depth > worst) {
+            worst     = depth;
+            worstBone = v->bone;
+        }
+    }
+
+    Com_sprintf(
+        line,
+        sizeof(line),
+        "M %d %d %.2f %s %.2f\n",
+        buried,
+        rd_skinNumVerts,
+        worst,
+        worstBone >= 0 ? cgi.Tag_NameForNum(model->tiki, worstBone) : "-",
+        gap
+    );
+    CG_RagdollDumpLine(rd, line);
+
+    CG_RagdollLog(
+        rd,
+        "mesh: %d of %d vertices more than %.0f unit in the world (%.1f%%), deepest %.1f on %s; underside %.1f above the ground",
+        buried,
+        rd_skinNumVerts,
+        RD_CLIP_TOLERANCE,
+        100.0f * buried / rd_skinNumVerts,
+        worst,
+        worstBone >= 0 ? cgi.Tag_NameForNum(model->tiki, worstBone) : "-",
+        gap
+    );
+}
+
 void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 {
     cg_ragdoll_t *rd;
@@ -5849,8 +7507,17 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
     rd = CG_RagdollForEntity(cent->currentState.number);
 
-    if (!CG_RagdollEligible(cent, model, bThirdPerson)) {
+    // A stand-in for a corpse that has just been swapped out. See
+    // CG_RagdollAdopt.
+    if (!rd && !(cent->currentState.eFlags & EF_DEAD) && cent->currentState.eType == ET_MODELANIM
+        && CG_RagdollStandInArrived(cent->currentState.number)
+        && CG_RagdollEligible(cent, model, bThirdPerson, qtrue)) {
+        rd = CG_RagdollAdoptStandIn(cent, model);
+    }
+
+    if (!CG_RagdollEligible(cent, model, bThirdPerson, rd ? rd->standIn : qfalse)) {
         if (rd) {
+            CG_RagdollLog(rd, "freed: its entity is no longer eligible (eFlags 0x%x)", cent->currentState.eFlags);
             CG_RagdollFree(rd);
         }
         return;
@@ -5859,6 +7526,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // cg_forceModel can be toggled at runtime, and a tiki swap invalidates
     // every cached bone index, so re-seed rather than emit garbage.
     if (rd && rd->tiki != model->tiki) {
+        CG_RagdollLog(rd, "freed: its entity changed model");
         CG_RagdollFree(rd);
         rd = NULL;
     }
@@ -5878,6 +7546,10 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // slot from another settled corpse, which would then ask for one back.
         if (CG_RagdollWasEvicted(cent->currentState.number)) {
             return;
+        }
+
+        if (cg_ragdoll_log->integer) {
+            cgi.Printf("ragdoll %d: entity %d died, starting a ragdoll\n", cg.time, cent->currentState.number);
         }
 
         rd = CG_RagdollAlloc();
@@ -5918,7 +7590,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         }
     }
 
-    rd->entityNum = cent->currentState.number;
+    rd->entityNum     = cent->currentState.number;
+    rd->lastEntityNum = rd->entityNum;
     VectorCopy(cent->lerpOrigin, rd->entOrigin);
     VectorCopy(cent->lerpAngles, rd->entAngles);
 
@@ -6049,6 +7722,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // entity is, and does not get another ragdoll.
         if (CG_RagdollRunaway(rd)) {
             cgi.DPrintf("ragdoll: gave up on entity %d, it left the world\n", rd->entityNum);
+            CG_RagdollLog(rd, "EVICTED: it left the world");
             CG_RagdollNoteEvicted(rd);
             CG_RagdollFree(rd);
             return;
@@ -6075,7 +7749,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
             if (supported && cg.time - rd->quietSince > cg_ragdoll_sleeptime->integer) {
                 rd->state = RD_SLEEPING;
+                CG_RagdollLog(rd, "asleep after %d ms", elapsed);
                 CG_RagdollNoteMovers(rd);
+                rd->measureClip = qtrue;
             } else if (cg_ragdoll_duration->integer > 0 && elapsed > cg_ragdoll_duration->integer
                        && cg.time > rd->wakeUntil) {
                 // The lifetime cap is a budget, not a statement about the body.
@@ -6086,7 +7762,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 // far beyond any real settling time overrides that.
                 if (supported || elapsed > cg_ragdoll_duration->integer * RD_SLEEP_BACKSTOP) {
                     rd->state = RD_SLEEPING;
+                    CG_RagdollLog(rd, "asleep after %d ms, at the lifetime cap", elapsed);
                     CG_RagdollNoteMovers(rd);
+                    rd->measureClip = qtrue;
                 }
             }
         }
@@ -6157,6 +7835,14 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // that queries a bone or a tag, attachments and the shadow included, sees
     // the ragdoll rather than the animation.
     cgi.ForceUpdatePose(model);
+
+    rd->drawn     = *model;
+    rd->haveDrawn = qtrue;
+
+    if (rd->measureClip) {
+        rd->measureClip = qfalse;
+        CG_RagdollMeasureClipping(rd, model, cent->currentState.number);
+    }
 
     // Deliberately not behind cg_ragdoll_debug: that draws a spike at every
     // joint and, at level 2, the whole constraint web, which is the last thing

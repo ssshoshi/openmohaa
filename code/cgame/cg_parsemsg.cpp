@@ -63,6 +63,59 @@ static vec3_t          flesh_impact_pos[MAX_IMPACTS];
 static vec3_t          flesh_impact_norm[MAX_IMPACTS];
 static int             flesh_impact_large[MAX_IMPACTS];
 
+// Added in OPM
+//  Rounds this frame that went into a ragdoll corpse, from where they went in
+//  to where the server says they ended. See CG_NoteCorpseStoppedBullet.
+#define MAX_CORPSE_STOPS 64
+static int    corpse_stop_count;
+static vec3_t corpse_stop_start[MAX_CORPSE_STOPS];
+static vec3_t corpse_stop_end[MAX_CORPSE_STOPS];
+
+// How far off a stopped round's path the server's impact may be and still be
+// taken for that round's. The server reports its own trace end and the client
+// retraces the same line, so they agree to within rounding.
+#define CORPSE_STOP_SLOP 8.0f
+
+static void CG_NoteCorpseStoppedBullet(const vec3_t start, const vec3_t end)
+{
+    if (corpse_stop_count >= MAX_CORPSE_STOPS) {
+        return;
+    }
+
+    VectorCopy(start, corpse_stop_start[corpse_stop_count]);
+    VectorCopy(end, corpse_stop_end[corpse_stop_count]);
+    corpse_stop_count++;
+}
+
+// Whether the server's impact at pos belongs to a round that a corpse stopped
+// before it got there.
+static qboolean CG_ImpactBehindCorpse(const vec3_t pos)
+{
+    int i;
+
+    for (i = 0; i < corpse_stop_count; i++) {
+        vec3_t dir, rel, closest;
+        float  length, along;
+
+        VectorSubtract(corpse_stop_end[i], corpse_stop_start[i], dir);
+        length = VectorNormalize(dir);
+
+        VectorSubtract(pos, corpse_stop_start[i], rel);
+        along = DotProduct(rel, dir);
+
+        if (along < 0.0f || along > length + CORPSE_STOP_SLOP) {
+            continue;
+        }
+
+        VectorMA(corpse_stop_start[i], along, dir, closest);
+        if (Distance(pos, closest) <= CORPSE_STOP_SLOP) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
 void CG_MakeBulletHoleSound(const vec3_t i_vPos, const vec3_t i_vNorm, int iLarge, trace_t *pPreTrace)
 {
     int     iSurfType;
@@ -495,6 +548,7 @@ static void CG_MakeBulletTracerInternal(
     vec3_t   vTmp;
     int      iNumImpacts;
     trace_t  tImpacts[128];
+    vec3_t   vCorpseStop;
     float    fImpSndDistRA;
     float    fImpSndDistLA;
     float    fImpSndDistRB;
@@ -587,19 +641,25 @@ static void CG_MakeBulletTracerInternal(
                         VectorNormalizeFast(trace.plane.normal);
                     }
 
-                    if (!bInWater && trace.fraction < 1.0f && iNumImpacts < ARRAY_LEN(tImpacts)) {
+                    // Corpses are moved by the round after the fact, along the
+                    // line it actually took. The trace above is not changed by
+                    // this: the bullet is traced against the world and the
+                    // living exactly as before, since corpses exist only on
+                    // the client and one that really stopped bullets would
+                    // shelter a man on one machine and not on another. But a
+                    // round that goes into a corpse is drawn and heard ending
+                    // there, so whatever it would have hit behind the body
+                    // makes no impact, and neither does the server's report of
+                    // hitting it (see CG_AddBulletImpacts).
+                    if (CG_RagdollNoteBullet(vTraceStart, trace.endpos, iLarge, vCorpseStop)) {
+                        CG_NoteCorpseStoppedBullet(vCorpseStop, i_vEnd[iBullet]);
+                        VectorCopy(vCorpseStop, trace.endpos);
+                        trace.fraction = 1.0f;
+                        bBulletDone    = qtrue;
+                    } else if (!bInWater && trace.fraction < 1.0f && iNumImpacts < ARRAY_LEN(tImpacts)) {
                         memcpy(&tImpacts[iNumImpacts], &trace, sizeof(trace_t));
                         iNumImpacts++;
                     }
-
-                    // Corpses are moved by the round after the fact, along the
-                    // line it actually took. Nothing above is changed by this:
-                    // the bullet is traced against the world and the living
-                    // exactly as before and passes through the dead, which it
-                    // has to, since corpses exist only on the client and one
-                    // that stopped bullets would shelter a man on one machine
-                    // and not on another.
-                    CG_RagdollNoteBullet(vTraceStart, trace.endpos, iLarge);
 
                     if (iTracerVisible && !bMadeTracer) {
                         CG_BulletTracerEffect(vTrailStart, trace.endpos, iLarge, alpha);
@@ -855,6 +915,23 @@ void CG_AddBulletTracers()
     bullet_tracers_count        = 0;
 }
 
+// Added in OPM
+//  A round passing through a ragdoll corpse. The server no longer collides with
+//  the body, so it sends no flesh hit for it; the ragdoll finds its own entry
+//  point and queues the same effect a live body gets, sharing the per-frame
+//  sound selection below.
+void CG_AddCorpseFleshImpact(const vec3_t pos, const vec3_t norm, int large)
+{
+    if (flesh_impact_count >= MAX_IMPACTS) {
+        return;
+    }
+
+    VectorCopy(pos, flesh_impact_pos[flesh_impact_count]);
+    VectorCopy(norm, flesh_impact_norm[flesh_impact_count]);
+    flesh_impact_large[flesh_impact_count] = large;
+    flesh_impact_count++;
+}
+
 void CG_AddBulletImpacts()
 {
     int    i;
@@ -870,6 +947,27 @@ void CG_AddBulletImpacts()
     int    iImpSndIndexLB;
     vec3_t vTmp;
     str    sSoundName;
+
+    // Added in OPM
+    //  Drop what the server reports a round hitting after a corpse stopped it.
+    if (corpse_stop_count) {
+        int kept = 0;
+
+        for (i = 0; i < wall_impact_count; i++) {
+            if (CG_ImpactBehindCorpse(wall_impact_pos[i])) {
+                continue;
+            }
+
+            VectorCopy(wall_impact_pos[i], wall_impact_pos[kept]);
+            VectorCopy(wall_impact_norm[i], wall_impact_norm[kept]);
+            wall_impact_large[kept] = wall_impact_large[i];
+            wall_impact_type[kept]  = wall_impact_type[i];
+            kept++;
+        }
+
+        wall_impact_count = kept;
+        corpse_stop_count = 0;
+    }
 
     if (wall_impact_count) {
         if (wall_impact_count > 4) {
