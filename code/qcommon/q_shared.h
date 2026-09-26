@@ -1934,6 +1934,10 @@ typedef struct usercmd_s {
 #define RF_INVISIBLE			(1<<25)		// This entity is invisible, and only negative lights will light it up
 #define RF_ALWAYSDRAW			(1<<26)		// This entity is invisible, and only negative lights will light it up
 #define RF_PRECISESHADOW		(1<<28)		// This entity is invisible, and only negative lights will light it up
+// OPM: set by cgame only, never sent by a server. The player's own body in
+// first person: fold a skeletal model's head and arms away, leaving the
+// torso and legs.
+#define RF_FIRST_PERSON_BODY		(1<<29)
 //
 // use this mask when propagating renderfx from one entity to another
 //

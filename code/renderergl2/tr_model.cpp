@@ -614,6 +614,118 @@ void RB_DrawSkeletor(trRefEntity_t *ent)
 surfaceType_t skelSurface = SF_TIKI_SKEL;
 
 /*
+=============
+R_FoldHeadAndArms
+
+For RF_FIRST_PERSON_BODY, the player's own body seen through their eyes:
+folds the head, where the camera sits, and the arms, which the view model
+already draws, each into the joint it hangs from, and leaves the torso and
+legs. The renderer has no bone names, so the joints are found by the shape of
+the skeleton. The pelvis is the bone nearest the root with three children that
+are chains of three bones or more (the two legs and the spine), and the spine
+is the biggest of those. The chest is the first bone up the spine that
+branches three ways (the neck and the two arms). With no such chest, the whole
+spine is folded and only the legs are left.
+=============
+*/
+static void R_FoldHeadAndArms(dtiki_t *tiki, int entityNumber, skelBoneCache_t *bones, int numBones)
+{
+    void *skeletor;
+    int   parent[TIKI_MAX_BONES];
+    int   size[TIKI_MAX_BONES];
+    int   depth[TIKI_MAX_BONES];
+    int   fold[TIKI_MAX_BONES];
+    int   i, j, p;
+    int   spine = -1, spineDepth = 0;
+    int   chest = -1, chestDepth = 0;
+
+    if (numBones > TIKI_MAX_BONES) {
+        return;
+    }
+
+    skeletor = ri.TIKI_GetSkeletor(tiki, entityNumber);
+    for (i = 0; i < numBones; i++) {
+        parent[i] = ri.SKEL_GetBoneParent(skeletor, i);
+        size[i]   = 0;
+        depth[i]  = 0;
+        fold[i]   = -1;
+    }
+
+    for (i = 0; i < numBones; i++) {
+        size[i]++;
+        for (p = parent[i], j = 0; p >= 0 && j < numBones; p = parent[p], j++) {
+            size[p]++;
+            depth[i]++;
+        }
+    }
+
+    for (i = 0; i < numBones; i++) {
+        int chains = 0, biggest = -1;
+
+        for (j = 0; j < numBones; j++) {
+            if (parent[j] == i && size[j] >= 3) {
+                chains++;
+                if (biggest < 0 || size[j] > size[biggest]) {
+                    biggest = j;
+                }
+            }
+        }
+
+        if (chains >= 3 && (spine < 0 || depth[i] < spineDepth)) {
+            spine      = biggest;
+            spineDepth = depth[i];
+        }
+    }
+
+    if (spine < 0) {
+        return;
+    }
+
+    for (i = 0; i < numBones; i++) {
+        int branches = 0;
+
+        // only bones on the spine's side of the pelvis
+        for (p = i, j = 0; p >= 0 && p != spine && j < numBones; p = parent[p], j++) {}
+        if (p != spine) {
+            continue;
+        }
+
+        for (j = 0; j < numBones; j++) {
+            if (parent[j] == i && size[j] >= 2) {
+                branches++;
+            }
+        }
+
+        if (branches >= 3 && (chest < 0 || depth[i] < chestDepth)) {
+            chest      = i;
+            chestDepth = depth[i];
+        }
+    }
+
+    // each bone folds into the root of the branch it is on
+    for (i = 0; i < numBones; i++) {
+        for (p = i, j = 0; p >= 0 && j < numBones; p = parent[p], j++) {
+            if (chest >= 0 ? parent[p] == chest : p == spine) {
+                fold[i] = p;
+                break;
+            }
+        }
+    }
+
+    for (i = 0; i < numBones; i++) {
+        if (fold[i] >= 0 && fold[i] != i) {
+            VectorCopy(bones[fold[i]].offset, bones[i].offset);
+        }
+    }
+
+    for (i = 0; i < numBones; i++) {
+        if (fold[i] >= 0) {
+            memset(bones[i].matrix, 0, sizeof(bones[i].matrix));
+        }
+    }
+}
+
+/*
 ==============
 R_AddSkelSurfaces
 ==============
@@ -752,6 +864,10 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
             outbones->matrix[2][2] = newFrame->bones[i][2][2];
             outbones->matrix[2][3] = 0;
             outbones++;
+        }
+
+        if (ent->e.renderfx & RF_FIRST_PERSON_BODY) {
+            R_FoldHeadAndArms(tiki, ent->e.entityNumber, outbones - num_tags, num_tags);
         }
     }
 

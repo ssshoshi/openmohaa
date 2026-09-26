@@ -78,6 +78,8 @@ cvar_t *dm_playergermanmodel;
 cvar_t *cg_forceModel;
 cvar_t *cg_animationviewmodel;
 cvar_t *cg_firstPersonShadow;
+cvar_t *cg_firstPersonBody;
+cvar_t *cg_firstPersonBodyOffset;
 cvar_t *cg_hitmessages;
 cvar_t *cg_acidtrip;
 cvar_t *cg_hud;
@@ -168,6 +170,8 @@ void CG_RegisterCvars(void)
     cg_forceModel                 = cgi.Cvar_Get("cg_forceModel", "0", CVAR_ARCHIVE);
     cg_animationviewmodel         = cgi.Cvar_Get("cg_animationviewmodel", "0", CVAR_SYSTEMINFO);
     cg_firstPersonShadow          = cgi.Cvar_Get("cg_firstPersonShadow", "0", CVAR_ARCHIVE);
+    cg_firstPersonBody            = cgi.Cvar_Get("cg_firstPersonBody", "0", CVAR_ARCHIVE);
+    cg_firstPersonBodyOffset      = cgi.Cvar_Get("cg_firstPersonBodyOffset", "0", CVAR_ARCHIVE);
     cg_hitmessages                = cgi.Cvar_Get("cg_hitmessages", "1", CVAR_ARCHIVE);
     cg_acidtrip                   = cgi.Cvar_Get("cg_acidtrip", "0", CVAR_CHEAT);
     cg_hud                        = cgi.Cvar_Get("cg_hud", "0", 0);
