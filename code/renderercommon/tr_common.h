@@ -48,6 +48,9 @@ typedef enum
 	IMGFLAG_NOLIGHTSCALE   = 0x0020,
 	IMGFLAG_CLAMPTOEDGE    = 0x0040,
 	IMGFLAG_GENNORMALMAP   = 0x0080,
+	// MOH:AA's clampmapx and clampmapy: clamp one axis, repeat the other
+	IMGFLAG_CLAMPTOEDGE_S  = 0x0100,
+	IMGFLAG_CLAMPTOEDGE_T  = 0x0200,
 } imgFlags_t;
 
 typedef struct image_s {

@@ -831,13 +831,23 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 		//=========================
 		{
 			imgType_t type = IMGTYPE_COLORALPHA;
-			imgFlags_t flags = IMGFLAG_CLAMPTOEDGE;
+			imgFlags_t flags;
 
 			// OPENMOHAA-specific stuff
 			//=========================
-			// FIXME:
-			//  Support clampmapx and clampmapy
-			//  Also add IMGFLAG_CLAMP along IMGFLAG_CLAMPTOEDGE
+			// clampmapx and clampmapy clamp one axis and repeat the other, as
+			// in GL1. The Omaha shoreline repeats along the beach and clamps
+			// up it; clamping both smeared its edge pixels into streaks.
+			if ( !token[8] ) {
+				flags = IMGFLAG_CLAMPTOEDGE;
+			} else if ( ( token[8] == 'x' || token[8] == 'X' ) && !token[9] ) {
+				flags = IMGFLAG_CLAMPTOEDGE_S;
+			} else if ( ( token[8] == 'y' || token[8] == 'Y' ) && !token[9] ) {
+				flags = IMGFLAG_CLAMPTOEDGE_T;
+			} else {
+				ri.Printf( PRINT_WARNING, "WARNING: Converting unknown clampmap type to clampmap\n" );
+				flags = IMGFLAG_CLAMPTOEDGE;
+			}
 			//=========================
 
 			token = COM_ParseExt( text, qfalse );

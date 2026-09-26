@@ -2166,7 +2166,7 @@ image_t *R_CreateImage2( const char *name, byte *pic, int width, int height, GLe
 	image_t    *image;
 	qboolean    isLightmap = qfalse, scaled = qfalse;
 	long        hash;
-	int         glWrapClampMode, mipWidth, mipHeight, miplevel;
+	int         glWrapClampMode, glWrapClampModeT, mipWidth, mipHeight, miplevel;
 	qboolean    rgba8 = picFormat == GL_RGBA8 || picFormat == GL_SRGB8_ALPHA8_EXT;
 	qboolean    mipmap = !!(flags & IMGFLAG_MIPMAP);
 	qboolean    cubemap = !!(flags & IMGFLAG_CUBEMAP);
@@ -2197,10 +2197,15 @@ image_t *R_CreateImage2( const char *name, byte *pic, int width, int height, GLe
 
 	image->width = width;
 	image->height = height;
-	if (flags & IMGFLAG_CLAMPTOEDGE)
+	if (flags & (IMGFLAG_CLAMPTOEDGE | IMGFLAG_CLAMPTOEDGE_S))
 		glWrapClampMode = GL_CLAMP_TO_EDGE;
 	else
 		glWrapClampMode = GL_REPEAT;
+
+	if (flags & (IMGFLAG_CLAMPTOEDGE | IMGFLAG_CLAMPTOEDGE_T))
+		glWrapClampModeT = GL_CLAMP_TO_EDGE;
+	else
+		glWrapClampModeT = GL_REPEAT;
 
 	if (!internalFormat)
 		internalFormat = RawImage_GetFormat(pic, width * height, picFormat, isLightmap, image->type, image->flags);
@@ -2309,7 +2314,7 @@ image_t *R_CreateImage2( const char *name, byte *pic, int width, int height, GLe
 
 	// Set all necessary texture parameters.
 	qglTextureParameterfEXT(image->texnum, textureTarget, GL_TEXTURE_WRAP_S, glWrapClampMode);
-	qglTextureParameterfEXT(image->texnum, textureTarget, GL_TEXTURE_WRAP_T, glWrapClampMode);
+	qglTextureParameterfEXT(image->texnum, textureTarget, GL_TEXTURE_WRAP_T, glWrapClampModeT);
 
 	if (cubemap)
 		qglTextureParameteriEXT(image->texnum, textureTarget, GL_TEXTURE_WRAP_R, glWrapClampMode);
