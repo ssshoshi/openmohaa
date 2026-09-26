@@ -162,6 +162,15 @@ typedef struct {
 	qboolean    hasMorph;
 } refEntity_t;
 
+// Added in OPM
+//  One vertex of a skeletal model as it is posed and drawn, in world space,
+//  with the bone that carries most of its weight (a tiki channel number, the
+//  same numbering as Tag_NumForName). See GetSkinnedMesh.
+typedef struct {
+	vec3_t		xyz;
+	int			bone;
+} skinnedVert_t;
+
 
 #define	MAX_RENDER_STRINGS			8
 #define	MAX_RENDER_STRING_LENGTH	32

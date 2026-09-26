@@ -28,7 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 extern "C" {
 #endif
 
-#define	REF_API_VERSION		15
+#define	REF_API_VERSION		16
 
 typedef struct dtiki_s dtiki_t;
 typedef struct skelAnimFrame_s skelAnimFrame_t;
@@ -180,6 +180,12 @@ typedef struct {
     void (*FreeRawImage)(byte *pic);
 
     void (*Set2DInitialShaderTime)(float startTime);
+
+    // Added in OPM
+    //  The skeletal model as posed and drawn, at full detail, in world space.
+    //  Fills verts and tris (three vertex indices each) and returns the vertex
+    //  count, or 0 if it is not a skeletal model or does not fit.
+    int (*GetSkinnedMesh)(refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris);
 } refexport_t;
 
 //

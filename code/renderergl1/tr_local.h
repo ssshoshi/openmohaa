@@ -2227,6 +2227,7 @@ dtiki_t* R_Model_GetHandle(qhandle_t handle);
 float R_GetRadius(refEntity_t* model);
 void R_GetFrame(refEntity_t* model, struct skelAnimFrame_s* newFrame);
 void RE_ForceUpdatePose(refEntity_t* model);
+int RE_GetSkinnedMesh(refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris);
 void RE_SetFrameNumber(int frameNumber);
 void R_UpdatePoseInternal(refEntity_t* model);
 void RB_SkelMesh(skelSurfaceGame_t* sf);
