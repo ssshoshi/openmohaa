@@ -698,6 +698,76 @@ void CG_AnimationDebugMessage(int number, const char *fmt, ...)
 
 /*
 ======================
+CG_FreezeIdleAnims
+
+The standing and crouching idles look around and shift the body, which
+the first person view never does. The player's own body, seen as legs or a
+shadow, holds the first frame of them instead.
+======================
+*/
+static void CG_FreezeIdleAnims(refEntity_t *model)
+{
+    const char *name;
+    size_t      len;
+    int         i;
+
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        if (!model->frameInfo[i].weight) {
+            continue;
+        }
+
+        name = cgi.Anim_NameForNum(model->tiki, model->frameInfo[i].index);
+        if (!name) {
+            continue;
+        }
+
+        len = strlen(name);
+        if (len >= 5 && !Q_stricmp(name + len - 5, "_idle")) {
+            model->frameInfo[i].time = 0;
+        }
+    }
+}
+
+/*
+======================
+CG_PlaceFirstPersonBody
+
+Crouching, jumping and leaning carry the model's neck ahead of the eyes,
+which would put the camera inside the chest. The body is moved across the
+ground so its neck sits cg_firstPersonBodyOffset behind the camera, whatever
+the pose; its height is left alone so the feet stay on the ground.
+======================
+*/
+static void CG_PlaceFirstPersonBody(refEntity_t *body)
+{
+    orientation_t or;
+    vec3_t        neck, forward, target, angles;
+    int           tagnum, i;
+
+    tagnum = cgi.Tag_NumForName(body->tiki, "Bip01 Neck");
+    if (tagnum < 0) {
+        return;
+    }
+
+    or = cgi.TIKI_Orientation(body, tagnum & TAG_MASK);
+    VectorCopy(body->origin, neck);
+    for (i = 0; i < 3; i++) {
+        VectorMA(neck, or.origin[i], body->axis[i], neck);
+    }
+
+    VectorSet(angles, 0, cg.refdefViewAngles[YAW], 0);
+    AngleVectors(angles, forward, NULL, NULL);
+    VectorMA(cg.refdef.vieworg, -cg_firstPersonBodyOffset->value, forward, target);
+
+    for (i = 0; i < 2; i++) {
+        body->origin[i] += target[i] - neck[i];
+        body->oldorigin[i] += target[i] - neck[i];
+        body->lightingOrigin[i] += target[i] - neck[i];
+    }
+}
+
+/*
+======================
 CG_AttachEntity
 
 Modifies the entities position and axis by the given
@@ -1415,18 +1485,35 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         if (!bThirdPerson) {
             // first person view
 
-            if (cg_firstPersonShadow->integer && !(s1->renderfx & RF_DONTDRAW)) {
-                // The world body, drawn only into the shadow maps so the
-                // player casts a shadow of their own. It goes without an
-                // entity number: the first person model keeps the player's,
-                // so attached weapons still find it, and the two would
-                // otherwise share one per-frame pose.
-                cg.playerShadowBody              = model;
-                cg.playerShadowBody.entityNumber = ENTITYNUM_NONE;
-                cg.playerShadowBody.renderfx &= ~(RF_FIRST_PERSON | RF_DEPTHHACK);
-                cg.playerShadowBody.renderfx |= RF_THIRD_PERSON;
-                cgi.R_AddRefEntityToScene(&cg.playerShadowBody, ENTITYNUM_NONE);
-                cg.iPlayerShadowBodyTime = cg.time;
+            if ((cg_firstPersonShadow->integer || cg_firstPersonBody->integer) && !(s1->renderfx & RF_DONTDRAW)) {
+                // The world body. It goes without an entity number: the
+                // first person model keeps the player's, so attached weapons
+                // still find it, and the two would otherwise share one
+                // per-frame pose.
+                refEntity_t body = model;
+
+                body.entityNumber = ENTITYNUM_NONE;
+                body.renderfx &= ~(RF_FIRST_PERSON | RF_THIRD_PERSON | RF_DEPTHHACK);
+                CG_FreezeIdleAnims(&body);
+
+                if (cg_firstPersonShadow->integer) {
+                    // drawn only into the shadow maps, so the player casts a
+                    // shadow of their own
+                    cg.playerShadowBody = body;
+                    cg.playerShadowBody.renderfx |= RF_THIRD_PERSON;
+                    cgi.R_AddRefEntityToScene(&cg.playerShadowBody, ENTITYNUM_NONE);
+                    cg.iPlayerShadowBodyTime = cg.time;
+                }
+
+                if (cg_firstPersonBody->integer) {
+                    // drawn only through the eyes, without the head the camera
+                    // sits in or the arms the view model already draws
+                    refEntity_t fpsBody = body;
+
+                    fpsBody.renderfx |= RF_FIRST_PERSON | RF_FIRST_PERSON_BODY;
+                    CG_PlaceFirstPersonBody(&fpsBody);
+                    cgi.R_AddRefEntityToScene(&fpsBody, ENTITYNUM_NONE);
+                }
             }
 
             if (!(cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW)
