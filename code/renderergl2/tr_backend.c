@@ -1081,6 +1081,109 @@ RB_DrawSurfs
 
 =============
 */
+/*
+=============
+RB_DrawDebugLines
+
+Added in OPM.
+The debug lines the game and cgame queue (G_DebugLine, R_DebugLine), which
+GL2 collected and never drew: R_DrawDebugLines in tr_main.c is GL1's
+immediate-mode code, stubbed out. Drawn here instead, at the end of the main
+view, against the world and depth-tested like GL1's. The texture colour shader
+takes one colour per draw, so runs of lines of the same colour are drawn
+together, which is how callers emit them.
+=============
+*/
+static void RB_DrawDebugLines(void)
+{
+    const debugline_t *lines;
+    float             *verts;
+    int                numLines;
+    int                start;
+    GLint              prevVao = 0, prevArrayBuf = 0;
+    GLuint             vao = 0, vbo = 0;
+
+    if (!ri.DebugLines || !ri.numDebugLines || !*ri.numDebugLines || !*ri.DebugLines) {
+        return;
+    }
+
+    if (backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_HUD)) {
+        return;
+    }
+
+    if (backEnd.viewParms.isPortalSky || (backEnd.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW))) {
+        return;
+    }
+
+    if (glRefConfig.framebufferObject && tr.renderCubeFbo && backEnd.viewParms.targetFbo == tr.renderCubeFbo) {
+        return;
+    }
+
+    lines    = *ri.DebugLines;
+    numLines = *ri.numDebugLines;
+    verts    = (float *)ri.Hunk_AllocateTempMemory(sizeof(float) * 6 * numLines);
+
+    if (tess.numIndexes) {
+        RB_EndSurface();
+    }
+
+    GL_SetModelviewMatrix(backEnd.viewParms.world.modelMatrix);
+
+    qglGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    qglGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArrayBuf);
+
+    GL_BindToTMU(tr.whiteImage, TB_COLORMAP);
+    GL_Cull(CT_TWO_SIDED);
+    GL_State(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA
+             | (r_debuglines_depthmask->integer ? GLS_DEPTHMASK_TRUE : 0));
+
+    R_BindNullVao();
+    qglGenVertexArrays(1, &vao);
+    qglBindVertexArray(vao);
+    qglGenBuffers(1, &vbo);
+    qglBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    GLSL_BindProgram(&tr.textureColorShader);
+    GLSL_SetUniformMat4(&tr.textureColorShader, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
+
+    qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+
+    for (start = 0; start < numLines;) {
+        const debugline_t *first = &lines[start];
+        vec4_t             color;
+        int                end, i;
+
+        for (end = start + 1; end < numLines; end++) {
+            if (!VectorCompare(lines[end].color, first->color) || lines[end].alpha != first->alpha) {
+                break;
+            }
+        }
+
+        for (i = start; i < end; i++) {
+            VectorCopy(lines[i].start, &verts[(i - start) * 6]);
+            VectorCopy(lines[i].end, &verts[(i - start) * 6 + 3]);
+        }
+
+        VectorSet4(color, first->color[0], first->color[1], first->color[2], first->alpha);
+        GLSL_SetUniformVec4(&tr.textureColorShader, UNIFORM_COLOR, color);
+
+        qglBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * (end - start), verts, GL_STREAM_DRAW);
+        qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, 0, (const void *)0);
+        qglDrawArrays(GL_LINES, 0, (end - start) * 2);
+
+        start = end;
+    }
+
+    qglDisableVertexAttribArray(ATTR_INDEX_POSITION);
+
+    qglBindBuffer(GL_ARRAY_BUFFER, prevArrayBuf);
+    qglBindVertexArray(prevVao);
+    qglDeleteBuffers(1, &vbo);
+    qglDeleteVertexArrays(1, &vao);
+
+    ri.Hunk_FreeTempMemory(verts);
+}
+
 const void	*RB_DrawSurfs( const void *data ) {
 	const drawSurfsCommand_t	*cmd;
 	qboolean isShadowView;
@@ -1409,6 +1512,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 		if (!(backEnd.refdef.rdflags & RDF_HUD)) {
 			R_DrawLensFlares();
 		}
+
+		RB_DrawDebugLines();
 		//=========================
 	}
 

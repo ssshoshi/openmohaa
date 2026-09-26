@@ -1984,7 +1984,9 @@ R_DrawDebugLines
 ================
 */
 void R_DrawDebugLines(void) {
-	// FIXME: unimplemented
+	// Not used by GL2: the debug lines are drawn by RB_DrawDebugLines in
+	// tr_backend.c, at the end of the main view. What follows is GL1's
+	// immediate-mode version, kept for reference.
 #if 0
 	debugline_t* line;
 	int i;
