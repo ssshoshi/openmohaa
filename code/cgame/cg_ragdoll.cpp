@@ -195,6 +195,10 @@ static const rdJointDef_t rd_joints[RD_NUM_JOINTS] = {
 #define RD_TWIST_PARALLEL_LO 0.88f
 #define RD_TWIST_PARALLEL_HI 0.97f
 
+// How fast a thigh or an upper arm may roll about itself, in degrees a second.
+// A turn of half a circle takes a third of a second. See CG_RagdollBoneFrame.
+#define RD_LIMB_ROLL_RATE 540.0f
+
 typedef struct {
     const char *boneName;
     short       joint;
@@ -650,6 +654,16 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // body hangs about four units under the aim and trails a swing by about a
 // seventh of a second.
 #define RD_GRAB_DAMPING 0.6f
+
+// A body the grabber holds is also calmed, as the physics gun calms what it
+// holds: its velocity is damped by this much more each step, and only this
+// share of what the solver moves it by is handed back as speed. Hung from a
+// point, a body is pulled against its own joint limits by gravity every step,
+// and at full gain that tug of war was fed back in as motion: it spun and
+// shivered for as long as it was held. The part being held keeps its own
+// spring and its weight; it is the rest of the body that settles.
+#define RD_GRAB_BODY_DAMPING 0.94f
+#define RD_GRAB_SOLVEGAIN    0.4f
 #define RD_GRAB_SAG     0.25f
 
 // A ragdoll whose entity has been gone longer than this can be picked up again
@@ -896,6 +910,23 @@ typedef struct {
     // Set as the body falls asleep; the drawn mesh is checked against the world
     // once the sleeping pose is installed. See CG_RagdollMeasureClipping.
     qboolean measureClip;
+
+    // Which edge of its twist range an elbow that has gone out of it
+    // is being brought back to: -1 or 1, and 0 while it is inside. Kept so a
+    // joint turned almost exactly the wrong way, which is equally far from
+    // both edges, goes back by one of them rather than being thrown to and
+    // fro between the two. See CG_RagdollTwistEdge.
+    signed char elbowEdge[2];
+
+    // Set once a pose has been built from the simulation, so the last frame's
+    // roll of each bone means something. Until then there is nothing to keep
+    // or to limit the turn from.
+    qboolean rollReady;
+
+    // How far CG_RagdollJointRanges has moved each joint during the current
+    // solve. Taken back out of what the solver hands to the body as speed:
+    // see CG_RagdollSolveTracked.
+    vec3_t rangeShift[RD_NUM_JOINTS];
 
     // The joint the grabber is holding, or -1, and where it is being carried
     // to. See the grabber section.
@@ -1315,6 +1346,25 @@ static void CG_RagdollOrthonormalize(const vec3_t x, const vec3_t helper, vec3_t
 // frame's Y axis is carried forward, which is a discrete parallel transport:
 // it introduces no twist and has no singularity, unlike deriving the rotation
 // from the seed direction directly.
+// Which limb, if any, this bone is the top of: 0 and 1 the upper arms, 2 and 3
+// the thighs, -1 anything else. These are the bones whose roll is taken from
+// the joint below them (see CG_RagdollBoneFrame).
+static int CG_RagdollLimbRoot(int boneNum)
+{
+    switch (rd_bones[boneNum].joint) {
+    case RD_LUARM:
+        return 0;
+    case RD_RUARM:
+        return 1;
+    case RD_LTHIGH:
+        return 2;
+    case RD_RTHIGH:
+        return 3;
+    default:
+        return -1;
+    }
+}
+
 static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3])
 {
     const rdBoneDef_t *def = &rd_bones[boneNum];
@@ -1370,7 +1420,15 @@ static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3]
             vec3_t fallback, hy, fy, side;
             float  t;
 
-            if (haveCarried) {
+            // A straight limb says nothing about its roll, so it keeps the one
+            // it had. It used to take the roll carried over from the chest,
+            // which has nothing to do with where the palm was facing: every
+            // time an arm straightened its roll went to that one angle, and
+            // when it bent again it came back from there, up to half a turn
+            // round, which put the palms behind the body.
+            if (CG_RagdollLimbRoot(boneNum) >= 0 && rd->state == RD_ACTIVE && rd->rollReady) {
+                VectorCopy(rd->transportY[boneNum], fallback);
+            } else if (haveCarried) {
                 VectorCopy(carried, fallback);
             } else {
                 VectorCopy(rd->transportY[boneNum], fallback);
@@ -1407,6 +1465,37 @@ static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3]
         VectorCopy(carried, helper);
     } else {
         VectorCopy(rd->transportY[boneNum], helper);
+    }
+
+    // However the thigh and the upper arm come by their roll, it may only turn
+    // so fast. Both take it from the next bone down, which sets it by the way
+    // the knee or elbow is bent; a limb hanging straight is bent hardly at all,
+    // and as it sways that little bend passes from one side to the other and
+    // the roll it gives turns over with it, in a single frame. Carried down to
+    // the calf, the foot, the forearm and the hand, that was a whole leg or arm
+    // flipping over and back while the body hung from the grabber, seen as the
+    // corpse spasming. A real roll takes a moment to happen and still does;
+    // noise flicking the reference to and fro now barely moves the limb.
+    //
+    // Only once the body is its own: through the blend the pose is being
+    // taken from the animation, and at the seed there is no last frame.
+    if (def->helperA >= 0 && rd->state == RD_ACTIVE && rd->rollReady) {
+        vec3_t prevY, newY, side;
+
+        VectorMA(rd->transportY[boneNum], -DotProduct(rd->transportY[boneNum], x), x, prevY);
+        VectorMA(helper, -DotProduct(helper, x), x, newY);
+
+        if (VectorNormalize(prevY) > 0.001f && VectorNormalize(newY) > 0.001f) {
+            const float maxTurn = RD_LIMB_ROLL_RATE * Q_clamp_float((float)cg.frametime, 1.0f, 100.0f) * 0.001f;
+            float       turn;
+
+            CrossProduct(x, prevY, side);
+            turn = RAD2DEG(atan2(DotProduct(newY, side), DotProduct(newY, prevY)));
+
+            if (fabs(turn) > maxTurn) {
+                RotatePointAroundVector(helper, x, prevY, turn > 0.0f ? maxTurn : -maxTurn);
+            }
+        }
     }
 
     // The back's share of the chest roll correction. Added to this bone's roll
@@ -2603,12 +2692,23 @@ static void CG_RagdollProjectContacts(cg_ragdoll_t *rd)
 // that limb is doing: a leg held inside its cone at the hip is free to
 // straighten at the knee, which is exactly what a distance from head to foot
 // could never allow.
+//
+// It is a memory of the death pose, not a joint, so it opens up as the body
+// goes limp (cg_ragdoll_limptime), until nothing is left of it. Held for ever
+// it was what kept a man who died mid stride in that stride however he was
+// hung: picked up by the head, his thigh could come no nearer than thirty
+// degrees to the way it pointed when he was shot, and his shin hung from it,
+// so he dangled sitting down. What the hip and the shoulder can really do is
+// kept by CG_RagdollJointRanges, which never lets go.
+static float CG_RagdollLimpness(const cg_ragdoll_t *rd);
+
 static void CG_RagdollCones(cg_ragdoll_t *rd)
 {
-    vec3_t torso[3];
-    int    i, k;
+    const float limp = CG_RagdollLimpness(rd);
+    vec3_t      torso[3];
+    int         i, k;
 
-    if (!CG_RagdollTorsoFrame(rd, torso)) {
+    if (limp <= 0.0f || !CG_RagdollTorsoFrame(rd, torso)) {
         return;
     }
 
@@ -2635,7 +2735,7 @@ static void CG_RagdollCones(cg_ragdoll_t *rd)
             continue;
         }
 
-        limit = cos(rd_cones[i].maxDeg * (float)M_PI / 180.0f);
+        limit = cos((rd_cones[i].maxDeg + (180.0f - rd_cones[i].maxDeg) * (1.0f - limp)) * (float)M_PI / 180.0f);
         along = DotProduct(dir, axis);
 
         if (along >= limit) {
@@ -2677,6 +2777,216 @@ static void CG_RagdollCones(cg_ragdoll_t *rd)
         VectorMA(root->p, -RD_CONE_RATE * (root->invMass / total), delta, root->p);
     }
 }
+
+// What the hip and the shoulder can actually do, which the death-pose cones
+// above only stood in for. Each limb's direction is taken apart into how far
+// it has swung forward or back (flexion) and how far out to the side or in
+// across the body (abduction), measured against the pelvis for a leg and the
+// line of the shoulders for an arm, and each is held within the range a man's
+// joint has. Straight down along the body is zero on both.
+//
+// Unlike the cones this does not fade: a limp leg still cannot fold up behind
+// the back. The ranges are wide, so a body hangs, sprawls and folds freely
+// inside them.
+typedef struct {
+    short root, tip;  // the joint the limb swings about, and the one it swings
+    short left;       // which side of the body, so outward can be told apart
+    short leg;        // measured against the pelvis rather than the shoulders
+    float flexMin, flexMax; // degrees, forward positive
+    float abdMin, abdMax;   // degrees, outward positive
+} rdJointRange_t;
+
+static const rdJointRange_t rd_jointRanges[] = {
+    {RD_LTHIGH, RD_LCALF, 1, 1, -45.0f, 130.0f, -25.0f, 70.0f },
+    {RD_RTHIGH, RD_RCALF, 0, 1, -45.0f, 130.0f, -25.0f, 70.0f },
+    {RD_LUARM,  RD_LFARM, 1, 0, -60.0f, 180.0f, -45.0f, 180.0f},
+    {RD_RUARM,  RD_RFARM, 0, 0, -60.0f, 180.0f, -45.0f, 180.0f},
+};
+
+#define RD_NUM_JOINT_RANGES ((int)(sizeof(rd_jointRanges) / sizeof(rd_jointRanges[0])))
+
+static void CG_RagdollJointRanges(cg_ragdoll_t *rd)
+{
+    // Taking over from the cones as they let go, rather than alongside them
+    // from the moment of death: measured against a pelvis pitched forward by
+    // a running stride, the trailing leg of a man shot mid step is well past
+    // any range a standing man has, and yanked into it at once the legs
+    // scissored through each other and wrung the body round.
+    const float strength = 1.0f - CG_RagdollLimpness(rd);
+    vec3_t      up;
+    int         i, k;
+
+    if (strength <= 0.0f) {
+        return;
+    }
+
+    VectorSubtract(rd->part[RD_SPINE1].p, rd->part[RD_PELVIS].p, up);
+    if (VectorNormalize(up) < 0.001f) {
+        return;
+    }
+
+    for (i = 0; i < RD_NUM_JOINT_RANGES; i++) {
+        const rdJointRange_t *jr   = &rd_jointRanges[i];
+        rdParticle_t         *root = &rd->part[jr->root];
+        rdParticle_t         *tip  = &rd->part[jr->tip];
+        vec3_t                right, fwd, out, down, dir, sag, want, target, delta;
+        float                 len, flex, abd, flexTo, abdTo, total;
+
+        // The body's own frame at this joint: up the spine, across the hips or
+        // the shoulders, and forward.
+        if (jr->leg) {
+            VectorSubtract(rd->part[RD_RTHIGH].p, rd->part[RD_LTHIGH].p, right);
+        } else {
+            VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, right);
+        }
+        VectorMA(right, -DotProduct(right, up), up, right);
+        if (VectorNormalize(right) < 0.001f) {
+            continue;
+        }
+        CrossProduct(up, right, fwd);
+
+        VectorScale(right, jr->left ? -1.0f : 1.0f, out);
+        VectorNegate(up, down);
+
+        VectorSubtract(tip->p, root->p, dir);
+        len = VectorNormalize(dir);
+        if (len < 0.001f) {
+            continue;
+        }
+
+        flex = RAD2DEG(atan2(DotProduct(dir, fwd), DotProduct(dir, down)));
+        abd  = RAD2DEG(asin(Q_clamp_float(DotProduct(dir, out), -1.0f, 1.0f)));
+
+        // Flexion goes round a circle, and its range has to be read that way.
+        // An arm raised overhead sits at a hundred and eighty; the least
+        // movement behind the head takes it to minus a hundred and seventy
+        // nine, which clamped as a plain number is more than a hundred degrees
+        // behind the back and was yanked there in a single step. Hung from a
+        // leg, a body has its arms overhead the whole time, and they whipped
+        // about as fast as the solver could move them. Outside the range, the
+        // nearer edge is the one it goes back to, measured round the circle.
+        flexTo = flex;
+        if (flex < jr->flexMin || flex > jr->flexMax) {
+            const float toMin = fabs(AngleNormalize180(flex - jr->flexMin));
+            const float toMax = fabs(AngleNormalize180(flex - jr->flexMax));
+
+            flexTo = toMin < toMax ? jr->flexMin : jr->flexMax;
+        }
+
+        // Swung right out to the side, a limb has no forward or back to speak
+        // of, and the angle that says which it is swings about wildly for the
+        // least movement; so flexion lets go there.
+        flexTo = flex + AngleNormalize180(flexTo - flex) * Q_clamp_float((85.0f - fabs(abd)) / 20.0f, 0.0f, 1.0f);
+
+        abdTo = Q_clamp_float(abd, jr->abdMin, jr->abdMax);
+
+        if (fabs(AngleNormalize180(flexTo - flex)) < 0.01f && abdTo == abd) {
+            continue;
+        }
+
+        // Put back together from the two angles, the way they were taken
+        // apart: swung forward within the plane of the body, then out of it.
+        for (k = 0; k < 3; k++) {
+            sag[k] = cos(DEG2RAD(flexTo)) * down[k] + sin(DEG2RAD(flexTo)) * fwd[k];
+        }
+        for (k = 0; k < 3; k++) {
+            want[k] = cos(DEG2RAD(abdTo)) * sag[k] + sin(DEG2RAD(abdTo)) * out[k];
+        }
+        VectorMA(root->p, len, want, target);
+
+        // Shared by mass and only partly applied, as the cones are.
+        VectorSubtract(target, tip->p, delta);
+        total = root->invMass + tip->invMass;
+        if (total < 0.0001f) {
+            continue;
+        }
+
+        VectorMA(tip->p, strength * RD_CONE_RATE * (tip->invMass / total), delta, tip->p);
+        VectorMA(root->p, -strength * RD_CONE_RATE * (root->invMass / total), delta, root->p);
+
+        VectorMA(rd->rangeShift[jr->tip], strength * RD_CONE_RATE * (tip->invMass / total), delta, rd->rangeShift[jr->tip]);
+        VectorMA(rd->rangeShift[jr->root], -strength * RD_CONE_RATE * (root->invMass / total), delta, rd->rangeShift[jr->root]);
+    }
+}
+
+// Where the front of a limb faces when it has swung from hanging straight down
+// to where it now points without turning about its own length: the reference
+// that its twist is measured against. front0 is the front with the limb
+// hanging down. swingDeg is how far it has swung, 180 being straight up along
+// the body, where no such reference exists.
+static void CG_RagdollSwingFront(
+    const vec3_t down, const vec3_t front0, const vec3_t limbDir, vec3_t out, float *swingDeg
+)
+{
+    vec3_t axis;
+    float  c = Q_clamp_float(DotProduct(down, limbDir), -1.0f, 1.0f);
+
+    *swingDeg = RAD2DEG(acos(c));
+    CrossProduct(down, limbDir, axis);
+
+    if (VectorNormalize(axis) < 0.0001f) {
+        VectorCopy(front0, out);
+        return;
+    }
+
+    RotatePointAroundVector(out, axis, front0, *swingDeg);
+}
+
+// How much a twist range may act for a limb swung this far. Straight up along
+// the body the reference above turns on a pin and means nothing, so the range
+// lets go over the last thirty degrees before it.
+static float CG_RagdollSwingTrust(float swingDeg)
+{
+    return Q_clamp_float((170.0f - swingDeg) / 30.0f, 0.0f, 1.0f);
+}
+
+// The signed angle from a to b about axis, both taken square to it.
+static float CG_RagdollTwistAbout(const vec3_t axis, const vec3_t a, const vec3_t b)
+{
+    vec3_t pa, pb, c;
+
+    VectorMA(a, -DotProduct(a, axis), axis, pa);
+    VectorMA(b, -DotProduct(b, axis), axis, pb);
+    CrossProduct(pa, pb, c);
+
+    return RAD2DEG(atan2(DotProduct(c, axis), DotProduct(pa, pb)));
+}
+
+// Where a twist that is out of its range [lo, hi] should be brought back to.
+// Turned nearly all the way round, a joint is as close to one edge as the
+// other, and the nearer one flips from frame to frame; so the first edge it
+// was sent to is kept in *edge until it is back inside.
+static float CG_RagdollTwistEdge(float turn, float lo, float hi, signed char *edge)
+{
+    if (turn >= lo && turn <= hi) {
+        *edge = 0;
+        return turn;
+    }
+
+    if (!*edge) {
+        // The nearer edge, going the short way round the circle.
+        const float toLo = fabs(AngleNormalize180(turn - lo));
+        const float toHi = fabs(AngleNormalize180(turn - hi));
+
+        *edge = toLo < toHi ? -1 : 1;
+    }
+
+    return *edge < 0 ? lo : hi;
+}
+
+// How far the elbow may point from straight back, either way, before the arm
+// reads as bending the wrong way.
+#define RD_ELBOW_TURN 100.0f
+
+// Share of an elbow's excess turn taken back each pass, and the most it may
+// be turned in one pass, in degrees.
+#define RD_ELBOW_RATE     0.1f
+#define RD_ELBOW_MAX_STEP 3.0f
+
+// How far the elbow has to stand off the line from shoulder to hand, in units,
+// before its range starts to act, and how much further before it acts fully.
+#define RD_ELBOW_BENT_MIN  1.0f
+#define RD_ELBOW_BENT_FULL 4.0f
 
 // Keeps elbows and knees bending the way they were seeded. The distance limits
 // alone happily let a knee fold backwards.
@@ -2799,6 +3109,7 @@ static void CG_RagdollHinges(cg_ragdoll_t *rd)
                     }
                 }
             }
+
         }
 
         violation = -DotProduct(offset, want);
@@ -2822,6 +3133,101 @@ static void CG_RagdollHinges(cg_ragdoll_t *rd)
     }
 }
 
+
+// What the elbow can do, which nothing held before: the knees have their
+// hinge above, but an elbow's bend turns with the upper arm, and the shoulder
+// rotates freely enough that no plane fixed to the body will do. So instead of
+// a plane, a range. The arm's swing is followed to find which way straight back
+// is for an arm pointing where this one points, and the elbow may point
+// anywhere within RD_ELBOW_TURN of that. Past it the arm reads as bent the
+// wrong way, and the elbow is turned back about the line from shoulder to hand,
+// which leaves both bones their lengths.
+//
+// Only a bent elbow has a direction, so a nearly straight arm is left alone.
+// Faded in as the body goes limp, like the other ranges.
+static void CG_RagdollElbows(cg_ragdoll_t *rd)
+{
+    static const short arms[2][3] = {
+        {RD_LUARM, RD_LFARM, RD_LHAND},
+        {RD_RUARM, RD_RFARM, RD_RHAND},
+    };
+    const float strength = 1.0f - CG_RagdollLimpness(rd);
+    vec3_t      torso[3], down, back;
+    int         i, k;
+
+    if (strength <= 0.0f || !CG_RagdollTorsoFrame(rd, torso)) {
+        return;
+    }
+
+    VectorNegate(torso[0], down);
+    VectorNegate(torso[2], back);
+
+    for (i = 0; i < 2; i++) {
+        rdParticle_t *shoulder = &rd->part[arms[i][0]];
+        rdParticle_t *elbow    = &rd->part[arms[i][1]];
+        rdParticle_t *hand     = &rd->part[arms[i][2]];
+        vec3_t        upper, chord, rel, offset, ref, dir, target;
+        float         along, bentBy, swing, trust, turn, to;
+
+        VectorSubtract(elbow->p, shoulder->p, upper);
+        VectorSubtract(hand->p, shoulder->p, chord);
+
+        if (VectorNormalize(upper) < 0.001f || VectorNormalize(chord) < 0.001f) {
+            continue;
+        }
+
+        VectorSubtract(elbow->p, shoulder->p, rel);
+        along = DotProduct(rel, chord);
+        VectorMA(rel, -along, chord, offset);
+        bentBy = VectorNormalize(offset);
+
+        // Nearly straight, it has hardly any direction to hold, and what it
+        // has swings wildly for a tiny movement of the hand; so the range
+        // comes in only as the elbow bends.
+        CG_RagdollSwingFront(down, back, upper, ref, &swing);
+        trust = CG_RagdollSwingTrust(swing) * strength
+              * Q_clamp_float((bentBy - RD_ELBOW_BENT_MIN) / RD_ELBOW_BENT_FULL, 0.0f, 1.0f);
+        if (trust <= 0.0f) {
+            rd->elbowEdge[i] = 0;
+            continue;
+        }
+
+        turn = CG_RagdollTwistAbout(chord, ref, offset);
+        to   = CG_RagdollTwistEdge(turn, -RD_ELBOW_TURN, RD_ELBOW_TURN, &rd->elbowEdge[i]);
+        if (to == turn) {
+            continue;
+        }
+
+        {
+            // Eased back, never snapped: an elbow a long way out of range is
+            // brought round a few degrees a pass, over a moment, rather than
+            // thrown there, which read as the arm whipping about.
+            const float step = AngleNormalize180(to - turn) * trust * RD_ELBOW_RATE;
+
+            to = turn + Q_clamp_float(step, -RD_ELBOW_MAX_STEP, RD_ELBOW_MAX_STEP);
+        }
+
+        VectorMA(ref, -DotProduct(ref, chord), chord, ref);
+        if (VectorNormalize(ref) < 0.001f) {
+            continue;
+        }
+        RotatePointAroundVector(dir, chord, ref, to);
+
+        for (k = 0; k < 3; k++) {
+            target[k] = shoulder->p[k] + chord[k] * along + dir[k] * bentBy;
+        }
+
+        if (elbow->invMass > 0.0f) {
+            vec3_t moved;
+
+            // A limit, like the joint ranges: it moves the elbow and hands
+            // none of that back as speed (CG_RagdollSolveTracked).
+            VectorSubtract(target, elbow->p, moved);
+            VectorAdd(rd->rangeShift[arms[i][1]], moved, rd->rangeShift[arms[i][1]]);
+            VectorCopy(target, elbow->p);
+        }
+    }
+}
 
 // Keeps whole limb bones out of the head and the trunk. Testing only the joints
 // at each end of a bone is not enough: a forearm can lie straight through the
@@ -3034,9 +3440,16 @@ static void CG_RagdollSegmentCollide(cg_ragdoll_t *rd)
 // and what is wanted here is a limit.
 //
 // So this measures the angle directly and turns the shoulders back about the
-// spine when it is exceeded. The hips are the anchor and are left alone: their
-// drawn line sits a median of six degrees from the simulation against the
-// chest's twenty four, so they are the half that is trustworthy.
+// spine when it is exceeded.
+//
+// It used to turn only the shoulders, leaving the hips as the anchor. But a
+// correction is also a push, since the solver hands what it moves back to the
+// body as speed (cg_ragdoll_solvegain), and a push on one end of the trunk
+// alone sets the whole body turning. On the floor that is lost in friction;
+// hung from the grabber, with the legs below winding the trunk past its limit
+// every step, it was a corpse that spun and never stopped. Shoulders and hips
+// now turn back half each, the opposite ways, which untwists the trunk the
+// same and turns the body not at all.
 static void CG_RagdollSpineTwist(cg_ragdoll_t *rd)
 {
     const float lim = cg_ragdoll_spinetwist->value;
@@ -3094,8 +3507,18 @@ static void CG_RagdollSpineTwist(cg_ragdoll_t *rd)
         vec3_t        rel, turned;
 
         VectorSubtract(part->p, rd->part[RD_SPINE2].p, rel);
-        RotatePointAroundVector(turned, axis, rel, -over);
+        RotatePointAroundVector(turned, axis, rel, -over * 0.5f);
         VectorAdd(rd->part[RD_SPINE2].p, turned, part->p);
+    }
+
+    // The hips' half, the other way about the pelvis.
+    for (k = 0; k < 2; k++) {
+        rdParticle_t *part = &rd->part[k ? RD_RTHIGH : RD_LTHIGH];
+        vec3_t        rel, turned;
+
+        VectorSubtract(part->p, rd->part[RD_PELVIS].p, rel);
+        RotatePointAroundVector(turned, axis, rel, over * 0.5f);
+        VectorAdd(rd->part[RD_PELVIS].p, turned, part->p);
     }
 }
 
@@ -3419,8 +3842,10 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
         // inside the ribcage, is far more noticeable than a joint sitting a
         // little outside one of the soft limits.
         CG_RagdollHinges(rd);
+        CG_RagdollElbows(rd);
         CG_RagdollSpineTwist(rd);
         CG_RagdollCones(rd);
+        CG_RagdollJointRanges(rd);
         CG_RagdollSelfCollide(rd);
         CG_RagdollBodyCollide(rd);
         CG_RagdollSegmentCollide(rd);
@@ -3492,14 +3917,22 @@ static void CG_RagdollSolveTracked(cg_ragdoll_t *rd, int iterations)
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         VectorCopy(rd->part[i].p, before[i]);
+        VectorClear(rd->rangeShift[i]);
     }
 
     CG_RagdollSolveConstraints(rd, iterations);
 
+    // A joint range is a limit, not a spring: it says where a limb may not
+    // go and has no business pushing. What it moves is left out of the speed
+    // the solver hands back, so it puts a limb back in range without flinging
+    // it. Counted in, a body hung by its hip, where gravity pulls the leg past
+    // the range on every step and the range pulls it back, was given that
+    // tug of war as motion each time and spun faster and faster.
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         vec3_t d;
 
         VectorSubtract(rd->part[i].p, before[i], d);
+        VectorSubtract(d, rd->rangeShift[i], d);
         VectorAdd(rd->part[i].solved, d, rd->part[i].solved);
     }
 }
@@ -3578,6 +4011,14 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
+
+        // The part the grabber holds goes where the beam takes it. Its end is
+        // already kept out of walls, and swept from inside a floor it was
+        // lying a hair into, the trace would put it back where it started
+        // every step, so a body could not be lifted by it at all.
+        if (i == rd->grabJoint) {
+            continue;
+        }
 
         CG_RagdollJointBox(rd, i, rd_mins, rd_maxs);
         trace_t       trace;
@@ -3829,6 +4270,11 @@ static void CG_RagdollLimbPushOut(cg_ragdoll_t *rd, int skipEntity)
         rdParticle_t *pa = &rd->part[rd_limbSegments[n].a];
         rdParticle_t *pb = &rd->part[rd_limbSegments[n].b];
 
+        // A limb the grabber holds by one end; see CG_RagdollCollide.
+        if (rd_limbSegments[n].a == rd->grabJoint || rd_limbSegments[n].b == rd->grabJoint) {
+            continue;
+        }
+
         // The thinner of the bone's two ends, since the middle of a forearm is
         // nearer the wrist's thickness than the elbow's.
         CG_RagdollJointBox(
@@ -3925,6 +4371,11 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
 
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
+
+        // Carried by the grabber; see CG_RagdollCollide.
+        if (i == rd->grabJoint) {
+            continue;
+        }
 
         CG_RagdollJointBox(rd, i, rd_mins, rd_maxs);
         const int     toward = rd_joints[i].parent >= 0 ? rd_joints[i].parent : RD_SPINE;
@@ -4144,7 +4595,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
             continue;
         }
 
-        VectorScale(part->v, damping, part->v);
+        VectorScale(part->v, rd->grabJoint >= 0 ? damping * RD_GRAB_BODY_DAMPING : damping, part->v);
         part->v[2] -= gravity * dt;
 
         VectorCopy(part->p, part->pPrev);
@@ -4193,7 +4644,7 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
         // Verlet one did; below it, a correction moves the body without also
         // pushing it.
         if (solveGain > 0.0f) {
-            VectorMA(part->v, solveGain / dt, part->solved, part->v);
+            VectorMA(part->v, (rd->grabJoint >= 0 ? solveGain * RD_GRAB_SOLVEGAIN : solveGain) / dt, part->solved, part->v);
         }
 
         VectorSubtract(part->p, part->pPrev, d);
@@ -4834,6 +5285,10 @@ static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weig
             }
         }
     }
+
+    // Every bone now has a roll from a frame of its own to be measured
+    // against. See CG_RagdollBoneFrame.
+    rd->rollReady = qtrue;
 }
 
 // While the ragdoll blends in, drag the particles toward the animation pose so
@@ -6839,10 +7294,13 @@ void CG_InitRagdoll(void)
     // its head at the top of a staircase instead of folding down it. What fades
     // is only the bias; every hard limit is taken before it and stays.
     //
-    // Left off by default. How limp a corpse should look is a judgement made by
-    // eye rather than a thing that can be measured, so this is here to be tried
-    // in the game and settled on, not guessed at from the harness.
-    cg_ragdoll_limptime  = cgi.Cvar_Get("cg_ragdoll_limptime", "0", CVAR_ARCHIVE);
+    // It was left off, to be settled by eye in the game, and the game settled
+    // it: a body picked up with the grabber hung in the pose it died in, legs
+    // drawn up and arms held out, because nothing about that pose ever let go.
+    // 1500 is the best value the harness measured, and with it the death-pose
+    // cones open as well (CG_RagdollCones) and the joints' real ranges take
+    // over (CG_RagdollJointRanges).
+    cg_ragdoll_limptime  = cgi.Cvar_Get("cg_ragdoll_limptime", "1500", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_ragdoll_limptime, 0, 10000, qtrue);
 
     // Scales how firmly the soft constraints hold the body toward the shape it
