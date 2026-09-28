@@ -2304,6 +2304,8 @@ int main(void)
 // and wakes corpses when doors near them move. Neither has anything to do here.
 extern "C" void CG_AddCorpseFleshImpact(const vec3_t, const vec3_t, int) {}
 extern "C" int CG_GetBrushEntitiesInBounds(int, centity_t **, const vec3_t, const vec3_t) { return 0; }
+// cg_props.cpp logs through the physics cvar too; the harness has no physics.
+cvar_t *cg_physics_log;
 extern "C" void Com_Printf(const char *fmt, ...) { (void)fmt; }
 extern "C" void Com_Error(int level, const char *fmt, ...) { (void)level; printf("Com_Error: %s\n", fmt); exit(1); }
 extern "C" void Com_DPrintf(const char *fmt, ...) { (void)fmt; }

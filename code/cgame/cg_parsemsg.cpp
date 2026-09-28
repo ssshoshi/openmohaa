@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_physics.h"
 #include "cg_parsemsg.h"
 #include "cg_specialfx.h"
 #include "cg_radar.h"
@@ -651,6 +652,8 @@ static void CG_MakeBulletTracerInternal(
                     // there, so whatever it would have hit behind the body
                     // makes no impact, and neither does the server's report of
                     // hitting it (see CG_AddBulletImpacts).
+                    CG_PhysicsNoteBullet(vTraceStart, trace.endpos, iLarge);
+
                     if (CG_RagdollNoteBullet(vTraceStart, trace.endpos, iLarge, vCorpseStop)) {
                         CG_NoteCorpseStoppedBullet(vCorpseStop, i_vEnd[iBullet]);
                         VectorCopy(vCorpseStop, trace.endpos);
@@ -1160,6 +1163,7 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
         }
 
         CG_RagdollNoteExplosion(vPos, iBlastKind);
+        CG_PhysicsNoteExplosion(vPos, iBlastKind);
     }
 
     if ((CG_PointContents(vPos, 0)) & MASK_WATER) {

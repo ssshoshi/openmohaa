@@ -14,6 +14,7 @@ file(GLOB_RECURSE BG_SOURCES
 
 file(GLOB_RECURSE CGAME_SOURCES
     ${SOURCE_DIR}/cgame/*.c ${SOURCE_DIR}/cgame/*.cpp
+    ${SOURCE_DIR}/physics/*.cpp
 )
 
 set(CGAME_BINARY_SOURCES)
@@ -21,6 +22,7 @@ set(CGAME_QVM_SOURCES)
 
 file(GLOB_RECURSE GAME_SOURCES
     ${SOURCE_DIR}/fgame/*.c ${SOURCE_DIR}/fgame/*.cpp
+    ${SOURCE_DIR}/physics/*.cpp
     ${SOURCE_DIR}/script/*.c ${SOURCE_DIR}/script/*.cpp
 	${SOURCE_DIR}/parser/parsetree.cpp
 )
@@ -77,6 +79,7 @@ if(BUILD_GAME_LIBRARIES)
 
     add_library(                ${CGAME_MODULE_BINARY_BASEGAME} SHARED ${CGAME_SOURCES_BASEGAME} ${BG_SOURCES} ${CGAME_BINARY_SOURCES})
     target_compile_definitions( ${CGAME_MODULE_BINARY_BASEGAME} PRIVATE CGAME_DLL)
+    target_link_libraries(      ${CGAME_MODULE_BINARY_BASEGAME} PRIVATE Jolt)
     target_link_libraries(      ${CGAME_MODULE_BINARY_BASEGAME} PRIVATE ${COMMON_LIBRARIES})
     set_target_properties(      ${CGAME_MODULE_BINARY_BASEGAME} PROPERTIES OUTPUT_NAME ${CGAME_MODULE_BINARY})
     set_output_dirs(            ${CGAME_MODULE_BINARY_BASEGAME} SUBDIRECTORY ${BASEGAME})
@@ -90,6 +93,7 @@ if(BUILD_GAME_LIBRARIES)
     add_library(                ${GAME_MODULE_BINARY_BASEGAME} SHARED ${GAME_SOURCES_BASEGAME} ${BG_SOURCES} ${GAME_BINARY_SOURCES})
     target_compile_definitions( ${GAME_MODULE_BINARY_BASEGAME} PRIVATE GAME_DLL WITH_SCRIPT_ENGINE ARCHIVE_SUPPORTED)
     target_link_libraries(      ${GAME_MODULE_BINARY_BASEGAME} PRIVATE RecastNavigation::Detour RecastNavigation::DetourCrowd RecastNavigation::Recast)
+    target_link_libraries(      ${GAME_MODULE_BINARY_BASEGAME} PRIVATE Jolt)
     target_link_libraries(      ${GAME_MODULE_BINARY_BASEGAME} PRIVATE ${COMMON_LIBRARIES})
     set_target_properties(      ${GAME_MODULE_BINARY_BASEGAME} PROPERTIES OUTPUT_NAME ${GAME_MODULE_BINARY})
     set_output_dirs(            ${GAME_MODULE_BINARY_BASEGAME} SUBDIRECTORY ${BASEGAME})

@@ -30,5 +30,6 @@ for f in q_math q_shared; do
 done
 
 g++ -O2 -c -o "$HERE/solver.o" "$SRC" $INC
-g++ -O2 -o "$HERE/rdsim" "$HERE/rdsim.cpp" "$HERE/solver.o" "$HERE/q_math.o" "$HERE/q_shared.o" $INC -lm
+g++ -O2 -c -o "$HERE/props.o" "$REPO/code/cgame/cg_props.cpp" $INC
+g++ -O2 -o "$HERE/rdsim" "$HERE/rdsim.cpp" "$HERE/solver.o" "$HERE/props.o" "$HERE/q_math.o" "$HERE/q_shared.o" $INC -lm
 echo "built $HERE/rdsim from $SRC"

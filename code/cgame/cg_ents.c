@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_physics.h"
 #include "cg_radar.h"
 
 /*
@@ -549,6 +550,13 @@ void CG_AddCEntity(centity_t *cent)
     // calculate the current origin
     CG_ENT_TIMER_BEGIN(CGE_LERP);
     CG_CalcEntityLerpPositions(cent);
+
+    // Added in OPM
+    //  cg_physics_debug 3 and 4: brush entities drawn turned over in place, to
+    //  look at the sides they were built without (see cg_physics_fill.cpp).
+    if (cent->currentState.solid == SOLID_BMODEL && (cg_physics_debug->integer == 3 || cg_physics_debug->integer == 4)) {
+        cent->lerpAngles[2] = AngleMod(cent->lerpAngles[2] + 180.0f);
+    }
     CG_ENT_TIMER_END(CGE_LERP);
 
     // add automatic effects
@@ -633,6 +641,12 @@ void CG_AddCEntity(centity_t *cent)
         break;
     }
 
+    // Added in OPM
+    //  A brush entity knocked over shows the sides it was built without.
+    if (cent->currentState.solid == SOLID_BMODEL) {
+        CG_PhysicsDrawModelFill(cent->currentState.number, cent->currentState.modelindex, cent->lerpOrigin, cent->lerpAngles);
+    }
+
     CG_EntTimerSample(cent, CG_Microseconds() - cgEntWholeOpen);
 }
 
@@ -698,6 +712,10 @@ void CG_AddPacketEntities(void)
     //  Corpses the server has culled by where they died rather than where the
     //  ragdoll has taken them.
     CG_RagdollAddUnsent();
+
+    // Added in OPM
+    //  Client-side props (and later corpses) on Jolt.
+    CG_PhysicsFrame();
 
     // Add in the multibeams at the end
     for (num = 0; num < cg.snap->numEntities; num++) {

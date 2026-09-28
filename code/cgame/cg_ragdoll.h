@@ -70,6 +70,7 @@ extern "C" {
 
     extern cvar_t *cg_ragdoll;
     extern cvar_t *cg_ragdoll_maxcount;
+    extern cvar_t *cg_ragdoll_log;
     extern cvar_t *cg_ragdoll_blendtime;
     extern cvar_t *cg_ragdoll_impulse;
     extern cvar_t *cg_ragdoll_duration;

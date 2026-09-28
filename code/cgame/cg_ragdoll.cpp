@@ -36,6 +36,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_local.h"
 #include "cg_ragdoll.h"
 #include "cg_parsemsg.h"
+#include "cg_props.h"
 #include "../qcommon/qfiles.h"
 
 #include <chrono>
@@ -7123,267 +7124,8 @@ static qboolean CG_RagdollSkin(refEntity_t *model, const cg_ragdoll_t *owner)
 }
 
 //=============================================================
-// Props: collision for the map's static models
+// Props (cg_props.cpp): ragdoll traces collide with them
 //=============================================================
-
-// The furniture a map is dressed with -- cots, shelves, tables, crates -- is
-// mostly static models, and a static model has no collision at all: the world
-// the traces see is the brushes, and a prop is solid to a player only where
-// the mapper put a clip brush round it. Most have none. In a room full of them
-// a body dropped on a cot lay on the floor through it, its hips poking up out
-// of the canvas.
-//
-// So each one is given a box, fitted to its drawn mesh in its own frame and
-// turned with it, and the ragdoll's traces run against those as well as the
-// world: the hull a Half-Life 2 prop would carry, simplified to one box. A
-// table is then solid underneath as well as on top and a shelf in front of its
-// shelves, which is the right way to be wrong: a body rests on it or against
-// it, and never ends up inside it.
-//
-// Left out: foliage, lights and wire (see CG_RagdollPropSkipped); things too
-// small to matter under a body; and anything so big a box could seal off a
-// room.
-typedef struct {
-    vec3_t origin;
-    vec3_t angles;
-    vec3_t axis[3];
-    vec3_t mins, maxs;     // in the model's own frame
-    vec3_t absmin, absmax; // the world box round it, for a cheap first test
-} rdProp_t;
-
-#define RD_MAX_PROPS      2048
-#define RD_PROP_MIN_SIZE  6.0f
-#define RD_PROP_MAX_SIZE  320.0f
-
-static rdProp_t rd_props[RD_MAX_PROPS];
-static int      rd_numProps;
-static char     rd_propsMap[MAX_QPATH];
-static qboolean rd_propsLoaded;
-
-// Whether a static model is left without a box, by its name: foliage, whose
-// box would be an invisible wall round a bush; the lights, which on a map such
-// as m1l2a are nearly three hundred of its five hundred static models, most of
-// them coronas and bulbs hanging in the air; and wire, whose box would be a
-// solid block where there is mostly nothing.
-static qboolean CG_RagdollPropSkipped(const char *name)
-{
-    static const char *words[] = {"tree",   "bush",  "plant", "grass",  "foliage", "palm",   "vine",  "ivy",
-                                  "fern",   "weed",  "flower", "hedge", "leaf",    "leaves", "branch", "shrub",
-                                  "reed",   "cactus", "corona", "flare", "light",  "lamp",   "bulb",  "lantern",
-                                  "wire"};
-    char   lower[128];
-    size_t i;
-
-    Q_strncpyz(lower, name, sizeof(lower));
-    Q_strlwr(lower);
-
-    for (i = 0; i < ARRAY_LEN(words); i++) {
-        if (strstr(lower, words[i])) {
-            return qtrue;
-        }
-    }
-
-    return qfalse;
-}
-
-// The box round a static model, in its own frame: from its skinned mesh, or
-// from the model's own bounds if the renderer cannot skin it.
-static qboolean CG_RagdollPropBox(const cStaticModel_t *in, const char *path, rdProp_t *out)
-{
-    refEntity_t ent;
-    qhandle_t   h;
-    dtiki_t    *tiki;
-    vec3_t      axis[3];
-    float       scale;
-    int         i, k, n = 0;
-
-    h = cgi.R_RegisterModel(path);
-    if (!h) {
-        return qfalse;
-    }
-
-    tiki = cgi.R_Model_GetHandle(h);
-    if (!tiki || !tiki->a) {
-        return qfalse;
-    }
-
-    for (k = 0; k < 3; k++) {
-        out->origin[k] = LittleFloat(in->origin[k]);
-        out->angles[k] = LittleFloat(in->angles[k]);
-    }
-    scale = LittleFloat(in->scale);
-    AnglesToAxis(out->angles, axis);
-    AxisCopy(axis, out->axis);
-
-    ClearBounds(out->mins, out->maxs);
-
-    if (CG_RagdollCanSkin()) {
-        memset(&ent, 0, sizeof(ent));
-        ent.reType       = RT_MODEL;
-        ent.hModel       = h;
-        ent.tiki         = tiki;
-        ent.scale        = scale;
-        ent.entityNumber = ENTITYNUM_NONE;
-        // Posed as the renderer poses a static model, on the first frame of
-        // its first animation (TIKI_GetSkelAnimFrame). With no animation at
-        // all it came out in its bind pose, turned a quarter over: a chair's
-        // box lay on its side and a deck of cards stood on its edge.
-        ent.frameInfo[0].index  = 0;
-        ent.frameInfo[0].time   = 0.0f;
-        ent.frameInfo[0].weight = 1.0f;
-        ent.actionWeight        = 1.0f;
-        VectorCopy(out->origin, ent.origin);
-        VectorCopy(out->origin, ent.lightingOrigin);
-        AxisCopy(axis, ent.axis);
-
-        n = cgi.R_GetSkinnedMesh(&ent, rd_skinVerts, RD_SKIN_MAX_VERTS, rd_skinTris, RD_SKIN_MAX_TRIS, &i);
-        rd_skinOwner    = NULL;
-        rd_skinNumVerts = 0;
-
-        for (i = 0; i < n; i++) {
-            vec3_t d, local;
-
-            VectorSubtract(rd_skinVerts[i].xyz, out->origin, d);
-            for (k = 0; k < 3; k++) {
-                local[k] = DotProduct(d, axis[k]);
-            }
-            AddPointToBounds(local, out->mins, out->maxs);
-        }
-    }
-
-    if (n <= 0) {
-        for (k = 0; k < 3; k++) {
-            out->mins[k] = tiki->a->mins[k] * tiki->load_scale * scale;
-            out->maxs[k] = tiki->a->maxs[k] * tiki->load_scale * scale;
-        }
-    }
-
-    // The world box round the turned one.
-    ClearBounds(out->absmin, out->absmax);
-    for (i = 0; i < 8; i++) {
-        vec3_t corner, world;
-
-        corner[0] = (i & 1) ? out->maxs[0] : out->mins[0];
-        corner[1] = (i & 2) ? out->maxs[1] : out->mins[1];
-        corner[2] = (i & 4) ? out->maxs[2] : out->mins[2];
-
-        VectorCopy(out->origin, world);
-        for (k = 0; k < 3; k++) {
-            VectorMA(world, corner[k], axis[k], world);
-        }
-        AddPointToBounds(world, out->absmin, out->absmax);
-    }
-
-    return qtrue;
-}
-
-// Reads the map's static models, once a map.
-static void CG_RagdollLoadProps(void)
-{
-    void                 *buf = NULL;
-    long                  len;
-    dheader_t             header;
-    const lump_t         *lump;
-    const cStaticModel_t *in;
-    int                   i, count, kept = 0, skipped = 0, sized = 0;
-
-    if (rd_propsLoaded && !Q_stricmp(rd_propsMap, cgs.mapname)) {
-        return;
-    }
-
-    rd_propsLoaded = qtrue;
-    Q_strncpyz(rd_propsMap, cgs.mapname, sizeof(rd_propsMap));
-    rd_numProps = 0;
-
-    if (!cgs.mapname[0] || !cgi.FS_ReadFile) {
-        return;
-    }
-
-    len = cgi.FS_ReadFile(cgs.mapname, &buf, qtrue);
-    if (len < (long)sizeof(dheader_t) || !buf) {
-        if (buf) {
-            cgi.FS_FreeFile(buf);
-        }
-        return;
-    }
-
-    memcpy(&header, buf, sizeof(header));
-    for (i = 0; i < (int)(sizeof(dheader_t) / 4); i++) {
-        ((int *)&header)[i] = LittleLong(((int *)&header)[i]);
-    }
-
-    lump  = Q_GetLumpByVersion(&header, LUMP_STATICMODELDEF);
-    count = (lump->fileofs > 0 && lump->filelen > 0 && lump->fileofs + lump->filelen <= len)
-              ? lump->filelen / (int)sizeof(cStaticModel_t)
-              : 0;
-    in    = (const cStaticModel_t *)((const byte *)buf + lump->fileofs);
-
-    for (i = 0; i < count && rd_numProps < RD_MAX_PROPS; i++) {
-        char      path[MAX_QPATH];
-        char      name[sizeof(in[i].model) + 1];
-        rdProp_t *p = &rd_props[rd_numProps];
-        float     biggest = 0.0f;
-        int       k;
-
-        memcpy(name, in[i].model, sizeof(in[i].model));
-        name[sizeof(in[i].model)] = 0;
-
-        if (CG_RagdollPropSkipped(name)) {
-            skipped++;
-            continue;
-        }
-
-        if (!Q_stricmpn(name, "models", 6)) {
-            Q_strncpyz(path, name, sizeof(path));
-        } else {
-            Com_sprintf(path, sizeof(path), "models/%s", name);
-        }
-        cgi.FS_CanonicalFilename(path);
-
-        if (!CG_RagdollPropBox(&in[i], path, p)) {
-            continue;
-        }
-
-        for (k = 0; k < 3; k++) {
-            biggest = Q_max(biggest, p->maxs[k] - p->mins[k]);
-        }
-
-        if (biggest < RD_PROP_MIN_SIZE || biggest > RD_PROP_MAX_SIZE) {
-            sized++;
-            continue;
-        }
-
-        if (cg_ragdoll_log->integer > 1) {
-            cgi.Printf(
-                "ragdoll: prop %d %s at %.0f %.0f %.0f, box %.0f x %.0f x %.0f\n",
-                rd_numProps,
-                name,
-                p->origin[0],
-                p->origin[1],
-                p->origin[2],
-                p->maxs[0] - p->mins[0],
-                p->maxs[1] - p->mins[1],
-                p->maxs[2] - p->mins[2]
-            );
-        }
-
-        rd_numProps++;
-        kept++;
-    }
-
-    cgi.FS_FreeFile(buf);
-
-    if (cg_ragdoll_log->integer) {
-        cgi.Printf(
-            "ragdoll: %d of %d static models on %s are solid to corpses (%d foliage, lights or wire, %d too small or too big)\n",
-            kept,
-            count,
-            cgs.mapname,
-            skipped,
-            sized
-        );
-    }
-}
 
 // CG_Trace, and then the props.
 static void CG_RagdollTrace(
@@ -7408,9 +7150,9 @@ static void CG_RagdollTrace(
         return;
     }
 
-    CG_RagdollLoadProps();
+    CG_PropsLoad();
 
-    if (!rd_numProps || result->allsolid) {
+    if (!cg_numProps || result->allsolid) {
         return;
     }
 
@@ -7419,8 +7161,8 @@ static void CG_RagdollTrace(
         smax[k] = Q_max(start[k], end[k]) + maxs[k];
     }
 
-    for (i = 0; i < rd_numProps; i++) {
-        const rdProp_t *p = &rd_props[i];
+    for (i = 0; i < cg_numProps; i++) {
+        const cgProp_t *p = &cg_props[i];
         trace_t         tr;
         clipHandle_t    box;
 
@@ -7458,7 +7200,7 @@ static void CG_RagdollTrace(
 // the real thing is not; pushed out of it, the whole body was thrown clear of
 // it at once, a toe travelling forty eight units in one step.
 // Whether any of the body's joints is inside a prop's box.
-static qboolean CG_RagdollInsideProp(const cg_ragdoll_t *rd, const rdProp_t *p)
+static qboolean CG_RagdollInsideProp(const cg_ragdoll_t *rd, const cgProp_t *p)
 {
     int j, k;
 
@@ -7501,10 +7243,10 @@ static void CG_RagdollNoteEnclosingProps(cg_ragdoll_t *rd)
         return;
     }
 
-    CG_RagdollLoadProps();
+    CG_PropsLoad();
 
-    for (i = 0; i < rd_numProps && rd->numIgnoredProps < (int)ARRAY_LEN(rd->ignoredProp); i++) {
-        if (CG_RagdollInsideProp(rd, &rd_props[i])) {
+    for (i = 0; i < cg_numProps && rd->numIgnoredProps < (int)ARRAY_LEN(rd->ignoredProp); i++) {
+        if (CG_RagdollInsideProp(rd, &cg_props[i])) {
             rd->ignoredProp[rd->numIgnoredProps++] = (short)i;
             CG_RagdollLog(rd, "inside prop %d as it died; passing through it", i);
         }
@@ -7520,7 +7262,7 @@ static void CG_RagdollReleaseEnclosingProps(cg_ragdoll_t *rd)
     for (i = 0; i < rd->numIgnoredProps; i++) {
         const int index = rd->ignoredProp[i];
 
-        if (index < rd_numProps && CG_RagdollInsideProp(rd, &rd_props[index])) {
+        if (index < cg_numProps && CG_RagdollInsideProp(rd, &cg_props[index])) {
             rd->ignoredProp[n++] = (short)index;
         }
     }
@@ -9194,8 +8936,7 @@ void CG_InitRagdoll(void)
     // clipping metric says it helps: fatter shapes have hurt before (99fad083).
     cg_ragdoll_meshfit = cgi.Cvar_Get("cg_ragdoll_meshfit", "0", CVAR_ARCHIVE);
     cg_ragdoll_props   = cgi.Cvar_Get("cg_ragdoll_props", "1", CVAR_ARCHIVE);
-    rd_propsLoaded     = qfalse;
-    rd_numProps        = 0;
+    CG_PropsReset();
     // The grabber (+rdgrab, rdpunt): how far it reaches, and how hard a punt
     // throws a body, in units per second.
     // The grabber is off until this is set, and setting it binds its keys.
@@ -10340,7 +10081,7 @@ void CG_RagdollAddUnsent(void)
     // would otherwise pay for skinning every one of them in the middle of a
     // firefight.
     if (cg_ragdoll_props->integer) {
-        CG_RagdollLoadProps();
+        CG_PropsLoad();
     }
 
     viewLeaf = cgi.CM_PointLeafnum(cg.refdef.vieworg);

@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_archive.h"
 #include "cg_radar.h"
 #include "cg_ragdoll.h"
+#include "cg_physics.h"
 
 #ifdef _WIN32
 #    include <windows.h>
@@ -738,6 +739,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
 
     CG_RegisterCvars();
     CG_InitRagdoll();
+    CG_InitPhysics();
 
     L_InitEvents();
 
@@ -788,6 +790,7 @@ Called before every level change or subsystem restart
 void CG_Shutdown(void)
 {
     L_ShutdownEvents();
+    CG_ShutdownPhysics();
     CG_ShutdownRagdoll();
     // Shutdown radar
     cgi.CL_InitRadar(NULL, NULL, -1);

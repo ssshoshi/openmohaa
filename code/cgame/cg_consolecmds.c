@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_physics.h"
 #include "../fgame/bg_voteoptions.h"
 
 void CG_TargetCommand_f(void);
@@ -497,6 +498,11 @@ static consoleCommand_t commands[] = {
     {"rdgrab_nearer",          &CG_RagdollGrabNearer_f     },
     {"rdgrab_farther",         &CG_RagdollGrabFarther_f    },
     {"rdpunt",                 &CG_RagdollPunt_f           },
+    //  Client-side physics
+    {"phys_selftest",          &CG_PhysicsSelftest_f       },
+    {"phys_poke",              &CG_PhysicsPoke_f           },
+    {"phys_blast",             &CG_PhysicsBlast_f          },
+    {"phys_list",              &CG_PhysicsList_f           },
     {"viewpos",                &CG_Viewpos_f               },
     {"sizeup",                 &CG_SizeUp_f                },
     {"sizedown",               &CG_SizeDown_f              },
