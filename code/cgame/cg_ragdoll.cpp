@@ -1156,6 +1156,13 @@ typedef struct {
     // blend out of the death animation is over (cg_physics_ragdoll.cpp), or 0.
     int jolt;
 
+    // What struck the body since the Jolt ragdoll last stepped (rounds and
+    // blasts on a corpse already lying there), as a change of speed at each
+    // joint, units a second. The Jolt body sets the joints' speeds itself on
+    // every step, so a push written into the particles was lost.
+    qboolean hasJoltKick;
+    vec3_t   joltKick[RD_NUM_JOINTS];
+
     // An explosion near enough to have thrown this body, kept as the place it
     // went off rather than as a direction, so each particle can be pushed away
     // from it by its own distance.
@@ -2417,6 +2424,18 @@ static const struct {
 // indexes rd_blastKinds and is clamped, so an unknown one reads as a grenade.
 static void CG_RagdollWake(cg_ragdoll_t *rd);
 
+// Something struck a joint: speed units a second along dir. The particles
+// take it, and a Jolt body takes it on its next step (CG_RagdollJoltFollow).
+static void CG_RagdollKick(cg_ragdoll_t *rd, int joint, float speed, const vec3_t dir)
+{
+    VectorMA(rd->part[joint].v, speed, dir, rd->part[joint].v);
+
+    if (rd->jolt) {
+        VectorMA(rd->joltKick[joint], speed, dir, rd->joltKick[joint]);
+        rd->hasJoltKick = qtrue;
+    }
+}
+
 void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
 {
     rdBlast_t *blast;
@@ -2489,7 +2508,7 @@ void CG_RagdollNoteExplosion(const vec3_t pos, int kind)
                     push = RD_BLAST_MAX_SPEED;
                 }
 
-                VectorMA(rd->part[i].v, push, away, rd->part[i].v);
+                CG_RagdollKick(rd, i, push, away);
 
                 touched = qtrue;
             }
@@ -7917,12 +7936,7 @@ qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large, v
             // Hardest along the line and tailing off to nothing at the edge, so
             // a round that grazes a corpse twitches it and one through the
             // middle throws it.
-            VectorMA(
-                rd->part[i].v,
-                RD_BULLET_SPEED * strength * (1.0f - away / RD_BULLET_REACH),
-                dir,
-                rd->part[i].v
-            );
+            CG_RagdollKick(rd, i, RD_BULLET_SPEED * strength * (1.0f - away / RD_BULLET_REACH), dir);
 
             touched = qtrue;
         }
@@ -9730,6 +9744,19 @@ static float CG_RagdollJoltFollow(cg_ragdoll_t *rd, float dt)
         pushed       = qtrue;
     }
 
+    if (rd->hasJoltKick) {
+        float most = 0.0f;
+
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            most = Q_max(most, VectorLength(rd->joltKick[i]));
+            VectorAdd(dv[i], rd->joltKick[i], dv[i]);
+            VectorClear(rd->joltKick[i]);
+        }
+        rd->hasJoltKick = qfalse;
+        pushed          = qtrue;
+        CG_RagdollLog(rd, "struck: joints kicked up to %.0f u/s", most);
+    }
+
     if (pushed) {
         CG_JoltRagdollAddVelocity(rd->jolt, dv);
     }
@@ -9949,6 +9976,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             }
 
             // The hold on the death pose lasts as long as the particles' would.
+            rd->hasJoltKick = qfalse;
+            memset(rd->joltKick, 0, sizeof(rd->joltKick));
             rd->jolt = CG_JoltRagdollCreate(
                 p, v, rd->jointRadius, Q_max(0.0f, (cg_ragdoll_limptime->integer - (cg.time - rd->startTime)) * 0.001f)
             );
