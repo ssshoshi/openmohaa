@@ -20,6 +20,27 @@ The first build generates `rd_anims.h` from the retail `Pak0.pk3` (set
 animations are the game's own and are not part of the tree. Don't run two builds
 at once in this directory: they share `solver.o`.
 
+## The Jolt ragdoll
+
+`./build.sh --jolt` builds `./rdsim_jolt`, which runs the same scenarios with the
+Jolt ragdoll (`code/cgame/cg_physics_ragdoll.cpp`, `cg_ragdoll_solver 1`):
+the particle solver carries the body through the blend out of the death
+animation, as in the game, and Jolt carries it from there, in a world built
+from each scenario's floor and ledge or wall (`rdjolt.cpp`). It links the Jolt
+library of a CMake build of this tree (`JOLT_LIB`, default
+`build/linux/libJolt.a`, so build the tree for Linux first).
+
+`RD_SOLVER=0 ./rdsim_jolt` runs the particles in the same binary, and matches
+`./rdsim` line for line. `scripts/compare.py` runs both and sets them side by
+side: how many scenarios each fails and on which check, and the median of each
+measure (`-v` for every scenario). `RD_CVAR` passes through, for tuning.
+
+```sh
+./build.sh --jolt
+scripts/compare.py
+RD_ONLY="anim death_run03" ./rdsim_jolt
+```
+
 ## Knobs
 
 Environment variables, all optional:

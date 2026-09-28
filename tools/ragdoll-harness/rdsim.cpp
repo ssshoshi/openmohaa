@@ -18,6 +18,12 @@ static float gMoveThisFrame = 0.0f, gLateMove = 0.0f;
 extern "C" int CG_RagdollDebugParticles(int, float*, int);
 extern "C" void CG_RagdollGrabDown_f(void);
 extern "C" qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large, vec3_t stopAt);
+#ifdef RD_JOLT
+// The physics world the Jolt ragdoll runs in (rdjolt.cpp).
+void RDJ_Init(float gravity);
+void RDJ_Build(const vec3_t floorN, int box, const vec3_t mins, const vec3_t maxs);
+void RDJ_Step(float frametime);
+#endif
 clientGameImport_t cgi;
 cg_t               cg;
 cgs_t              cgs;
@@ -496,6 +502,9 @@ static int RunScenario(const Scenario &sc)
         sscanf(bx, "%f %f %f %f %f %f", &gLedgeMins[0], &gLedgeMins[1], &gLedgeMins[2], &gLedgeMaxs[0], &gLedgeMaxs[1], &gLedgeMaxs[2]);
     }
     VectorNormalize(gFloorN);
+#ifdef RD_JOLT
+    RDJ_Build(gFloorN, gLedge, gLedgeMins, gLedgeMaxs);
+#endif
 
     const int  entnum = 5;
     centity_t *cent   = &cg_entities[entnum];
@@ -752,6 +761,9 @@ static int RunScenario(const Scenario &sc)
 
     for (int frame = 0; frame < numFrames; frame++) {
         cg.time = frame * 16; cg.frametime = 16;
+#ifdef RD_JOLT
+        RDJ_Step(0.016f);
+#endif
 
         if (wdT >= 0 && cg.time >= wdT) {
             float pp[23*3];
@@ -2213,6 +2225,13 @@ int main(void)
     cg_3rd_person = Stub_CvarGet("cg_3rd_person", "0", 0);
     g_anim.bIsCharacter = qtrue; g_anim.name = (char *)"models/human/german.tik";
     memset(&g_tiki, 0, sizeof(g_tiki)); g_tiki.a = &g_anim; g_tiki.load_scale = 1.0f;
+#ifdef RD_JOLT
+    // The Jolt build carries bodies with the Jolt ragdoll once the blend
+    // ends; RD_SOLVER=0 runs the particles in the same binary, to compare.
+    RDJ_Init(800.0f);
+    Stub_CvarSet("cg_ragdoll_solver", getenv("RD_SOLVER") ? getenv("RD_SOLVER") : "1");
+    printf("solver: %s\n", Stub_CvarGet("cg_ragdoll_solver", "1", 0)->integer == 1 ? "jolt" : "particles");
+#endif
 
     printf("%-26s | %-12s | %-6s | %-5s | %-5s | %-6s | %-6s |\n",
            "scenario", "bone stretch", "selfX%", "hyper", "knee", "move", "deep");
@@ -2318,7 +2337,8 @@ extern "C" void CG_PhysicsGrabDenied(void) {}
 extern "C" void CG_PhysicsGrabSetTarget(const vec3_t) {}
 extern "C" void CG_PhysicsGrabPoint(vec3_t out) { VectorClear(out); }
 extern "C" qboolean CG_PhysicsPunt(const vec3_t, const vec3_t, float, float) { return qfalse; }
-// The Jolt ragdoll is not built here (yet): making one fails, and the
+#ifndef RD_JOLT
+// Without --jolt the Jolt ragdoll is not built: making one fails, and the
 // particles carry every body.
 int CG_JoltRagdollCreate(const vec3_t[RD_NUM_JOINTS], const vec3_t[RD_NUM_JOINTS], const float[RD_NUM_JOINTS]) { return 0; }
 void CG_JoltRagdollDestroy(int) {}
@@ -2328,6 +2348,7 @@ void CG_JoltRagdollHold(int, int, const vec3_t) {}
 qboolean CG_JoltRagdollAwake(int) { return qfalse; }
 void CG_JoltRagdollSleep(int) {}
 void CG_JoltRagdollWake(int) {}
+#endif
 extern "C" void Com_Printf(const char *fmt, ...) { (void)fmt; }
 extern "C" void Com_Error(int level, const char *fmt, ...) { (void)level; printf("Com_Error: %s\n", fmt); exit(1); }
 extern "C" void Com_DPrintf(const char *fmt, ...) { (void)fmt; }

@@ -1,4 +1,5 @@
 rdsim
+rdsim_jolt
 rdsim-*
 *.o
 rd_anims.h
