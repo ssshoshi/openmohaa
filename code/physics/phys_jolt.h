@@ -41,12 +41,17 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Skeleton/Skeleton.h>
 #include <Jolt/RegisterTypes.h>
 
 #include "../qcommon/q_shared.h"
@@ -99,6 +104,8 @@ inline constexpr unsigned int         COUNT = 2;
 #define PHYS_USERDATA_ENTITY_BASE 100000
 // A piece of the client's brushwork furniture: this + its index.
 #define PHYS_USERDATA_FURNITURE_BASE 200000
+// A part of a Jolt ragdoll: this + its slot * 32 + the part.
+#define PHYS_USERDATA_RAGDOLL_BASE 300000
 
 // A world of its own, with everything Jolt needs to step it.
 typedef struct {
@@ -126,12 +133,16 @@ public:
     bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer == PhysLayers::WORLD; }
 };
 
-// Casts that pass through the kinematic boxes of players and AI: a ray from
-// someone's eye or gun starts inside his own box.
+// Casts looking for props: through the kinematic boxes of players and AI (a
+// ray from someone's eye or gun starts inside his own box) and the parts of
+// ragdolls, which the ragdolls' own code handles.
 class PhysNoKinematicObjects final : public JPH::ObjectLayerFilter
 {
 public:
-    bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer != PhysLayers::KINEMATIC; }
+    bool ShouldCollide(JPH::ObjectLayer layer) const override
+    {
+        return layer != PhysLayers::KINEMATIC && layer != PhysLayers::RAGDOLL;
+    }
 };
 
 // The rotation that takes a model's own x, y and z to the given axes, and back.

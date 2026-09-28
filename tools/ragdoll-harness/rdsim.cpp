@@ -3,6 +3,7 @@
 #include "cg_local.h"
 #include "rd_anims.h"
 #include "cg_ragdoll.h"
+#include "cg_physics_ragdoll.h"
 #include <cstdio>
 #include <cmath>
 
@@ -2317,6 +2318,16 @@ extern "C" void CG_PhysicsGrabDenied(void) {}
 extern "C" void CG_PhysicsGrabSetTarget(const vec3_t) {}
 extern "C" void CG_PhysicsGrabPoint(vec3_t out) { VectorClear(out); }
 extern "C" qboolean CG_PhysicsPunt(const vec3_t, const vec3_t, float, float) { return qfalse; }
+// The Jolt ragdoll is not built here (yet): making one fails, and the
+// particles carry every body.
+int CG_JoltRagdollCreate(const vec3_t[RD_NUM_JOINTS], const vec3_t[RD_NUM_JOINTS], const float[RD_NUM_JOINTS]) { return 0; }
+void CG_JoltRagdollDestroy(int) {}
+qboolean CG_JoltRagdollRead(int, vec3_t[RD_NUM_JOINTS], vec3_t[RD_NUM_JOINTS], qboolean[RD_NUM_JOINTS], vec3_t[RD_NUM_JOINTS], int *) { return qfalse; }
+void CG_JoltRagdollAddVelocity(int, const vec3_t[RD_NUM_JOINTS]) {}
+void CG_JoltRagdollHold(int, int, const vec3_t) {}
+qboolean CG_JoltRagdollAwake(int) { return qfalse; }
+void CG_JoltRagdollSleep(int) {}
+void CG_JoltRagdollWake(int) {}
 extern "C" void Com_Printf(const char *fmt, ...) { (void)fmt; }
 extern "C" void Com_Error(int level, const char *fmt, ...) { (void)level; printf("Com_Error: %s\n", fmt); exit(1); }
 extern "C" void Com_DPrintf(const char *fmt, ...) { (void)fmt; }

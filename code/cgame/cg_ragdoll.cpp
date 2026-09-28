@@ -38,6 +38,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_parsemsg.h"
 #include "cg_props.h"
 #include "cg_physics.h"
+#include "cg_physics_ragdoll.h"
 #include "../qcommon/qfiles.h"
 
 #include <chrono>
@@ -76,6 +77,7 @@ cvar_t *cg_ragdoll_grabspring;
 cvar_t *cg_ragdoll_puntspeed;
 cvar_t *cg_ragdoll_chestroll;
 cvar_t *cg_ragdoll_spinetwist;
+cvar_t *cg_ragdoll_solver;
 cvar_t *cg_ragdoll_pinsleep;
 cvar_t *cg_ragdoll_jointsize;
 cvar_t *cg_ragdoll_shoulderslack;
@@ -88,33 +90,8 @@ cvar_t *cg_ragdoll_stiffness;
 // The rig
 //=============================================================
 
-enum {
-    RD_PELVIS,
-    RD_SPINE,
-    RD_SPINE1,
-    RD_SPINE2,
-    RD_NECK,
-    RD_HEAD,
-    RD_HEADTIP,
-    RD_LUARM,
-    RD_LFARM,
-    RD_LHAND,
-    RD_LHANDTIP,
-    RD_RUARM,
-    RD_RFARM,
-    RD_RHAND,
-    RD_RHANDTIP,
-    RD_LTHIGH,
-    RD_LCALF,
-    RD_LFOOT,
-    RD_LTOE,
-    RD_RTHIGH,
-    RD_RCALF,
-    RD_RFOOT,
-    RD_RTOE,
-
-    RD_NUM_JOINTS
-};
+// The joints, shared with the Jolt ragdoll (cg_physics_ragdoll.cpp).
+#include "cg_ragdoll_rig.h"
 
 typedef struct {
     const char *boneName; // primary bone this joint sits on
@@ -1174,6 +1151,10 @@ typedef struct {
     qboolean hasImpulse;
     vec3_t   impulseVel;
     int      impulseJoint;
+
+    // With cg_ragdoll_solver 1, the Jolt ragdoll that carries the body once the
+    // blend out of the death animation is over (cg_physics_ragdoll.cpp), or 0.
+    int jolt;
 
     // An explosion near enough to have thrown this body, kept as the place it
     // went off rather than as a direction, so each particle can be pushed away
@@ -7756,6 +7737,10 @@ static void CG_RagdollWake(cg_ragdoll_t *rd)
 
         rd->state = RD_ACTIVE;
 
+        if (rd->jolt) {
+            CG_JoltRagdollWake(rd->jolt);
+        }
+
         // The clock starts again from now. It is not advanced while a body
         // sleeps, so waking it left the whole sleep owed as simulation time:
         // five steps were run on the next frame, the most a frame may take,
@@ -8206,12 +8191,23 @@ extern "C" void CG_RagdollPunt_f(void)
 
     CG_RagdollKeepAwake(rd);
 
-    for (i = 0; i < RD_NUM_JOINTS; i++) {
-        // Full speed at the part hit, down to half of it a body's length away,
-        // so a punt to the legs turns the body over rather than sliding it.
-        const float falloff = 1.0f - 0.5f * Q_min(Distance(rd->part[i].p, point) / 64.0f, 1.0f);
+    {
+        vec3_t dv[RD_NUM_JOINTS];
 
-        VectorMA(rd->part[i].v, cg_ragdoll_puntspeed->value * falloff, dir, rd->part[i].v);
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            // Full speed at the part hit, down to half of it a body's length
+            // away, so a punt to the legs turns the body over rather than
+            // sliding it.
+            const float falloff = 1.0f - 0.5f * Q_min(Distance(rd->part[i].p, point) / 64.0f, 1.0f);
+
+            VectorScale(dir, cg_ragdoll_puntspeed->value * falloff, dv[i]);
+            VectorAdd(rd->part[i].v, dv[i], rd->part[i].v);
+        }
+
+        // A Jolt body takes it through the physics.
+        if (rd->jolt) {
+            CG_JoltRagdollAddVelocity(rd->jolt, dv);
+        }
     }
 
     CG_RagdollLog(rd, "punted");
@@ -8842,6 +8838,9 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
 
 static void CG_RagdollFree(cg_ragdoll_t *rd)
 {
+    if (rd->jolt) {
+        CG_JoltRagdollDestroy(rd->jolt);
+    }
     CG_RagdollDumpClose(rd);
     memset(rd, 0, sizeof(*rd));
     rd->state     = RD_FREE;
@@ -9002,6 +9001,8 @@ void CG_InitRagdoll(void)
     cg_ragdoll_puntspeed = cgi.Cvar_Get("cg_ragdoll_puntspeed", "700", CVAR_ARCHIVE);
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
+    // Added in OPM: 0 the particle solver, 1 a Jolt ragdoll (cg_physics_ragdoll.cpp)
+    cg_ragdoll_solver = cgi.Cvar_Get("cg_ragdoll_solver", "0", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
     cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "3", CVAR_ARCHIVE);
     cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
@@ -9680,6 +9681,92 @@ static void CG_RagdollMeasureClipping(cg_ragdoll_t *rd, refEntity_t *model, int 
     );
 }
 
+// With cg_ragdoll_solver 1: hands the Jolt ragdoll the shots, blasts and the
+// grabber waiting for it, and takes back where its joints are, how fast they
+// go and what they rest on, as a step of the particle solver would leave them.
+// Returns the largest distance a joint moves in a step at dt.
+static float CG_RagdollJoltFollow(cg_ragdoll_t *rd, float dt)
+{
+    vec3_t   p[RD_NUM_JOINTS], v[RD_NUM_JOINTS], normal[RD_NUM_JOINTS], dv[RD_NUM_JOINTS];
+    qboolean contact[RD_NUM_JOINTS], pushed = qfalse;
+    float    maxDisp = 0.0f, meanDisp = 0.0f;
+    int      mask, i;
+
+    memset(dv, 0, sizeof(dv));
+
+    if (rd->hasImpulse) {
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            VectorScale(rd->impulseVel, 1.0f - RD_IMPULSE_LOCAL, dv[i]);
+        }
+        VectorMA(dv[rd->impulseJoint], RD_IMPULSE_LOCAL, rd->impulseVel, dv[rd->impulseJoint]);
+        rd->hasImpulse = qfalse;
+        pushed         = qtrue;
+    }
+
+    if (rd->hasBlast) {
+        for (i = 0; i < RD_NUM_JOINTS; i++) {
+            vec3_t away;
+            float  dist;
+
+            VectorSubtract(rd->part[i].p, rd->blastPos, away);
+            dist = VectorNormalize(away);
+            if (dist >= rd->blastRadius) {
+                continue;
+            }
+            if (dist < 1.0f) {
+                VectorSet(away, 0.0f, 0.0f, 1.0f);
+            }
+            VectorMA(dv[i], rd->blastSpeed * (1.0f - dist / rd->blastRadius), away, dv[i]);
+        }
+        rd->hasBlast = qfalse;
+        pushed       = qtrue;
+    }
+
+    if (pushed) {
+        CG_JoltRagdollAddVelocity(rd->jolt, dv);
+    }
+
+    CG_JoltRagdollHold(rd->jolt, rd->grabJoint, rd->grabTarget);
+
+    if (!CG_JoltRagdollRead(rd->jolt, p, v, contact, normal, &mask)) {
+        // Gone from the world (the map changed): the particles carry on.
+        rd->jolt = 0;
+        return 0.0f;
+    }
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        rdParticle_t *part = &rd->part[i];
+        const float   disp = VectorLength(v[i]) * dt;
+
+        VectorCopy(part->p, part->pPrev);
+        VectorCopy(p[i], part->p);
+        VectorCopy(v[i], part->v);
+        VectorClear(part->solved);
+
+        part->hasContact = contact[i];
+        part->onGround   = (contact[i] && normal[i][2] > 0.7f) ? qtrue : qfalse;
+        if (contact[i]) {
+            VectorCopy(normal[i], part->contactNormal);
+            part->contactDist = DotProduct(part->p, normal[i]);
+            part->contactTime = cg.time;
+            VectorCopy(part->p, part->contactAt);
+        }
+
+        maxDisp = Q_max(maxDisp, disp);
+        meanDisp += disp;
+    }
+
+    rd->onBodyMask = mask;
+    rd->stuckMask  = 0;
+    rd->lastMean   = meanDisp / (float)RD_NUM_JOINTS;
+    rd->balanced   = CG_RagdollBalanced(rd, &rd->draped);
+
+    // The drawn roll of the upper arms and thighs, as the particle step keeps.
+    CG_RagdollLimbTwist(rd);
+
+    return maxDisp;
+}
+
 void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 {
     cg_ragdoll_t *rd;
@@ -9835,6 +9922,21 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         rd->state = RD_ACTIVE;
         CG_RagdollStartTwist(rd);
 
+        // Added in OPM
+        //  From here the Jolt ragdoll carries the body, if one is wanted.
+        if (cg_ragdoll_solver->integer == 1 && !rd->jolt) {
+            vec3_t p[RD_NUM_JOINTS], v[RD_NUM_JOINTS];
+            int    j;
+
+            for (j = 0; j < RD_NUM_JOINTS; j++) {
+                VectorCopy(rd->part[j].p, p[j]);
+                VectorCopy(rd->part[j].v, v[j]);
+            }
+
+            rd->jolt = CG_JoltRagdollCreate(p, v, rd->jointRadius);
+            CG_RagdollLog(rd, rd->jolt ? "carried by a Jolt ragdoll" : "no Jolt ragdoll could be made; the particles carry on");
+        }
+
         // Nothing is measured again here, and it is worth saying why, because
         // it looks like an obvious thing to do and was tried at some length.
         //
@@ -9868,6 +9970,12 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         CG_RagdollWake(rd);
     }
 
+    // Something in the physics world struck the Jolt body while it slept.
+    if (rd->state == RD_SLEEPING && rd->jolt && CG_JoltRagdollAwake(rd->jolt)) {
+        CG_RagdollLog(rd, "woken by the physics");
+        CG_RagdollWake(rd);
+    }
+
     if (rd->state != RD_SLEEPING) {
         // Everything below reads the animation pose, so gather it once here
         // rather than per bone per substep.
@@ -9892,7 +10000,14 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 rd->accum = dt * 5.0f;
             }
 
-            while (rd->accum >= dt && steps < 5) {
+            if (rd->jolt) {
+                // The physics world steps it (CG_PhysicsFrame); this follows.
+                maxDisp   = CG_RagdollJoltFollow(rd, dt);
+                rd->accum = 0.0f;
+                steps     = 1;
+            }
+
+            while (!rd->jolt && rd->accum >= dt && steps < 5) {
                 CG_RagdollDriveFromAnim(rd, weight);
                 maxDisp = CG_RagdollStep(rd, cent->currentState.number, dt);
                 rd->accum -= dt;
@@ -9963,6 +10078,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
             if (supported && rd->balanced && cg.time - rd->quietSince > cg_ragdoll_sleeptime->integer) {
                 rd->state = RD_SLEEPING;
+                if (rd->jolt) {
+                    CG_JoltRagdollSleep(rd->jolt);
+                }
                 CG_RagdollLog(rd, "asleep after %d ms", elapsed);
                 CG_RagdollNoteMovers(rd);
                 rd->measureClip = qtrue;
@@ -9996,6 +10114,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 if ((rd->restingSince && cg.time - rd->restingSince > RD_CAP_SETTLE && rd->lastMean < RD_CAP_MAX_MEAN)
                     || cg.time - Q_max(rd->startTime, rd->lastWake) > cg_ragdoll_duration->integer * RD_SLEEP_BACKSTOP) {
                     rd->state = RD_SLEEPING;
+                    if (rd->jolt) {
+                        CG_JoltRagdollSleep(rd->jolt);
+                    }
                     CG_RagdollLog(rd, "asleep after %d ms, at the lifetime cap", elapsed);
                     CG_RagdollNoteMovers(rd);
                     rd->measureClip = qtrue;

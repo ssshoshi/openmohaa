@@ -210,6 +210,7 @@ Props are rigid bodies (Jolt Physics) that bullets, explosions and falling bodie
 |cg_physics_furniture |1      |Furniture built from world brushes moves (takes effect on map load)
 |cg_physics_clipped   |0      |Props wrapped in clip brushes move even when the clip brushes cannot be removed (multiplayer); the clip brushes then stay where the prop was
 |cg_physics_log       |0      |1 reports load and step costs, 2 also blasts, hits and each piece of furniture
+|cg_ragdoll_solver    |0      |0: corpses are the particle ragdoll. 1: once the blend out of the death animation ends, a Jolt ragdoll (rigid capsules, hinged knees and elbows, a man's range at the hips and shoulders) carries the body, colliding with the map, props, people and other corpses
 |cg_physics_debug     |0      |1 draws the physics world's shapes near the view; 3 draws every brush prop turned over where it stands, with the sides it was built without covered (4: without the covers), to check them
 
 Walking into a prop pushes it, lighter props faster and nothing over 80 kg; AI push props too. The client's props and the server's collide: crates and barrels push chairs and bottles, and in single player a chair thrown into a crate shoves it. With `cg_ragdoll_grab 1` the grabber (`+rdgrab`, `rdpunt`) carries and throws props as well as bodies, in single player the server's crates, barrels and magazines too.

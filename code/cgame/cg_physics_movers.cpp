@@ -388,6 +388,7 @@ public:
     ) override
     {
         Note(a, b, manifold);
+        CG_JoltRagdollContact(a, b, manifold);
     }
 
     void OnContactPersisted(
@@ -395,6 +396,7 @@ public:
     ) override
     {
         Note(a, b, manifold);
+        CG_JoltRagdollContact(a, b, manifold);
     }
 
 private:
