@@ -112,7 +112,8 @@ disabled or conservative by default. The settings below are latched unless noted
 Normal and specular maps are picked up automatically: for a texture `foo.jpg`, the renderer
 looks for `foo_n` (normal map), `foo_nh` (normal map with height in the alpha channel, for
 parallax mapping) and `foo_s` (specular map). Because these are ordinary extra files, they can
-be shipped in a separate pk3 without modifying any stock game content.
+be shipped in a separate pk3 without modifying any stock game content. `tools/matgen` generates
+such a pk3 from the installed textures.
 
 Materials can also be described explicitly in `.mtr` files, which live alongside `.shader`
 files in `scripts/` and use the same syntax. A `.mtr` file replaces the `.shader` file of the
