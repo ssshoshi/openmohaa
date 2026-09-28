@@ -706,7 +706,7 @@ static void G_PhysicsFollowSentients(void)
             }
 
             JPH::BodyCreationSettings settings(
-                shape, JPH::RVec3(PhysToJolt(centre)), JPH::Quat::sIdentity(), JPH::EMotionType::Kinematic, PhysLayers::KINEMATIC
+                shape, JPH::RVec3(PhysToJolt(centre)), JPH::Quat::sIdentity(), JPH::EMotionType::Kinematic, PhysLayers::PEOPLE
             );
             // No friction, so someone standing on a crate does not drag it.
             settings.mFriction    = 0.0f;

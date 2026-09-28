@@ -69,8 +69,14 @@ public:
         }
         // Kinematic bodies are driven, not simulated: they push, and nothing
         // needs to push them back.
-        if ((a == PhysLayers::KINEMATIC && (b == PhysLayers::KINEMATIC || b == PhysLayers::WORLD))
-            || (b == PhysLayers::KINEMATIC && a == PhysLayers::WORLD)) {
+        const bool driven1 = a == PhysLayers::KINEMATIC || a == PhysLayers::PEOPLE;
+        const bool driven2 = b == PhysLayers::KINEMATIC || b == PhysLayers::PEOPLE;
+
+        if ((driven1 && (driven2 || b == PhysLayers::WORLD)) || (driven2 && a == PhysLayers::WORLD)) {
+            return false;
+        }
+        // People walk over corpses without moving them, as they always have.
+        if ((a == PhysLayers::PEOPLE && b == PhysLayers::RAGDOLL) || (b == PhysLayers::PEOPLE && a == PhysLayers::RAGDOLL)) {
             return false;
         }
         return true;

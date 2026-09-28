@@ -88,7 +88,10 @@ inline constexpr JPH::ObjectLayer PROP      = 1;
 inline constexpr JPH::ObjectLayer DEBRIS    = 2;
 inline constexpr JPH::ObjectLayer RAGDOLL   = 3;
 inline constexpr JPH::ObjectLayer KINEMATIC = 4;
-inline constexpr JPH::ObjectLayer COUNT     = 5;
+// Players and AI: kinematic boxes that push props but pass through corpses,
+// which nobody shoves by walking over them.
+inline constexpr JPH::ObjectLayer PEOPLE    = 5;
+inline constexpr JPH::ObjectLayer COUNT     = 6;
 } // namespace PhysLayers
 
 namespace PhysBroadPhase
@@ -144,7 +147,7 @@ class PhysNoKinematicObjects final : public JPH::ObjectLayerFilter
 public:
     bool ShouldCollide(JPH::ObjectLayer layer) const override
     {
-        return layer != PhysLayers::KINEMATIC && layer != PhysLayers::RAGDOLL;
+        return layer != PhysLayers::KINEMATIC && layer != PhysLayers::PEOPLE && layer != PhysLayers::RAGDOLL;
     }
 };
 

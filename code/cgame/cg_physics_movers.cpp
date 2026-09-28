@@ -226,7 +226,7 @@ static void CG_PhysicsPlaceMover(int key, int model, const vec3_t origin, const 
         }
 
         JPH::BodyCreationSettings settings(
-            shape, JPH::RVec3(PhysToJolt(centre)), rot, JPH::EMotionType::Kinematic, PhysLayers::KINEMATIC
+            shape, JPH::RVec3(PhysToJolt(centre)), rot, JPH::EMotionType::Kinematic, model ? PhysLayers::KINEMATIC : PhysLayers::PEOPLE
         );
         // No friction, so standing on a prop does not drag it.
         settings.mFriction    = model ? 0.6f : 0.0f;
