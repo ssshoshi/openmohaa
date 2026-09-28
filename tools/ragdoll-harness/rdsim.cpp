@@ -2352,6 +2352,7 @@ qboolean CG_JoltRagdollRead(int, vec3_t[RD_NUM_JOINTS], vec3_t[RD_NUM_JOINTS], q
 void CG_JoltRagdollAddVelocity(int, const vec3_t[RD_NUM_JOINTS]) {}
 void CG_JoltRagdollHold(int, int, const vec3_t) {}
 qboolean CG_JoltRagdollAwake(int) { return qfalse; }
+float CG_JoltRagdollSpeed(int) { return 0.0f; }
 void CG_JoltRagdollSleep(int) {}
 void CG_JoltRagdollWake(int) {}
 void CG_JoltRagdollReport(int, void (*)(const char *, ...)) {}

@@ -9681,6 +9681,10 @@ static void CG_RagdollMeasureClipping(cg_ragdoll_t *rd, refEntity_t *model, int 
     );
 }
 
+// How fast a part of a sleeping Jolt body has to be going for what struck it to
+// wake the corpse, units a second.
+#define RD_JOLT_WAKE_SPEED 20.0f
+
 // With cg_ragdoll_solver 1: hands the Jolt ragdoll the shots, blasts and the
 // grabber waiting for it, and takes back where its joints are, how fast they
 // go and what they rest on, as a step of the particle solver would leave them.
@@ -9758,6 +9762,13 @@ static float CG_RagdollJoltFollow(cg_ragdoll_t *rd, float dt)
 
     rd->onBodyMask = mask;
     rd->stuckMask  = 0;
+
+    // Never asleep while held: a body the beam cannot move, caught on
+    // something, would otherwise sleep with the grabber still on it and stop
+    // answering it.
+    if (rd->grabJoint >= 0) {
+        rd->quietSince = cg.time;
+    }
     rd->lastMean   = meanDisp / (float)RD_NUM_JOINTS;
     rd->balanced   = CG_RagdollBalanced(rd, &rd->draped);
 
@@ -9973,10 +9984,17 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         CG_RagdollWake(rd);
     }
 
-    // Something in the physics world struck the Jolt body while it slept.
+    // Something in the physics world struck the Jolt body while it slept. Only
+    // what sets it moving counts: brushed by something it lies against, it is
+    // put back to sleep there instead, or a pile of bodies wakes itself for
+    // ever, each one's settling nudging the next.
     if (rd->state == RD_SLEEPING && rd->jolt && CG_JoltRagdollAwake(rd->jolt)) {
-        CG_RagdollLog(rd, "woken by the physics");
-        CG_RagdollWake(rd);
+        if (CG_JoltRagdollSpeed(rd->jolt) > RD_JOLT_WAKE_SPEED) {
+            CG_RagdollLog(rd, "woken by the physics");
+            CG_RagdollWake(rd);
+        } else {
+            CG_JoltRagdollSleep(rd->jolt);
+        }
     }
 
     if (rd->state != RD_SLEEPING) {

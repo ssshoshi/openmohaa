@@ -165,10 +165,19 @@ static const float pr_tone[] = {
     10.0f,  // PR_ANKLE
 };
 
-// The grabber's spring: natural frequency, radians a second (critically
-// damped), and the most it accelerates the joint held, units a second squared.
-#define PR_HOLD_OMEGA     16.0f
-#define PR_HOLD_MAX_ACCEL 6000.0f
+// The grabber. The joint held is tied to an anchor carried to the end of the
+// beam, by motors on a six degree of freedom constraint rather than a force of
+// our own: Jolt then solves the pull against the whole body hanging from the
+// joint, where a force sized for the whole body and put on one small part
+// overshot it and set it shaking. The motors' stiffness (hertz, critically
+// damped), the most they pull (the body's weight and this much acceleration
+// besides, metres a second squared), the fastest the anchor follows the beam
+// (units a second), and the friction that stops the part held spinning about
+// the grip (newton metres).
+#define PR_HOLD_FREQUENCY     10.0f
+#define PR_HOLD_EXTRA_ACCEL   25.0f
+#define PR_HOLD_MAX_SPEED     1500.0f
+#define PR_HOLD_SPIN_FRICTION 3.0f
 
 typedef struct {
     qboolean                      used;
@@ -180,6 +189,9 @@ typedef struct {
 
     int    holdJoint;
     vec3_t holdTarget;
+
+    JPH::BodyID                     anchor; // what the joint held is tied to
+    JPH::Ref<JPH::SixDOFConstraint> hold;
 
     // The hold on the death pose: how long it lasts, and how far into it.
     float toneTime, toneElapsed;
@@ -682,6 +694,8 @@ int CG_JoltRagdollCreate(
 
     pr->used        = qtrue;
     pr->holdJoint   = -1;
+    pr->anchor      = JPH::BodyID();
+    pr->hold        = NULL;
     pr->onBodyMask  = 0;
     pr->toneTime    = toneTime;
     pr->toneElapsed = 0.0f;
@@ -693,8 +707,82 @@ int CG_JoltRagdollCreate(
     return slot + 1 + PR_MAX_RAGDOLLS * pr->generation;
 }
 
+static void CG_JoltRagdollJoint(const prRagdoll_t *pr, JPH::BodyInterface& bodies, int joint, JPH::RVec3 *point, JPH::BodyID *id);
+
+// Lets go of the joint held.
+static void CG_JoltRagdollDropHold(prRagdoll_t *pr)
+{
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+
+    if (pr->hold) {
+        phys_system->RemoveConstraint(pr->hold);
+        pr->hold = NULL;
+    }
+    if (!pr->anchor.IsInvalid()) {
+        bodies.RemoveBody(pr->anchor);
+        bodies.DestroyBody(pr->anchor);
+        pr->anchor = JPH::BodyID();
+    }
+    pr->holdJoint = -1;
+}
+
+// Ties a joint to a new anchor where it is.
+static void CG_JoltRagdollTakeHold(prRagdoll_t *pr, int joint)
+{
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+    JPH::RVec3          point;
+    JPH::BodyID         part;
+
+    CG_JoltRagdollDropHold(pr);
+    CG_JoltRagdollJoint(pr, bodies, joint, &point, &part);
+
+    {
+        JPH::BodyCreationSettings settings(
+            new JPH::SphereShape(0.02f), point, JPH::Quat::sIdentity(), JPH::EMotionType::Kinematic, PhysLayers::KINEMATIC
+        );
+        settings.mIsSensor = true;
+        pr->anchor         = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    }
+    if (pr->anchor.IsInvalid()) {
+        return;
+    }
+
+    {
+        JPH::SixDOFConstraintSettings settings;
+        const float                   force = pr->totalMass * (-phys_system->GetGravity().GetZ() + PR_HOLD_EXTRA_ACCEL);
+
+        settings.mSpace     = JPH::EConstraintSpace::WorldSpace;
+        settings.mPosition1 = point;
+        settings.mPosition2 = point;
+        for (int a = 0; a < JPH::SixDOFConstraintSettings::EAxis::Num; a++) {
+            settings.MakeFreeAxis((JPH::SixDOFConstraintSettings::EAxis)a);
+        }
+        for (int a = JPH::SixDOFConstraintSettings::EAxis::RotationX; a <= JPH::SixDOFConstraintSettings::EAxis::RotationZ; a++) {
+            settings.mMaxFriction[a] = PR_HOLD_SPIN_FRICTION;
+        }
+        for (int a = JPH::SixDOFConstraintSettings::EAxis::TranslationX; a <= JPH::SixDOFConstraintSettings::EAxis::TranslationZ; a++) {
+            settings.mMotorSettings[a] = JPH::MotorSettings(PR_HOLD_FREQUENCY, 1.0f, force, 0.0f);
+        }
+
+        pr->hold = static_cast<JPH::SixDOFConstraint *>(bodies.CreateConstraint(&settings, pr->anchor, part));
+    }
+    if (!pr->hold) {
+        CG_JoltRagdollDropHold(pr);
+        return;
+    }
+
+    phys_system->AddConstraint(pr->hold);
+    for (int a = JPH::SixDOFConstraintSettings::EAxis::TranslationX; a <= JPH::SixDOFConstraintSettings::EAxis::TranslationZ; a++) {
+        pr->hold->SetMotorState((JPH::SixDOFConstraintSettings::EAxis)a, JPH::EMotorState::Position);
+    }
+    pr->hold->SetTargetPositionCS(JPH::Vec3::sZero());
+    pr->holdJoint = joint;
+}
+
 static void CG_JoltRagdollRelease(prRagdoll_t *pr)
 {
+    CG_JoltRagdollDropHold(pr);
+
     if (pr->ragdoll) {
         pr->ragdoll->RemoveFromPhysicsSystem();
     }
@@ -806,11 +894,36 @@ void CG_JoltRagdollHold(int handle, int joint, const vec3_t target)
         return;
     }
 
-    pr->holdJoint = (joint >= 0 && joint < RD_NUM_JOINTS) ? joint : -1;
-    if (pr->holdJoint >= 0) {
-        VectorCopy(target, pr->holdTarget);
-        pr->ragdoll->Activate();
+    if (joint < 0 || joint >= RD_NUM_JOINTS) {
+        if (pr->holdJoint >= 0) {
+            CG_JoltRagdollDropHold(pr);
+        }
+        return;
     }
+
+    if (joint != pr->holdJoint || !pr->hold) {
+        CG_JoltRagdollTakeHold(pr, joint);
+    }
+    VectorCopy(target, pr->holdTarget);
+    pr->ragdoll->Activate();
+}
+
+float CG_JoltRagdollSpeed(int handle)
+{
+    prRagdoll_t *pr   = CG_JoltRagdollGet(handle);
+    float        most = 0.0f;
+
+    if (!pr) {
+        return 0.0f;
+    }
+
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        most = Q_max(most, bodies.GetLinearVelocity(pr->ragdoll->GetBodyID(i)).Length());
+    }
+
+    return most * PHYS_METRES_TO_UNITS;
 }
 
 qboolean CG_JoltRagdollAwake(int handle)
@@ -852,9 +965,8 @@ void CG_JoltRagdollWake(int handle)
     }
 }
 
-// Each step of the world: a body held by the grabber hangs from the joint
-// taken hold of, on a spring towards the end of the beam, strong enough to lift
-// the whole of it.
+// Each step of the world: the hold on the death pose easing off, and the
+// anchor of a body held by the grabber carried towards the end of the beam.
 void CG_JoltRagdollsStep(float dt)
 {
     if (!phys_system) {
@@ -867,8 +979,6 @@ void CG_JoltRagdollsStep(float dt)
         prRagdoll_t *pr = &pr_ragdolls[n];
         JPH::RVec3   point;
         JPH::BodyID  id;
-        JPH::Vec3    pointVel, accel, gravity, force;
-        float        limit, mass, most;
 
         if (!pr->used) {
             continue;
@@ -894,40 +1004,23 @@ void CG_JoltRagdollsStep(float dt)
             pr->onBodyMask = 0;
         }
 
-        if (pr->holdJoint < 0) {
+        if (pr->holdJoint < 0 || pr->anchor.IsInvalid()) {
             continue;
         }
 
-        CG_JoltRagdollJoint(pr, bodies, pr->holdJoint, &point, &id);
-        pointVel = bodies.GetPointVelocity(id, point);
-
-        accel   = (PhysToJolt(pr->holdTarget) - JPH::Vec3(point)) * (PR_HOLD_OMEGA * PR_HOLD_OMEGA) - pointVel * (2.0f * PR_HOLD_OMEGA);
-        gravity = -phys_system->GetGravity();
-        limit   = PR_HOLD_MAX_ACCEL * PHYS_UNITS_TO_METRES;
-        if (accel.Length() > limit) {
-            accel = accel.Normalized() * limit;
-        }
-
-        // The part's own weight and pull, and what is left of the strength
-        // for the rest of the body hanging from it.
+        // The anchor after the end of the beam, no faster than a hand.
         {
-            JPH::BodyLockRead lock(phys_system->GetBodyLockInterface(), id);
+            const JPH::RVec3 at     = bodies.GetPosition(pr->anchor);
+            JPH::Vec3        toward = PhysToJolt(pr->holdTarget) - JPH::Vec3(at);
+            const float      most   = PR_HOLD_MAX_SPEED * PHYS_UNITS_TO_METRES * dt;
 
-            if (!lock.Succeeded()) {
-                continue;
+            if (toward.Length() > most) {
+                toward = toward.Normalized() * most;
             }
-            mass = 1.0f / Q_max(1e-4f, lock.GetBody().GetMotionProperties()->GetInverseMass());
+            bodies.MoveKinematic(pr->anchor, at + toward, JPH::Quat::sIdentity(), dt);
         }
-
-        force = (accel + gravity) * pr->totalMass;
-        most  = pr->totalMass * (limit + gravity.Length());
-        if (force.Length() > most) {
-            force = force.Normalized() * most;
-        }
-        (void)mass;
-
-        bodies.AddImpulse(id, force * dt, point);
-        bodies.ActivateBody(id);
+        (void)point;
+        (void)id;
     }
 }
 
@@ -946,7 +1039,7 @@ void CG_JoltRagdollContact(const JPH::Body& a, const JPH::Body& b, const JPH::Co
         JPH::Vec3         up;
         qboolean          onBody = qfalse;
 
-        if (data < lo || data >= hi) {
+        if (data < lo || data >= hi || other.IsSensor()) {
             continue;
         }
 

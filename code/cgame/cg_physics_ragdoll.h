@@ -56,9 +56,10 @@ void CG_JoltRagdollAddVelocity(int handle, const vec3_t dv[RD_NUM_JOINTS]);
 // Carried by the grabber by this joint towards target, or let go (joint -1).
 void CG_JoltRagdollHold(int handle, int joint, const vec3_t target);
 
-// Whether any part is moving in the physics world; putting it to sleep there;
-// waking it.
+// Whether any part is moving in the physics world, and how fast the fastest
+// is going (units a second); putting it to sleep there; waking it.
 qboolean CG_JoltRagdollAwake(int handle);
+float    CG_JoltRagdollSpeed(int handle);
 void     CG_JoltRagdollSleep(int handle);
 void     CG_JoltRagdollWake(int handle);
 

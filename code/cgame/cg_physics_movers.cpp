@@ -295,7 +295,9 @@ void CG_PhysicsFollowMovers(void)
         const centity_t     *cent = &cg_entities[es->number];
         vec3_t               mins, maxs;
 
-        if (es->number == cg.snap->ps.clientNum || !es->solid) {
+        // Not the dead: a corpse is a ragdoll, and one left solid by the
+        // server would be a box its own body lies on.
+        if (es->number == cg.snap->ps.clientNum || !es->solid || (es->eFlags & EF_DEAD)) {
             continue;
         }
 
