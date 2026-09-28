@@ -36,6 +36,9 @@ LOADWAIT="${OMBENCH_LOADWAIT:-9000}"
 # r_sunShadows -- and a latched cvar set after GL init does nothing until the
 # next vid_restart, which reads as "the setting had no effect".
 CVARS="${OMBENCH_CVARS:-}"
+# The renderer to load: opengl2 (the default; the only one with r_gpuTimers) or
+# opengl1, to reproduce a GL1 problem.
+RENDERER="${OMBENCH_RENDERER:-opengl2}"
 # Extra console commands run after the measurement, semicolon separated, e.g.
 # OMBENCH_CMDS="saveshot save/test.tga 256 256; wait 500" to exercise the saved
 # game thumbnail path.
@@ -123,7 +126,7 @@ fi
 cat > "$OUT/run.bat" <<BAT
 @echo off
 cd /d "$win_install"
-openmohaa.exe$cvar_args +set cl_renderer opengl2 +set fs_basepath "$win_base" +set fs_homepath "$win_out" +set logfile 2 +set cl_playintro 0 +set ui_skip_eamovie 1 +set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set r_fullscreen 0 +set r_mode -1 +set r_customwidth $WIDTH +set r_customheight $HEIGHT +exec bench.cfg
+openmohaa.exe$cvar_args +set cl_renderer $RENDERER +set fs_basepath "$win_base" +set fs_homepath "$win_out" +set logfile 2 +set cl_playintro 0 +set ui_skip_eamovie 1 +set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set r_fullscreen 0 +set r_mode -1 +set r_customwidth $WIDTH +set r_customheight $HEIGHT +exec bench.cfg
 BAT
 
 echo "bench: install   $INSTALL"
@@ -149,12 +152,12 @@ if [ -n "$SEEDCFG" ]; then
   # cl_renderer is CVAR_ARCHIVE|CVAR_LATCH and outranks the launch line, so a
   # seeded config carrying opengl1 would silently load GL1 and report no timers.
   if grep -q 'cl_renderer' "$CFGFILE"; then
-    sed -i 's/^seta cl_renderer .*/seta cl_renderer "opengl2"/' "$CFGFILE"
+    sed -i "s/^seta cl_renderer .*/seta cl_renderer \"$RENDERER\"/" "$CFGFILE"
   else
-    echo 'seta cl_renderer "opengl2"' >> "$CFGFILE"
+    echo "seta cl_renderer \"$RENDERER\"" >> "$CFGFILE"
   fi
 else
-  echo 'seta cl_renderer "opengl2"' > "$CFGFILE"
+  echo "seta cl_renderer \"$RENDERER\"" > "$CFGFILE"
 fi
 
 wait_for() {   # marker deadline_epoch
