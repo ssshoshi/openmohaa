@@ -1805,6 +1805,11 @@ Entity::~Entity()
     int                 num;
     int                 i;
 
+    // Added in OPM
+    //  Its body goes with it, or the next entity given its number would be
+    //  moved by it.
+    G_PhysicsRemoveEntity(this);
+
     // unbind any entities that are bound to me
     // can't unbind within this loop, so make an array
     // and unbind them outside of it.

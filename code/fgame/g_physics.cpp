@@ -49,6 +49,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "barrels.h"
 #include "object.h"
 #include "player.h"
+#include "item.h"
+#include "weapon.h"
 
 #include <set>
 #include <string>
@@ -78,6 +80,7 @@ typedef struct {
     JPH::BodyID id;
     qboolean    owned;
     float       ruleMass; // the mass physics.txt gave it, or 0
+    Entity     *refused;  // could not be shaped: not tried again
 } gphysEntity_t;
 
 static gphysEntity_t gphys_entities[MAX_GENTITIES];
@@ -194,6 +197,11 @@ static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
         return &gphys_wood;
     }
 
+    // Weapons, ammunition and the first aid tins.
+    if (ent->IsSubclassOfWeapon() || strstr(ent->model.c_str(), "ammo") || strstr(ent->model.c_str(), "health")) {
+        return &gphys_metal;
+    }
+
     if (strstr(ent->getClassID(), "barrel") || strstr(ent->getClassname(), "barrel")) {
         return &gphys_metal;
     }
@@ -272,6 +280,22 @@ static int G_PhysicsDecide(Entity *ent, float *mass, const char **why)
     } else if (ent->isSubclassOf(InteractObject)) {
         byDefault  = ent->size[0] <= 96 && ent->size[1] <= 96 && ent->size[2] <= 96;
         defaultWhy = byDefault ? "small enough to move" : "too big to move";
+    } else if (ent->IsSubclassOfItem()) {
+        // Weapons, ammunition and health lying about, not in anyone's hands
+        // and not picked up; in single player only, as where a pickup lies is
+        // part of a multiplayer game.
+        if (g_gametype->integer != GT_SINGLE_PLAYER || ((Item *)ent)->GetOwner() || ent->edict->solid != SOLID_TRIGGER
+            || ent->bindmaster || !ent->edict->tiki) {
+            return PHYS_RULE_UNSET;
+        }
+        byDefault  = true;
+        defaultWhy = ent->IsSubclassOfWeapon() ? "a weapon lying about" : "an item lying about";
+    } else if (ent->isSubclassOf(HelmetObject)) {
+        if (!ent->edict->tiki) {
+            return PHYS_RULE_UNSET;
+        }
+        byDefault  = true;
+        defaultWhy = "a helmet shot off";
     } else {
         return PHYS_RULE_UNSET;
     }
@@ -559,10 +583,15 @@ static JPH::ShapeRefC G_PhysicsEntityShape(Entity *ent, vec3_t boxMins, vec3_t b
         if (ent->edict->tiki) {
             vec3_t tlo, thi;
 
+            // An item's size is the box it is picked up by, and a helmet's a
+            // token cube: the model's own bounds are the thing itself.
+            const bool loose = ent->IsSubclassOfItem() || ent->isSubclassOf(HelmetObject);
+
             gi.TIKI_CalculateBounds(ent->edict->tiki, ent->edict->s.scale, tlo, thi);
             if (tlo[0] < thi[0] && tlo[1] < thi[1] && tlo[2] <= thi[2]
-                && thi[0] - tlo[0] <= (hi[0] - lo[0]) * 2.0f + 1.0f && thi[1] - tlo[1] <= (hi[1] - lo[1]) * 2.0f + 1.0f
-                && thi[2] - tlo[2] <= (hi[2] - lo[2]) * 2.0f + 1.0f) {
+                && (loose
+                    || (thi[0] - tlo[0] <= (hi[0] - lo[0]) * 2.0f + 1.0f && thi[1] - tlo[1] <= (hi[1] - lo[1]) * 2.0f + 1.0f
+                        && thi[2] - tlo[2] <= (hi[2] - lo[2]) * 2.0f + 1.0f))) {
                 VectorCopy(tlo, lo);
                 VectorCopy(thi, hi);
             }
@@ -689,6 +718,149 @@ void G_PhysicsRemoveEntity(Entity *ent)
     // Whatever it held up.
     box.ExpandBy(JPH::Vec3::sReplicate(0.1f));
     bodies.ActivateBodiesInAABox(box, {}, {});
+}
+
+// A helmet made solid to shots, as the magazines are: weapon clip, which stops
+// rounds and the grabber's beam and nothing that walks, round its model.
+static void G_PhysicsMakeShootable(Entity *ent)
+{
+    vec3_t tlo, thi, axis[3];
+    Vector lo(99999, 99999, 99999), hi(-99999, -99999, -99999);
+
+    gi.TIKI_CalculateBounds(ent->edict->tiki, ent->edict->s.scale, tlo, thi);
+    AngleVectorsLeft(ent->angles, axis[0], axis[1], axis[2]);
+    for (int i = 0; i < 8; i++) {
+        const Vector c((i & 1) ? thi[0] : tlo[0], (i & 2) ? thi[1] : tlo[1], (i & 4) ? thi[2] : tlo[2]);
+        const Vector w = Vector(axis[0]) * c[0] + Vector(axis[1]) * c[1] + Vector(axis[2]) * c[2];
+
+        for (int k = 0; k < 3; k++) {
+            lo[k] = Q_min(lo[k], w[k]);
+            hi[k] = Q_max(hi[k], w[k] + (k == 2 ? 1.0f : 0.0f));
+        }
+    }
+
+    ent->setSolidType(SOLID_BBOX);
+    ent->setContents(CONTENTS_WEAPONCLIP);
+    if (lo[0] < hi[0] && lo[1] < hi[1]) {
+        ent->setSize(lo, hi);
+    }
+    ent->link();
+}
+
+// An item or a helmet that has come to lie about (placed, dropped, thrown,
+// knocked off) becomes a body, going as fast as it was thrown.
+static void G_PhysicsAdopt(Entity *ent)
+{
+    gphysEntity_t *pe = &gphys_entities[ent->entnum];
+    const Vector   velocity  = ent->velocity;
+    const Vector   avelocity = ent->avelocity;
+
+    if (pe->refused == ent) {
+        return;
+    }
+
+    if (ent->isSubclassOf(HelmetObject)) {
+        G_PhysicsMakeShootable(ent);
+
+        // In single player it stays, as the bodies do; elsewhere it goes after
+        // its few seconds, as it always has.
+        if (g_gametype->integer == GT_SINGLE_PLAYER) {
+            ent->CancelEventsOfType(EV_Remove);
+        }
+    }
+
+    if (!G_PhysicsAddEntity(ent)) {
+        pe->refused = ent;
+        return;
+    }
+
+    ent->setMoveType(MOVETYPE_NONE);
+    ent->velocity  = vec_zero;
+    ent->avelocity = vec_zero;
+
+    if (velocity.lengthSquared() > 1.0f || avelocity.lengthSquared() > 1.0f) {
+        JPH::BodyInterface &bodies = gphys_world.system->GetBodyInterface();
+        vec3_t              v;
+
+        VectorCopy(velocity, v);
+        bodies.SetLinearVelocity(pe->id, PhysToJolt(v));
+        // Degrees a second of pitch, yaw and roll, as spin about the world's
+        // axes: near enough for something tumbling through the air.
+        bodies.SetAngularVelocity(
+            pe->id, JPH::Vec3(avelocity[2], avelocity[0], avelocity[1]) * (float)(M_PI / 180.0)
+        );
+        bodies.ActivateBody(pe->id);
+    }
+}
+
+// Each frame: items and helmets as they come to lie about, and let go of as
+// they are picked up (the item then belongs to whoever has it).
+static void G_PhysicsLooseThings(void)
+{
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        Entity     *e = g_entities[i].inuse ? g_entities[i].entity : NULL;
+        float       mass;
+        const char *why;
+
+        if (!e || (!e->IsSubclassOfItem() && !e->isSubclassOf(HelmetObject))) {
+            continue;
+        }
+
+        if (G_PhysicsOwns(e)) {
+            if (G_PhysicsDecide(e, &mass, &why) != PHYS_RULE_MOVES) {
+                G_PhysicsRemoveEntity(e);
+            }
+            continue;
+        }
+
+        if (G_PhysicsDecide(e, &mass, &why) == PHYS_RULE_MOVES) {
+            G_PhysicsAdopt(e);
+        }
+    }
+}
+
+// A round's path, start to where it stopped: the items it passed (they are
+// triggers, so it goes through them) are shoved as a hit would.
+void G_PhysicsBulletPath(const Vector& start, const Vector& end, float damage, const Vector& dir, Entity *struck)
+{
+    JPH::RayCastResult hit;
+    vec3_t             s, e;
+    Vector             far;
+
+    if (!gphys_ready || damage <= 0.0f) {
+        return;
+    }
+
+    far = end + dir * 4.0f;
+    VectorCopy(start, s);
+    VectorCopy(far, e);
+
+    const JPH::RRayCast ray(JPH::RVec3(PhysToJolt(s)), PhysToJolt(e) - PhysToJolt(s));
+    const bool          any = gphys_world.system->GetNarrowPhaseQuery().CastRay(ray, hit, {}, PhysNoKinematicObjects());
+
+    if (g_physics_log->integer > 2) {
+        gi.Printf(
+            "g_physics: round from %.0f %.0f %.0f to %.0f %.0f %.0f (struck #%d): %s %llu at %.2f\n",
+            s[0], s[1], s[2], e[0], e[1], e[2], struck ? struck->entnum : -1,
+            any ? "hit" : "missed", any ? (unsigned long long)gphys_world.system->GetBodyInterface().GetUserData(hit.mBodyID) : 0ull,
+            any ? hit.mFraction : 0.0f
+        );
+    }
+    if (!any) {
+        return;
+    }
+
+    const JPH::uint64 data = gphys_world.system->GetBodyInterface().GetUserData(hit.mBodyID);
+    if (data < PHYS_USERDATA_ENTITY_BASE || data >= PHYS_USERDATA_ENTITY_BASE + MAX_GENTITIES) {
+        return;
+    }
+
+    Entity *ent = g_entities[data - PHYS_USERDATA_ENTITY_BASE].entity;
+    if (!ent || ent == struck || !ent->IsSubclassOfItem() || !G_PhysicsOwns(ent)) {
+        return;
+    }
+
+    G_PhysicsDamaged(ent, damage, start + (far - start) * hit.mFraction, dir);
 }
 
 void G_PhysicsImpulse(Entity *ent, const Vector& point, const Vector& impulse)
@@ -1279,7 +1451,10 @@ qboolean G_PhysicsRulesCmd(gentity_t *ent)
             continue;
         }
 
-        if (e->isSubclassOf(InteractObject)) {
+        if (e->IsSubclassOfItem() || e->isSubclassOf(HelmetObject)) {
+            // Taken up by the next frame (G_PhysicsLooseThings).
+            gphys_entities[i].refused = NULL;
+        } else if (e->isSubclassOf(InteractObject)) {
             // As at spawn: made solid to shots too.
             ((InteractObject *)e)->SetupPhysics(NULL);
             added += G_PhysicsOwns(e) ? 1 : 0;
@@ -1437,6 +1612,7 @@ void G_PhysicsFrame(float frametime)
         }
     }
 
+    G_PhysicsLooseThings();
     G_PhysicsFollowSentients();
 
     gphys_accum = Q_min(gphys_accum + frametime, dt * GPHYS_MAX_STEPS);

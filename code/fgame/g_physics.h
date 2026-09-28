@@ -72,6 +72,9 @@ qboolean G_PhysicsRulesCmd(struct gentity_s *ent);
 void G_PhysicsImpulse(Entity *ent, const Vector& point, const Vector& impulse);
 // The push a hit gives: damage along its direction, at where it struck.
 void G_PhysicsDamaged(Entity *ent, float damage, const Vector& position, const Vector& direction);
+// A round's path from start to where it stopped, having struck struck (or
+// NULL): the items lying in it, which rounds pass through, are shoved.
+void G_PhysicsBulletPath(const Vector& start, const Vector& end, float damage, const Vector& dir, Entity *struck);
 // Someone moving into a physics entity (it blocked his movement): pushed along
 // the way he is going, at up to his speed, less the heavier it is.
 void G_PhysicsPushedBy(Entity *ent, Entity *pusher, const Vector& direction, float speed);

@@ -214,7 +214,7 @@ static qboolean CG_PhysicsEditFurnitureBox(int i, peBox_t *box, int *brush, qboo
     return qtrue;
 }
 
-static qboolean CG_PhysicsEditEntityBox(int entnum, peBox_t *box)
+qboolean CG_PhysicsEntityBox(int entnum, vec3_t origin, vec3_t axis[3], vec3_t mins, vec3_t maxs)
 {
     const centity_t     *cent;
     const entityState_t *es;
@@ -229,55 +229,57 @@ static qboolean CG_PhysicsEditEntityBox(int entnum, peBox_t *box)
         return qfalse;
     }
 
-    VectorCopy(cent->lerpOrigin, box->origin);
-    AnglesToAxis(cent->lerpAngles, box->axis);
+    VectorCopy(cent->lerpOrigin, origin);
+    AnglesToAxis(cent->lerpAngles, axis);
 
     if (es->solid == SOLID_BMODEL) {
         if (es->modelindex <= 0 || es->modelindex >= MAX_MODELS) {
             return qfalse;
         }
-        cgi.R_ModelBounds(cgs.inlineDrawModel[es->modelindex], box->mins, box->maxs);
+        cgi.R_ModelBounds(cgs.inlineDrawModel[es->modelindex], mins, maxs);
     } else if (es->solid) {
-        IntegerToBoundingBox(es->solid, box->mins, box->maxs);
-        AxisClear(box->axis);
+        IntegerToBoundingBox(es->solid, mins, maxs);
+        AxisClear(axis);
     } else {
         if (es->modelindex <= 0 || es->modelindex >= MAX_MODELS) {
             return qfalse;
         }
-        cgi.R_ModelBounds(cgs.model_draw[es->modelindex], box->mins, box->maxs);
+        cgi.R_ModelBounds(cgs.model_draw[es->modelindex], mins, maxs);
     }
 
     // Nothing to aim at: a small cube.
-    if (box->maxs[0] - box->mins[0] < 1.0f || box->maxs[1] - box->mins[1] < 1.0f) {
-        VectorSet(box->mins, -8.0f, -8.0f, -8.0f);
-        VectorSet(box->maxs, 8.0f, 8.0f, 8.0f);
+    if (maxs[0] - mins[0] < 1.0f || maxs[1] - mins[1] < 1.0f) {
+        VectorSet(mins, -8.0f, -8.0f, -8.0f);
+        VectorSet(maxs, 8.0f, 8.0f, 8.0f);
     }
     return qtrue;
 }
 
-// Where a ray enters a box, or qfalse.
-static qboolean CG_PhysicsEditRayBox(const vec3_t start, const vec3_t dir, const peBox_t *box, float *enter)
+qboolean CG_PhysicsRayHitsBox(
+    const vec3_t start, const vec3_t dir, float range, const vec3_t origin, const vec3_t axis[3], const vec3_t mins,
+    const vec3_t maxs, float *enter
+)
 {
     vec3_t rel, s, d;
-    float  lo = 0.0f, hi = PE_RANGE;
+    float  lo = 0.0f, hi = range;
     int    k;
 
-    VectorSubtract(start, box->origin, rel);
+    VectorSubtract(start, origin, rel);
     for (k = 0; k < 3; k++) {
-        s[k] = DotProduct(rel, box->axis[k]);
-        d[k] = DotProduct(dir, box->axis[k]);
+        s[k] = DotProduct(rel, axis[k]);
+        d[k] = DotProduct(dir, axis[k]);
     }
 
     for (k = 0; k < 3; k++) {
         if (fabs(d[k]) < 1e-6f) {
-            if (s[k] < box->mins[k] || s[k] > box->maxs[k]) {
+            if (s[k] < mins[k] || s[k] > maxs[k]) {
                 return qfalse;
             }
             continue;
         }
 
-        float t0 = (box->mins[k] - s[k]) / d[k];
-        float t1 = (box->maxs[k] - s[k]) / d[k];
+        float t0 = (mins[k] - s[k]) / d[k];
+        float t1 = (maxs[k] - s[k]) / d[k];
         if (t0 > t1) {
             const float t = t0;
             t0            = t1;
@@ -292,6 +294,17 @@ static qboolean CG_PhysicsEditRayBox(const vec3_t start, const vec3_t dir, const
 
     *enter = lo;
     return qtrue;
+}
+
+static qboolean CG_PhysicsEditEntityBox(int entnum, peBox_t *box)
+{
+    return CG_PhysicsEntityBox(entnum, box->origin, box->axis, box->mins, box->maxs);
+}
+
+// Where a ray enters a box, or qfalse.
+static qboolean CG_PhysicsEditRayBox(const vec3_t start, const vec3_t dir, const peBox_t *box, float *enter)
+{
+    return CG_PhysicsRayHitsBox(start, dir, PE_RANGE, box->origin, box->axis, box->mins, box->maxs, enter);
 }
 
 static int CG_PhysicsEditPropState(const cgProp_t *p)

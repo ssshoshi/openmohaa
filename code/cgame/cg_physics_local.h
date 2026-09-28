@@ -79,6 +79,14 @@ void     CG_PhysicsApplyPropRules(void);
 qboolean CG_PhysicsFurnitureRule(int firstBrush, const char **why, float *mass);
 void     CG_PhysicsEditFrame(void);
 
+// A server entity's box as it is drawn (its brush model, its solid box, or its
+// model's bounds), and where a ray from start along dir enters a turned box.
+qboolean CG_PhysicsEntityBox(int entnum, vec3_t origin, vec3_t axis[3], vec3_t mins, vec3_t maxs);
+qboolean CG_PhysicsRayHitsBox(
+    const vec3_t start, const vec3_t dir, float range, const vec3_t origin, const vec3_t axis[3], const vec3_t mins,
+    const vec3_t maxs, float *enter
+);
+
 // The world again, as the rules now have it, without the ragdolls in it
 // going (cg_physics_world.cpp); the props go back where the map put them.
 void CG_PhysicsReloadWorld(void);

@@ -2336,6 +2336,10 @@ float BulletAttack(
                     ent = NULL;
                 }
 
+                // Added in OPM
+                //  Weapons and items lying in its way, which it passes through.
+                G_PhysicsBulletPath(vTraceStart, trace.endpos, newdamage, vDir, ent);
+
                 if (ent && ent != world && ent != owner) {
                     if (ent->takedamage) {
                         if (g_gametype->integer == GT_SINGLE_PLAYER && !iNumHit) {
@@ -3069,7 +3073,9 @@ void RadiusDamage(
 
     while (ent) {
         // Add ents that has contents
-        if (ent->getContents()) {
+        // Added in OPM
+        //  and the physics' bodies, some of which have none (dropped weapons)
+        if (ent->getContents() || G_PhysicsOwns(ent)) {
             ents.AddObject(ent);
         }
 

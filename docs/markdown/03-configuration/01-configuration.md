@@ -197,13 +197,13 @@ To calculate IP subnets, search for `IP subnet calculator` on Internet.
 
 Props are rigid bodies (Jolt Physics) that bullets, explosions and falling bodies knock about.
 
-- Entity props (crates, barrels and cans, magazines) are simulated by the server, so every client sees them move.
+- Entity props (crates, barrels and cans, magazines, helmets shot off) are simulated by the server, so every client sees them move. In single player so are the weapons, ammunition and health lying about, placed or dropped; in multiplayer those stay where the game puts them.
 - The map's static-model clutter and furniture, and furniture built from world brushes (tables, benches, crates), are simulated by the client. Sides a prop was built without (nodraw or caulk, never meant to be seen) are covered with its own texture once it moves. That is cosmetic, except in single player: there the clip brushes that stood in for a prop are removed from collision once it moves.
 
 |Name                 |Default|Description
 |---------------------|-------|-----------
 |g_physics            |1      |Server props are physics bodies (takes effect on map load)
-|g_physics_log        |0      |1 reports the server world and body counts, 2 also each prop and hit
+|g_physics_log        |0      |1 reports the server world and body counts, 2 also each prop and hit, 3 also every round's path
 |g_physics_hitscale   |1      |Multiplies how hard hits shove server props
 |cg_physics           |1      |Client physics on or off
 |cg_physics_props     |1      |Small static models move (takes effect on map load)

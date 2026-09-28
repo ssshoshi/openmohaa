@@ -622,6 +622,8 @@ static qboolean CG_PhysicsRayEntity(const vec3_t start, const vec3_t dir, float 
 {
     trace_t tr;
     vec3_t  end;
+    float   best;
+    int     bestEnt = -1;
 
     if (!CG_PhysicsServerTakesCommands() || !cg.snap) {
         return qfalse;
@@ -629,21 +631,38 @@ static qboolean CG_PhysicsRayEntity(const vec3_t start, const vec3_t dir, float 
 
     VectorMA(start, range, dir, end);
     CG_Trace(&tr, start, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SHOT, qfalse, qtrue, "physics grab");
+    best = range * tr.fraction;
 
-    if (tr.fraction >= 1.0f || tr.entityNum < 0 || tr.entityNum >= ENTITYNUM_WORLD) {
-        return qfalse;
-    }
-
-    {
+    if (tr.fraction < 1.0f && tr.entityNum >= 0 && tr.entityNum < ENTITYNUM_WORLD) {
         const centity_t *cent = &cg_entities[tr.entityNum];
 
-        if (!cent->currentValid || !cent->currentState.solid) {
-            return qfalse;
+        if (cent->currentValid && cent->currentState.solid) {
+            bestEnt = tr.entityNum;
         }
     }
 
-    *entnum = tr.entityNum;
-    *entry  = range * tr.fraction;
+    // Weapons and items lying about, which are triggers and so not in the
+    // trace: their models' boxes, nearer than what the trace struck.
+    for (int i = 0; i < cg.snap->numEntities; i++) {
+        const entityState_t *es = &cg.snap->entities[i];
+        vec3_t               origin, axis[3], mins, maxs;
+        float                at;
+
+        if (es->eType != ET_ITEM || es->parent != ENTITYNUM_NONE || !CG_PhysicsEntityBox(es->number, origin, axis, mins, maxs)) {
+            continue;
+        }
+        if (CG_PhysicsRayHitsBox(start, dir, range, origin, axis, mins, maxs, &at) && at < best) {
+            best    = at;
+            bestEnt = es->number;
+        }
+    }
+
+    if (bestEnt < 0) {
+        return qfalse;
+    }
+
+    *entnum = bestEnt;
+    *entry  = best;
     return qtrue;
 }
 
@@ -757,8 +776,11 @@ qboolean CG_PhysicsGrabHeld(void)
     }
 
     if (pg.server) {
-        // Gone from the snapshot: broken, or out of sight.
-        if (!cg_entities[pg.entnum].currentValid || !cg_entities[pg.entnum].currentState.solid) {
+        // Gone from the snapshot (broken, or out of sight), or picked up. An
+        // item lying about is never solid.
+        const entityState_t *es = &cg_entities[pg.entnum].currentState;
+
+        if (!cg_entities[pg.entnum].currentValid || (!es->solid && es->eType != ET_ITEM) || es->parent != ENTITYNUM_NONE) {
             CG_PhysicsGrabRelease();
         }
     } else if (!phys_system || !phys_system->GetBodyInterface().IsAdded(pg.id)) {
