@@ -27,7 +27,11 @@ static char *s_shaderText;
 
 // the shader is parsed into these global variables, then copied into
 // dynamically allocated memory if it is valid.
-static	shaderStage_t	stages[MAX_SHADER_STAGES];		
+static	shaderStage_t	stages[MAX_SHADER_STAGES];
+
+// Added in OPM
+//  Set while RE_RegisterShaderVertexLit finds a shader: see VertexLitCollapse.
+static qboolean		r_vertexLitShader;		
 static	shader_t		shader;
 // MOH:AA's nextBundle gives a stage a second texture with tcMods of its own,
 // so each bundle needs its own.
@@ -4339,6 +4343,40 @@ static char *FindShaderInShaderText( const char *shadername ) {
 
 
 /*
+===============
+VertexLitCollapse
+
+Added in OPM
+A world shader lit by vertex colour instead of its lightmap, for faces that
+have none (see RE_RegisterShaderVertexLit): the lightmap stages go, and the
+first stage left draws opaque and takes the vertex colour.
+===============
+*/
+static void VertexLitCollapse( void ) {
+	int i, n = 0;
+
+	for ( i = 0; i < MAX_SHADER_STAGES && stages[i].active; i++ ) {
+		if ( stages[i].bundle[0].isLightmap ) {
+			continue;
+		}
+		if ( n != i ) {
+			stages[n] = stages[i];
+		}
+		n++;
+	}
+
+	for ( i = n; i < MAX_SHADER_STAGES; i++ ) {
+		stages[i].active = qfalse;
+	}
+
+	if ( n ) {
+		stages[0].stateBits &= ~( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+		stages[0].stateBits |= GLS_DEPTHMASK_TRUE;
+		stages[0].rgbGen = CGEN_EXACT_VERTEX;
+	}
+}
+
+/*
 ==================
 R_FindShaderByName
 
@@ -4466,6 +4504,12 @@ shader_t *R_FindShaderEx( const char *name, int lightmapIndex, qboolean mipRawIm
 			// had errors, so use default shader
 			shader.defaultShader = qtrue;
 		}
+
+		// Added in OPM
+		if ( r_vertexLitShader ) {
+			VertexLitCollapse();
+		}
+
 		sh = FinishShader();
 		return sh;
 	}
@@ -5233,6 +5277,31 @@ qhandle_t RE_RefreshShaderNoMip(const char* name) {
 
 	sh = R_FindShader(name, -4, qfalse);
 	if (sh->defaultShader) {
+		return 0;
+	}
+
+	return sh->index;
+}
+/*
+====================
+RE_RegisterShaderVertexLit
+
+Added in OPM
+A world shader for faces with no lightmap, lit by their vertex colours.
+====================
+*/
+qhandle_t RE_RegisterShaderVertexLit( const char *name ) {
+	shader_t	*sh;
+
+	if ( strlen( name ) >= MAX_QPATH ) {
+		return 0;
+	}
+
+	r_vertexLitShader = qtrue;
+	sh = R_FindShader( name, LIGHTMAP_BY_VERTEX, qtrue );
+	r_vertexLitShader = qfalse;
+
+	if ( sh->defaultShader ) {
 		return 0;
 	}
 

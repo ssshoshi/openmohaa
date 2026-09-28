@@ -498,6 +498,15 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 	
 	R_DlightBmodel( bmodel );
 
+	// Added in OPM
+	//  World surfaces that were detached.
+	if ( bmodel->surfaceList ) {
+		for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
+			R_AddWorldSurface( bmodel->surfaceList[i], tr.currentEntity->needDlights );
+		}
+		return;
+	}
+
 	for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
 		R_AddWorldSurface( bmodel->firstSurface + i, tr.currentEntity->needDlights );
 	}
@@ -644,7 +653,9 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits )
 				// the surface may have already been added if it
 				// spans multiple leafs
 				surf = *mark;
-				if (surf->viewCount != tr.viewCount) {
+				// Added in OPM
+				//  A detached surface is drawn by its own model.
+				if (surf->viewCount != tr.viewCount && !surf->detached) {
 					R_AddWorldSurface(surf, dlightBits);
 				}
 				mark++;
@@ -913,4 +924,83 @@ void R_AddWorldSurfaces (void) {
 	}
 
 	R_UpdateLevelMarksSystem();
+}
+
+/*
+=================
+RE_DetachWorldSurfaces
+
+Added in OPM
+Takes world surfaces out of the world and returns a brush model that draws
+them. The model's space is the world's, so at the identity they are where they
+were; the client places it as the brushwork it simulates moves.
+=================
+*/
+qhandle_t RE_DetachWorldSurfaces(const int *surfaces, int numSurfaces)
+{
+	model_t		*mod;
+	bmodel_t	*bmodel;
+	int			i, k;
+
+	if ( !tr.world || !surfaces || numSurfaces <= 0 || !tr.world->numBmodels ) {
+		return 0;
+	}
+
+	for ( i = 0 ; i < numSurfaces ; i++ ) {
+		if ( surfaces[i] < 0 || surfaces[i] >= tr.world->bmodels[0].numSurfaces || tr.world->surfaces[surfaces[i]].detached ) {
+			return 0;
+		}
+	}
+
+	mod = R_AllocModel();
+	if ( !mod ) {
+		return 0;
+	}
+
+	bmodel = ri.Hunk_Alloc( sizeof( *bmodel ) + numSurfaces * sizeof( msurface_t * ), h_low );
+	bmodel->surfaceList = (msurface_t **)( bmodel + 1 );
+	bmodel->numSurfaces = numSurfaces;
+	ClearBounds( bmodel->bounds[0], bmodel->bounds[1] );
+
+	for ( i = 0 ; i < numSurfaces ; i++ ) {
+		msurface_t *surf = tr.world->surfaces + surfaces[i];
+
+		bmodel->surfaceList[i] = surf;
+		surf->detached = qtrue;
+
+		switch ( *surf->data ) {
+		case SF_FACE: {
+			const srfSurfaceFace_t *face = (const srfSurfaceFace_t *)surf->data;
+
+			for ( k = 0 ; k < face->numPoints ; k++ ) {
+				AddPointToBounds( face->points[k], bmodel->bounds[0], bmodel->bounds[1] );
+			}
+			break;
+		}
+		case SF_GRID: {
+			const srfGridMesh_t *grid = (const srfGridMesh_t *)surf->data;
+
+			AddPointToBounds( grid->meshBounds[0], bmodel->bounds[0], bmodel->bounds[1] );
+			AddPointToBounds( grid->meshBounds[1], bmodel->bounds[0], bmodel->bounds[1] );
+			break;
+		}
+		case SF_TRIANGLES: {
+			const srfTriangles_t *tris = (const srfTriangles_t *)surf->data;
+
+			AddPointToBounds( tris->bounds[0], bmodel->bounds[0], bmodel->bounds[1] );
+			AddPointToBounds( tris->bounds[1], bmodel->bounds[0], bmodel->bounds[1] );
+			break;
+		}
+		default:
+			VectorSet( bmodel->bounds[0], -MAX_WORLD_COORD, -MAX_WORLD_COORD, -MAX_WORLD_COORD );
+			VectorSet( bmodel->bounds[1], MAX_WORLD_COORD, MAX_WORLD_COORD, MAX_WORLD_COORD );
+			break;
+		}
+	}
+
+	mod->type = MOD_BRUSH;
+	mod->d.bmodel = bmodel;
+	Com_sprintf( mod->name, sizeof( mod->name ), "*detached%d", mod->index );
+
+	return mod->index;
 }

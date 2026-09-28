@@ -526,7 +526,8 @@ static void R_BoxSurfacesForBModel_r( bmodel_t *pBmodel, vec3_t mins, vec3_t max
 
 	for ( i = 0; i < pBmodel->numSurfaces; i++ ) {
 		int *surfViewCount;
-		int  surfIndex = pBmodel->firstSurface + i;
+		// Added in OPM: a model of detached world surfaces lists them.
+		int  surfIndex = pBmodel->surfaceList ? pBmodel->surfaceList[i] : pBmodel->firstSurface + i;
 
 		if ( *listlength >= listsize ) {
 			break;

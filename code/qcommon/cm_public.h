@@ -41,6 +41,11 @@ void		CM_PrintBSPFileSizes( void );
 
 int			CM_NumClusters (void);
 int			CM_NumInlineModels( void );
+// Added in OPM
+//  Takes a world brush out of every trace and contents test until the map is
+//  loaded again. For the clip brushes that stand in for a prop the client has
+//  moved; only meaningful where client and server share this collision model.
+void		CM_DisableBrush( int brushNum );
 char		*CM_EntityString( void );
 const char	*CM_MapTime( void );
 

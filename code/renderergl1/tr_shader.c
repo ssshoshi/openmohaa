@@ -3967,3 +3967,26 @@ void R_SetupShaders()
     InitStaticShaders();
     CreateExternalShaders();
 }
+
+/*
+====================
+RE_RegisterShaderVertexLit
+
+Added in OPM
+A world shader for faces with no lightmap, lit by their vertex colours.
+====================
+*/
+qhandle_t RE_RegisterShaderVertexLit( const char *name ) {
+	shader_t	*sh;
+
+	if ( strlen( name ) >= MAX_QPATH ) {
+		return 0;
+	}
+
+	sh = R_FindShader( name, LIGHTMAP_BY_VERTEX, qtrue, qtrue, qtrue, qtrue );
+	if ( sh->defaultShader ) {
+		return 0;
+	}
+
+	return sh->index;
+}

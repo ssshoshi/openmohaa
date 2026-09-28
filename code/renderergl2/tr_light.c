@@ -92,7 +92,8 @@ void R_DlightBmodel( bmodel_t *bmodel ) {
 
 	// set the dlight bits in all the surfaces
 	for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
-		surf = tr.world->surfaces + bmodel->firstSurface + i;
+		// Added in OPM: a model of detached world surfaces lists them.
+		surf = tr.world->surfaces + ( bmodel->surfaceList ? bmodel->surfaceList[i] : bmodel->firstSurface + i );
 
 		switch(*surf->data)
 		{

@@ -1050,6 +1050,21 @@ cmodel_t	*CM_ClipHandleToModel( clipHandle_t handle ) {
 
 /*
 ==================
+CM_DisableBrush
+
+Added in OPM
+==================
+*/
+void CM_DisableBrush( int brushNum ) {
+	if ( brushNum < 0 || brushNum >= cm.numBrushes ) {
+		return;
+	}
+
+	cm.brushes[ brushNum ].contents = 0;
+}
+
+/*
+==================
 CM_InlineModel
 ==================
 */

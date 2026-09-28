@@ -587,3 +587,25 @@ void R_PrintInfoStaticModels()
         );
     }
 }
+
+/*
+=============
+RE_SetStaticModelTransform
+
+Added in OPM. Moves a static model, for props the client simulates. Static
+models are placed from their origin and axes every frame (R_RotateForStaticModel)
+over geometry baked in model space, so nothing else needs redoing.
+=============
+*/
+void RE_SetStaticModelTransform(int index, const vec3_t origin, const vec3_t axis[3])
+{
+    cStaticModelUnpacked_t *SM;
+
+    if (!tr.world || index < 0 || index >= tr.world->numStaticModels) {
+        return;
+    }
+
+    SM = &tr.world->staticModels[index];
+    VectorCopy(origin, SM->origin);
+    AxisCopy(axis, SM->axis);
+}

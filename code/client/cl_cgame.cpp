@@ -835,6 +835,10 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 
 	// Added in OPM
 	cgi->R_GetSkinnedMesh			= re.GetSkinnedMesh;
+	cgi->R_SetStaticModelTransform	= re.SetStaticModelTransform;
+	cgi->CM_DisableBrush			= CM_DisableBrush;
+	cgi->R_DetachWorldSurfaces		= re.DetachWorldSurfaces;
+	cgi->R_RegisterShaderVertexLit	= re.RegisterShaderVertexLit;
 	cgi->apiversion					= CGAME_IMPORT_API_VERSION;
 	// FIXME
 	//cgi->pUnknownVar				= NULL;

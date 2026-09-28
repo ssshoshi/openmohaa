@@ -28,7 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 extern "C" {
 #endif
 
-#define	REF_API_VERSION		16
+#define	REF_API_VERSION		17
 
 typedef struct dtiki_s dtiki_t;
 typedef struct skelAnimFrame_s skelAnimFrame_t;
@@ -186,6 +186,19 @@ typedef struct {
     //  Fills verts and tris (three vertex indices each) and returns the vertex
     //  count, or 0 if it is not a skeletal model or does not fit.
     int (*GetSkinnedMesh)(refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris);
+
+    // Added in OPM
+    //  Moves one of the map's static models (in LUMP_STATICMODELDEF order), for
+    //  props the client simulates. The model's baked lighting goes with it.
+    void (*SetStaticModelTransform)(int index, const vec3_t origin, const vec3_t axis[3]);
+    //  Takes some of the world's surfaces out of the world, and returns a model
+    //  that draws them, placed like a brush model (at the identity they are
+    //  where they were). For world brushwork the client simulates. 0 if the
+    //  surfaces cannot be taken.
+    qhandle_t (*DetachWorldSurfaces)(const int *surfaces, int numSurfaces);
+    //  A world shader lit by the vertex colours of what it is drawn on (a
+    //  poly's), for faces that have no lightmap. 0 if it cannot be found.
+    qhandle_t (*RegisterShaderVertexLit)(const char *name);
 } refexport_t;
 
 //

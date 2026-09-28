@@ -383,6 +383,16 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 	R_SetupEntityLighting( &tr.refdef, ent );
 	R_DlightBmodel( bmodel );
 
+	// Added in OPM
+	//  World surfaces that were detached: the world marked them seen this
+	//  view, but no longer draws them.
+	if ( bmodel->surfaceList ) {
+		for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
+			R_AddWorldSurface( tr.world->surfaces + bmodel->surfaceList[i], tr.currentEntity->needDlights, 0 );
+		}
+		return;
+	}
+
 	for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
 		int surf = bmodel->firstSurface + i;
 
@@ -872,6 +882,11 @@ void R_AddWorldSurfaces (void) {
 			if (tr.world->surfacesViewCount[i] != tr.viewCount)
 				continue;
 
+			// Added in OPM
+			//  Drawn by the model it was detached into.
+			if (tr.world->surfaces[i].detached)
+				continue;
+
 			R_AddWorldSurface( tr.world->surfaces + i, tr.world->surfacesDlightBits[i], tr.world->surfacesPshadowBits[i] );
 			tr.refdef.dlightMask |= tr.world->surfacesDlightBits[i];
 		}
@@ -1048,4 +1063,73 @@ int R_CheckDlightTerrain(cTerraPatchUnpacked_t* surf, int dlightBits)
 	surf->drawinfo.dlightMap[0] = 0;
 	surf->drawinfo.dlightBits[0] = 0;
 	return 0;
+}
+
+/*
+=================
+RE_DetachWorldSurfaces
+
+Added in OPM
+Takes world surfaces out of the world and returns a brush model that draws
+them. The model's space is the world's, so at the identity they are where they
+were; the client places it as the brushwork it simulates moves.
+=================
+*/
+qhandle_t RE_DetachWorldSurfaces(const int *surfaces, int numSurfaces)
+{
+	model_t		*mod;
+	bmodel_t	*bmodel;
+	int			i, k;
+
+	if ( !tr.world || !surfaces || numSurfaces <= 0 ) {
+		return 0;
+	}
+
+	for ( i = 0 ; i < numSurfaces ; i++ ) {
+		if ( surfaces[i] < 0 || surfaces[i] >= tr.world->numWorldSurfaces || tr.world->surfaces[surfaces[i]].detached ) {
+			return 0;
+		}
+	}
+
+	mod = R_AllocModel();
+	if ( !mod ) {
+		return 0;
+	}
+
+	bmodel = ri.Hunk_Alloc( sizeof( *bmodel ) + numSurfaces * sizeof( int ), h_low );
+	bmodel->surfaceList = (int *)( bmodel + 1 );
+	bmodel->numSurfaces = numSurfaces;
+	ClearBounds( bmodel->bounds[0], bmodel->bounds[1] );
+
+	for ( i = 0 ; i < numSurfaces ; i++ ) {
+		msurface_t *surf = tr.world->surfaces + surfaces[i];
+
+		bmodel->surfaceList[i] = surfaces[i];
+		surf->detached = qtrue;
+
+		if ( surf->cullinfo.type & CULLINFO_BOX ) {
+			AddPointToBounds( surf->cullinfo.bounds[0], bmodel->bounds[0], bmodel->bounds[1] );
+			AddPointToBounds( surf->cullinfo.bounds[1], bmodel->bounds[0], bmodel->bounds[1] );
+		} else if ( surf->cullinfo.type & CULLINFO_SPHERE ) {
+			for ( k = 0 ; k < 3 ; k++ ) {
+				vec3_t p;
+
+				VectorCopy( surf->cullinfo.localOrigin, p );
+				p[k] -= surf->cullinfo.radius;
+				AddPointToBounds( p, bmodel->bounds[0], bmodel->bounds[1] );
+				p[k] += 2.0f * surf->cullinfo.radius;
+				AddPointToBounds( p, bmodel->bounds[0], bmodel->bounds[1] );
+			}
+		} else {
+			// Nothing to cull it by: never culled.
+			VectorSet( bmodel->bounds[0], -MAX_WORLD_COORD, -MAX_WORLD_COORD, -MAX_WORLD_COORD );
+			VectorSet( bmodel->bounds[1], MAX_WORLD_COORD, MAX_WORLD_COORD, MAX_WORLD_COORD );
+		}
+	}
+
+	mod->type = MOD_BRUSH;
+	mod->bmodel = bmodel;
+	Com_sprintf( mod->name, sizeof( mod->name ), "*detached%d", mod->index );
+
+	return mod->index;
 }

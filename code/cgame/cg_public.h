@@ -87,7 +87,9 @@ functions imported from the main executable
 // Added in OPM
 //  4: the engine sets apiversion, and R_GetSkinnedMesh is present. An older
 //  engine leaves apiversion at zero, so cgame can tell the entry is missing.
-#define CGAME_IMPORT_API_VERSION 4
+//  5: R_SetStaticModelTransform, CM_DisableBrush, R_DetachWorldSurfaces and
+//  R_RegisterShaderVertexLit are present.
+#define CGAME_IMPORT_API_VERSION 5
 
     /*
 ==================================================================
@@ -453,6 +455,18 @@ functions exported to the main executable
         int (*R_GetSkinnedMesh)(
             refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris
         );
+
+        // Added in OPM, API version 5
+        //  Moves one of the map's static models. See refexport_t.
+        void (*R_SetStaticModelTransform)(int index, const vec3_t origin, const vec3_t axis[3]);
+        //  Takes a world brush out of the collision model. The model is shared
+        //  with the server only when the server runs in this process.
+        void (*CM_DisableBrush)(int brushNum);
+        //  Takes world surfaces out of the world into a model of their own.
+        //  See refexport_t.
+        qhandle_t (*R_DetachWorldSurfaces)(const int *surfaces, int numSurfaces);
+        //  A world shader for polys, lit by their vertex colours.
+        qhandle_t (*R_RegisterShaderVertexLit)(const char *name);
 
     } clientGameImport_t;
 

@@ -1034,6 +1034,11 @@ typedef struct msurface_s {
 	int					fogIndex;
 
 	surfaceType_t		*data;			// any of srf*_t
+
+	// Added in OPM
+	//  Taken out of the world by RE_DetachWorldSurfaces: drawn by its own
+	//  model instead.
+	qboolean			detached;
 } msurface_t;
 
 
@@ -1075,6 +1080,11 @@ typedef struct {
     int iNumMarkFragment;
     int frameCount;
     qboolean hasLightmap;
+
+    // Added in OPM
+    //  World surfaces drawn in place of firstSurface..numSurfaces (see
+    //  RE_DetachWorldSurfaces), or NULL.
+    msurface_t **surfaceList;
 } bmodel_t;
 
 typedef struct {
@@ -2228,6 +2238,9 @@ float R_GetRadius(refEntity_t* model);
 void R_GetFrame(refEntity_t* model, struct skelAnimFrame_s* newFrame);
 void RE_ForceUpdatePose(refEntity_t* model);
 int RE_GetSkinnedMesh(refEntity_t *model, skinnedVert_t *verts, int maxVerts, int *tris, int maxTris, int *numTris);
+void RE_SetStaticModelTransform(int index, const vec3_t origin, const vec3_t axis[3]);
+qhandle_t RE_DetachWorldSurfaces(const int *surfaces, int numSurfaces);
+qhandle_t RE_RegisterShaderVertexLit(const char *name);
 void RE_SetFrameNumber(int frameNumber);
 void R_UpdatePoseInternal(refEntity_t* model);
 void RB_SkelMesh(skelSurfaceGame_t* sf);

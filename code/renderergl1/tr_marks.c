@@ -803,9 +803,10 @@ void R_BoxSurfacesForBModel_r(bmodel_t* pBmodel, const vec3_t mins, const vec3_t
 	msurface_t* surf;
 	int i;
 
-	surf = pBmodel->firstSurface;
+	for (i = 0; i < listsize && i < pBmodel->numSurfaces; i++) {
+		// Added in OPM: a model of detached world surfaces lists them.
+		surf = pBmodel->surfaceList ? pBmodel->surfaceList[i] : pBmodel->firstSurface + i;
 
-	for (i = 0; i < listsize && i < pBmodel->numSurfaces; i++, surf++) {
 		s = surf->shader->surfaceFlags;
 		c = surf->shader->contentFlags;
 
