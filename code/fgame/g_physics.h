@@ -43,7 +43,8 @@ void G_PhysicsFrame(float frametime);
 
 // Hands an entity to the physics: from now on its body decides where it is.
 // Brush models take their shape from their brushes, others a box from their
-// bounds. Returns false if it could not be shaped.
+// bounds. Returns false if it is not one the physics moves (by its kind, or by
+// a rule in physics.txt), or if it could not be shaped.
 bool G_PhysicsAddEntity(Entity *ent);
 // Takes an entity back from the physics (destroyed, removed). Whatever was
 // resting on it is woken so it falls.
@@ -58,6 +59,13 @@ qboolean G_PhysicsDropCmd(struct gentity_s *ent);
 qboolean G_PhysicsDistCmd(struct gentity_s *ent);
 qboolean G_PhysicsPuntCmd(struct gentity_s *ent);
 qboolean G_PhysicsNudgeCmd(struct gentity_s *ent);
+
+// The physics editor's, from a single player client (cg_physics_edit.cpp):
+// physlist, which entities could be bodies and which are; physinfo <entity>,
+// what decided one; physrules, physics.txt read again and applied.
+qboolean G_PhysicsListCmd(struct gentity_s *ent);
+qboolean G_PhysicsInfoCmd(struct gentity_s *ent);
+qboolean G_PhysicsRulesCmd(struct gentity_s *ent);
 
 // Pushes a physics entity: an impulse in kilograms times units a second, at a
 // point in the world.

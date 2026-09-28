@@ -37,18 +37,21 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Jolt, through the physics core, before any of the game's headers.
 #include "../physics/phys_world.h"
 #include "../physics/phys_furniture.h"
+#include "../physics/phys_rules.h"
 
 #include "g_local.h"
 #include "entity.h"
 #include "level.h"
 #include "gamecvars.h"
 #include "g_physics.h"
+#include "g_phys.h"
 #include "sentient.h"
 #include "barrels.h"
 #include "object.h"
 #include "player.h"
 
 #include <set>
+#include <string>
 #include <vector>
 
 static cvar_t *g_physics;
@@ -74,18 +77,33 @@ static qboolean                       gphys_ready;
 typedef struct {
     JPH::BodyID id;
     qboolean    owned;
+    float       ruleMass; // the mass physics.txt gave it, or 0
 } gphysEntity_t;
 
 static gphysEntity_t gphys_entities[MAX_GENTITIES];
+
+// physics.txt (see code/physics/phys_rules.h), and what each entity is called
+// in it: a brush model by its model (*185), anything else by where it stood
+// when the physics first saw it.
+#define GPHYS_RULES_FILE "physics.txt"
+
+typedef struct {
+    Entity     *ent;
+    std::string key;
+} gphysKey_t;
+
+static PhysRules  gphys_rules;
+static gphysKey_t gphys_keys[MAX_GENTITIES];
 
 // The furniture in the brushwork (see code/physics/phys_furniture.cpp). The
 // client makes it move; here each piece is a fixed body of its own, so that
 // when the client takes its brushes out of the collision model the server shares
 // with it (single player), the body goes too and what stood on it falls.
 typedef struct {
-    JPH::BodyID id;
-    vec3_t      probe; // inside one of its brushes
-    int         nextCheck;
+    JPH::BodyID    id;
+    JPH::ShapeRefC shape;
+    vec3_t         probe; // inside one of its brushes
+    int            nextCheck;
 } gphysFurniture_t;
 
 static std::vector<gphysFurniture_t> gphys_furniture;
@@ -192,6 +210,88 @@ static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
 }
 
 //=============================================================
+// physics.txt
+//=============================================================
+
+static void G_PhysicsRulesLoad(void)
+{
+    void *buf = NULL;
+    long  len = gi.FS_ReadFile(GPHYS_RULES_FILE, &buf, qtrue);
+
+    if (len > 0 && buf) {
+        const std::string text((const char *)buf, (size_t)len);
+        gphys_rules.Parse(text.c_str());
+    } else {
+        gphys_rules.Parse("");
+    }
+
+    if (buf) {
+        gi.FS_FreeFile(buf);
+    }
+}
+
+static const char *G_PhysicsEntityKey(Entity *ent)
+{
+    gphysKey_t *k = &gphys_keys[ent->entnum];
+
+    if (k->ent != ent || k->key.empty()) {
+        k->ent = ent;
+        if (ent->model.length() > 1 && ent->model[0] == '*') {
+            k->key = ent->model.c_str();
+        } else {
+            k->key = va("%d,%d,%d", (int)floor(ent->origin[0] + 0.5f), (int)floor(ent->origin[1] + 0.5f), (int)floor(ent->origin[2] + 0.5f));
+        }
+    }
+
+    return k->key.c_str();
+}
+
+// Whether an entity moves as a body, by its kind and by the rules: MOVES or
+// FIXED (the rules' off is fixed here, as the entity was made), or UNSET for
+// one that is no kind of physics object at all. With why, and the rules' mass
+// (0 for its own).
+static int G_PhysicsDecide(Entity *ent, float *mass, const char **why)
+{
+    bool        byDefault;
+    const char *defaultWhy;
+
+    *mass = 0.0f;
+    *why  = "";
+
+    if (!ent || ent->entnum < 0 || ent->entnum >= MAX_GENTITIES) {
+        return PHYS_RULE_UNSET;
+    }
+
+    if (ent->IsSubclassOfCrateObject() || ent->isSubclassOf(BarrelObject)) {
+        // Broken, or never to be.
+        if (ent->takedamage == DAMAGE_NO) {
+            return PHYS_RULE_UNSET;
+        }
+        byDefault  = true;
+        defaultWhy = ent->IsSubclassOfCrateObject() ? "a crate" : "a barrel";
+    } else if (ent->isSubclassOf(InteractObject)) {
+        byDefault  = ent->size[0] <= 96 && ent->size[1] <= 96 && ent->size[2] <= 96;
+        defaultWhy = byDefault ? "small enough to move" : "too big to move";
+    } else {
+        return PHYS_RULE_UNSET;
+    }
+
+    const bool             brush = ent->model.length() > 1 && ent->model[0] == '*';
+    const physRuleResult_t r     = gphys_rules.Resolve(
+        level.m_mapfile.c_str(), "entity", G_PhysicsEntityKey(ent), brush ? NULL : ent->model.c_str(), ent->getClassID()
+    );
+
+    *mass = r.rule.mass;
+    if (r.rule.state == PHYS_RULE_UNSET) {
+        *why = defaultWhy;
+        return byDefault ? PHYS_RULE_MOVES : PHYS_RULE_FIXED;
+    }
+
+    *why = r.from;
+    return r.rule.state == PHYS_RULE_MOVES ? PHYS_RULE_MOVES : PHYS_RULE_FIXED;
+}
+
+//=============================================================
 // The world
 //=============================================================
 
@@ -242,6 +342,9 @@ void G_PhysicsShutdown(void)
     }
 
     memset(gphys_entities, 0, sizeof(gphys_entities));
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        gphys_keys[i] = gphysKey_t();
+    }
     for (int i = 0; i < MAX_CLIENTS; i++) {
         gphys_grab[i].entnum = -1;
     }
@@ -269,6 +372,7 @@ void G_PhysicsInitLevel(const char *mapfile)
     g_physics_hitscale = gi.Cvar_Get("g_physics_hitscale", "1", 0);
 
     G_PhysicsShutdown();
+    G_PhysicsRulesLoad();
 
     if (!g_physics->integer || !mapfile || !mapfile[0]) {
         return;
@@ -343,6 +447,7 @@ void G_PhysicsInitLevel(const char *mapfile)
         if (f.id.IsInvalid()) {
             continue;
         }
+        f.shape = result.Get();
 
         // The middle of its first brush.
         VectorClear(f.probe);
@@ -385,19 +490,14 @@ void G_PhysicsInitLevel(const char *mapfile)
 // brings it back: an unbroken crate or barrel, or a small interactive object.
 static bool G_PhysicsWants(Entity *ent)
 {
+    float       mass;
+    const char *why;
+
     if (!ent || ent->edict->solid == SOLID_NOT) {
         return false;
     }
 
-    if (ent->IsSubclassOfCrateObject() || ent->isSubclassOf(BarrelObject)) {
-        return ent->takedamage != DAMAGE_NO;
-    }
-
-    if (ent->isSubclassOf(InteractObject)) {
-        return ent->size[0] <= 96 && ent->size[1] <= 96 && ent->size[2] <= 96;
-    }
-
-    return false;
+    return G_PhysicsDecide(ent, &mass, &why) == PHYS_RULE_MOVES;
 }
 
 void G_PhysicsRestoreLevel(void)
@@ -497,8 +597,14 @@ bool G_PhysicsAddEntity(Entity *ent)
     vec3_t                 mins, maxs, axis[3];
     const gphysMaterial_t *material;
     JPH::ShapeRefC         shape;
+    float                  ruleMass;
+    const char            *why;
 
     if (!gphys_ready || !ent || ent->entnum < 0 || ent->entnum >= MAX_GENTITIES || G_PhysicsOwns(ent)) {
+        return false;
+    }
+
+    if (G_PhysicsDecide(ent, &ruleMass, &why) != PHYS_RULE_MOVES) {
         return false;
     }
 
@@ -523,7 +629,7 @@ bool G_PhysicsAddEntity(Entity *ent)
         const float     area = 2.0f * (size.GetX() * size.GetY() + size.GetY() * size.GetZ() + size.GetZ() * size.GetX());
 
         settings.mOverrideMassProperties       = JPH::EOverrideMassProperties::CalculateInertia;
-        settings.mMassPropertiesOverride.mMass = Q_clamp_float(area * material->arealDensity, 0.2f, 200.0f);
+        settings.mMassPropertiesOverride.mMass = ruleMass > 0.0f ? ruleMass : Q_clamp_float(area * material->arealDensity, 0.2f, 200.0f);
     }
 
     settings.mFriction       = material->friction;
@@ -538,8 +644,9 @@ bool G_PhysicsAddEntity(Entity *ent)
         return false;
     }
 
-    gphys_entities[ent->entnum].id    = id;
-    gphys_entities[ent->entnum].owned = qtrue;
+    gphys_entities[ent->entnum].id       = id;
+    gphys_entities[ent->entnum].owned    = qtrue;
+    gphys_entities[ent->entnum].ruleMass = ruleMass;
 
     if (g_physics_log->integer >= 2) {
         gi.Printf(
@@ -1034,6 +1141,162 @@ qboolean G_PhysicsNudgeCmd(gentity_t *ent)
     return qtrue;
 }
 
+//=============================================================
+// The physics editor
+//=============================================================
+
+// What the editor shows of an entity: 1 a body, 0 solid but not one, 2
+// neither; -1 no kind of physics object.
+static int G_PhysicsEditState(Entity *ent)
+{
+    float       mass;
+    const char *why;
+
+    if (!ent || G_PhysicsDecide(ent, &mass, &why) == PHYS_RULE_UNSET) {
+        return -1;
+    }
+    if (G_PhysicsOwns(ent)) {
+        return PHYS_RULE_MOVES;
+    }
+    return ent->edict->solid == SOLID_NOT ? PHYS_RULE_OFF : PHYS_RULE_FIXED;
+}
+
+static void G_PhysicsSendList(int client)
+{
+    std::string part;
+    bool        first = true;
+
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        const int state = g_entities[i].inuse ? G_PhysicsEditState(g_entities[i].entity) : -1;
+
+        if (state >= 0) {
+            part += va(" %d:%d", i, state);
+        }
+
+        if (part.size() > 900 || (i == MAX_GENTITIES - 1 && (first || !part.empty()))) {
+            gi.SendServerCommand(client, "physlist %d%s", first ? 1 : 0, part.c_str());
+            part.clear();
+            first = false;
+        }
+    }
+}
+
+// physlist
+qboolean G_PhysicsListCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 0, &target);
+
+    if (player) {
+        G_PhysicsSendList(player->edict - g_entities);
+    }
+    return qtrue;
+}
+
+// physinfo <entity>
+qboolean G_PhysicsInfoCmd(gentity_t *ent)
+{
+    Entity     *target = NULL;
+    Player     *player = G_PhysicsCommandTarget(ent, 0, &target);
+    int         n;
+    float       ruleMass, mass = 0.0f;
+    const char *why;
+
+    if (!player || gi.Argc() < 2) {
+        return qtrue;
+    }
+
+    n = atoi(gi.Argv(1));
+    if (n < 0 || n >= MAX_GENTITIES || !g_entities[n].inuse || !g_entities[n].entity) {
+        return qtrue;
+    }
+
+    target = g_entities[n].entity;
+    if (G_PhysicsDecide(target, &ruleMass, &why) == PHYS_RULE_UNSET) {
+        why = "not a kind the physics moves";
+    }
+    if (G_PhysicsOwns(target)) {
+        mass = G_PhysicsBodyMass(gphys_entities[n].id);
+    }
+
+    gi.SendServerCommand(
+        player->edict - g_entities,
+        "physinfo %d %d %.1f \"%s\" \"%s\" \"%s\" \"%s\"",
+        n,
+        G_PhysicsEditState(target),
+        mass,
+        target->getClassID(),
+        target->model.length() ? target->model.c_str() : "none",
+        G_PhysicsEntityKey(target),
+        why
+    );
+    return qtrue;
+}
+
+// physrules: the file again, and every entity as it now says.
+qboolean G_PhysicsRulesCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 0, &target);
+    int     added = 0, removed = 0, remade = 0;
+
+    if (!player) {
+        return qtrue;
+    }
+
+    G_PhysicsRulesLoad();
+
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        Entity     *e = g_entities[i].inuse ? g_entities[i].entity : NULL;
+        float       ruleMass;
+        const char *why;
+        int         state;
+
+        if (!e) {
+            continue;
+        }
+
+        state = G_PhysicsDecide(e, &ruleMass, &why);
+        if (state == PHYS_RULE_UNSET) {
+            continue;
+        }
+
+        if (G_PhysicsOwns(e)) {
+            if (state != PHYS_RULE_MOVES) {
+                // Stays where it is now, as the map's own entity would.
+                G_PhysicsRemoveEntity(e);
+                removed++;
+            } else if (ruleMass != gphys_entities[i].ruleMass) {
+                G_PhysicsRemoveEntity(e);
+                if (G_PhysicsAddEntity(e)) {
+                    remade++;
+                }
+            }
+            continue;
+        }
+
+        if (state != PHYS_RULE_MOVES) {
+            continue;
+        }
+
+        if (e->isSubclassOf(InteractObject)) {
+            // As at spawn: made solid to shots too.
+            ((InteractObject *)e)->SetupPhysics(NULL);
+            added += G_PhysicsOwns(e) ? 1 : 0;
+        } else if (G_PhysicsAddEntity(e)) {
+            e->setMoveType(MOVETYPE_NONE);
+            added++;
+        }
+    }
+
+    if (g_physics_log->integer) {
+        gi.Printf("g_physics: %s read again: %d entities became bodies, %d stopped being, %d were weighed again\n", GPHYS_RULES_FILE, added, removed, remade);
+    }
+
+    G_PhysicsSendList(player->edict - g_entities);
+    return qtrue;
+}
+
 // Each step: what each player carries is pulled after the end of his beam.
 static void G_PhysicsGrabStep(float dt)
 {
@@ -1127,16 +1390,33 @@ void G_PhysicsFrame(float frametime)
 
     gphys_world.system->SetGravity(JPH::Vec3(0.0f, 0.0f, -sv_gravity->value * PHYS_UNITS_TO_METRES));
 
-    // Furniture the client has taken out of the collision model.
+    // Furniture the client has taken out of the collision model, or put back
+    // (its physics editor puts the map back as it was).
     for (size_t i = 0; i < gphys_furniture.size(); i++) {
         gphysFurniture_t *f = &gphys_furniture[i];
+        bool              solid;
 
-        if (f->id.IsInvalid() || level.inttime < f->nextCheck) {
+        if (level.inttime < f->nextCheck) {
             continue;
         }
         f->nextCheck = level.inttime + 250;
+        solid        = (gi.pointcontents(f->probe, ENTITYNUM_NONE) & CONTENTS_SOLID) != 0;
 
-        if (gi.pointcontents(f->probe, ENTITYNUM_NONE) & CONTENTS_SOLID) {
+        if (f->id.IsInvalid()) {
+            if (solid && f->shape) {
+                JPH::BodyCreationSettings settings(
+                    f->shape, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, PhysLayers::WORLD
+                );
+
+                f->id = gphys_world.system->GetBodyInterface().CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+                if (g_physics_log->integer) {
+                    gi.Printf("g_physics: furniture %d is back in the collision model; so is its body\n", (int)i);
+                }
+            }
+            continue;
+        }
+
+        if (solid) {
             continue;
         }
 

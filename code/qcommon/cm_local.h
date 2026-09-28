@@ -91,6 +91,7 @@ typedef struct {
 	int			numsides;
 	cbrushside_t	*sides;
 	int			checkcount;		// to avoid repeated testings
+	int			disabledContents;	// Added in OPM: what CM_DisableBrush took away
 } cbrush_t;
 
 

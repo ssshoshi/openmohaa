@@ -326,10 +326,7 @@ void CG_PropsLoad(void)
         memcpy(name, in[i].model, sizeof(in[i].model));
         name[sizeof(in[i].model)] = 0;
 
-        if (CG_PropSkipped(name)) {
-            skipped++;
-            continue;
-        }
+        const qboolean left = CG_PropSkipped(name);
 
         if (!Q_stricmpn(name, "models", 6)) {
             Q_strncpyz(path, name, sizeof(path));
@@ -347,17 +344,33 @@ void CG_PropsLoad(void)
         p->body        = -1;
         p->clipped     = 0;
         p->numStandIns = 0;
+        p->mass        = 0.0f;
+        p->solid       = qtrue;
+        p->dynamic     = qfalse;
 
         for (k = 0; k < 3; k++) {
             biggest = Q_max(biggest, p->maxs[k] - p->mins[k]);
         }
 
+        // Left out, but kept for the physics editor to show.
+        if (left) {
+            skipped++;
+            p->solid = qfalse;
+            p->why   = "left out: foliage, a light or wire";
+            cg_numProps++;
+            continue;
+        }
+
         if (biggest < CG_PROP_MIN_SIZE || biggest > CG_PROP_MAX_SIZE) {
             sized++;
+            p->solid = qfalse;
+            p->why   = biggest < CG_PROP_MIN_SIZE ? "left out: too small" : "left out: too big";
+            cg_numProps++;
             continue;
         }
 
         p->dynamic = biggest <= CG_PROP_DYNAMIC_SIZE ? qtrue : qfalse;
+        p->why     = p->dynamic ? "small enough to move" : "too big to move";
         if (p->dynamic) {
             dynamic++;
         }

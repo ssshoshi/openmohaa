@@ -418,6 +418,11 @@ static void CG_ServerCommand(qboolean modelOnly)
         return;
     }
 
+    //  The physics editor's questions answered.
+    if (CG_PhysicsEditServerCommand(cmd)) {
+        return;
+    }
+
     if (!strcmp(cmd, "svlag")) {
         CG_ServerLag_f();
         return;

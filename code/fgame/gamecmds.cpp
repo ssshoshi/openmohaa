@@ -80,6 +80,9 @@ consolecmd_t G_ConsoleCmds[] = {
     {"physdist",        G_PhysicsDistCmd,     qfalse},
     {"physpunt",        G_PhysicsPuntCmd,     qfalse},
     {"physnudge",       G_PhysicsNudgeCmd,    qfalse},
+    {"physlist",        G_PhysicsListCmd,     qfalse},
+    {"physinfo",        G_PhysicsInfoCmd,     qfalse},
+    {"physrules",       G_PhysicsRulesCmd,    qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif

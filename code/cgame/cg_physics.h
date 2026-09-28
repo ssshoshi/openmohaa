@@ -72,11 +72,25 @@ extern "C" {
     void CG_PhysicsBlast_f(void);
     void CG_PhysicsList_f(void);
 
+    // The physics editor and physics.txt (cg_physics_edit.cpp): phys_edit,
+    // phys_toggle, phys_off, phys_mass, phys_forget, phys_reload; its lines on
+    // the screen; what the server says of its objects (physlist, physinfo).
+    void     CG_PhysicsEditInit(void);
+    void     CG_PhysicsEdit_f(void);
+    void     CG_PhysicsToggle_f(void);
+    void     CG_PhysicsOff_f(void);
+    void     CG_PhysicsMass_f(void);
+    void     CG_PhysicsForget_f(void);
+    void     CG_PhysicsReload_f(void);
+    void     CG_PhysicsEditDraw2D(void);
+    qboolean CG_PhysicsEditServerCommand(const char *cmd);
+
     extern cvar_t *cg_physics;
     extern cvar_t *cg_physics_log;
     extern cvar_t *cg_physics_debug;
     extern cvar_t *cg_physics_props;
     extern cvar_t *cg_physics_clipped;
+    extern cvar_t *cg_physics_edit;
 
 #ifdef __cplusplus
 }

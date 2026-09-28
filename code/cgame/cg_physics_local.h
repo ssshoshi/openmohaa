@@ -39,6 +39,10 @@ extern JPH::PhysicsSystem *phys_system;
 qboolean CG_PhysicsCanRemoveStandIns(void);
 qboolean CG_PhysicsClippedPropsMove(void);
 
+// cg_physics_world.cpp: a brush out of the collision model (a prop's stand-in
+// or furniture that moved), remembered so the physics editor can put it back.
+void CG_PhysicsDisableBrush(int brushNum);
+
 // cg_physics_world.cpp
 void CG_PhysicsLoadWorld(void);
 void CG_PhysicsUnloadWorld(void);
@@ -63,6 +67,29 @@ void     CG_PhysicsFurnitureStepped(void);
 void     CG_PhysicsDrawFurniture(float frac);
 int      CG_PhysicsFurnitureCount(void);
 qboolean CG_PhysicsFurnitureBody(int index, JPH::BodyID *id, vec3_t middle);
+qboolean CG_PhysicsFurnitureInfo(
+    int index, int *firstBrush, qboolean *moves, const char **why, const char **shader, vec3_t mins, vec3_t maxs
+);
+void CG_PhysicsForgetDetachedFurniture(void);
+
+// physics.txt (cg_physics_edit.cpp): read with the map, and what it says of the
+// props and the brushwork furniture.
+void     CG_PhysicsRulesLoad(void);
+void     CG_PhysicsApplyPropRules(void);
+qboolean CG_PhysicsFurnitureRule(int firstBrush, const char **why, float *mass);
+void     CG_PhysicsEditFrame(void);
+
+// The world again, as the rules now have it, without the ragdolls in it
+// going (cg_physics_world.cpp); the props go back where the map put them.
+void CG_PhysicsReloadWorld(void);
+
+// A body's mass in kilograms, or 0 if it does not move; a prop's body.
+float    CG_PhysicsBodyMass(JPH::BodyID id);
+qboolean CG_PhysicsPropBody(int prop, JPH::BodyID *id);
+// The static models that have moved from where the map put them.
+void CG_PhysicsMovedStaticModels(std::vector<int> *out);
+
+void CG_JoltRagdollsWake(void);
 
 const physFurniture_t *CG_PhysicsFurnitureShape(int index);
 

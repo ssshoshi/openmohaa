@@ -1056,11 +1056,28 @@ Added in OPM
 ==================
 */
 void CM_DisableBrush( int brushNum ) {
-	if ( brushNum < 0 || brushNum >= cm.numBrushes ) {
+	if ( brushNum < 0 || brushNum >= cm.numBrushes || !cm.brushes[ brushNum ].contents ) {
 		return;
 	}
 
+	cm.brushes[ brushNum ].disabledContents = cm.brushes[ brushNum ].contents;
 	cm.brushes[ brushNum ].contents = 0;
+}
+
+/*
+==================
+CM_EnableBrush
+
+Added in OPM. Puts back a brush CM_DisableBrush took out.
+==================
+*/
+void CM_EnableBrush( int brushNum ) {
+	if ( brushNum < 0 || brushNum >= cm.numBrushes || !cm.brushes[ brushNum ].disabledContents ) {
+		return;
+	}
+
+	cm.brushes[ brushNum ].contents = cm.brushes[ brushNum ].disabledContents;
+	cm.brushes[ brushNum ].disabledContents = 0;
 }
 
 /*

@@ -244,10 +244,16 @@ void CG_PhysicsLoadProps(void)
                                   && (!p->clipped || CG_PhysicsClippedPropsMove()))
                                          ? qtrue
                                          : qfalse;
-        JPH::ShapeRefC        shape    = CG_PhysicsPropShape(p);
+        JPH::ShapeRefC        shape;
         float                 biggest  = 0.0f;
         int                   k;
 
+        // Left out (foliage, lights, wire, the very small and big, or a rule).
+        if (!p->solid) {
+            continue;
+        }
+
+        shape = CG_PhysicsPropShape(p);
         if (!shape) {
             failed++;
             continue;
@@ -277,7 +283,8 @@ void CG_PhysicsLoadProps(void)
             const float     area = 2.0f * (size.GetX() * size.GetY() + size.GetY() * size.GetZ() + size.GetZ() * size.GetX());
 
             settings.mOverrideMassProperties       = JPH::EOverrideMassProperties::CalculateInertia;
-            settings.mMassPropertiesOverride.mMass = Q_clamp_float(area * material->arealDensity, 0.2f, 200.0f);
+            settings.mMassPropertiesOverride.mMass =
+                p->mass > 0.0f ? p->mass : Q_clamp_float(area * material->arealDensity, 0.2f, 200.0f);
             settings.mLinearDamping  = 0.05f;
             settings.mAngularDamping = 0.1f;
             settings.mMotionQuality  = JPH::EMotionQuality::LinearCast;
@@ -365,7 +372,7 @@ void CG_PhysicsPropsStepped(void)
                 (void)rot;
 
                 for (int k = 0; k < p->numStandIns; k++) {
-                    cgi.CM_DisableBrush(p->standIns[k]);
+                    CG_PhysicsDisableBrush(p->standIns[k]);
                 }
 
                 if (cg_physics_log->integer) {
@@ -388,6 +395,26 @@ void CG_PhysicsPropsStepped(void)
             PhysFromJolt(JPH::Vec3(pp->curPos), origin);
             CG_PhysicsAxisFromQuat(pp->curRot, axis);
             CG_PropSetPose(pp->prop, origin, axis);
+        }
+    }
+}
+
+qboolean CG_PhysicsPropBody(int prop, JPH::BodyID *id)
+{
+    if (prop < 0 || prop >= cg_numProps || cg_props[prop].body < 0 || cg_props[prop].body >= (int)pp_props.size()) {
+        return qfalse;
+    }
+
+    *id = pp_props[cg_props[prop].body].id;
+    return qtrue;
+}
+
+void CG_PhysicsMovedStaticModels(std::vector<int> *out)
+{
+    out->clear();
+    for (size_t i = 0; i < pp_props.size(); i++) {
+        if (pp_props[i].everMoved || pp_props[i].moving) {
+            out->push_back(cg_props[pp_props[i].prop].staticIndex);
         }
     }
 }
@@ -446,7 +473,7 @@ static qboolean CG_PhysicsUnderCrosshair(float range, JPH::BodyID *id, vec3_t po
 }
 
 // A body's mass in kilograms, or 0 if it does not move.
-static float CG_PhysicsBodyMass(JPH::BodyID id)
+float CG_PhysicsBodyMass(JPH::BodyID id)
 {
     JPH::BodyLockRead lock(phys_system->GetBodyLockInterface(), id);
 

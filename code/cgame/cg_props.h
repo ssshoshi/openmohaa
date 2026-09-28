@@ -54,6 +54,14 @@ extern "C" {
         float hull[CG_PROP_MAX_HULL][3];
         int   numHull;
 
+        // Solid at all: ragdolls collide with it and the physics has a body
+        // for it. Foliage, lights, wire and the very small and very big are
+        // kept only so the physics editor can show them and have them made
+        // solid (cg_physics_edit.cpp), and why they were left out.
+        qboolean    solid;
+        const char *why;   // what decided solid and dynamic
+        float       mass;  // kilograms from a rule, or 0 for the physics' own
+
         qboolean dynamic; // small enough to be knocked about
         int      clipped; // the map's invisible clip brushes that stand in for it
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers

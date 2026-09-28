@@ -839,6 +839,7 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 	cgi->CM_DisableBrush			= CM_DisableBrush;
 	cgi->R_DetachWorldSurfaces		= re.DetachWorldSurfaces;
 	cgi->R_RegisterShaderVertexLit	= re.RegisterShaderVertexLit;
+	cgi->CM_EnableBrush				= CM_EnableBrush;
 	cgi->apiversion					= CGAME_IMPORT_API_VERSION;
 	// FIXME
 	//cgi->pUnknownVar				= NULL;

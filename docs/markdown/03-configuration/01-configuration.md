@@ -217,6 +217,33 @@ Walking into a prop pushes it, lighter props faster and nothing over 80 kg; AI p
 
 The console commands `phys_poke`, `phys_blast`, `phys_list` and `phys_selftest` are for testing.
 
+#### Choosing what moves: physics.txt and the physics editor
+
+Which objects are physics bodies is guessed: small static models move, big ones stay fixed, foliage, lights and wire are left out, and so on. Where a guess is wrong, `physics.txt` in the game's home directory (`main/physics.txt`) overrides it. Both the client and the server read it at every map load.
+
+`phys_edit` turns on the in-game editor. Every physics object near the view is outlined: green if it moves, red if it is fixed, grey if it is left out. The one under the crosshair is yellow, and the screen says what it is, how heavy it is and what decided it. Then:
+
+|Command                          |What it does
+|---------------------------------|------------
+|phys_toggle [model\|mapmodel]    |Moves if it was fixed or left out, fixed if it moved
+|phys_off [model\|mapmodel]       |Left out of the physics altogether, not even solid to ragdolls (the server's objects: the same as fixed)
+|phys_mass <kg> [model\|mapmodel] |How heavy it is when it moves; 0 goes back to the guess
+|phys_forget [model\|mapmodel]    |Takes the rule out
+|phys_reload                      |Reads `physics.txt` again, after editing it by hand
+
+With no argument a command is about the object alone. With `model` it applies to every object with the same model (for a brush entity such as a crate, every entity of its class) on every map, and with `mapmodel` on this map only. A rule for one object wins over a rule for its model. Each change is saved to `physics.txt` straight away, and the physics is rebuilt: the client's props and furniture go back where the map put them. The server's crates, barrels and magazines can be edited in single player only. Binding the commands to keys makes the editor quicker to use, e.g. `bind j phys_toggle` and `bind k "phys_toggle model"`.
+
+The file can be edited by hand. Each line is an optional map, what the rule is about, and settings (`moves`, `fixed`, `off`, `mass <kg>`); `//` or `#` starts a comment:
+
+```
+model static/chair.tik fixed           every static/chair.tik, on every map
+m3l1b model static/chair.tik moves     but on m3l1b they move
+m3l1b static 57 moves mass 12          the 57th static model on m3l1b
+m3l1b furniture 712 fixed              the brushwork furniture that starts with brush 712
+m3l1b entity *185 fixed                the brush entity with model *185
+class func_barrel mass 30              every barrel weighs 30 kg
+```
+
 ### Chat
 
 Chat messages are logged to console and in the logfile by default, without requiring to set the `developer` variable.

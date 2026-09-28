@@ -42,6 +42,7 @@ typedef struct {
 } pwShape_t;
 
 static std::vector<pwShape_t>   pw_shapes;
+static std::vector<int>         pw_disabled; // brushes taken out of the collision model
 static std::vector<float>       pw_edges; // 6 floats an edge
 static std::vector<JPH::BodyID> pw_bodies;
 static char                     pw_map[MAX_QPATH];
@@ -74,7 +75,7 @@ static int CG_PhysicsBrushStandsIn(const char *shader, const vec3_t mins, const 
         const cgProp_t *p = &cg_props[i];
         float           overlap = 1.0f;
 
-        if (!p->dynamic) {
+        if (!p->dynamic || !p->solid) {
             continue;
         }
 
@@ -154,10 +155,13 @@ static qboolean CG_PhysicsSkipBrush(void *ctx, int brushNum, const char *shader,
     return CG_PhysicsClippedPropsMove();
 }
 
-void CG_PhysicsUnloadWorld(void)
+static void CG_PhysicsUnloadWorldBut(qboolean keepRagdolls)
 {
     CG_PhysicsGrabRelease();
-    CG_JoltRagdollsUnload();
+    if (!keepRagdolls) {
+        CG_JoltRagdollsUnload();
+        CG_PhysicsForgetDetachedFurniture();
+    }
     CG_PhysicsUnloadMovers();
     CG_PhysicsUnloadFills();
     CG_PhysicsUnloadFurniture();
@@ -178,6 +182,59 @@ void CG_PhysicsUnloadWorld(void)
     pw_map[0] = 0;
 }
 
+void CG_PhysicsUnloadWorld(void)
+{
+    CG_PhysicsUnloadWorldBut(qfalse);
+    pw_disabled.clear();
+}
+
+void CG_PhysicsDisableBrush(int brushNum)
+{
+    cgi.CM_DisableBrush(brushNum);
+    pw_disabled.push_back(brushNum);
+}
+
+void CG_PhysicsReloadWorld(void)
+{
+    std::vector<int> moved;
+    int              i;
+
+    if (!phys_system || !cgs.mapname[0]) {
+        return;
+    }
+
+    CG_PhysicsMovedStaticModels(&moved);
+    CG_PhysicsUnloadProps();
+    CG_PhysicsUnloadWorldBut(qtrue);
+    CG_PropsReset();
+
+    // The collision model as the map made it: props and furniture that moved
+    // are back where they were, and solid there again.
+    if (cgi.apiversion >= 6 && cgi.CM_EnableBrush) {
+        for (size_t b = 0; b < pw_disabled.size(); b++) {
+            cgi.CM_EnableBrush(pw_disabled[b]);
+        }
+        pw_disabled.clear();
+    }
+
+    CG_PhysicsLoadWorld();
+    CG_PhysicsLoadProps();
+
+    // The props that had moved are drawn where the map put them again.
+    for (i = 0; i < cg_numProps; i++) {
+        const cgProp_t *p = &cg_props[i];
+
+        for (size_t m = 0; m < moved.size(); m++) {
+            if (moved[m] == p->staticIndex) {
+                cgi.R_SetStaticModelTransform(p->staticIndex, p->origin, p->axis);
+                break;
+            }
+        }
+    }
+
+    CG_JoltRagdollsWake();
+}
+
 void CG_PhysicsLoadWorld(void)
 {
     void            *buf = NULL;
@@ -190,7 +247,11 @@ void CG_PhysicsLoadWorld(void)
         return;
     }
 
-    CG_PhysicsUnloadWorld();
+    // Another map's; after CG_PhysicsReloadWorld there is none, and the
+    // ragdolls and the furniture drawn apart are this map's to keep.
+    if (pw_loaded) {
+        CG_PhysicsUnloadWorld();
+    }
     pw_loaded = qtrue;
     Q_strncpyz(pw_map, cgs.mapname, sizeof(pw_map));
     pw_standIns = 0;
@@ -199,8 +260,11 @@ void CG_PhysicsLoadWorld(void)
         return;
     }
 
-    // The props first, for the clip brushes that stand in for them.
+    // The props first, for the clip brushes that stand in for them, as the
+    // rules have them.
     CG_PropsLoad();
+    CG_PhysicsRulesLoad();
+    CG_PhysicsApplyPropRules();
 
     len = cgi.FS_ReadFile(cgs.mapname, &buf, qtrue);
     if (len < (long)sizeof(dheader_t) || !buf) {

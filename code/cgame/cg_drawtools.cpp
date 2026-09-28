@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Some tools used to drawing 2d stuff
 
 #include "cg_local.h"
+#include "cg_physics.h"
 
 /*
 ================
@@ -1540,4 +1541,6 @@ void CG_Draw2D(void)
     CG_DrawVote();
     CG_DrawInstantMessageMenu();
     CG_DrawCrosshair();
+    // Added in OPM
+    CG_PhysicsEditDraw2D();
 }

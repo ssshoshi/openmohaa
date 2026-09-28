@@ -46,6 +46,7 @@ int			CM_NumInlineModels( void );
 //  loaded again. For the clip brushes that stand in for a prop the client has
 //  moved; only meaningful where client and server share this collision model.
 void		CM_DisableBrush( int brushNum );
+void		CM_EnableBrush( int brushNum );
 char		*CM_EntityString( void );
 const char	*CM_MapTime( void );
 

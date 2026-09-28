@@ -7148,6 +7148,10 @@ static void CG_RagdollTrace(
         trace_t         tr;
         clipHandle_t    box;
 
+        if (!p->solid) {
+            continue;
+        }
+
         if (smin[0] > p->absmax[0] || smax[0] < p->absmin[0] || smin[1] > p->absmax[1] || smax[1] < p->absmin[1]
             || smin[2] > p->absmax[2] || smax[2] < p->absmin[2]) {
             continue;
@@ -7228,7 +7232,7 @@ static void CG_RagdollNoteEnclosingProps(cg_ragdoll_t *rd)
     CG_PropsLoad();
 
     for (i = 0; i < cg_numProps && rd->numIgnoredProps < (int)ARRAY_LEN(rd->ignoredProp); i++) {
-        if (CG_RagdollInsideProp(rd, &cg_props[i])) {
+        if (cg_props[i].solid && CG_RagdollInsideProp(rd, &cg_props[i])) {
             rd->ignoredProp[rd->numIgnoredProps++] = (short)i;
             CG_RagdollLog(rd, "inside prop %d as it died; passing through it", i);
         }

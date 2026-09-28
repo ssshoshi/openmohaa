@@ -811,6 +811,17 @@ void CG_JoltRagdollsUnload(void)
     }
 }
 
+// The world under them has changed (the physics editor): every body wakes, to
+// fall or settle on what is there now.
+void CG_JoltRagdollsWake(void)
+{
+    for (int i = 0; i < PR_MAX_RAGDOLLS; i++) {
+        if (pr_ragdolls[i].used && pr_ragdolls[i].ragdoll) {
+            pr_ragdolls[i].ragdoll->Activate();
+        }
+    }
+}
+
 //=============================================================
 // Following it
 //=============================================================

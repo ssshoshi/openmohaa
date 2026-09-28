@@ -87,6 +87,7 @@ void CG_InitPhysics(void)
     // removed instead and they always move; see CG_PhysicsCanRemoveStandIns.
     cg_physics_clipped = cgi.Cvar_Get("cg_physics_clipped", "0", CVAR_ARCHIVE | CVAR_LATCH);
     cg_physics_furniture = cgi.Cvar_Get("cg_physics_furniture", "1", CVAR_ARCHIVE | CVAR_LATCH);
+    CG_PhysicsEditInit();
     phys_lastTime    = 0;
     phys_accum       = 0.0f;
 
@@ -222,6 +223,8 @@ void CG_PhysicsFrame(void)
     if (cg_physics_debug->integer == 1) {
         CG_PhysicsDrawWorld();
     }
+
+    CG_PhysicsEditFrame();
 }
 
 // phys_selftest [rays]: casts random rays from the eye through Jolt's copy of

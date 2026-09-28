@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_physics_local.h"
 #include "../physics/phys_furniture.h"
 
+#include <map>
 #include <set>
 
 typedef struct {
@@ -43,10 +44,46 @@ typedef struct {
     JPH::Quat       prevRot, curRot;
     qhandle_t       model;
     qboolean        everMoved;
+    qboolean        moves; // a rule can keep a piece fixed (physics.txt)
+    const char     *why;
+    float           mass; // kilograms from a rule, or 0
 } cgFurniture_t;
 
 static std::vector<cgFurniture_t> pf_furniture;
 static std::set<int>              pf_brushes;
+
+// The pieces the renderer has drawn apart from the world, by their first
+// surface. A piece is taken out of the world once only, so when the physics
+// editor has the furniture made again (cg_physics_edit.cpp), a piece that
+// already moved is drawn with the model it had.
+static std::map<int, qhandle_t> pf_detached;
+
+static qhandle_t CG_PhysicsDetachFurniture(const physFurniture_t *shape)
+{
+    std::map<int, qhandle_t>::const_iterator it;
+    qhandle_t                                model;
+
+    if (shape->surfaces.empty()) {
+        return 0;
+    }
+
+    it = pf_detached.find(shape->surfaces[0]);
+    if (it != pf_detached.end()) {
+        return it->second;
+    }
+
+    model = cgi.R_DetachWorldSurfaces(&shape->surfaces[0], (int)shape->surfaces.size());
+    if (model) {
+        pf_detached[shape->surfaces[0]] = model;
+    }
+    return model;
+}
+
+// The map is going.
+void CG_PhysicsForgetDetachedFurniture(void)
+{
+    pf_detached.clear();
+}
 
 cvar_t *cg_physics_furniture;
 
@@ -74,11 +111,27 @@ void CG_PhysicsFindFurniture(const void *bsp, long len)
 
     for (size_t i = 0; i < found.size(); i++) {
         cgFurniture_t f;
+        vec3_t        centre;
+
+        VectorAdd(found[i].mins, found[i].maxs, centre);
+        VectorScale(centre, 0.5f, centre);
 
         f.shape     = found[i];
-        f.model     = 0;
+        f.id        = JPH::BodyID();
+        f.centre    = JPH::RVec3(PhysToJolt(centre));
+        f.curPos = f.prevPos = f.centre;
+        f.curRot = f.prevRot = JPH::Quat::sIdentity();
+        f.moves     = CG_PhysicsFurnitureRule(found[i].brushes.empty() ? -1 : found[i].brushes[0], &f.why, &f.mass);
+
+        // Drawn apart already, before the editor had it made again.
+        f.model     = (!found[i].surfaces.empty() && pf_detached.count(found[i].surfaces[0])) ? pf_detached[found[i].surfaces[0]] : 0;
         f.everMoved = qfalse;
         pf_furniture.push_back(f);
+
+        // Fixed, its brushes stay in the world as they are.
+        if (!f.moves) {
+            continue;
+        }
 
         for (size_t b = 0; b < found[i].brushes.size(); b++) {
             pf_brushes.insert(found[i].brushes[b]);
@@ -127,6 +180,9 @@ void CG_PhysicsLoadFurniture(void)
         float                            density, friction, restitution;
 
         f->id = JPH::BodyID();
+        if (!f->moves) {
+            continue;
+        }
 
         VectorAdd(f->shape.mins, f->shape.maxs, centre);
         VectorScale(centre, 0.5f, centre);
@@ -173,7 +229,7 @@ void CG_PhysicsLoadFurniture(void)
             area = (size[0] * size[1] + size[1] * size[2] + size[2] * size[0]);
 
             settings.mOverrideMassProperties       = JPH::EOverrideMassProperties::CalculateInertia;
-            settings.mMassPropertiesOverride.mMass = Q_clamp_float(area * density, 1.0f, 200.0f);
+            settings.mMassPropertiesOverride.mMass = f->mass > 0.0f ? f->mass : Q_clamp_float(area * density, 1.0f, 200.0f);
         }
 
         settings.mFriction       = friction;
@@ -245,7 +301,7 @@ void CG_PhysicsFurnitureStepped(void)
 
         // Moving for the first time: out of the world, into a model of its own.
         f->everMoved = qtrue;
-        f->model     = cgi.R_DetachWorldSurfaces(&f->shape.surfaces[0], (int)f->shape.surfaces.size());
+        f->model     = CG_PhysicsDetachFurniture(&f->shape);
 
         if (!f->model) {
             // Nothing to draw it with: it stays where the world draws it.
@@ -258,7 +314,7 @@ void CG_PhysicsFurnitureStepped(void)
 
         if (CG_PhysicsCanRemoveStandIns()) {
             for (size_t b = 0; b < f->shape.brushes.size(); b++) {
-                cgi.CM_DisableBrush(f->shape.brushes[b]);
+                CG_PhysicsDisableBrush(f->shape.brushes[b]);
             }
         }
 
@@ -288,7 +344,7 @@ void CG_PhysicsDrawFurniture(float frac)
         const qboolean turnOver = (cg_physics_debug->integer == 3 || cg_physics_debug->integer == 4) ? qtrue : qfalse;
 
         if (!f->model && turnOver && !f->shape.surfaces.empty()) {
-            pf_furniture[i].model = cgi.R_DetachWorldSurfaces(&f->shape.surfaces[0], (int)f->shape.surfaces.size());
+            pf_furniture[i].model = CG_PhysicsDetachFurniture(&f->shape);
         }
 
         if (!f->model) {
@@ -351,5 +407,35 @@ qboolean CG_PhysicsFurnitureBody(int index, JPH::BodyID *id, vec3_t middle)
     f   = &pf_furniture[index];
     *id = f->id;
     PhysFromJolt(JPH::Vec3(f->curPos), middle);
+    return qtrue;
+}
+
+// For the physics editor: a piece's first brush (what rules name it by),
+// whether it moves and why, and the box it fills now.
+qboolean CG_PhysicsFurnitureInfo(
+    int index, int *firstBrush, qboolean *moves, const char **why, const char **shader, vec3_t mins, vec3_t maxs
+)
+{
+    const cgFurniture_t *f;
+
+    if (index < 0 || index >= (int)pf_furniture.size()) {
+        return qfalse;
+    }
+
+    f           = &pf_furniture[index];
+    *firstBrush = f->shape.brushes.empty() ? -1 : f->shape.brushes[0];
+    *moves      = f->moves;
+    *why        = f->why;
+    *shader     = f->shape.shader;
+
+    if (phys_system && !f->id.IsInvalid() && f->model) {
+        const JPH::AABox box = phys_system->GetBodyInterface().GetTransformedShape(f->id).GetWorldSpaceBounds();
+
+        PhysFromJolt(box.mMin, mins);
+        PhysFromJolt(box.mMax, maxs);
+    } else {
+        VectorCopy(f->shape.mins, mins);
+        VectorCopy(f->shape.maxs, maxs);
+    }
     return qtrue;
 }

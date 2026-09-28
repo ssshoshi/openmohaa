@@ -108,8 +108,9 @@ InteractObject::InteractObject()
 
 void InteractObject::SetupPhysics(Event *ev)
 {
-    // Small ones (magazines and the like) are real bodies.
-    if (size[0] <= 96 && size[1] <= 96 && size[2] <= 96 && G_PhysicsAddEntity(this)) {
+    // Small ones (magazines and the like) are real bodies, and whatever
+    // physics.txt says moves (G_PhysicsAddEntity decides).
+    if (!G_PhysicsOwns(this) && G_PhysicsAddEntity(this)) {
         setMoveType(MOVETYPE_NONE);
 
         // Nothing makes them solid, so bullets went through. Weapon clip

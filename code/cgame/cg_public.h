@@ -89,7 +89,8 @@ functions imported from the main executable
 //  engine leaves apiversion at zero, so cgame can tell the entry is missing.
 //  5: R_SetStaticModelTransform, CM_DisableBrush, R_DetachWorldSurfaces and
 //  R_RegisterShaderVertexLit are present.
-#define CGAME_IMPORT_API_VERSION 5
+//  6: CM_EnableBrush is present.
+#define CGAME_IMPORT_API_VERSION 6
 
     /*
 ==================================================================
@@ -467,6 +468,10 @@ functions exported to the main executable
         qhandle_t (*R_DetachWorldSurfaces)(const int *surfaces, int numSurfaces);
         //  A world shader for polys, lit by their vertex colours.
         qhandle_t (*R_RegisterShaderVertexLit)(const char *name);
+
+        // Added in OPM, API version 6
+        //  Puts back a brush CM_DisableBrush took out.
+        void (*CM_EnableBrush)(int brushNum);
 
     } clientGameImport_t;
 
