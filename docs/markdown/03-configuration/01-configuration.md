@@ -193,6 +193,27 @@ To calculate IP subnets, search for `IP subnet calculator` on Internet.
 
 ## Game settings
 
+### Physics
+
+Props are rigid bodies (Jolt Physics) that bullets, explosions and falling bodies knock about.
+
+- Entity props (crates, barrels and cans, magazines) are simulated by the server, so every client sees them move.
+- The map's static-model clutter and furniture, and furniture built from world brushes (tables, benches, crates), are simulated by the client. Sides a prop was built without (nodraw or caulk, never meant to be seen) are covered with its own texture once it moves. That is cosmetic, except in single player: there the clip brushes that stood in for a prop are removed from collision once it moves.
+
+|Name                 |Default|Description
+|---------------------|-------|-----------
+|g_physics            |1      |Server props are physics bodies (takes effect on map load)
+|g_physics_log        |0      |1 reports the server world and body counts, 2 also each prop and hit
+|g_physics_hitscale   |1      |Multiplies how hard hits shove server props
+|cg_physics           |1      |Client physics on or off
+|cg_physics_props     |1      |Small static models move (takes effect on map load)
+|cg_physics_furniture |1      |Furniture built from world brushes moves (takes effect on map load)
+|cg_physics_clipped   |0      |Props wrapped in clip brushes move even when the clip brushes cannot be removed (multiplayer); the clip brushes then stay where the prop was
+|cg_physics_log       |0      |1 reports load and step costs, 2 also blasts, hits and each piece of furniture
+|cg_physics_debug     |0      |1 draws the physics world's shapes near the view; 3 draws every brush prop turned over where it stands, with the sides it was built without covered (4: without the covers), to check them
+
+The console commands `phys_poke`, `phys_blast`, `phys_list` and `phys_selftest` are for testing.
+
 ### Chat
 
 Chat messages are logged to console and in the logfile by default, without requiring to set the `developer` variable.
