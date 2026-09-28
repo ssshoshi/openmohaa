@@ -37,6 +37,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_ragdoll.h"
 #include "cg_parsemsg.h"
 #include "cg_props.h"
+#include "cg_physics.h"
 #include "../qcommon/qfiles.h"
 
 #include <chrono>
@@ -8101,17 +8102,29 @@ extern "C" void CG_RagdollGrabDown_f(void)
     float         entry;
 
     CG_RagdollRelease();
+    CG_PhysicsGrabRelease();
 
     if (!cg_ragdoll_grab->integer) {
         return;
     }
 
     rd = CG_RagdollUnderCrosshair(&entry);
+    CG_RagdollViewRay(start, dir);
+
+    // A prop, if one is nearer along the aim than any body.
+    {
+        float propEntry;
+
+        if (CG_PhysicsGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &propEntry) && (!rd || propEntry < entry)) {
+            CG_PhysicsGrabStart(start, dir, cg_ragdoll_grabrange->value, RD_GRAB_MIN_DIST);
+            return;
+        }
+    }
+
     if (!rd) {
         return;
     }
 
-    CG_RagdollViewRay(start, dir);
     VectorMA(start, entry, dir, point);
 
     rd_grab.held      = qtrue;
@@ -8130,6 +8143,7 @@ extern "C" void CG_RagdollGrabDown_f(void)
 extern "C" void CG_RagdollGrabUp_f(void)
 {
     CG_RagdollRelease();
+    CG_PhysicsGrabRelease();
 }
 
 extern "C" void CG_RagdollGrabNearer_f(void)
@@ -8139,6 +8153,7 @@ extern "C" void CG_RagdollGrabNearer_f(void)
     }
 
     rd_grab.dist = Q_max(rd_grab.dist - RD_GRAB_WHEEL, RD_GRAB_MIN_DIST);
+    *CG_PhysicsGrabDistance() = Q_max(*CG_PhysicsGrabDistance() - RD_GRAB_WHEEL, RD_GRAB_MIN_DIST);
 }
 
 extern "C" void CG_RagdollGrabFarther_f(void)
@@ -8148,6 +8163,7 @@ extern "C" void CG_RagdollGrabFarther_f(void)
     }
 
     rd_grab.dist = Q_min(rd_grab.dist + RD_GRAB_WHEEL, cg_ragdoll_grabrange->value);
+    *CG_PhysicsGrabDistance() = Q_min(*CG_PhysicsGrabDistance() + RD_GRAB_WHEEL, cg_ragdoll_grabrange->value);
 }
 
 // Throws the body being carried, or knocks the one the crosshair is on: the
@@ -8165,11 +8181,23 @@ extern "C" void CG_RagdollPunt_f(void)
 
     CG_RagdollViewRay(start, dir);
 
+    // A prop held, or aimed at nearer than any body, is thrown or knocked.
+    if (CG_PhysicsGrabHeld()) {
+        CG_PhysicsPunt(start, dir, cg_ragdoll_grabrange->value, cg_ragdoll_puntspeed->value);
+        return;
+    }
+
     if (rd) {
         VectorCopy(rd->part[rd->grabJoint].p, point);
         CG_RagdollRelease();
     } else {
+        float propEntry;
+
         rd = CG_RagdollUnderCrosshair(&entry);
+        if (CG_PhysicsGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &propEntry) && (!rd || propEntry < entry)) {
+            CG_PhysicsPunt(start, dir, cg_ragdoll_grabrange->value, cg_ragdoll_puntspeed->value);
+            return;
+        }
         if (!rd) {
             return;
         }
@@ -8423,6 +8451,29 @@ static void CG_RagdollGrabUpdate(void)
     cg_ragdoll_t *rd = CG_RagdollHeld();
     vec3_t        start, dir, target, muzzle;
     trace_t       tr;
+
+    // A prop held: the physics carries it towards the end of the beam, which
+    // stops short of walls as a body's does.
+    if (CG_PhysicsGrabHeld() && cg.snap) {
+        vec3_t held;
+
+        CG_RagdollViewRay(start, dir);
+        VectorMA(start, *CG_PhysicsGrabDistance(), dir, target);
+
+        cgi.CM_BoxTrace(&tr, start, target, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse);
+        if (tr.fraction < 1.0f) {
+            VectorMA(tr.endpos, -4.0f, dir, target);
+        }
+
+        CG_PhysicsGrabSetTarget(target);
+        CG_PhysicsGrabPoint(held);
+
+        VectorMA(start, 12.0f, dir, muzzle);
+        VectorMA(muzzle, -6.0f, cg.refdef.viewaxis[1], muzzle);
+        VectorMA(muzzle, -6.0f, cg.refdef.viewaxis[2], muzzle);
+        CG_RagdollDrawGrabBeam(muzzle, dir, target, held);
+        return;
+    }
 
     if (!rd || !cg.snap) {
         return;

@@ -66,6 +66,15 @@ qboolean CG_PhysicsFurnitureBody(int index, JPH::BodyID *id, vec3_t middle);
 
 const physFurniture_t *CG_PhysicsFurnitureShape(int index);
 
+void CG_PhysicsFollowMovers(void);
+void CG_PhysicsMoveMovers(float frac, float dt);
+void CG_PhysicsMoversHeld(void);
+void CG_PhysicsUnloadMovers(void);
+void CG_PhysicsPlayerPushes(void);
+void CG_PhysicsPushBody(JPH::BodyID id, const vec3_t dir, float speed);
+void CG_PhysicsPushPropsInBox(const vec3_t mins, const vec3_t maxs, const vec3_t dir, float speed);
+void CG_PhysicsGrabStep(float dt);
+
 void CG_PhysicsLoadFills(const void *bsp, long len);
 void CG_PhysicsUnloadFills(void);
 void CG_PhysicsDrawFurnitureFill(int index, const vec3_t origin, const vec3_t axis[3]);

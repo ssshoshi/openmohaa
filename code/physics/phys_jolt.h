@@ -124,6 +124,14 @@ public:
     bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer == PhysLayers::WORLD; }
 };
 
+// Casts that pass through the kinematic boxes of players and AI: a ray from
+// someone's eye or gun starts inside his own box.
+class PhysNoKinematicObjects final : public JPH::ObjectLayerFilter
+{
+public:
+    bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer != PhysLayers::KINEMATIC; }
+};
+
 // The rotation that takes a model's own x, y and z to the given axes, and back.
 JPH::Quat Phys_QuatFromAxis(const vec3_t axis[3]);
 void      Phys_AxisFromQuat(JPH::QuatArg q, vec3_t axis[3]);

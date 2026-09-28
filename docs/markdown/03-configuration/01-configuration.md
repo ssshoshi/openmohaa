@@ -212,6 +212,8 @@ Props are rigid bodies (Jolt Physics) that bullets, explosions and falling bodie
 |cg_physics_log       |0      |1 reports load and step costs, 2 also blasts, hits and each piece of furniture
 |cg_physics_debug     |0      |1 draws the physics world's shapes near the view; 3 draws every brush prop turned over where it stands, with the sides it was built without covered (4: without the covers), to check them
 
+Walking into a prop pushes it, lighter props faster and nothing over 80 kg; AI push props too. With `cg_ragdoll_grab 1` the grabber (`+rdgrab`, `rdpunt`) carries and throws props as well as bodies.
+
 The console commands `phys_poke`, `phys_blast`, `phys_list` and `phys_selftest` are for testing.
 
 ### Chat

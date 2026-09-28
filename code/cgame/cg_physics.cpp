@@ -127,6 +127,8 @@ qboolean CG_PhysicsClippedPropsMove(void)
 
 void CG_ShutdownPhysics(void)
 {
+    CG_PhysicsGrabRelease();
+    CG_PhysicsUnloadMovers();
     CG_PhysicsUnloadProps();
     CG_PhysicsUnloadWorld();
     Phys_DestroyWorld(&phys_world);
@@ -163,9 +165,20 @@ void CG_PhysicsFrame(void)
         phys_lastTime = cg.time;
         phys_accum    = Q_min(phys_accum, dt * PHYS_MAX_STEPS);
 
-        while (phys_accum >= dt && steps < PHYS_MAX_STEPS) {
+        // The people in the world, and the player's pushing.
+        CG_PhysicsFollowMovers();
+        CG_PhysicsPlayerPushes();
+
+        const int total = Q_min((int)(phys_accum / dt), PHYS_MAX_STEPS);
+        if (!total) {
+            CG_PhysicsMoversHeld();
+        }
+
+        while (steps < total) {
             const auto start = std::chrono::steady_clock::now();
 
+            CG_PhysicsMoveMovers((float)(steps + 1) / total, dt);
+            CG_PhysicsGrabStep(dt);
             phys_system->Update(dt, 1, phys_temp, phys_jobs);
             CG_PhysicsPropsStepped();
             CG_PhysicsFurnitureStepped();
@@ -246,7 +259,7 @@ void CG_PhysicsSelftest_f(void)
 
         {
             JPH::RRayCast ray(JPH::RVec3(PhysToJolt(start)), PhysToJolt(end) - PhysToJolt(start));
-            joltHit = phys_system->GetNarrowPhaseQuery().CastRay(ray, hit) ? qtrue : qfalse;
+            joltHit = phys_system->GetNarrowPhaseQuery().CastRay(ray, hit, {}, PhysNoKinematicObjects()) ? qtrue : qfalse;
         }
 
         if (tr.startsolid) {

@@ -156,6 +156,8 @@ static qboolean CG_PhysicsSkipBrush(void *ctx, int brushNum, const char *shader,
 
 void CG_PhysicsUnloadWorld(void)
 {
+    CG_PhysicsGrabRelease();
+    CG_PhysicsUnloadMovers();
     CG_PhysicsUnloadFills();
     CG_PhysicsUnloadFurniture();
 

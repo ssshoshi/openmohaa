@@ -436,7 +436,7 @@ static qboolean CG_PhysicsUnderCrosshair(float range, JPH::BodyID *id, vec3_t po
     VectorMA(cg.refdef.vieworg, range, dir, end);
 
     JPH::RRayCast ray(JPH::RVec3(PhysToJolt(cg.refdef.vieworg)), PhysToJolt(end) - PhysToJolt(cg.refdef.vieworg));
-    if (!phys_system->GetNarrowPhaseQuery().CastRay(ray, hit)) {
+    if (!phys_system->GetNarrowPhaseQuery().CastRay(ray, hit, {}, PhysNoKinematicObjects())) {
         return qfalse;
     }
 
@@ -579,7 +579,7 @@ void CG_PhysicsNoteBullet(const vec3_t start, const vec3_t end, int large)
     VectorMA(end, 8.0f, dir, far);
 
     const JPH::RRayCast ray(JPH::RVec3(PhysToJolt(start)), PhysToJolt(far) - PhysToJolt(start));
-    if (!phys_system->GetNarrowPhaseQuery().CastRay(ray, hit)) {
+    if (!phys_system->GetNarrowPhaseQuery().CastRay(ray, hit, {}, PhysNoKinematicObjects())) {
         return;
     }
 
@@ -616,6 +616,36 @@ void CG_PhysicsNoteExplosion(const vec3_t pos, int kind)
 
     kind = kind < 0 ? 0 : kind > 3 ? 3 : kind;
     CG_PhysicsBlast(pos, blasts[kind][0], blasts[kind][1]);
+}
+
+// Someone reaching into the box round a prop (its stand-ins stop him short of
+// it) while going along dir, towards it and not standing on it: it is pushed.
+void CG_PhysicsPushPropsInBox(const vec3_t mins, const vec3_t maxs, const vec3_t dir, float speed)
+{
+    for (size_t i = 0; i < pp_props.size(); i++) {
+        const cgProp_t *p = &cg_props[pp_props[i].prop];
+        vec3_t          toward;
+        int             k;
+
+        for (k = 0; k < 3; k++) {
+            if (mins[k] > p->absmax[k] || maxs[k] < p->absmin[k]) {
+                break;
+            }
+        }
+        if (k < 3 || mins[2] >= p->absmax[2] - 2.0f) {
+            continue;
+        }
+
+        for (k = 0; k < 2; k++) {
+            toward[k] = (p->absmin[k] + p->absmax[k]) * 0.5f - (mins[k] + maxs[k]) * 0.5f;
+        }
+        toward[2] = 0.0f;
+        if (VectorNormalize(toward) < 0.001f || DotProduct(toward, dir) < 0.2f) {
+            continue;
+        }
+
+        CG_PhysicsPushBody(pp_props[i].id, dir, speed);
+    }
 }
 
 // phys_poke [speed]: knocks whatever prop is under the crosshair.

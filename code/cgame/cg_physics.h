@@ -45,6 +45,20 @@ extern "C" {
     void CG_PhysicsNoteBullet(const vec3_t start, const vec3_t end, int large);
     void CG_PhysicsNoteExplosion(const vec3_t pos, int kind);
 
+    // The grabber (see the ragdolls' +rdgrab) on props: the nearest dynamic
+    // body along a ray and how far; taking hold of it; whether one is held,
+    // letting go, how far it is carried, where it is pulled to and where the
+    // point held is now; and throwing what is held or knocking what the ray
+    // finds, lighter things faster.
+    qboolean CG_PhysicsGrabCandidate(const vec3_t start, const vec3_t dir, float range, float *entry);
+    qboolean CG_PhysicsGrabStart(const vec3_t start, const vec3_t dir, float range, float minDist);
+    qboolean CG_PhysicsGrabHeld(void);
+    void     CG_PhysicsGrabRelease(void);
+    float   *CG_PhysicsGrabDistance(void);
+    void     CG_PhysicsGrabSetTarget(const vec3_t target);
+    void     CG_PhysicsGrabPoint(vec3_t out);
+    qboolean CG_PhysicsPunt(const vec3_t start, const vec3_t dir, float range, float speed);
+
     // For each brush entity drawn: covers the sides it was built with nodraw
     // or caulk on, once it has moved from where it stood.
     void CG_PhysicsDrawModelFill(int entnum, int model, const vec3_t origin, const vec3_t angles);
