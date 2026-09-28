@@ -36,6 +36,10 @@ LOADWAIT="${OMBENCH_LOADWAIT:-9000}"
 # r_sunShadows -- and a latched cvar set after GL init does nothing until the
 # next vid_restart, which reads as "the setting had no effect".
 CVARS="${OMBENCH_CVARS:-}"
+# Extra console commands run after the measurement, semicolon separated, e.g.
+# OMBENCH_CMDS="saveshot save/test.tga 256 256; wait 500" to exercise the saved
+# game thumbnail path.
+CMDS="${OMBENCH_CMDS:-}"
 # Repeated measurement windows inside ONE process, to reproduce effects that
 # only appear after the renderer has been up a while. OMBENCH_RESTART picks
 # what happens between windows: none, vid_restart (tears down and rebuilds the
@@ -97,6 +101,9 @@ mkdir -p "$OUT/main" "$SHOTDIR"
     fi
     i=$(( i + 1 ))
   done
+  if [ -n "$CMDS" ]; then
+    echo "$CMDS" | tr ';' '\n' | sed 's/^ *//'
+  fi
   echo "echo OMBENCH_ALLDONE"
   echo "screenshotJPEG"
   echo "wait 500"
