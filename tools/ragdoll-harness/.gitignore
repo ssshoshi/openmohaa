@@ -1,0 +1,6 @@
+rdsim
+rdsim-*
+*.o
+rd_anims.h
+ragdoll_dump*.txt
+__pycache__/
