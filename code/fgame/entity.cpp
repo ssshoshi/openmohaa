@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 
 #include "entity.h"
+#include "g_physics.h"
 #include "scriptmaster.h"
 #include "sentient.h"
 #include "misc.h"
@@ -2639,6 +2640,10 @@ void Entity::Damage(
     if (!inflictor) {
         inflictor = world;
     }
+
+    // Added in OPM
+    //  A physics prop is shoved by what hits it.
+    G_PhysicsDamaged(this, damage, position, direction);
 
     ev = new Event(EV_Damage);
     ev->AddEntity(attacker);

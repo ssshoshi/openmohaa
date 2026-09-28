@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "player.h"
 #include "Entities.h"
 #include "health.h"
+#include "g_physics.h"
 
 #include "navigation_recast_load.h"
 
@@ -867,6 +868,9 @@ void Level::CleanUp(qboolean samemap, qboolean resetConfigStrings)
     DisableListenerNotify++;
 
     // Added in OPM
+    G_PhysicsShutdown();
+
+    // Added in OPM
     //  When resetConfigStrings is 0, the game is shutting down
     if (!resetConfigStrings) {
         Event *event = new Event;
@@ -1138,6 +1142,10 @@ void Level::SpawnEntities(char *entities, int svsTime)
     }
 
     Com_Printf("-------------------- Spawning Entities -----------------------\n");
+
+    // Added in OPM
+    //  The physics world, before the props that go in it spawn.
+    G_PhysicsInitLevel(m_mapfile.c_str());
 
     t1 = gi.Milliseconds();
     memset(skel_index, 0xff, sizeof(skel_index));

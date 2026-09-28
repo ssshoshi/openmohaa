@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // object.cpp : Object (used by common TIKIs)
 
 #include "g_local.h"
+#include "g_physics.h"
 #include "object.h"
 #include "sentient.h"
 #include "misc.h"
@@ -76,16 +77,70 @@ Event EV_InteractObject_HitEffect
     EV_NORMAL
 );
 
+// Added in OPM
+Event EV_InteractObject_SetupPhysics
+(
+    "_setupphysics",
+    EV_DEFAULT,
+    NULL,
+    NULL,
+    "Makes a small object a physics body."
+);
+
 CLASS_DECLARATION(Animate, InteractObject, "interactobject") {
     {&EV_Damage,                      &InteractObject::Damaged          },
     {&EV_Killed,                      &InteractObject::Killed           },
     {&EV_InteractObject_Setup,        &InteractObject::Setup            },
+    {&EV_InteractObject_SetupPhysics, &InteractObject::SetupPhysics     },
     {&EV_InteractObject_HitEffect,    &InteractObject::EventHitEffect   },
     {&EV_InteractObject_KilledEffect, &InteractObject::EventKilledEffect},
     {NULL,                            NULL                              }
 };
 
-InteractObject::InteractObject() {}
+InteractObject::InteractObject()
+{
+    // Added in OPM
+    //  Nothing posts _setup, so the physics body has its own event.
+    if (!LoadingSavegame) {
+        PostEvent(EV_InteractObject_SetupPhysics, EV_POSTSPAWN);
+    }
+}
+
+void InteractObject::SetupPhysics(Event *ev)
+{
+    // Small ones (magazines and the like) are real bodies.
+    if (size[0] <= 96 && size[1] <= 96 && size[2] <= 96 && G_PhysicsAddEntity(this)) {
+        setMoveType(MOVETYPE_NONE);
+
+        // Nothing makes them solid, so bullets went through. Weapon clip
+        // stops shots and nothing that walks.
+        if (edict->solid == SOLID_NOT) {
+            vec3_t tlo, thi, axis[3];
+            Vector lo(99999, 99999, 99999), hi(-99999, -99999, -99999);
+
+            // The model's box turned to its angles, as the size given in the
+            // tiki is a rough cube round the origin.
+            gi.TIKI_CalculateBounds(edict->tiki, edict->s.scale, tlo, thi);
+            AngleVectorsLeft(angles, axis[0], axis[1], axis[2]);
+            for (int i = 0; i < 8; i++) {
+                const Vector c((i & 1) ? thi[0] : tlo[0], (i & 2) ? thi[1] : tlo[1], (i & 4) ? thi[2] : tlo[2]);
+                Vector       w = Vector(axis[0]) * c[0] + Vector(axis[1]) * c[1] + Vector(axis[2]) * c[2];
+
+                for (int k = 0; k < 3; k++) {
+                    lo[k] = Q_min(lo[k], w[k]);
+                    hi[k] = Q_max(hi[k], w[k] + (k == 2 ? 1.0f : 0.0f));
+                }
+            }
+
+            setSolidType(SOLID_BBOX);
+            setContents(CONTENTS_WEAPONCLIP);
+            if (lo[0] < hi[0] && lo[1] < hi[1]) {
+                setSize(lo, hi);
+            }
+            link();
+        }
+    }
+}
 
 void InteractObject::Setup(Event *ev)
 {
@@ -126,6 +181,9 @@ void InteractObject::Damaged(Event *ev)
 
 void InteractObject::Killed(Event *ev)
 {
+    // Added in OPM
+    G_PhysicsRemoveEntity(this);
+
     Entity     *ent;
     Entity     *attacker;
     Vector      dir;

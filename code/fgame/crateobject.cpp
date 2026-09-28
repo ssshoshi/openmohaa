@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // crateobject.cpp : Crates
 
 #include "crateobject.h"
+#include "g_physics.h"
 #include "player.h"
 #include "g_phys.h"
 
@@ -127,6 +128,12 @@ CrateObject::CrateObject()
 
 void CrateObject::TellNeighborsToFall(void)
 {
+    // Added in OPM
+    //  With physics, crates on top fall of their own accord.
+    if (G_PhysicsOwns(this)) {
+        return;
+    }
+
     Entity *pEnt;
     Entity *pNext;
     Vector  vMins;
@@ -157,6 +164,12 @@ void CrateObject::TellNeighborsToFall(void)
 
 void CrateObject::TellNeighborsToJitter(Vector vJitterAdd)
 {
+    // Added in OPM
+    //  With physics, the hit is a push instead.
+    if (G_PhysicsOwns(this)) {
+        return;
+    }
+
     Entity *pEnt;
     Entity *pNext;
     Vector  vMins;
@@ -220,6 +233,12 @@ void CrateObject::CrateSetup(Event *ev)
     setMoveType(MOVETYPE_PUSH);
     setSolidType(SOLID_BSP);
 
+    // Added in OPM
+    //  A real body from now on: it is knocked about, tips and falls by itself.
+    if (G_PhysicsAddEntity(this)) {
+        setMoveType(MOVETYPE_NONE);
+    }
+
     vMins = origin + mins + Vector(12, 12, 18);
     vMaxs = origin + maxs - Vector(12, 12, 18);
 
@@ -262,6 +281,11 @@ void CrateObject::CrateDebrisType(Event *ev)
 
 void CrateObject::StartFalling(Event *ev)
 {
+    // Added in OPM
+    if (G_PhysicsOwns(this)) {
+        return;
+    }
+
     m_fMoveTime = 0;
 
     setMoveType(MOVETYPE_TOSS);
@@ -372,6 +396,9 @@ void CrateObject::CrateKilled(Event *ev)
         p->m_iNumObjectsDestroyed++;
     }
 
+    // Added in OPM
+    G_PhysicsRemoveEntity(this);
+
     setSolidType(SOLID_NOT);
     hideModel();
 
@@ -403,6 +430,13 @@ void CrateObject::CrateKilled(Event *ev)
 
 void CrateObject::CrateThink(Event *ev)
 {
+    // Added in OPM
+    //  The physics owns its angles.
+    if (G_PhysicsOwns(this)) {
+        m_vJitterAngles = vec_zero;
+        return;
+    }
+
     // Shake the create if it's on fire
 
     if (m_vJitterAngles[0] || m_vJitterAngles[2]) {

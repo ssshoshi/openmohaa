@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "g_phys.h"
 #include "g_spawn.h"
 #include "weaputils.h"
+#include "g_physics.h"
 #include "specialfx.h"
 #include "sentient.h"
 #include "actor.h"
@@ -2363,6 +2364,10 @@ float BulletAttack(
                         // Get the new value of the victims health or water
 
                         damage_total += original_value - ent->health;
+                    } else if (G_PhysicsOwns(ent)) {
+                        // Added in OPM
+                        //  A physics prop that can't be hurt is still shoved.
+                        G_PhysicsDamaged(ent, newdamage, trace.endpos, dir);
                     }
 
                     if (ent->edict->solid == SOLID_BBOX && !(trace.contents & CONTENTS_CLAYPIDGEON)) {
@@ -3080,7 +3085,13 @@ void RadiusDamage(
     for (i = 1; i <= ents.NumObjects(); i++) {
         ent = ents.ObjectAt(i);
 
-        if (ent == ignore || !(ent->takedamage) || (hurtOwnerOnly && ent != attacker)) {
+        if (ent == ignore || (hurtOwnerOnly && ent != attacker)) {
+            continue;
+        }
+
+        // Added in OPM
+        //  A physics prop that can't be hurt is still thrown.
+        if (!ent->takedamage && !G_PhysicsOwns(ent)) {
             continue;
         }
 
@@ -3131,7 +3142,9 @@ void RadiusDamage(
                 points *= 0.9f;
             }
 
-            if (points > 0) {
+            if (points > 0 && !ent->takedamage) {
+                G_PhysicsDamaged(ent, points, org, dir);
+            } else if (points > 0) {
                 ent->Damage(inflictor, attacker, points, org, dir, vec_zero, knockback, DAMAGE_RADIUS, mod);
 
                 if (g_gametype->integer == GT_SINGLE_PLAYER && weap) {

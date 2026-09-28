@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "playerbot.h"
 #include "g_bot.h"
 #include "navigation_recast_load.h"
+#include "g_physics.h"
 
 #include "../corepp/tiki.h"
 
@@ -610,6 +611,10 @@ void G_RunFrame(int levelTime, int frameTime)
                 G_AddGEntity(edict, showentnums);
             }
         }
+
+        // Added in OPM
+        //  The props' physics, after everything that could push them has run.
+        G_PhysicsFrame(level.frametime);
 
         if (g_timeents->integer) {
             gi.cvar_set("g_timeents", va("%d", g_timeents->integer - 1));

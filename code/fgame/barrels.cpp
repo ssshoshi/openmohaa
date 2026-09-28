@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // barrels.cpp : Barrels
 
 #include "barrels.h"
+#include "g_physics.h"
 #include "weaputils.h"
 #include "level.h"
 #include "g_phys.h"
@@ -146,6 +147,12 @@ void BarrelObject::BarrelSetup(Event *ev)
 
     // Position the barrel correctly
     CheckGround();
+
+    // Added in OPM
+    //  A real body from now on.
+    if (G_PhysicsAddEntity(this)) {
+        setMoveType(MOVETYPE_NONE);
+    }
 }
 
 void BarrelObject::BarrelSetType(Event *ev)
@@ -182,6 +189,12 @@ void BarrelObject::BarrelSetType(Event *ev)
 
 void BarrelObject::BarrelThink(Event *ev)
 {
+    // Added in OPM
+    //  The physics owns its angles.
+    if (G_PhysicsOwns(this)) {
+        m_vJitterAngles = vec_zero;
+    }
+
     int   i;
     int   iBiggestLeak;
     float fFluidTop;
@@ -445,6 +458,9 @@ void BarrelObject::BarrelDamaged(Event *ev)
 
 void BarrelObject::BarrelKilled(Event *ev)
 {
+    // Added in OPM
+    G_PhysicsRemoveEntity(this);
+
     float  fFluidTop;
     Vector vPos;
     str    sModel;
