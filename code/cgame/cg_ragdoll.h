@@ -48,6 +48,10 @@ extern "C" {
     // stale ragdoll cannot survive on a recycled entity slot.
     void CG_RagdollEntityReset(centity_t *cent);
 
+    // Once a frame, after the packet entities: draws the corpses whose entities
+    // the server has stopped sending because it thinks they are out of sight.
+    void CG_RagdollAddUnsent(void);
+
     // Records a flesh hit so a body dying just after it can be pushed by the
     // shot. dir is the outward normal, as the message parser stores it.
     void CG_RagdollNoteFleshImpact(const vec3_t pos, const vec3_t dir, int large);
@@ -74,6 +78,8 @@ extern "C" {
     extern cvar_t *cg_ragdoll_damping;
     extern cvar_t *cg_ragdoll_friction;
     extern cvar_t *cg_ragdoll_bounce;
+    extern cvar_t *cg_ragdoll_bodybounce;
+    extern cvar_t *cg_ragdoll_limbdamp;
     extern cvar_t *cg_ragdoll_sleepvel;
     extern cvar_t *cg_ragdoll_sleeptime;
     extern cvar_t *cg_ragdoll_debug;

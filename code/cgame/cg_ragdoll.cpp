@@ -36,6 +36,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_local.h"
 #include "cg_ragdoll.h"
 #include "cg_parsemsg.h"
+#include "../qcommon/qfiles.h"
 
 #include <chrono>
 
@@ -49,6 +50,8 @@ cvar_t *cg_ragdoll_iterations;
 cvar_t *cg_ragdoll_damping;
 cvar_t *cg_ragdoll_friction;
 cvar_t *cg_ragdoll_bounce;
+cvar_t *cg_ragdoll_bodybounce;
+cvar_t *cg_ragdoll_limbdamp;
 cvar_t *cg_ragdoll_sleepvel;
 cvar_t *cg_ragdoll_sleeptime;
 cvar_t *cg_ragdoll_debug;
@@ -63,6 +66,7 @@ cvar_t *cg_ragdoll_dumplabel;
 cvar_t *cg_ragdoll_log;
 cvar_t *cg_ragdoll_meshhits;
 cvar_t *cg_ragdoll_meshfit;
+cvar_t *cg_ragdoll_props;
 cvar_t *cg_ragdoll_grab;
 cvar_t *cg_ragdoll_grabsaved;
 cvar_t *cg_ragdoll_grabrange;
@@ -324,6 +328,9 @@ typedef struct {
     // permits 28. Since the mesh nips in by an amount that follows the bend
     // angle, the angle is the thing that has to be specified.
     float maxBendDeg;
+    // The same for the maximum length: the joint can straighten no closer to
+    // straight than this many degrees.
+    float minBendDeg;
 } rdConstraintDef_t;
 
 #define RD_STICK(a, b) {a, b, -1, 1.0f, 1.0f, 0.0f, 0.0f}
@@ -440,8 +447,18 @@ static const rdConstraintDef_t rd_constraints[] = {
     {RD_LUARM,  RD_LHANDTIP, RD_LHAND,  0.35f, 9.0f,   0.0f,  0.0f },
     {RD_RUARM,  RD_RHANDTIP, RD_RHAND,  0.35f, 9.0f,   0.0f,  0.0f },
 
-    {RD_LCALF,  RD_LTOE,     RD_LFOOT,  0.86f, 1.02f,  0.10f, 0.0f },
-    {RD_RCALF,  RD_RTOE,     RD_RFOOT,  0.86f, 1.02f,  0.10f, 0.0f },
+    // The ankle, as angles off the line of the shin, because this model's foot
+    // bone does not run level: from the ankle it slopes down to the toe, and a
+    // man standing has it about 62 degrees off the shin. As fractions of the
+    // straight length these were 0.86 to 1.02, which allowed only about eight
+    // degrees of lifting the toes and no limit at all on pointing them: the
+    // foot could fold out straight in line with the leg, and a body lying on
+    // the ground did exactly that. 25 is about 37 degrees of pointing, a relaxed
+    // corpse's worth rather than the 50 a dancer can hold; 80 about 18 of
+    // lifting, near the 20 a living ankle has. Soft rather than hard, see
+    // CG_RagdollMeasureLimits.
+    {RD_LCALF,  RD_LTOE,     RD_LFOOT,  0.0f,  9.0f,   0.10f, 80.0f, 25.0f},
+    {RD_RCALF,  RD_RTOE,     RD_RFOOT,  0.0f,  9.0f,   0.10f, 80.0f, 25.0f},
 
     {RD_SPINE2, RD_HEADTIP,  RD_HEAD,   0.88f, 1.0f,   0.12f, 0.0f },
     {RD_NECK,   RD_HEADTIP,  RD_HEAD,   0.90f, 1.0f,   0.12f, 0.0f },
@@ -576,6 +593,13 @@ static const rdLimbSegment_t rd_limbSegments[] = {
 
 #define RD_NUM_LIMB_SEGMENTS ((int)(sizeof(rd_limbSegments) / sizeof(rd_limbSegments[0])))
 
+// How far along a limb bone the world is sampled. The two ends are joints and
+// are traced already; these are the places in between that nothing has ever
+// looked at.
+#define RD_NUM_LIMB_SAMPLES 2
+
+static const float rd_limbSamples[RD_NUM_LIMB_SAMPLES] = {0.35f, 0.65f};
+
 // The arms occupy the first four rows above, the legs the last four.
 #define RD_FIRST_LEG_SEGMENT 4
 
@@ -647,6 +671,15 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // flick of the mouse teleports it.
 #define RD_GRAB_SPEED 1200.0f
 
+// The beam held back when pulling a body against the world: how far short of
+// the aim the held part has to be, with at least this many joints touching
+// something, and then what share of the spring and what speed it gets.
+#define RD_GRAB_BLOCKED_GAP      24.0f
+#define RD_GRAB_BLOCKED_CONTACTS 3
+#define RD_GRAB_BLOCKED_PULL     0.3f
+#define RD_GRAB_BLOCKED_SPEED    300.0f
+#define RD_GRAB_BLOCKED_EASE     0.1f
+
 // The spring the grabber holds a body on (its stiffness is
 // cg_ragdoll_grabspring): a little under critically damped, so a body that is
 // swung and stopped runs on and settles back once rather than stopping dead,
@@ -696,6 +729,15 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // How far past its own radius that question is asked.
 #define RD_CONTACT_PROBE 2.0f
 
+// How far, in particle radii, a particle may move from where it last struck a
+// plane before the world is asked again whether the plane is still under it.
+// Age alone let a plane outlive the surface by a quarter of a second: a forearm
+// that came up under a lip in the game, and then slid out from beneath it, was
+// held down by the lip's underside for a third of a second after it had left
+// it, while the grabber carried the rest of the body up past it, and then came
+// up a hundred and fifty units in one step.
+#define RD_CONTACT_REACH 2.0f
+
 // How far, in particle radii, a buried particle may be moved to get it out.
 // Beyond this the exit found is not the surface it is behind.
 // How long a joint may go on failing to get out of the world before it is left
@@ -707,6 +749,11 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 
 #define RD_UNBURY_REACH 4.0f
 
+// How far a joint must be drawn from the one it hangs from, as a share of the
+// bone and in units, before a surface it strikes is taken to be hooking it.
+#define RD_HOOK_STRETCH 1.5f
+#define RD_HOOK_SLACK   4.0f
+
 // Collision displacement below this is treated as a resting contact rather
 // than an impact, and does not trigger the reconciling solve.
 #define RD_IMPACT_EPSILON 0.5f
@@ -717,6 +764,11 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 
 // A hinge this close to its boundary is left alone, so that a joint resting
 // right on the limit is not nudged back and forth forever.
+// Share of cg_ragdoll_damping a body with nothing under it is given. A
+// little rather than none: measured, none spun held bodies faster; a fifth
+// left limbs hanging less and the torso less twisted than full damping did.
+#define RD_AIR_DAMPING 0.2f
+
 #define RD_HINGE_SLOP 0.08f
 
 // How far a hinge joint may stray out of its bend plane before being pulled
@@ -752,6 +804,18 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 #define RD_GROUND_DAMPING 0.35f
 #define RD_REST_SPEED     0.40f
 
+// Above this, in units a step, a grounded particle is sliding and is left to
+// friction instead (120 units a second at sixty steps).
+#define RD_SLIDE_SPEED    2.0f
+
+// How far below the lowest joint it rests on, in units, a body's centre of mass
+// may sit and still count as lying on it rather than hanging from it.
+#define RD_BALANCE_SLACK 6.0f
+
+// The share of the friction a body keeps while it hangs from what it rests on
+// rather than lying on it. See CG_RagdollFriction.
+#define RD_DRAPED_FRICTION 0.25f
+
 // How many times the sleeping speed one joint may move before it alone keeps
 // the body awake.
 #define RD_SLEEP_SPIKE 4.0f
@@ -780,6 +844,14 @@ static const short rd_spineChain[] = {0, 1, 2, 3, 4, 5, 6};
 // keep falling before it is frozen anyway. Only reached by a body that has left
 // the map or wedged somewhere it can never rest.
 #define RD_SLEEP_BACKSTOP 4
+
+// The most a body's joints may be moving, on average, in units a step, for the
+// lifetime cap to freeze it.
+#define RD_CAP_MAX_MEAN 1.0f
+
+// How long, in milliseconds, a body must have been lying on level ground before
+// the lifetime cap may freeze it. See the cap in CG_RagdollUpdateEntity.
+#define RD_CAP_SETTLE 1000
 
 // Fraction of a limb-versus-body overlap resolved per iteration.
 #define RD_SEGMENT_RATE 0.35f
@@ -874,6 +946,10 @@ typedef struct {
     // never fall through, so one that outlives the surface it came from is an
     // invisible shelf.
     int contactTime;
+
+    // Where the particle was when that happened. A plane is only known to be
+    // there near the place it was struck; see RD_CONTACT_REACH.
+    vec3_t contactAt;
 } rdParticle_t;
 
 typedef struct {
@@ -907,6 +983,12 @@ typedef struct {
     refEntity_t drawn;
     qboolean    haveDrawn;
 
+    // The model as its entity last handed it over, before any of this was done
+    // to it, so the corpse can go on being drawn if the server stops sending
+    // the entity; see CG_RagdollAddUnsent.
+    refEntity_t unsent;
+    qboolean    haveUnsent;
+
     // Set as the body falls asleep; the drawn mesh is checked against the world
     // once the sleeping pose is installed. See CG_RagdollMeasureClipping.
     qboolean measureClip;
@@ -922,6 +1004,38 @@ typedef struct {
     // roll of each bone means something. Until then there is nothing to keep
     // or to limit the turn from.
     qboolean rollReady;
+
+    // The grabber's pull held back against the world (see the grab spring in
+    // CG_RagdollStep): whether it is, and how far it has eased into it.
+    qboolean grabBlocked;
+    float    grabEase;
+
+    // How fast the hardest-hitting joint struck the world this step, along
+    // the surface's normal (see CG_RagdollStep's impact splat).
+    float    impactSpeed;
+
+    // Whether the body's weight is over what it is lying on (see
+    // CG_RagdollBalanced), as the last step found it.
+    qboolean balanced;
+    // Resting on something but hanging below it (see CG_RagdollFriction).
+    qboolean draped;
+    // When it last came to lie on level ground, balanced; 0 while it is not.
+    int restingSince;
+
+    // Props the body was already inside when it died, which it passes
+    // through; see CG_RagdollNoteEnclosingProps.
+    short ignoredProp[8];
+    int   numIgnoredProps;
+
+    // The roll of each upper arm and thigh (see the limb twist section): the
+    // way its joint bends, square to the bone, in the world; the bone's
+    // direction when that was last carried along with it; and which edge of
+    // its range it is being held to. Live from the moment the body leaves the
+    // blend.
+    vec3_t      limbY[4];
+    vec3_t      limbDir[4];
+    signed char limbEdge[4];
+    qboolean    limbTwistLive;
 
     // How far CG_RagdollJointRanges has moved each joint during the current
     // solve. Taken back out of what the solver hands to the body as speed:
@@ -982,6 +1096,10 @@ typedef struct {
     // Joint thickness, and the pairs that are allowed to push each other apart.
     float jointRadius[RD_NUM_JOINTS];
 
+    // Each joint's distance from the joint it hangs from, as it died; see
+    // CG_RagdollHooked.
+    float boneRest[RD_NUM_JOINTS];
+
     // Deliberately not scaled to the model, unlike the other distances here.
     // It reads as an oversight and scaling it was tried; it measures worse,
     // because the value was arrived at as an absolute and scaling it drives a
@@ -989,6 +1107,17 @@ typedef struct {
     // from 40 to 55.
     float hingeLateralSlop;
     float limbRadius[RD_NUM_LIMB_SEGMENTS];
+
+    // A contact plane for each sample along each limb, kept and projected
+    // against in every solver iteration the way a joint's is; see
+    // CG_RagdollBoneSweep.
+    struct {
+        qboolean has;
+        vec3_t   normal;
+        float    dist;
+        int      time;
+        vec3_t   at;
+    } boneContact[RD_NUM_LIMB_SEGMENTS][RD_NUM_LIMB_SAMPLES];
     float collisionSlop;
     // How much of the ideal clearance each limb/trunk pair is actually asked
     // for: 1 when the two start clear of each other, less when they begin
@@ -1020,8 +1149,21 @@ typedef struct {
     // be measured against where the joint started rather than drifting freely.
     vec3_t hingeBendRest[RD_NUM_HINGES];
 
-    boneOverride_t overrides[RD_NUM_BONES];
+    boneOverride_t overrides[RD_NUM_BONES + 2];
     int            numOverrides;
+
+    // The same, as handed to the renderer: moved to the drawn model's own
+    // origin (CG_RagdollRecenter), which changes every frame.
+    boneOverride_t drawOverrides[RD_NUM_BONES + 2];
+
+    // The clavicles (see CG_RagdollPlaceClavicles): each one's bone, where it
+    // sat on the chest and which way its axes lay, both in the seed frame of
+    // Bip01 Spine2. Then where it was last drawn.
+    int    clavIndex[2];
+    vec3_t clavOffset[2];
+    vec3_t clavLocal[2][3];
+    vec3_t clavPos[2];
+    vec3_t clavAxis[2][3];
 
     // Velocity, in units per second, that the killing shot should hand to the
     // body. Held until the first integration step rather than written into the
@@ -1096,6 +1238,12 @@ typedef struct {
     // lifetime cap is allowed to put it back to sleep. Without it a body past
     // its five seconds goes straight back down on the very frame it is hit.
     int      wakeUntil;
+
+    // When it was last woken, by a shot, a blast or the grabber. The lifetime
+    // cap counts from here rather than from the death: counted from the death,
+    // a body punted minutes later was frozen mid-slide the moment its wake
+    // window ran out, and one knocked off a ledge was frozen mid-fall.
+    int      lastWake;
 
     // How many times something has hit this corpse since it died. Without it a
     // trace cannot tell a body that is moving because it was shot from one that
@@ -1365,6 +1513,8 @@ static int CG_RagdollLimbRoot(int boneNum)
     }
 }
 
+static int CG_RagdollTwistSlot(int boneNum);
+
 static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3])
 {
     const rdBoneDef_t *def = &rd_bones[boneNum];
@@ -1375,6 +1525,19 @@ static qboolean CG_RagdollBoneFrame(cg_ragdoll_t *rd, int boneNum, vec3_t out[3]
 
     if (VectorNormalize(x) < 0.001f) {
         return qfalse;
+    }
+
+    // A limb bone whose twist is simulated is drawn with it, and nothing
+    // below is guessed for it (see the limb twist section).
+    if (rd->limbTwistLive && rd->state == RD_ACTIVE) {
+        const int slot = CG_RagdollTwistSlot(boneNum);
+
+        if (slot >= 0) {
+            CG_RagdollOrthonormalize(x, rd->limbY[slot], out);
+            VectorCopy(out[1], rd->transportY[boneNum]);
+            VectorCopy(out[0], rd->transportX[boneNum]);
+            return qtrue;
+        }
     }
 
     // The parent's roll carried across to this bone's direction, by the
@@ -1626,6 +1789,59 @@ CG_RagdollWriteBoneModel(const refEntity_t *model, const vec3_t worldPos, const 
     }
 }
 
+// Moves the drawn model's origin to where the body is, and the pose with it.
+//
+// The corpse's entity stays where the man died, and the renderer judges the
+// model by that point: how much detail it keeps (the level of detail comes from
+// how large the model looks from its origin), and where it takes its light
+// from. A body carried off with the grabber, or punted down the street, was
+// drawn at the detail due to something far away, which on these models drops
+// most of the vertices and collapses the arms, and lit as though it still lay
+// where it fell. The matrices are relative to the origin, so moving the one and
+// taking the same distance off the other leaves every bone exactly where it was.
+static void CG_RagdollRecenter(cg_ragdoll_t *rd, refEntity_t *model)
+{
+    const float scale = CG_RagdollModelScale(model);
+    vec3_t      target, shift;
+    int         i, k;
+
+    memcpy(rd->drawOverrides, rd->overrides, rd->numOverrides * sizeof(rd->overrides[0]));
+
+    if (scale <= 0.0f) {
+        return;
+    }
+
+    // Where the root is drawn this frame, from its own matrix: that is right
+    // however the pose was written, sleeping, pinned or riding the entity.
+    for (i = 0; i < rd->numOverrides; i++) {
+        if (rd->overrides[i].boneIndex == rd->boneIndex[0]) {
+            break;
+        }
+    }
+    if (i == rd->numOverrides) {
+        return;
+    }
+
+    VectorCopy(model->origin, target);
+    for (k = 0; k < 3; k++) {
+        const float local = (rd->overrides[i].matrix[3][k] + (model->tiki ? model->tiki->load_origin[k] : 0.0f)) * scale;
+
+        VectorMA(target, local, model->axis[k], target);
+    }
+
+    VectorSubtract(target, model->origin, shift);
+
+    for (i = 0; i < rd->numOverrides; i++) {
+        for (k = 0; k < 3; k++) {
+            rd->drawOverrides[i].matrix[3][k] -= DotProduct(shift, model->axis[k]) / scale;
+        }
+    }
+
+    VectorAdd(model->origin, shift, model->origin);
+    VectorAdd(model->oldorigin, shift, model->oldorigin);
+    VectorAdd(model->lightingOrigin, shift, model->lightingOrigin);
+}
+
 //=============================================================
 // Seeding
 //=============================================================
@@ -1707,6 +1923,10 @@ static qboolean CG_RagdollMeasureLimits(cg_ragdoll_t *rd)
 {
     int i;
 
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        rd->boneRest[i] = rd_joints[i].parent >= 0 ? Distance(rd->part[i].p, rd->part[rd_joints[i].parent].p) : 0.0f;
+    }
+
     rd->numConstraints = 0;
     for (i = 0; i < RD_NUM_CONSTRAINTS; i++) {
         const rdConstraintDef_t *def = &rd_constraints[i];
@@ -1736,8 +1956,25 @@ static qboolean CG_RagdollMeasureLimits(cg_ragdoll_t *rd)
             out->minLen = sqrt(l1 * l1 + l2 * l2 - 2.0f * l1 * l2 * cos(rad));
         }
         out->maxLen    = ref * def->maxScale;
+
+        if (def->minBendDeg > 0.0f && def->via >= 0) {
+            const float rad = (180.0f - def->minBendDeg) * (float)M_PI / 180.0f;
+            vec3_t      d1, d2;
+            float       l1, l2;
+
+            VectorSubtract(rd->part[def->via].p, rd->part[def->a].p, d1);
+            VectorSubtract(rd->part[def->b].p, rd->part[def->via].p, d2);
+            l1 = VectorLength(d1);
+            l2 = VectorLength(d2);
+
+            out->maxLen = sqrt(l1 * l1 + l2 * l2 - 2.0f * l1 * l2 * cos(rad));
+        }
         out->stiffness = def->stiffness;
-        out->isHard    = (def->maxBendDeg > 0.0f || (def->minScale == 1.0f && def->maxScale == 1.0f)) ? qtrue : qfalse;
+        // A joint with both ends given as angles, the ankle, is left with the
+        // soft constraints. Held hard, a foot lying face down, which wants to
+        // lie flat, was pressed against its limit by the floor for as long as
+        // it lay there and never quite settled.
+        out->isHard    = ((def->maxBendDeg > 0.0f && def->minBendDeg <= 0.0f) || (def->minScale == 1.0f && def->maxScale == 1.0f)) ? qtrue : qfalse;
 
         // The soft term always pulls back toward the distance the two joints
         // actually had at the moment of death, not toward the chain length.
@@ -2437,6 +2674,8 @@ static void CG_RagdollFindImpulse(cg_ragdoll_t *rd)
 
 static void CG_RagdollFitToMesh(cg_ragdoll_t *rd, refEntity_t *model);
 
+static void CG_RagdollSeedClavicles(cg_ragdoll_t *rd, refEntity_t *model);
+
 static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *model)
 {
     vec3_t   worldPos[RD_NUM_JOINTS];
@@ -2595,6 +2834,8 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
         }
     }
 
+    CG_RagdollSeedClavicles(rd, model);
+
     // How thick the body is at each joint, and so how far things have to stay
     // apart. Fixed by the size of the model, not by the pose, so this belongs
     // with the seed rather than with the measurements taken from the pose.
@@ -2680,6 +2921,41 @@ static void CG_RagdollProjectContacts(cg_ragdoll_t *rd)
 
         if (d < 0.0f) {
             VectorMA(part->p, -d, part->contactNormal, part->p);
+        }
+    }
+
+    // And the middles of the limbs, against the planes CG_RagdollBoneSweep
+    // found for them, moving the two ends of the bone.
+    for (i = 0; i < RD_NUM_LIMB_SEGMENTS; i++) {
+        rdParticle_t *pa = &rd->part[rd_limbSegments[i].a];
+        rdParticle_t *pb = &rd->part[rd_limbSegments[i].b];
+        int           q, k;
+
+        if (rd_limbSegments[i].a == rd->grabJoint || rd_limbSegments[i].b == rd->grabJoint) {
+            continue;
+        }
+
+        for (q = 0; q < RD_NUM_LIMB_SAMPLES; q++) {
+            const float u = rd_limbSamples[q];
+            vec3_t      mid;
+            float       d;
+
+            if (!rd->boneContact[i][q].has) {
+                continue;
+            }
+
+            for (k = 0; k < 3; k++) {
+                mid[k] = pa->p[k] + (pb->p[k] - pa->p[k]) * u;
+            }
+
+            d = DotProduct(mid, rd->boneContact[i][q].normal) - rd->boneContact[i][q].dist;
+
+            if (d < 0.0f) {
+                const float push = -d / ((1.0f - u) * (1.0f - u) + u * u);
+
+                VectorMA(pa->p, push * (1.0f - u), rd->boneContact[i][q].normal, pa->p);
+                VectorMA(pb->p, push * u, rd->boneContact[i][q].normal, pb->p);
+            }
         }
     }
 }
@@ -2805,6 +3081,9 @@ static const rdJointRange_t rd_jointRanges[] = {
 
 #define RD_NUM_JOINT_RANGES ((int)(sizeof(rd_jointRanges) / sizeof(rd_jointRanges[0])))
 
+// Share of the joint ranges' strength kept while the grabber holds the body.
+#define RD_RANGE_HELD 0.1f
+
 static void CG_RagdollJointRanges(cg_ragdoll_t *rd)
 {
     // Taking over from the cones as they let go, rather than alongside them
@@ -2812,9 +3091,21 @@ static void CG_RagdollJointRanges(cg_ragdoll_t *rd)
     // a running stride, the trailing leg of a man shot mid step is well past
     // any range a standing man has, and yanked into it at once the legs
     // scissored through each other and wrung the body round.
-    const float strength = 1.0f - CG_RagdollLimpness(rd);
+    float       strength = 1.0f - CG_RagdollLimpness(rd);
     vec3_t      up;
     int         i, k;
+
+    // Held by the grabber, the ranges only lean on the limbs. The beam moves
+    // the body faster than anything else does, and a range applied at full
+    // strength to a body being swung about took each limb back by the whole
+    // excess on every pass and threw it out again on the next: held by a knee
+    // or a thigh and swung, the pelvis flapped up and down on alternate steps.
+    // Measured, a tenth of the strength takes the joints reversing like that
+    // down four to eight times, and the jitter and spin of a body simply held
+    // up down with them; a fifth was worse than either.
+    if (rd->grabJoint >= 0) {
+        strength *= RD_RANGE_HELD;
+    }
 
     if (strength <= 0.0f) {
         return;
@@ -2976,12 +3267,27 @@ static float CG_RagdollTwistEdge(float turn, float lo, float hi, signed char *ed
 
 // How far the elbow may point from straight back, either way, before the arm
 // reads as bending the wrong way.
-#define RD_ELBOW_TURN 100.0f
+//
+// This is what a shoulder's twist amounts to: the upper arm turned about its
+// own length carries the elbow round with it. 45 degrees is the usual figure
+// for a shoulder's twist either way. It was 100, taken back a tenth a pass,
+// which let arms read as bent backwards and could not even hold the 100.
+#define RD_ELBOW_TURN 55.0f
 
 // Share of an elbow's excess turn taken back each pass, and the most it may
-// be turned in one pass, in degrees.
-#define RD_ELBOW_RATE     0.1f
-#define RD_ELBOW_MAX_STEP 3.0f
+// be turned in one pass, in degrees. The whole of the excess: a limit held
+// softly is one the body can lean on, and the arm settles past it.
+#define RD_ELBOW_RATE     1.0f
+#define RD_ELBOW_MAX_STEP 30.0f
+
+// Swing, from hanging straight down, over which the range fades out. With the
+// arm pointing up, which way is straight back has no answer: the reference
+// turns right round for a tiny movement of the arm, and a range held against
+// it whips the elbow round with it. Held on toward overhead, as it was up to
+// 140 degrees, a body hung by a hip, a hand or the pelvis, whose arms hang
+// toward the head, was spun measurably faster.
+#define RD_ELBOW_FADE_FROM 80.0f
+#define RD_ELBOW_FADE_TO   110.0f
 
 // How far the elbow has to stand off the line from shoulder to hand, in units,
 // before its range starts to act, and how much further before it acts fully.
@@ -3155,6 +3461,7 @@ static void CG_RagdollElbows(cg_ragdoll_t *rd)
     vec3_t      torso[3], down, back;
     int         i, k;
 
+    
     if (strength <= 0.0f || !CG_RagdollTorsoFrame(rd, torso)) {
         return;
     }
@@ -3185,7 +3492,8 @@ static void CG_RagdollElbows(cg_ragdoll_t *rd)
         // has swings wildly for a tiny movement of the hand; so the range
         // comes in only as the elbow bends.
         CG_RagdollSwingFront(down, back, upper, ref, &swing);
-        trust = CG_RagdollSwingTrust(swing) * strength
+        trust = Q_clamp_float((RD_ELBOW_FADE_TO - swing) / (RD_ELBOW_FADE_TO - RD_ELBOW_FADE_FROM), 0.0f, 1.0f)
+              * strength
               * Q_clamp_float((bentBy - RD_ELBOW_BENT_MIN) / RD_ELBOW_BENT_FULL, 0.0f, 1.0f);
         if (trust <= 0.0f) {
             rd->elbowEdge[i] = 0;
@@ -3199,9 +3507,9 @@ static void CG_RagdollElbows(cg_ragdoll_t *rd)
         }
 
         {
-            // Eased back, never snapped: an elbow a long way out of range is
-            // brought round a few degrees a pass, over a moment, rather than
-            // thrown there, which read as the arm whipping about.
+            // Never snapped: an elbow a long way out of range, turned right
+            // round, is brought back over a few passes rather than thrown
+            // there in one, which read as the arm whipping about.
             const float step = AngleNormalize180(to - turn) * trust * RD_ELBOW_RATE;
 
             to = turn + Q_clamp_float(step, -RD_ELBOW_MAX_STEP, RD_ELBOW_MAX_STEP);
@@ -3223,8 +3531,243 @@ static void CG_RagdollElbows(cg_ragdoll_t *rd)
             // A limit, like the joint ranges: it moves the elbow and hands
             // none of that back as speed (CG_RagdollSolveTracked).
             VectorSubtract(target, elbow->p, moved);
+
+            // Never into what the elbow is lying on. Pushed into the floor,
+            // the floor pushes back, and a settled arm is turned a little
+            // back and forth for as long as it lies there. Along the floor
+            // it still goes.
+            if (elbow->hasContact) {
+                const float into = DotProduct(moved, elbow->contactNormal);
+
+                if (into < 0.0f) {
+                    VectorMA(moved, -into, elbow->contactNormal, moved);
+                }
+            }
+
             VectorAdd(rd->rangeShift[arms[i][1]], moved, rd->rangeShift[arms[i][1]]);
-            VectorCopy(target, elbow->p);
+            VectorAdd(elbow->p, moved, elbow->p);
+        }
+    }
+}
+
+//=============================================================
+// Limb twist
+//=============================================================
+
+// The particles are points, so nothing in them says how an upper arm or a
+// thigh is turned about its own length. While the elbow or knee is bent, the
+// plane it bends in says it, and the bone is drawn rolled to that plane. A
+// straight limb says nothing, and it used to keep whatever roll it had last:
+// an arm that straightened while turned the wrong way stayed turned the wrong
+// way, palms behind the body, and a straight leg could lie twisted half round
+// with nothing to bring it back.
+//
+// So the roll of each upper arm and thigh is kept here, as a direction square
+// to the bone: the way its joint bends (an elbow forward, a knee back). It is
+// carried along with the bone as it swings, which is what a limb with nothing
+// turning it does; held within how far a shoulder or a hip turns the bone
+// about its length, measured from the limb's swing (CG_RagdollSwingFront); and
+// the more the joint is bent, the more it follows the plane the joint actually
+// bends in, so a bent elbow or knee is drawn on its hinge. Which way the joint
+// may bend stays with the particles, in CG_RagdollHinges and CG_RagdollElbows:
+// turning the forearm or shin round here as well was tried, and it set a held
+// body spinning.
+typedef struct {
+    short a, mid, end; // shoulder or hip, elbow or knee, hand or foot
+    short leg;
+    short left;
+} rdTwistLimb_t;
+
+static const rdTwistLimb_t rd_twistLimbs[4] = {
+    {RD_LUARM,  RD_LFARM, RD_LHAND, 0, 1},
+    {RD_RUARM,  RD_RFARM, RD_RHAND, 0, 0},
+    {RD_LTHIGH, RD_LCALF, RD_LFOOT, 1, 1},
+    {RD_RTHIGH, RD_RCALF, RD_RFOOT, 1, 0},
+};
+
+// How far the shoulder turns the upper arm about its length either way, and
+// the hip the thigh, in toward the other leg and out, from the joint bending
+// straight forward (elbow) or back (knee).
+#define RD_ARM_TWIST     85.0f
+#define RD_HIP_TWIST_IN  35.0f
+#define RD_HIP_TWIST_OUT 60.0f
+
+// The most the roll may be turned back into range in one pass, and the most
+// it may turn in one pass to follow the joint, in degrees. The second is what
+// keeps a joint passing through straight to its other side from snapping the
+// limb half round in a frame.
+#define RD_TWIST_STEP  2.0f
+#define RD_FOLLOW_STEP 8.0f
+
+// Below this much bend an elbow or knee has no plane to follow, and it is
+// followed fully from RD_HINGE_BEND_FULL degrees more.
+#define RD_HINGE_BEND_MIN  5.0f
+#define RD_HINGE_BEND_FULL 15.0f
+
+// Which limb of rd_twistLimbs a bone of rd_bones is the upper bone of, or -1.
+static int CG_RagdollTwistSlot(int boneNum)
+{
+    int t;
+
+    for (t = 0; t < 4; t++) {
+        if (rd_bones[boneNum].joint == rd_twistLimbs[t].a && rd_bones[boneNum].aim == rd_twistLimbs[t].mid) {
+            return t;
+        }
+    }
+
+    return -1;
+}
+
+// v turned by the shortest turn that takes direction from onto direction to.
+static void CG_RagdollCarry(const vec3_t from, const vec3_t to, const vec3_t v, vec3_t out)
+{
+    vec3_t axis;
+    float  sinA, cosA;
+
+    CrossProduct(from, to, axis);
+    sinA = VectorNormalize(axis);
+    cosA = DotProduct(from, to);
+
+    if (sinA < 0.0001f) {
+        VectorCopy(v, out);
+        return;
+    }
+
+    RotatePointAroundVector(out, axis, v, RAD2DEG(atan2(sinA, cosA)));
+}
+
+// Squares v to dir and normalises it. False if nothing is left of it.
+static qboolean CG_RagdollSquareTo(vec3_t v, const vec3_t dir)
+{
+    VectorMA(v, -DotProduct(v, dir), dir, v);
+    return VectorNormalize(v) > 0.001f ? qtrue : qfalse;
+}
+
+// Takes over the roll of each upper arm and thigh from the pose last drawn,
+// as the body leaves the blend, so nothing moves when it does.
+static void CG_RagdollStartTwist(cg_ragdoll_t *rd)
+{
+    int t, b;
+
+    for (t = 0; t < 4; t++) {
+        vec3_t dir;
+
+        VectorSubtract(rd->part[rd_twistLimbs[t].mid].p, rd->part[rd_twistLimbs[t].a].p, dir);
+        if (VectorNormalize(dir) < 0.001f) {
+            VectorSet(dir, 0, 0, -1);
+        }
+
+        VectorSet(rd->limbY[t], 1, 0, 0);
+        for (b = 0; b < RD_NUM_BONES; b++) {
+            if (CG_RagdollTwistSlot(b) == t) {
+                VectorCopy(rd->transportY[b], rd->limbY[t]);
+                break;
+            }
+        }
+
+        if (!CG_RagdollSquareTo(rd->limbY[t], dir)) {
+            VectorSet(rd->limbY[t], fabs(dir[2]) > 0.9f ? 1 : 0, 0, fabs(dir[2]) > 0.9f ? 0 : 1);
+            CG_RagdollSquareTo(rd->limbY[t], dir);
+        }
+
+        VectorCopy(dir, rd->limbDir[t]);
+        rd->limbEdge[t] = 0;
+    }
+
+    rd->limbTwistLive = qtrue;
+}
+
+// Brings a roll back toward [lo, hi] about axis, from ref, by no more than
+// RD_TWIST_STEP and scaled by trust. sign flips the sense, so a hip's outward
+// turn is measured the same way on both sides.
+static void CG_RagdollHoldTwist(
+    vec3_t y, const vec3_t axis, const vec3_t ref, float lo, float hi, float sign, float trust, signed char *edge
+)
+{
+    const float turn = CG_RagdollTwistAbout(axis, ref, y) * sign;
+    float       to   = CG_RagdollTwistEdge(turn, lo, hi, edge);
+    vec3_t      turned;
+
+    if (to == turn || trust <= 0.0f) {
+        return;
+    }
+
+    to = Q_clamp_float(AngleNormalize180(to - turn) * trust, -RD_TWIST_STEP, RD_TWIST_STEP);
+    RotatePointAroundVector(turned, axis, y, to * sign);
+    VectorCopy(turned, y);
+}
+
+// Once a frame, after the solver.
+static void CG_RagdollLimbTwist(cg_ragdoll_t *rd)
+{
+    vec3_t chest[3], hipUp, hipRight, hipFwd;
+    int    t;
+
+    if (!rd->limbTwistLive || rd->state != RD_ACTIVE || !CG_RagdollTorsoFrame(rd, chest)) {
+        return;
+    }
+
+    VectorSubtract(rd->part[RD_SPINE1].p, rd->part[RD_PELVIS].p, hipUp);
+    VectorSubtract(rd->part[RD_RTHIGH].p, rd->part[RD_LTHIGH].p, hipRight);
+    if (VectorNormalize(hipUp) < 0.001f || !CG_RagdollSquareTo(hipRight, hipUp)) {
+        return;
+    }
+    CrossProduct(hipUp, hipRight, hipFwd);
+
+    for (t = 0; t < 4; t++) {
+        const rdTwistLimb_t *L   = &rd_twistLimbs[t];
+        const float         *up  = L->leg ? hipUp : chest[0];
+        const float         *fwd = L->leg ? hipFwd : chest[2];
+        vec3_t               dir, lower, y, down, neutral, ref;
+        float                bend, follow, swing;
+
+        VectorSubtract(rd->part[L->mid].p, rd->part[L->a].p, dir);
+        VectorSubtract(rd->part[L->end].p, rd->part[L->mid].p, lower);
+        if (VectorNormalize(dir) < 0.001f || VectorNormalize(lower) < 0.001f) {
+            continue;
+        }
+
+        // Carried along with the bone as it has swung since the last frame.
+        CG_RagdollCarry(rd->limbDir[t], dir, rd->limbY[t], y);
+        if (CG_RagdollSquareTo(y, dir)) {
+            VectorCopy(y, rd->limbY[t]);
+        }
+        VectorCopy(dir, rd->limbDir[t]);
+
+        bend   = RAD2DEG(acos(Q_clamp_float(DotProduct(dir, lower), -1.0f, 1.0f)));
+        follow = Q_clamp_float((bend - RD_HINGE_BEND_MIN) / RD_HINGE_BEND_FULL, 0.0f, 1.0f);
+
+        // Held within the shoulder's or hip's range, as far as the joint below
+        // is not already saying where the roll is.
+        VectorNegate(up, down);
+        VectorScale(fwd, L->leg ? -1.0f : 1.0f, neutral);
+        CG_RagdollSwingFront(down, neutral, dir, ref, &swing);
+
+        if (follow < 1.0f && CG_RagdollSquareTo(ref, dir)) {
+            const float trust = CG_RagdollSwingTrust(swing) * (1.0f - follow);
+
+            if (L->leg) {
+                vec3_t out;
+
+                // Y is the back of the knee, so turning it outward is the
+                // thigh turning in.
+                VectorScale(hipRight, L->left ? -1.0f : 1.0f, out);
+                CG_RagdollHoldTwist(
+                    rd->limbY[t], dir, ref, -RD_HIP_TWIST_OUT, RD_HIP_TWIST_IN,
+                    CG_RagdollTwistAbout(dir, ref, out) < 0.0f ? -1.0f : 1.0f, trust, &rd->limbEdge[t]
+                );
+            } else {
+                CG_RagdollHoldTwist(rd->limbY[t], dir, ref, -RD_ARM_TWIST, RD_ARM_TWIST, 1.0f, trust, &rd->limbEdge[t]);
+            }
+        }
+
+        // Turned toward the plane the joint bends in, as far as it is bent.
+        if (follow > 0.0f) {
+            const float roll =
+                Q_clamp_float(CG_RagdollTwistAbout(dir, rd->limbY[t], lower) * follow, -RD_FOLLOW_STEP, RD_FOLLOW_STEP);
+
+            RotatePointAroundVector(y, dir, rd->limbY[t], roll);
+            VectorCopy(y, rd->limbY[t]);
         }
     }
 }
@@ -3483,12 +4026,12 @@ static void CG_RagdollSpineTwist(cg_ragdoll_t *rd)
 
     ang = (float)(atan2(DotProduct(sho, side), DotProduct(sho, hip)) * 180.0 / M_PI);
 
-    // The shoulder line is a line, not an arrow.
-    if (ang > 90.0f) {
-        ang -= 180.0f;
-    } else if (ang < -90.0f) {
-        ang += 180.0f;
-    }
+    // Measured the whole way round. Both lines run from left to right, so
+    // they are arrows, and a turn past a quarter is a turn past a quarter.
+    // This used to fold them as lines, which read a body wrung 120 degrees as
+    // one wrung 60 the other way: the limit then turned it further round, and a
+    // corpse flung hard enough finished facing one way above the waist and the
+    // other below, and stayed like that.
 
     if (ang > lim) {
         over = ang - lim;
@@ -3589,6 +4132,16 @@ static void CG_RagdollUpdateBounds(cg_ragdoll_t *rd)
 //
 // Both awake, each gives half, and the other body's own pass gives the rest, so
 // the pair converges without either being special.
+// How fast, in units a second, a moving body has to be driving into a sleeping
+// one to wake it. A body settling onto a pile is slower than this and leaves
+// the one underneath asleep; one thrown into it is not.
+#define RD_BODY_WAKE_SPEED 80.0f
+
+// The most one body is pushed out of another in a single pass, in units.
+#define RD_BODY_PUSH_STEP 0.5f
+
+static void CG_RagdollKeepAwake(cg_ragdoll_t *rd);
+
 static void CG_RagdollBodyCollide(cg_ragdoll_t *rd)
 {
     const float rate = cg_ragdoll_bodypush->value;
@@ -3600,8 +4153,8 @@ static void CG_RagdollBodyCollide(cg_ragdoll_t *rd)
 
     for (other = 0; other < MAX_RAGDOLLS; other++) {
         cg_ragdoll_t *od = &cg_ragdolls[other];
-        float         apart, reach, share;
-        vec3_t        between;
+        float         apart, reach, share, deepest;
+        vec3_t        between, deepestNormal;
         int           n, m, k;
 
         if (od == rd || od->state == RD_FREE || !od->boundRadius) {
@@ -3617,7 +4170,8 @@ static void CG_RagdollBodyCollide(cg_ragdoll_t *rd)
         }
 
         // A sleeping body is the floor as far as this is concerned.
-        share = (od->state == RD_SLEEPING) ? 1.0f : 0.5f;
+        share   = (od->state == RD_SLEEPING) ? 1.0f : 0.5f;
+        deepest = 0.0f;
 
         for (n = 0; n < RD_NUM_BODY_SEGMENTS; n++) {
             int   na, nb;
@@ -3649,11 +4203,46 @@ static void CG_RagdollBodyCollide(cg_ragdoll_t *rd)
                 // dir runs from the other body toward this one, so it is the
                 // way this one has to move.
                 VectorScale(dir, 1.0f / dist, push);
+
+                // Thrown into a sleeping body, this one used to bounce off it as
+                // off a wall. Hard enough, the sleeper wakes and takes its half.
+                if (od->state == RD_SLEEPING && rd->state == RD_ACTIVE
+                    && -DotProduct(rd->part[ta < 0.5f ? na : nb].v, push) > RD_BODY_WAKE_SPEED) {
+                    CG_RagdollKeepAwake(od);
+                    CG_RagdollLog(od, "woken by another body");
+                    share = 0.5f;
+
+                    for (k = 0; k < RD_NUM_JOINTS; k++) {
+                        VectorClear(od->part[k].v);
+                    }
+                }
+
+                // Deepest contact between the two bodies this pass, for the
+                // momentum trade below.
+                if (want - dist > deepest) {
+                    deepest = want - dist;
+                    VectorCopy(push, deepestNormal);
+                }
+
                 scale = (want - dist) * rate * share;
+
+                // Only so far a pass, and not as speed. A limb found deep
+                // inside another body, or squeezed between two of them, was
+                // pushed out by the whole overlap on every pass, and ten passes
+                // a step threw a knee thirty and forty units in a frame, over
+                // and over: the corpse spasming in the pile. The speed of a
+                // collision is handed over by the momentum trade below, so the
+                // push only has to separate them, which it does over a few
+                // steps as well as in one (CG_RagdollSolveTracked).
+                if (scale > RD_BODY_PUSH_STEP) {
+                    scale = RD_BODY_PUSH_STEP;
+                }
 
                 for (k = 0; k < 3; k++) {
                     rd->part[na].p[k] += push[k] * scale * (1.0f - ta);
                     rd->part[nb].p[k] += push[k] * scale * ta;
+                    rd->rangeShift[na][k] += push[k] * scale * (1.0f - ta);
+                    rd->rangeShift[nb][k] += push[k] * scale * ta;
                 }
 
                 // Held up by the other body rather than shouldered aside by it.
@@ -3661,6 +4250,43 @@ static void CG_RagdollBodyCollide(cg_ragdoll_t *rd)
                 // wall do not each decide the other is the floor.
                 if (push[2] > 0.7f) {
                     rd->onBodyMask |= (1 << na) | (1 << nb);
+                }
+            }
+        }
+
+        // And it is knocked along. The push apart above only moves the two
+        // bodies out of each other, each by half, which hands over almost none
+        // of the speed: a body thrown into another stopped dead against it and
+        // the one it hit barely stirred. Traded between the two contact points
+        // alone it still barely stirred, because two joints of twenty three
+        // take it and the rest of the body, lying on the ground, holds them.
+        // So the two bodies trade as whole bodies: how fast they are closing
+        // along the deepest contact, taken from each body's average speed, is
+        // split between them evenly, with a bounce of its own
+        // (cg_ragdoll_bodybounce): bodies bounce off each other far less than
+        // off the ground, and sharing the ground's figure made a thrown body
+        // spring back off the one it hit. Once
+        // done they are no longer closing, so the other body's own pass does
+        // not do it again.
+        if (deepest > 0.0f && rd->state == RD_ACTIVE && od->state == RD_ACTIVE) {
+            vec3_t va, vb;
+            float  closing, dv;
+
+            VectorClear(va);
+            VectorClear(vb);
+            for (k = 0; k < RD_NUM_JOINTS; k++) {
+                VectorAdd(va, rd->part[k].v, va);
+                VectorAdd(vb, od->part[k].v, vb);
+            }
+
+            closing = (DotProduct(va, deepestNormal) - DotProduct(vb, deepestNormal)) / RD_NUM_JOINTS;
+
+            if (closing < 0.0f) {
+                dv = -(1.0f + cg_ragdoll_bodybounce->value) * closing * 0.5f;
+
+                for (k = 0; k < RD_NUM_JOINTS; k++) {
+                    VectorMA(rd->part[k].v, dv, deepestNormal, rd->part[k].v);
+                    VectorMA(od->part[k].v, -dv, deepestNormal, od->part[k].v);
                 }
             }
         }
@@ -3751,10 +4377,25 @@ static float CG_RagdollLimpness(const cg_ragdoll_t *rd)
     return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
+// Puts the joint the grabber holds back where the step left it.
+static void CG_RagdollPinHeld(cg_ragdoll_t *rd, const vec3_t held)
+{
+    if (rd->grabJoint >= 0) {
+        VectorCopy(held, rd->part[rd->grabJoint].p);
+    }
+}
+
 static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
 {
     const float limp = CG_RagdollLimpness(rd);
+    vec3_t      held;
     int it, i, k;
+
+    if (rd->grabJoint >= 0) {
+        VectorCopy(rd->part[rd->grabJoint].p, held);
+    } else {
+        VectorClear(held);
+    }
 
     if (iterations < 3) {
         iterations = 3;
@@ -3841,16 +4482,30 @@ static void CG_RagdollSolveConstraints(cg_ragdoll_t *rd, int iterations)
         // have dropped out. A knee on the wrong side of its own leg, or a hand
         // inside the ribcage, is far more noticeable than a joint sitting a
         // little outside one of the soft limits.
+        // The joint the grabber holds is weightless to the bone sticks, but
+        // several of these move joints directly, whatever their weight. Each
+        // is followed by putting the held one back, so they move the rest of
+        // the body instead of fighting the beam for it. Left to move it, the
+        // beam's spring pulled it straight back on the next step and the two
+        // fought for as long as the body was held: measured, a body held by
+        // the knee shook three times as hard as one held by the head, and
+        // hung wedged sideways instead of below the knee.
         CG_RagdollHinges(rd);
+        CG_RagdollPinHeld(rd, held);
         CG_RagdollElbows(rd);
+        CG_RagdollPinHeld(rd, held);
         CG_RagdollSpineTwist(rd);
+        CG_RagdollPinHeld(rd, held);
         CG_RagdollCones(rd);
         CG_RagdollJointRanges(rd);
         CG_RagdollSelfCollide(rd);
+        CG_RagdollPinHeld(rd, held);
         CG_RagdollBodyCollide(rd);
         CG_RagdollSegmentCollide(rd);
         CG_RagdollLimbCollide(rd);
+        CG_RagdollPinHeld(rd, held);
         CG_RagdollProjectContacts(rd);
+        CG_RagdollPinHeld(rd, held);
     }
 
     // Self collision is the slowest of these to converge, because every sweep
@@ -3937,6 +4592,23 @@ static void CG_RagdollSolveTracked(cg_ragdoll_t *rd, int iterations)
     }
 }
 
+static void CG_RagdollTrace(
+    trace_t     *result,
+    const vec3_t start,
+    const vec3_t mins,
+    const vec3_t maxs,
+    const vec3_t end,
+    int          skipNumber,
+    int          mask,
+    qboolean     cylinder,
+    qboolean     cliptoentities,
+    const char  *description
+);
+
+// The body whose step is being traced, so the props it ignores can be skipped.
+static const cg_ragdoll_t *rd_traceBody;
+static void                CG_RagdollReleaseEnclosingProps(cg_ragdoll_t *rd);
+
 // How big a box to trace for one joint against the world.
 //
 // Every trace here used a single radius for all twenty three joints, three
@@ -3986,10 +4658,62 @@ static void CG_RagdollJointBox(const cg_ragdoll_t *rd, int joint, vec3_t mins, v
         }
     }
 
+    // At 3, the trunk and the upper and lower limbs too: the body meets the
+    // world as thick as it is drawn, as a Half-Life 2 ragdoll's hulls do.
+    //
+    // The loss measured against this above belongs to a solver long since
+    // gone. With the limbs swept through the world as the joints are (see
+    // CG_RagdollBoneSweep), the full figures keep every scenario the suite
+    // passed, cut the whips by a tenth, and take the trunk from a mean of one
+    // and a half units sunk into the floor, three and a half at worst, to a
+    // fifth of a unit; the limbs from six tenths to a fifth. Dropped on a beam,
+    // a body keeps a quarter less of the sideways speed the landing gives it.
+    // The feet and toes keep the single figure; they were not tried.
+    if (cg_ragdoll_jointsize->integer > 2
+        && (joint <= RD_NECK || joint == RD_LUARM || joint == RD_RUARM || joint == RD_LFARM || joint == RD_RFARM
+            || joint == RD_LTHIGH || joint == RD_RTHIGH || joint == RD_LCALF || joint == RD_RCALF)) {
+        r = Q_max(r, rd->jointRadius[joint]);
+    }
+
     for (k = 0; k < 3; k++) {
         mins[k] = -r;
         maxs[k] = r;
     }
+}
+
+static float CG_RagdollFriction(const cg_ragdoll_t *rd);
+
+// Whether a joint that has just struck a surface is caught on it: the body it
+// belongs to has been carried off past the far side, and the surface is the
+// only thing between the joint and the joint it hangs from.
+//
+// Collision always has the last word over the bones, so nothing else here can
+// ever let such a joint go. Traced in the game: a corpse lying in a hollow was
+// lifted by the head, a forearm and a foot met the underside of the lip above
+// them and stayed there, and the body was drawn out to three times its length
+// -- pelvis to head from twenty six units to seventy five -- until the arm slid
+// out from under the lip a second later and came up a hundred and fifty units
+// in one step. A limb hooked under something that far is going to come free;
+// letting it through the lip at once is much less wrong to look at than either.
+static qboolean CG_RagdollHooked(const cg_ragdoll_t *rd, int joint, const vec3_t normal)
+{
+    const int parent = rd_joints[joint].parent;
+    vec3_t    up;
+    float     len;
+
+    if (parent < 0 || rd->boneRest[joint] < 0.5f) {
+        return qfalse;
+    }
+
+    VectorSubtract(rd->part[parent].p, rd->part[joint].p, up);
+    len = VectorLength(up);
+
+    if (len < rd->boneRest[joint] * RD_HOOK_STRETCH || len < rd->boneRest[joint] + RD_HOOK_SLACK) {
+        return qfalse;
+    }
+
+    // The surface faces away from the parent, so it lies between the two.
+    return DotProduct(up, normal) < 0.0f ? qtrue : qfalse;
 }
 
 static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
@@ -4000,10 +4724,12 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
     vec3_t rd_mins, rd_maxs;
 
     const int   mask     = RD_CLIPMASK;
-    const float friction = cg_ragdoll_friction->value;
+    const float friction = CG_RagdollFriction(rd);
 
     const float bounce   = cg_ragdoll_bounce->value;
     int         moved    = 0;
+
+    rd->impactSpeed = 0.0f;
     int         i, k;
 
     rd->buriedMask     = 0;
@@ -4012,11 +4738,29 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
     for (i = 0; i < RD_NUM_JOINTS; i++) {
         rdParticle_t *part = &rd->part[i];
 
-        // The part the grabber holds goes where the beam takes it. Its end is
-        // already kept out of walls, and swept from inside a floor it was
-        // lying a hair into, the trace would put it back where it started
-        // every step, so a body could not be lifted by it at all.
+        // The part the grabber holds goes where the beam takes it, but not
+        // through the world. Left out of collision altogether, the beam
+        // dragged it through a ledge or a bracket while the rest of the body
+        // caught on it, and the limbs were torn round the edges. It is only
+        // stopped at a surface it would cross, though: swept from inside a
+        // floor it was lying a hair into, the trace would put it back where it
+        // started every step, and a body could not be lifted by it at all.
         if (i == rd->grabJoint) {
+            trace_t held;
+
+            CG_RagdollJointBox(rd, i, rd_mins, rd_maxs);
+            CG_RagdollTrace(&held, part->pPrev, rd_mins, rd_maxs, part->p, skipEntity, mask, qfalse, qtrue, "CG_RagdollCollide");
+
+            if (!held.startsolid && !held.allsolid && held.fraction < 1.0f) {
+                const float into = DotProduct(part->v, held.plane.normal);
+
+                VectorCopy(held.endpos, part->p);
+                VectorMA(part->p, RD_SURFACE_GAP, held.plane.normal, part->p);
+                if (into < 0.0f) {
+                    VectorMA(part->v, -into, held.plane.normal, part->v);
+                }
+                moved++;
+            }
             continue;
         }
 
@@ -4035,9 +4779,19 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         // plane, which is what stops a constraint from quietly dragging it
         // through the surface on a later step.
         if (part->hasContact) {
-            if (DotProduct(part->p, part->contactNormal) - part->contactDist > RD_CONTACT_FORGET) {
+            // A plane can hook a joint as well as a surface struck on the way
+            // can (see CG_RagdollHooked). A head that had come to rest under a
+            // lip never struck it again as the body was lifted: its plane held
+            // it where it was, and was confirmed each time the world was asked,
+            // since the lip was still there. The neck was drawn out from five
+            // units to twenty two and the head then came up fifty seven units
+            // in one step.
+            if (CG_RagdollHooked(rd, i, part->contactNormal)) {
                 part->hasContact = qfalse;
-            } else if (cg.time - part->contactTime > RD_CONTACT_STALE) {
+            } else if (DotProduct(part->p, part->contactNormal) - part->contactDist > RD_CONTACT_FORGET) {
+                part->hasContact = qfalse;
+            } else if (cg.time - part->contactTime > RD_CONTACT_STALE
+                       || DistanceSquared(part->p, part->contactAt) > Square(rd->radius * RD_CONTACT_REACH)) {
                 // Drifting off the plane is not enough to notice that a surface
                 // has gone, because a particle hanging under a remembered plane
                 // never rises above it and the distance test never fires. It
@@ -4069,7 +4823,7 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
                 }
 
                 VectorMA(part->p, -(above + rd->radius + RD_CONTACT_PROBE), part->contactNormal, behind);
-                CG_Trace(
+                CG_RagdollTrace(
                     &probe, part->p, rd_mins, rd_maxs, behind, skipEntity, mask, qfalse, qtrue, "CG_RagdollProbe"
                 );
 
@@ -4077,11 +4831,12 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
                     part->hasContact = qfalse;
                 } else {
                     part->contactTime = cg.time;
+                    VectorCopy(part->p, part->contactAt);
                 }
             }
         }
 
-        CG_Trace(&trace, part->pPrev, rd_mins, rd_maxs, part->p, skipEntity, mask, qfalse, qtrue, "CG_RagdollCollide");
+        CG_RagdollTrace(&trace, part->pPrev, rd_mins, rd_maxs, part->p, skipEntity, mask, qfalse, qtrue, "CG_RagdollCollide");
 
         if (trace.startsolid || trace.allsolid) {
             // Buried in the world. Dropping it back where it was and leaving
@@ -4118,7 +4873,7 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
             // If the parent is buried too the trace starts solid as well and
             // nothing is done this step. The chain unburies from the body
             // outward over the next few, which is the right order anyway.
-            CG_Trace(
+            CG_RagdollTrace(
                 &out, rd->part[toward].p, rd_mins, rd_maxs, part->p, skipEntity, mask, qfalse, qtrue, "CG_RagdollUnbury"
             );
 
@@ -4138,11 +4893,19 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
             continue;
         }
 
+        // Let through, and the plane it was held under forgotten, or the
+        // contact projection would put it straight back.
+        if (CG_RagdollHooked(rd, i, trace.plane.normal)) {
+            part->hasContact = qfalse;
+            continue;
+        }
+
         VectorCopy(trace.endpos, part->p);
         VectorMA(part->p, RD_SURFACE_GAP, trace.plane.normal, part->p);
 
         part->hasContact  = qtrue;
         part->contactTime = cg.time;
+        VectorCopy(part->p, part->contactAt);
         VectorCopy(trace.plane.normal, part->contactNormal);
         part->contactDist = DotProduct(part->p, part->contactNormal);
 
@@ -4151,6 +4914,10 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         // that could not be told apart from the constraint solver's corrections.
         VectorCopy(part->v, v);
         dot = DotProduct(v, trace.plane.normal);
+
+        if (-dot > rd->impactSpeed) {
+            rd->impactSpeed = -dot;
+        }
         VectorScale(trace.plane.normal, dot, vn);
         VectorSubtract(v, vn, vt);
 
@@ -4158,13 +4925,27 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
             part->onGround = qtrue;
 
             // Static friction, so settled corpses stop creeping downhill.
-            if (VectorLength(vt) < RD_STATIC_FRICTION) {
+            if (rd->balanced && VectorLength(vt) < RD_STATIC_FRICTION) {
                 VectorClear(vt);
             }
         }
 
-        for (k = 0; k < 3; k++) {
-            part->v[k] = vt[k] * (1.0f - friction) - vn[k] * bounce;
+        // Friction as friction: the slide slows by an amount set by how hard
+        // the surface is being pressed, the impact itself and the weight on
+        // it, not by a share of its speed. It used to keep 1 - friction of
+        // the sliding speed on every contact, which at sixty contacts a second
+        // stops a body dead whatever the cvar says. The rest of the slide is
+        // taken off in CG_RagdollStep, on every step a joint rests on
+        // something, not only on the steps it strikes it.
+        {
+            const float load  = (dot < 0.0f ? -dot : 0.0f)
+                              + CG_RagdollGravity() * Q_max(trace.plane.normal[2], 0.0f) / cg_ragdoll_physicsrate->value;
+            const float slide = VectorLength(vt);
+            const float keep  = slide > 0.001f ? Q_max(0.0f, slide - friction * load) / slide : 0.0f;
+
+            for (k = 0; k < 3; k++) {
+                part->v[k] = vt[k] * keep - vn[k] * bounce;
+            }
         }
 
         // Only a displacement worth reconciling counts. A corpse that has come
@@ -4215,6 +4996,22 @@ static qboolean CG_RagdollSupported(const cg_ragdoll_t *rd)
     return (level >= RD_MIN_SUPPORT || any >= RD_MIN_SUPPORT_ANY) ? qtrue : qfalse;
 }
 
+// Joints on level ground or on another corpse: enough of them, and the body is
+// lying on something rather than leaning on it or hanging from it.
+static qboolean CG_RagdollRestingOnLevel(const cg_ragdoll_t *rd)
+{
+    int level = 0;
+    int i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        if ((rd->onBodyMask & (1 << i)) || (rd->part[i].hasContact && rd->part[i].contactNormal[2] > 0.7f)) {
+            level++;
+        }
+    }
+
+    return level >= RD_MIN_SUPPORT ? qtrue : qfalse;
+}
+
 static int CG_RagdollSupportCount(const cg_ragdoll_t *rd)
 {
     int n = 0;
@@ -4234,14 +5031,207 @@ static int CG_RagdollSupportCount(const cg_ragdoll_t *rd)
     return n;
 }
 
-// The one thing a step must not end with: a particle inside the world.
+// The shortest way out of the world for a point found inside it, or qfalse if
+// there is none within reach. Tried from each of the given points (the bone
+// ends, which are the way a limb went in) and from just outside the point along
+// the four level directions and straight up, and whichever reaches a surface
+// nearest the point wins. Nothing further than the unbury reach counts: a way
+// out that far off is some other surface rather than the face the point came
+// in through, and moving there is throwing the limb, not freeing it.
 //
-// How far along a limb bone the world is sampled. The two ends are joints and
-// are traced already; these are the places in between that nothing has ever
-// looked at.
-static const float rd_limbSamples[] = {0.35f, 0.65f};
+// The middle of a limb used to try the bone, then up. For a leg dragged across
+// the edge of a ledge the way out along the bone is the whole buried part of
+// the bone, while the way out past the face is a unit or two. Moving along the
+// bone slid the limb along its own length, the constraints pulled it back the
+// next step, and the feet and shins flicked five to fifteen units a step for as
+// long as they were over the edge.
+//
+// Joints keep their own order, the bone and then up. Given this, bodies lying
+// against a wall and one on open floor settled with a hand or foot inside the
+// other leg, and it did nothing for the legs over an edge.
+static qboolean CG_RagdollNearestExit(
+    cg_ragdoll_t *rd,
+    const vec3_t  point,
+    const vec3_t  mins,
+    const vec3_t  maxs,
+    int           skipEntity,
+    const float  *from[],
+    int           numFrom,
+    vec3_t        shift,
+    vec3_t        normal
+)
+{
+    static const vec3_t dirs[] = {
+        {1, 0, 0},
+        {-1, 0, 0},
+        {0, 1, 0},
+        {0, -1, 0},
+        {0, 0, 1},
+    };
+    const float reach = rd->radius * RD_UNBURY_REACH;
+    float       best  = reach;
+    qboolean    found = qfalse;
+    int         n;
 
-#define RD_NUM_LIMB_SAMPLES ((int)(sizeof(rd_limbSamples) / sizeof(rd_limbSamples[0])))
+    for (n = 0; n < numFrom + (int)ARRAY_LEN(dirs); n++) {
+        vec3_t  start, d;
+        trace_t out;
+        float   len;
+
+        if (n < numFrom) {
+            VectorCopy(from[n], start);
+        } else {
+            VectorMA(point, reach, dirs[n - numFrom], start);
+        }
+
+        CG_RagdollTrace(&out, start, mins, maxs, point, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollNearestExit");
+
+        if (out.startsolid || out.allsolid || out.fraction >= 1.0f) {
+            continue;
+        }
+
+        VectorSubtract(out.endpos, point, d);
+        len = VectorLength(d);
+
+        if (len > best) {
+            continue;
+        }
+
+        best  = len;
+        found = qtrue;
+        VectorCopy(d, shift);
+        VectorCopy(out.plane.normal, normal);
+    }
+
+    return found;
+}
+
+// The one thing a step must not end with: a particle inside the world.
+
+// Sweeps the middle of every limb through the world, as the joints are swept.
+//
+// The world only ever collided with the joints, and a bone between two of them
+// was looked at only after it had ended up inside something (the push out
+// below). A beam narrower than a thigh passes between the hip and the knee
+// without either of them touching it, and the push out then shoves the bone
+// back out through whichever face is nearest -- often the far one. Traced in
+// the game, a body dropped across a beam had both calves inside it; the legs
+// were shoved about by up to thirty units a step, a thigh was squeezed to less
+// than half its length, and the body was thrown off the beam at a hundred and
+// fifty units a second.
+//
+// Swept, a bone meets the beam where a real one would, at its first touch, and
+// is held on the outside of it. The two ends are moved along the surface's
+// normal in proportion to how near the sample each one is, just far enough to
+// put the sample on the surface, and each loses the speed it had into the
+// surface in the same proportion. Nothing is added: the move is a position
+// correction, the way a contact holds a joint.
+static int CG_RagdollBoneSweep(cg_ragdoll_t *rd, int skipEntity)
+{
+    vec3_t rd_mins, rd_maxs;
+    int    n, q, k;
+    int    moved = 0;
+
+    for (n = 0; n < RD_NUM_LIMB_SEGMENTS; n++) {
+        rdParticle_t *pa = &rd->part[rd_limbSegments[n].a];
+        rdParticle_t *pb = &rd->part[rd_limbSegments[n].b];
+
+        // A limb the grabber holds by one end; see CG_RagdollCollide.
+        if (rd_limbSegments[n].a == rd->grabJoint || rd_limbSegments[n].b == rd->grabJoint) {
+            continue;
+        }
+
+        CG_RagdollJointBox(
+            rd,
+            rd->jointRadius[rd_limbSegments[n].a] < rd->jointRadius[rd_limbSegments[n].b]
+                ? rd_limbSegments[n].a
+                : rd_limbSegments[n].b,
+            rd_mins,
+            rd_maxs
+        );
+
+        for (q = 0; q < RD_NUM_LIMB_SAMPLES; q++) {
+            const float u     = rd_limbSamples[q];
+            const float share = (1.0f - u) * (1.0f - u) + u * u;
+            trace_t     tr;
+            vec3_t      from, to;
+            float       push, into;
+
+            for (k = 0; k < 3; k++) {
+                from[k] = pa->pPrev[k] + (pb->pPrev[k] - pa->pPrev[k]) * u;
+                to[k]   = pa->p[k] + (pb->p[k] - pa->p[k]) * u;
+            }
+
+            // A remembered plane is questioned as a joint's is: dropped once
+            // the sample is well clear of it, and asked again of the world when
+            // it is old or the sample has moved along it.
+            if (rd->boneContact[n][q].has) {
+                const float above = DotProduct(to, rd->boneContact[n][q].normal) - rd->boneContact[n][q].dist;
+
+                if (above > RD_CONTACT_FORGET) {
+                    rd->boneContact[n][q].has = qfalse;
+                } else if (cg.time - rd->boneContact[n][q].time > RD_CONTACT_STALE
+                           || DistanceSquared(to, rd->boneContact[n][q].at) > Square(rd->radius * RD_CONTACT_REACH)) {
+                    trace_t probe;
+                    vec3_t  behind;
+
+                    VectorMA(to, -(Q_max(above, 0.0f) + rd->radius + RD_CONTACT_PROBE), rd->boneContact[n][q].normal, behind);
+                    CG_RagdollTrace(&probe, to, rd_mins, rd_maxs, behind, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollBoneProbe");
+
+                    if (probe.fraction >= 1.0f && !probe.startsolid && !probe.allsolid) {
+                        rd->boneContact[n][q].has = qfalse;
+                    } else {
+                        rd->boneContact[n][q].time = cg.time;
+                        VectorCopy(to, rd->boneContact[n][q].at);
+                    }
+                }
+            }
+
+            CG_RagdollTrace(&tr, from, rd_mins, rd_maxs, to, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollBoneSweep");
+
+            // Already inside is the push out's business, and nothing struck is
+            // nothing to do.
+            if (tr.startsolid || tr.allsolid || tr.fraction >= 1.0f) {
+                continue;
+            }
+
+            push = DotProduct(tr.endpos, tr.plane.normal) - DotProduct(to, tr.plane.normal) + RD_SURFACE_GAP;
+
+            if (push <= 0.0f) {
+                continue;
+            }
+
+            // So that the sample, which moves by (1-u) of the one end's move
+            // and u of the other's, moves by exactly push.
+            push /= share;
+
+            for (k = 0; k < 3; k++) {
+                pa->p[k] += tr.plane.normal[k] * push * (1.0f - u);
+                pb->p[k] += tr.plane.normal[k] * push * u;
+            }
+
+            rd->boneContact[n][q].has  = qtrue;
+            rd->boneContact[n][q].time = cg.time;
+            VectorCopy(tr.plane.normal, rd->boneContact[n][q].normal);
+            rd->boneContact[n][q].dist = DotProduct(tr.endpos, tr.plane.normal) + RD_SURFACE_GAP;
+            VectorCopy(tr.endpos, rd->boneContact[n][q].at);
+
+            into = DotProduct(pa->v, tr.plane.normal);
+            if (into < 0.0f) {
+                VectorMA(pa->v, -into * Q_min(1.0f, (1.0f - u) / share), tr.plane.normal, pa->v);
+            }
+
+            into = DotProduct(pb->v, tr.plane.normal);
+            if (into < 0.0f) {
+                VectorMA(pb->v, -into * Q_min(1.0f, u / share), tr.plane.normal, pb->v);
+            }
+
+            moved++;
+        }
+    }
+
+    return moved;
+}
 
 // Keeps the middle of a limb out of the world.
 //
@@ -4288,15 +5278,14 @@ static void CG_RagdollLimbPushOut(cg_ragdoll_t *rd, int skipEntity)
 
         for (q = 0; q < RD_NUM_LIMB_SAMPLES; q++) {
             const float u = rd_limbSamples[q];
-            trace_t     probe, out;
-            vec3_t      mid, shift;
-            qboolean    freed;
+            trace_t     probe;
+            vec3_t      mid, shift, normal;
 
             for (k = 0; k < 3; k++) {
                 mid[k] = pa->p[k] + (pb->p[k] - pa->p[k]) * u;
             }
 
-            CG_Trace(&probe, mid, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
+            CG_RagdollTrace(&probe, mid, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
 
             if (!probe.startsolid && !probe.allsolid) {
                 continue;
@@ -4304,43 +5293,15 @@ static void CG_RagdollLimbPushOut(cg_ragdoll_t *rd, int skipEntity)
 
             rd->limbBuriedMask |= 1 << n;
 
-            // Out along the bone first, towards whichever end is itself clear,
-            // because that is the way the limb went in. Straight up only as a
-            // last resort, which is where the surface is when a body has gone
-            // through a floor.
-            CG_Trace(&out, pa->p, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
-            freed = (qboolean)(!out.startsolid && !out.allsolid && out.fraction < 1.0f);
+            {
+                const float *ends[] = {pa->p, pb->p};
 
-            if (!freed) {
-                CG_Trace(&out, pb->p, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
-                freed = (qboolean)(!out.startsolid && !out.allsolid && out.fraction < 1.0f);
+                if (!CG_RagdollNearestExit(rd, mid, rd_mins, rd_maxs, skipEntity, ends, 2, shift, normal)) {
+                    continue;
+                }
             }
 
-            if (!freed) {
-                vec3_t above;
-
-                VectorCopy(mid, above);
-                above[2] += rd->radius * RD_UNBURY_REACH;
-
-                CG_Trace(&out, above, rd_mins, rd_maxs, mid, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollLimbPushOut");
-                freed = (qboolean)(!out.startsolid && !out.allsolid && out.fraction < 1.0f);
-            }
-
-            if (!freed) {
-                continue;
-            }
-
-            VectorSubtract(out.endpos, mid, shift);
-
-            // The same limit the joints get, and for the same reason: a way out
-            // that is far away is some other surface rather than the face this
-            // limb came in through, and moving to it is throwing the limb, not
-            // freeing it.
-            if (VectorLength(shift) > rd->radius * RD_UNBURY_REACH) {
-                continue;
-            }
-
-            VectorMA(shift, RD_SURFACE_GAP, out.plane.normal, shift);
+            VectorMA(shift, RD_SURFACE_GAP, normal, shift);
 
             // Shared between the two ends by where along the bone the sample
             // sits, so a bone caught near its wrist lifts the wrist. Carried on
@@ -4382,7 +5343,7 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
         trace_t       probe, out;
         vec3_t        shift;
 
-        CG_Trace(&probe, part->p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut");
+        CG_RagdollTrace(&probe, part->p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut");
 
         if (!probe.startsolid && !probe.allsolid) {
             rd->buriedFor[i] = 0;
@@ -4435,7 +5396,7 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
             continue;
         }
 
-        CG_Trace(
+        CG_RagdollTrace(
             &out, rd->part[toward].p, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut"
         );
 
@@ -4451,7 +5412,7 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
             VectorCopy(part->p, above);
             above[2] += rd->radius * RD_UNBURY_REACH;
 
-            CG_Trace(
+            CG_RagdollTrace(
                 &out, above, rd_mins, rd_maxs, part->p, skipEntity, RD_CLIPMASK, qfalse, qtrue, "CG_RagdollPushOut"
             );
 
@@ -4486,7 +5447,242 @@ static void CG_RagdollPushOut(cg_ragdoll_t *rd, int skipEntity)
     }
 }
 
-static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
+// Impact speed, into a surface, from which a landing starts to be soaked up,
+// how much more speed it takes to reach the most, and the most: the share of
+// the body's spin and of its limbs' flailing taken out in that step.
+#define RD_SPLAT_SPEED 300.0f
+#define RD_SPLAT_RANGE 600.0f
+#define RD_SPLAT_MAX   0.6f
+
+// Share of a held body's turn about the vertical, through the joint held,
+// that is turned back each step.
+#define RD_GRAB_HEADING_HOLD 0.7f
+
+// Keeps a body the grabber holds from spinning about the vertical through the
+// held joint: the physics gun does the same to what it carries.
+//
+// Hanging from one point nothing else stops it turning, and the joint limits
+// set it turning. Gravity pulls a dangling limb past its range on every step
+// and the range moves it back, without turning the rest of the body the other
+// way as a real joint would, so each correction leaves a little turn behind.
+// Held by a thigh in the game a body was spun up to two hundred degrees a
+// second, one way, for as long as it was held. Taking turn out of the
+// velocities did nothing, since the solver puts it straight back; so it is
+// taken out of the positions the step ends with, and out of the velocities
+// with them. Swinging the body on the beam is a movement of the whole body,
+// or a turn about a level axis, and is left alone.
+static void CG_RagdollHoldHeading(cg_ragdoll_t *rd)
+{
+    const float *pivot = rd->part[rd->grabJoint].p;
+    float        num = 0.0f, den = 0.0f, turn, c, s;
+    int          i;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        const float ax = rd->part[i].pPrev[0] - pivot[0], ay = rd->part[i].pPrev[1] - pivot[1];
+        const float bx = rd->part[i].p[0] - pivot[0], by = rd->part[i].p[1] - pivot[1];
+
+        num += ax * by - ay * bx;
+        den += ax * bx + ay * by;
+    }
+
+    if (fabs(num) < 0.0001f && den <= 0.0f) {
+        return;
+    }
+
+    turn = -atan2(num, den) * RD_GRAB_HEADING_HOLD;
+    c    = cos(turn);
+    s    = sin(turn);
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        rdParticle_t *part = &rd->part[i];
+        const float   x    = part->p[0] - pivot[0];
+        const float   y    = part->p[1] - pivot[1];
+        const float   vx   = part->v[0];
+        const float   vy   = part->v[1];
+
+        part->p[0] = pivot[0] + x * c - y * s;
+        part->p[1] = pivot[1] + x * s + y * c;
+        part->v[0] = vx * c - vy * s;
+        part->v[1] = vx * s + vy * c;
+    }
+}
+
+// Whether the body is lying on what holds it up rather than hanging from it:
+// its centre of mass no lower than the joints resting on something level, or on
+// another body, with a little to spare.
+//
+// Resting is judged by the joints alone, and a body draped over the end of a
+// beam, a sill or a lamp bracket has four or five of them lying on its top
+// face while the rest of it hangs down the side. Counted as resting, it had the
+// slow start of its slide taken away on every step, by static friction and by
+// the damping for bodies at rest, and was then let fall asleep hanging there.
+// A body lying on a floor, or slumped against a wall with its seat on the
+// ground, has its weight above what it rests on; one hanging from a ledge has
+// it below, and is left to slide off.
+static qboolean CG_RagdollBalanced(const cg_ragdoll_t *rd, qboolean *draped)
+{
+    float centre = 0.0f, mass = 0.0f, lowest = 0.0f;
+    int   i, level = 0;
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        const rdParticle_t *part = &rd->part[i];
+        const float         m    = rd_joints[i].invMass > 0.0f ? 1.0f / rd_joints[i].invMass : 1.0f;
+
+        centre += m * part->p[2];
+        mass   += m;
+
+        if ((rd->onBodyMask & (1 << i)) || (part->hasContact && part->contactNormal[2] > 0.7f)) {
+            if (!level || part->p[2] < lowest) {
+                lowest = part->p[2];
+            }
+            level++;
+        }
+    }
+
+    *draped = qfalse;
+
+    if (!level || mass <= 0.0f) {
+        return qfalse;
+    }
+
+    if (centre / mass >= lowest - RD_BALANCE_SLACK) {
+        return qtrue;
+    }
+
+    *draped = qtrue;
+    return qfalse;
+}
+
+// Friction for this body as it lies now.
+//
+// A body draped across a beam, torso on top and arms and legs hanging down
+// either side, is held there by nothing but the rub of its chest on the top,
+// and with the weight nearly even on both sides that was enough to hold it
+// indefinitely: one in the game hung in the air for ten seconds, perfectly
+// still, until the player took hold of it again. The same body lying on the
+// beam would rightly stay. So a body that is hanging rather than lying slides
+// on a quarter of the grip, and comes off unless it is truly balanced. Only a
+// body resting on something counts: one in the air has nothing to hang from,
+// and taking the grip off it cut the friction of every landing, so bodies
+// dropped on open floor skidded and twisted where they fell.
+static float CG_RagdollFriction(const cg_ragdoll_t *rd)
+{
+    return cg_ragdoll_friction->value * (rd->draped ? RD_DRAPED_FRICTION : 1.0f);
+}
+
+// Damps the body's limbs moving relative to one another, and nothing else.
+//
+// Each joint's velocity is taken apart into what the body as a whole is doing,
+// moving and turning as though it were rigid, and the rest, which is its limbs
+// flailing about it; a share of the rest is taken away (Mueller et al.,
+// Position Based Dynamics, 2007, section 3.5). A body thrown or falling keeps
+// all of its speed and all of its tumble, since those are the rigid part, and
+// the momentum of both is left exactly as it was.
+static void CG_RagdollInternalDamping(cg_ragdoll_t *rd, float share, float spinShare)
+{
+    vec3_t centre, vel, spin, omega;
+    float  inertia[3][3], inv[3][3], det, mass = 0.0f;
+    int    i, a, b;
+
+    VectorClear(centre);
+    VectorClear(vel);
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        const float m = rd_joints[i].invMass > 0.0f ? 1.0f / rd_joints[i].invMass : 1.0f;
+
+        VectorMA(centre, m, rd->part[i].p, centre);
+        VectorMA(vel, m, rd->part[i].v, vel);
+        mass += m;
+    }
+    if (mass <= 0.0f) {
+        return;
+    }
+    VectorScale(centre, 1.0f / mass, centre);
+    VectorScale(vel, 1.0f / mass, vel);
+
+    VectorClear(spin);
+    memset(inertia, 0, sizeof(inertia));
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        const float m = rd_joints[i].invMass > 0.0f ? 1.0f / rd_joints[i].invMass : 1.0f;
+        vec3_t      r, l;
+
+        VectorSubtract(rd->part[i].p, centre, r);
+        CrossProduct(r, rd->part[i].v, l);
+        VectorMA(spin, m, l, spin);
+
+        for (a = 0; a < 3; a++) {
+            for (b = 0; b < 3; b++) {
+                inertia[a][b] += m * ((a == b ? DotProduct(r, r) : 0.0f) - r[a] * r[b]);
+            }
+        }
+    }
+
+    det = inertia[0][0] * (inertia[1][1] * inertia[2][2] - inertia[1][2] * inertia[2][1])
+        - inertia[0][1] * (inertia[1][0] * inertia[2][2] - inertia[1][2] * inertia[2][0])
+        + inertia[0][2] * (inertia[1][0] * inertia[2][1] - inertia[1][1] * inertia[2][0]);
+    if (fabs(det) < 0.0001f) {
+        return;
+    }
+    inv[0][0] = (inertia[1][1] * inertia[2][2] - inertia[1][2] * inertia[2][1]) / det;
+    inv[0][1] = (inertia[0][2] * inertia[2][1] - inertia[0][1] * inertia[2][2]) / det;
+    inv[0][2] = (inertia[0][1] * inertia[1][2] - inertia[0][2] * inertia[1][1]) / det;
+    inv[1][0] = (inertia[1][2] * inertia[2][0] - inertia[1][0] * inertia[2][2]) / det;
+    inv[1][1] = (inertia[0][0] * inertia[2][2] - inertia[0][2] * inertia[2][0]) / det;
+    inv[1][2] = (inertia[0][2] * inertia[1][0] - inertia[0][0] * inertia[1][2]) / det;
+    inv[2][0] = (inertia[1][0] * inertia[2][1] - inertia[1][1] * inertia[2][0]) / det;
+    inv[2][1] = (inertia[0][1] * inertia[2][0] - inertia[0][0] * inertia[2][1]) / det;
+    inv[2][2] = (inertia[0][0] * inertia[1][1] - inertia[0][1] * inertia[1][0]) / det;
+    for (a = 0; a < 3; a++) {
+        omega[a] = inv[a][0] * spin[0] + inv[a][1] * spin[1] + inv[a][2] * spin[2];
+    }
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        vec3_t r, rigid, off;
+
+        if (i == rd->grabJoint) {
+            continue;
+        }
+
+        VectorSubtract(rd->part[i].p, centre, r);
+        CrossProduct(omega, r, rigid);
+        VectorAdd(rigid, vel, rigid);
+        VectorSubtract(rigid, rd->part[i].v, off);
+        VectorMA(rd->part[i].v, share, off, rd->part[i].v);
+
+        // And, when asked, some of the body's turning as a whole as well.
+        if (spinShare > 0.0f) {
+            vec3_t turning;
+
+            CrossProduct(omega, r, turning);
+            VectorMA(rd->part[i].v, -spinShare, turning, rd->part[i].v);
+        }
+    }
+}
+
+// Joints being pulled into what they are touching: their contact surface faces
+// back against the way from the held part to where the beam wants it. Lifting
+// a body off the floor pulls away from every surface it lies on, and counts
+// none; dragging it into a wall or over a ledge counts every joint pressed
+// against it.
+static int CG_RagdollContactsAgainst(const cg_ragdoll_t *rd, const vec3_t target, const vec3_t held)
+{
+    vec3_t dir;
+    int    i, n = 0;
+
+    VectorSubtract(target, held, dir);
+    if (VectorNormalize(dir) < 0.001f) {
+        return 0;
+    }
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        if (i != rd->grabJoint && rd->part[i].hasContact && DotProduct(dir, rd->part[i].contactNormal) < -0.3f) {
+            n++;
+        }
+    }
+
+    return n;
+}
+
+static float CG_RagdollStepInner(cg_ragdoll_t *rd, int skipEntity, float dt)
 {
     // Cleared here rather than in the world collision, which runs after the
     // solve that fills it in: put there, every mark this step made was wiped
@@ -4496,6 +5692,14 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
 
     const float damping = 1.0f - cg_ragdoll_damping->value;
     const float gravity = CG_RagdollGravity();
+    // The damping is there to soak up what the solver's corrections feed a
+    // body that is lying on something. Applied in the air too, as it was, it
+    // is drag: at 60 steps a second 2 per cent a step holds a falling body
+    // under 660 units a second, and a second into a fall it is moving at
+    // little more than half the speed it should. Bodies read as floating down.
+    const qboolean resting = CG_RagdollSupported(rd);
+
+    rd->balanced = CG_RagdollBalanced(rd, &rd->draped);
     float       maxDisp = 0.0f;
     float       meanDisp = 0.0f;
     int         i, k;
@@ -4557,10 +5761,34 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
         // stops, and hangs a few units below the aim, and the beam bends to
         // follow it. Its velocity is kept, so letting go mid swing throws it.
         if (i == rd->grabJoint) {
-            const float k = cg_ragdoll_grabspring->value;
-            const float c = 2.0f * RD_GRAB_DAMPING * sqrtf(k);
+            // Pulling against the world, the beam gives: when the part held
+            // is well short of where the beam wants it and the body is up
+            // against something, the pull is weakened and slowed, as the
+            // physics gun's is. At full strength it dragged a body into a
+            // ledge or a bracket at up to RD_GRAB_SPEED, the limbs caught on
+            // the edges and were snapped free a joint at a time.
+            //
+            // Eased in and out over a few steps, and let go of only once the
+            // gap has mostly closed: switched outright, the pull jumped between
+            // full and weak from one step to the next as the gap or the count
+            // of contacts crossed the line, and the held part shook with it.
+            const float gap      = Distance(rd->grabTarget, part->p);
+            const int   contacts = CG_RagdollContactsAgainst(rd, rd->grabTarget, part->p);
+            float       k, c, maxSpeed, ease;
             vec3_t      pull;
             float       speed;
+
+            if (gap > RD_GRAB_BLOCKED_GAP && contacts >= RD_GRAB_BLOCKED_CONTACTS) {
+                rd->grabBlocked = qtrue;
+            } else if (gap < RD_GRAB_BLOCKED_GAP * 0.5f || contacts < RD_GRAB_BLOCKED_CONTACTS - 1) {
+                rd->grabBlocked = qfalse;
+            }
+
+            rd->grabEase += ((rd->grabBlocked ? 1.0f : 0.0f) - rd->grabEase) * RD_GRAB_BLOCKED_EASE;
+            ease     = rd->grabEase;
+            k        = cg_ragdoll_grabspring->value * (1.0f + (RD_GRAB_BLOCKED_PULL - 1.0f) * ease);
+            c        = 2.0f * RD_GRAB_DAMPING * sqrtf(k);
+            maxSpeed = RD_GRAB_SPEED + (RD_GRAB_BLOCKED_SPEED - RD_GRAB_SPEED) * ease;
 
             VectorSubtract(rd->grabTarget, part->p, pull);
             VectorScale(pull, k, pull);
@@ -4570,8 +5798,8 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
             VectorMA(part->v, dt, pull, part->v);
 
             speed = VectorLength(part->v);
-            if (speed > RD_GRAB_SPEED) {
-                VectorScale(part->v, RD_GRAB_SPEED / speed, part->v);
+            if (speed > maxSpeed) {
+                VectorScale(part->v, maxSpeed / speed, part->v);
             }
 
             VectorCopy(part->p, part->pPrev);
@@ -4595,7 +5823,11 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
             continue;
         }
 
-        VectorScale(part->v, rd->grabJoint >= 0 ? damping * RD_GRAB_BODY_DAMPING : damping, part->v);
+        {
+            const float d = resting ? damping : 1.0f - (1.0f - damping) * RD_AIR_DAMPING;
+
+            VectorScale(part->v, rd->grabJoint >= 0 ? d * RD_GRAB_BODY_DAMPING : d, part->v);
+        }
         part->v[2] -= gravity * dt;
 
         VectorCopy(part->p, part->pPrev);
@@ -4610,12 +5842,16 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
     // that was outside it, so the trace always catches it.
     CG_RagdollSolveTracked(rd, cg_ragdoll_iterations->integer);
 
+    if (rd->grabJoint >= 0) {
+        CG_RagdollHoldHeading(rd);
+    }
+
     // Collision resolution moves particles with no regard for what they are
     // attached to, so if it had to move any, relax once more against the
     // planes it just found. Without this the emitted pose keeps whatever
     // violation the impact introduced, which reads as limbs stretching on
     // impact and as a corpse that creeps instead of settling.
-    if (CG_RagdollCollide(rd, skipEntity)) {
+    if (CG_RagdollCollide(rd, skipEntity) | CG_RagdollBoneSweep(rd, skipEntity)) {
         CG_RagdollSolveTracked(rd, cg_ragdoll_iterations->integer);
         CG_RagdollPushOut(rd, skipEntity);
         CG_RagdollLimbPushOut(rd, skipEntity);
@@ -4647,13 +5883,36 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
             VectorMA(part->v, (rd->grabJoint >= 0 ? solveGain * RD_GRAB_SOLVEGAIN : solveGain) / dt, part->solved, part->v);
         }
 
+        // Sliding friction, on every joint resting on a surface: the slide
+        // loses friction times the weight pressing it into the surface. A
+        // joint sliding along the floor is held just off it and its trace
+        // strikes nothing, so friction applied only where a trace hits
+        // (CG_RagdollCollide) acted only at the moment of landing.
+        if (part->hasContact && part->contactNormal[2] > 0.0f) {
+            const float along = DotProduct(part->v, part->contactNormal);
+            vec3_t      vt;
+            float       slide, keep;
+
+            VectorMA(part->v, -along, part->contactNormal, vt);
+            slide = VectorLength(vt);
+            if (slide > 0.001f) {
+                keep = Q_max(0.0f, slide - CG_RagdollFriction(rd) * CG_RagdollGravity() * part->contactNormal[2] * dt) / slide;
+                VectorMA(part->v, keep - 1.0f, vt, part->v);
+            }
+        }
+
         VectorSubtract(part->p, part->pPrev, d);
         len = VectorLength(d);
 
-        if (part->hasContact && supported) {
+        if (part->hasContact && supported && rd->balanced) {
             if (len < RD_REST_SPEED) {
                 VectorClear(part->v);
                 len = 0.0f;
+            } else if (len > RD_SLIDE_SPEED) {
+                // Sliding, which friction has in hand. The damping below is
+                // for the slow shuffle of a body that has nearly stopped; left
+                // on a body at speed it took two thirds of its speed a step,
+                // and nothing slid at all, whatever the friction was.
             } else {
                 VectorScale(part->v, RD_GROUND_DAMPING, part->v);
                 len *= RD_GROUND_DAMPING;
@@ -4667,7 +5926,39 @@ static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
         meanDisp += len;
     }
 
+    // A hard landing is soaked up rather than carried on. A body striking the
+    // world at speed kept all of its tumble, and with friction under it that
+    // turned into rolling: bounced off a wall, one landed at seven hundred
+    // units a second and was thrown three hundred and fifty sideways and up.
+    // Flesh does not do that; it gives, and the body splats. So the harder a
+    // step's worst impact, the more of the body's spin and of its limbs'
+    // flailing is taken out with it. Its sliding speed is left alone, which
+    // is what the friction is for.
+    {
+        const float splat = Q_clamp_float((rd->impactSpeed - RD_SPLAT_SPEED) / RD_SPLAT_RANGE, 0.0f, 1.0f) * RD_SPLAT_MAX;
+        const float limb  = Q_max(cg_ragdoll_limbdamp->value, splat);
+
+        if (limb > 0.0f || splat > 0.0f) {
+            CG_RagdollInternalDamping(rd, limb, splat);
+        }
+    }
+
     rd->lastMean = meanDisp / (float)RD_NUM_JOINTS;
+
+    return maxDisp;
+}
+
+static float CG_RagdollStep(cg_ragdoll_t *rd, int skipEntity, float dt)
+{
+    float maxDisp;
+
+    if (rd->numIgnoredProps) {
+        CG_RagdollReleaseEnclosingProps(rd);
+    }
+
+    rd_traceBody = rd;
+    maxDisp      = CG_RagdollStepInner(rd, skipEntity, dt);
+    rd_traceBody = NULL;
 
     return maxDisp;
 }
@@ -5049,9 +6340,215 @@ static void CG_RagdollMeasureChestRoll(cg_ragdoll_t *rd)
     }
 }
 
+//=============================================================
+// Clavicles
+//=============================================================
+
+// The ragdoll draws no clavicle: each upper arm hangs off the chest directly,
+// and is allowed to slide a few units toward where the solver has its shoulder
+// (cg_ragdoll_shoulderslack). The clavicle was left to the animation, hanging
+// off the chest in the death pose, so its end and the top of the upper arm came
+// apart by as much as the shoulder had moved. Nothing of the mesh hangs on the
+// clavicle itself, but the helper bones that shape the shoulder do (helper
+// Lshoulder and Rshoulder, placed along the clavicle), and on the right arm the
+// elbow helper hangs off those in turn. Every vertex on them was drawn where the
+// clavicle said the arm was, which on screen is an arm broken at the shoulder
+// or at the elbow.
+//
+// So the clavicle is drawn too: its root where it sat on the chest, turned to
+// point at the upper arm wherever that is drawn.
+static const char *const rd_clavicleNames[2] = {"Bip01 L Clavicle", "Bip01 R Clavicle"};
+static const int         rd_clavicleArm[2]   = {7, 10}; // rd_bones: L and R UpperArm
+#define RD_CLAVICLE_PARENT 4                           // rd_bones: Bip01 Spine2
+#define RD_CLAVICLE_MAX_TURN 35.0f
+#define RD_CLAVICLE_COS_TURN 0.8191520f                  // cos(35 degrees)
+
+// At seed, after the bones: where each clavicle is, against its chest.
+static void CG_RagdollSeedClavicles(cg_ragdoll_t *rd, refEntity_t *model)
+{
+    const int par = RD_CLAVICLE_PARENT;
+    int       s, j, k;
+
+    for (s = 0; s < 2; s++) {
+        vec3_t pos, axis[3], d;
+
+        rd->clavIndex[s] = -1;
+
+        if (rd->boneIndex[par] < 0 || rd->boneIndex[rd_clavicleArm[s]] < 0) {
+            continue;
+        }
+
+        rd->clavIndex[s] = cgi.Tag_NumForName(model->tiki, rd_clavicleNames[s]);
+        if (rd->clavIndex[s] < 0 || !CG_RagdollReadBoneWorld(model, rd->clavIndex[s], pos, axis)) {
+            rd->clavIndex[s] = -1;
+            continue;
+        }
+
+        VectorSubtract(pos, rd->bonePos[par], d);
+        for (k = 0; k < 3; k++) {
+            rd->clavOffset[s][k] = DotProduct(d, rd->boneAxis[par][k]);
+            for (j = 0; j < 3; j++) {
+                rd->clavLocal[s][j][k] = DotProduct(axis[j], rd->boneAxis[par][k]);
+            }
+        }
+
+        VectorCopy(pos, rd->clavPos[s]);
+        AxisCopy(axis, rd->clavAxis[s]);
+    }
+}
+
+// Once the bones are placed: each clavicle carried on the chest as it sat
+// there, then turned by as much as the shoulder slack has moved its upper arm
+// off the place the chest alone would put it, and slid so that it still meets
+// the arm. With no slack that is the clavicle exactly as the animation had it.
+static void CG_RagdollPlaceClavicles(cg_ragdoll_t *rd)
+{
+    const int par = RD_CLAVICLE_PARENT;
+    int       s, j, k;
+
+    for (s = 0; s < 2; s++) {
+        const int arm = rd_clavicleArm[s];
+        vec3_t    root, rigid, from, to, axis[3];
+        float     len;
+
+        if (rd->clavIndex[s] < 0) {
+            continue;
+        }
+
+        VectorCopy(rd->bonePos[par], root);
+        VectorCopy(rd->bonePos[par], rigid);
+        for (k = 0; k < 3; k++) {
+            VectorMA(root, rd->clavOffset[s][k], rd->rolledAxis[par][k], root);
+            VectorMA(rigid, rd->localOffset[arm][k], rd->rolledAxis[par][k], rigid);
+        }
+        for (j = 0; j < 3; j++) {
+            VectorClear(axis[j]);
+            for (k = 0; k < 3; k++) {
+                VectorMA(axis[j], rd->clavLocal[s][j][k], rd->rolledAxis[par][k], axis[j]);
+            }
+        }
+
+        VectorSubtract(rigid, root, from);
+        VectorSubtract(rd->bonePos[arm], root, to);
+        len = VectorNormalize(from);
+        if (len < 0.001f || VectorNormalize(to) < 0.001f) {
+            continue;
+        }
+
+        // Turned no further than this. The slack can move the arm by more
+        // than the clavicle is long, right across its root, and the turn that
+        // follows it there has no settled direction: it flipped the clavicle,
+        // and the shoulder with it, half round in a frame. Past the cap the
+        // clavicle only slides.
+        {
+            const float cosTurn = DotProduct(from, to);
+
+            if (cosTurn < RD_CLAVICLE_COS_TURN) {
+                vec3_t axisTurn;
+
+                CrossProduct(from, to, axisTurn);
+                if (VectorNormalize(axisTurn) > 0.001f) {
+                    RotatePointAroundVector(to, axisTurn, from, RD_CLAVICLE_MAX_TURN);
+                } else {
+                    VectorCopy(from, to);
+                }
+            }
+        }
+
+        for (j = 0; j < 3; j++) {
+            CG_RagdollCarry(from, to, axis[j], rd->clavAxis[s][j]);
+        }
+
+        // The slack moves the arm by as much as the clavicle is long, so
+        // turning alone leaves its end well short of the arm or past it. The
+        // clavicle keeps its length and its root slides along it instead: into
+        // or out of the base of the neck, which hides it, rather than the
+        // shoulder being drawn torn open.
+        VectorMA(rd->bonePos[arm], -len, to, rd->clavPos[s]);
+    }
+}
+
+// Appends the clavicles to the overrides, offset by drop.
+static void CG_RagdollWriteClavicles(cg_ragdoll_t *rd, refEntity_t *model, const vec3_t drop)
+{
+    int s;
+
+    for (s = 0; s < 2; s++) {
+        boneOverride_t *out = &rd->overrides[rd->numOverrides];
+        vec3_t          pos;
+
+        if (rd->clavIndex[s] < 0) {
+            continue;
+        }
+
+        VectorAdd(rd->clavPos[s], drop, pos);
+        out->boneIndex = rd->clavIndex[s];
+        CG_RagdollWriteBoneModel(model, pos, rd->clavAxis[s], out->matrix);
+        rd->numOverrides++;
+    }
+}
+
+// Where the two shoulders are drawn: each hung off the chest as it was at the
+// moment of death, then let slide up to cg_ragdoll_shoulderslack toward where
+// the simulation has it. Never closer together than they were at death,
+// though. The simulated shoulders are held apart by a rigid bar, so they never
+// are; but when the drawn chest is turned against them, after a hard fling or
+// a twist, each one slid toward its own and the two met in the middle: the
+// shoulders drawn collapsed into the chest, and the clavicles, which follow
+// the arms, dragged in after them. Measured, a body wrung half round was drawn
+// with its shoulders at 59 per cent of their width.
+static void CG_RagdollSlideShoulders(cg_ragdoll_t *rd, vec3_t out[2])
+{
+    static const int bones[2] = {7, 10}; // rd_bones: L and R UpperArm
+    const float      slack    = cg_ragdoll_shoulderslack->value;
+    vec3_t           rigid[2], apart, mid;
+    float            restWidth, width;
+    int              s, k;
+
+    for (s = 0; s < 2; s++) {
+        const int b = bones[s];
+        vec3_t    off;
+        float     len;
+
+        VectorCopy(rd->bonePos[rd_bones[b].parent], rigid[s]);
+        for (k = 0; k < 3; k++) {
+            VectorMA(rigid[s], rd->localOffset[b][k], rd->rolledAxis[rd_bones[b].parent][k], rigid[s]);
+        }
+
+        VectorSubtract(rd->part[rd_bones[b].joint].p, rigid[s], off);
+        len = VectorLength(off);
+        if (len > slack) {
+            VectorScale(off, slack / len, off);
+        }
+        VectorAdd(rigid[s], off, out[s]);
+    }
+
+    VectorSubtract(rigid[1], rigid[0], apart);
+    restWidth = VectorLength(apart);
+
+    VectorSubtract(out[1], out[0], apart);
+    width = VectorNormalize(apart);
+
+    if (width >= restWidth) {
+        return;
+    }
+
+    if (width < 0.001f) {
+        VectorSubtract(rigid[1], rigid[0], apart);
+        VectorNormalize(apart);
+    }
+
+    VectorAdd(out[0], out[1], mid);
+    VectorScale(mid, 0.5f, mid);
+    VectorMA(mid, -0.5f * restWidth, apart, out[0]);
+    VectorMA(mid, 0.5f * restWidth, apart, out[1]);
+}
+
 static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weight)
 {
-    int i, j, k;
+    vec3_t   shoulderAt[2];
+    qboolean haveShoulders = qfalse;
+    int      i, j, k;
 
     rd->numOverrides = 0;
 
@@ -5061,6 +6558,7 @@ static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weig
         rd->spineRollFix = 0.0f;
     }
 
+    CG_RagdollLimbTwist(rd);
 
     // First pass: work out every bone's orientation.
     for (i = 0; i < RD_NUM_BONES; i++) {
@@ -5207,22 +6705,13 @@ static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weig
             // rather than a fudge. Clamped, because letting it go all the way
             // is how limbs used to stretch.
             if (cg_ragdoll_shoulderslack->value > 0.0f && (i == 7 || i == 10)) {
-                vec3_t want, off;
-                float  len;
-
-                VectorSubtract(rd->part[def->joint].p, worldPos, off);
-                len = VectorLength(off);
-
-                if (len > 0.001f) {
-                    const float slack = cg_ragdoll_shoulderslack->value;
-
-                    if (len > slack) {
-                        VectorScale(off, slack / len, off);
-                    }
-
-                    VectorAdd(worldPos, off, want);
-                    VectorCopy(want, worldPos);
+                // Both shoulders are worked out together, when the first is
+                // reached: each is held apart from the other.
+                if (!haveShoulders) {
+                    CG_RagdollSlideShoulders(rd, shoulderAt);
+                    haveShoulders = qtrue;
                 }
+                VectorCopy(shoulderAt[i == 7 ? 0 : 1], worldPos);
             }
         } else {
             // The root is the one bone that is positioned directly, so the
@@ -5284,6 +6773,13 @@ static void CG_RagdollBuildPose(cg_ragdoll_t *rd, refEntity_t *model, float weig
                 rd->numOverrides++;
             }
         }
+    }
+
+    {
+        const vec3_t none = {0, 0, 0};
+
+        CG_RagdollPlaceClavicles(rd);
+        CG_RagdollWriteClavicles(rd, model, none);
     }
 
     // Every bone now has a roll from a frame of its own to be measured
@@ -5624,6 +7120,412 @@ static qboolean CG_RagdollSkin(refEntity_t *model, const cg_ragdoll_t *owner)
     rd_skinTime  = cg.time;
 
     return rd_skinNumVerts > 0 && rd_skinNumTris > 0 ? qtrue : qfalse;
+}
+
+//=============================================================
+// Props: collision for the map's static models
+//=============================================================
+
+// The furniture a map is dressed with -- cots, shelves, tables, crates -- is
+// mostly static models, and a static model has no collision at all: the world
+// the traces see is the brushes, and a prop is solid to a player only where
+// the mapper put a clip brush round it. Most have none. In a room full of them
+// a body dropped on a cot lay on the floor through it, its hips poking up out
+// of the canvas.
+//
+// So each one is given a box, fitted to its drawn mesh in its own frame and
+// turned with it, and the ragdoll's traces run against those as well as the
+// world: the hull a Half-Life 2 prop would carry, simplified to one box. A
+// table is then solid underneath as well as on top and a shelf in front of its
+// shelves, which is the right way to be wrong: a body rests on it or against
+// it, and never ends up inside it.
+//
+// Left out: foliage, lights and wire (see CG_RagdollPropSkipped); things too
+// small to matter under a body; and anything so big a box could seal off a
+// room.
+typedef struct {
+    vec3_t origin;
+    vec3_t angles;
+    vec3_t axis[3];
+    vec3_t mins, maxs;     // in the model's own frame
+    vec3_t absmin, absmax; // the world box round it, for a cheap first test
+} rdProp_t;
+
+#define RD_MAX_PROPS      2048
+#define RD_PROP_MIN_SIZE  6.0f
+#define RD_PROP_MAX_SIZE  320.0f
+
+static rdProp_t rd_props[RD_MAX_PROPS];
+static int      rd_numProps;
+static char     rd_propsMap[MAX_QPATH];
+static qboolean rd_propsLoaded;
+
+// Whether a static model is left without a box, by its name: foliage, whose
+// box would be an invisible wall round a bush; the lights, which on a map such
+// as m1l2a are nearly three hundred of its five hundred static models, most of
+// them coronas and bulbs hanging in the air; and wire, whose box would be a
+// solid block where there is mostly nothing.
+static qboolean CG_RagdollPropSkipped(const char *name)
+{
+    static const char *words[] = {"tree",   "bush",  "plant", "grass",  "foliage", "palm",   "vine",  "ivy",
+                                  "fern",   "weed",  "flower", "hedge", "leaf",    "leaves", "branch", "shrub",
+                                  "reed",   "cactus", "corona", "flare", "light",  "lamp",   "bulb",  "lantern",
+                                  "wire"};
+    char   lower[128];
+    size_t i;
+
+    Q_strncpyz(lower, name, sizeof(lower));
+    Q_strlwr(lower);
+
+    for (i = 0; i < ARRAY_LEN(words); i++) {
+        if (strstr(lower, words[i])) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
+// The box round a static model, in its own frame: from its skinned mesh, or
+// from the model's own bounds if the renderer cannot skin it.
+static qboolean CG_RagdollPropBox(const cStaticModel_t *in, const char *path, rdProp_t *out)
+{
+    refEntity_t ent;
+    qhandle_t   h;
+    dtiki_t    *tiki;
+    vec3_t      axis[3];
+    float       scale;
+    int         i, k, n = 0;
+
+    h = cgi.R_RegisterModel(path);
+    if (!h) {
+        return qfalse;
+    }
+
+    tiki = cgi.R_Model_GetHandle(h);
+    if (!tiki || !tiki->a) {
+        return qfalse;
+    }
+
+    for (k = 0; k < 3; k++) {
+        out->origin[k] = LittleFloat(in->origin[k]);
+        out->angles[k] = LittleFloat(in->angles[k]);
+    }
+    scale = LittleFloat(in->scale);
+    AnglesToAxis(out->angles, axis);
+    AxisCopy(axis, out->axis);
+
+    ClearBounds(out->mins, out->maxs);
+
+    if (CG_RagdollCanSkin()) {
+        memset(&ent, 0, sizeof(ent));
+        ent.reType       = RT_MODEL;
+        ent.hModel       = h;
+        ent.tiki         = tiki;
+        ent.scale        = scale;
+        ent.entityNumber = ENTITYNUM_NONE;
+        // Posed as the renderer poses a static model, on the first frame of
+        // its first animation (TIKI_GetSkelAnimFrame). With no animation at
+        // all it came out in its bind pose, turned a quarter over: a chair's
+        // box lay on its side and a deck of cards stood on its edge.
+        ent.frameInfo[0].index  = 0;
+        ent.frameInfo[0].time   = 0.0f;
+        ent.frameInfo[0].weight = 1.0f;
+        ent.actionWeight        = 1.0f;
+        VectorCopy(out->origin, ent.origin);
+        VectorCopy(out->origin, ent.lightingOrigin);
+        AxisCopy(axis, ent.axis);
+
+        n = cgi.R_GetSkinnedMesh(&ent, rd_skinVerts, RD_SKIN_MAX_VERTS, rd_skinTris, RD_SKIN_MAX_TRIS, &i);
+        rd_skinOwner    = NULL;
+        rd_skinNumVerts = 0;
+
+        for (i = 0; i < n; i++) {
+            vec3_t d, local;
+
+            VectorSubtract(rd_skinVerts[i].xyz, out->origin, d);
+            for (k = 0; k < 3; k++) {
+                local[k] = DotProduct(d, axis[k]);
+            }
+            AddPointToBounds(local, out->mins, out->maxs);
+        }
+    }
+
+    if (n <= 0) {
+        for (k = 0; k < 3; k++) {
+            out->mins[k] = tiki->a->mins[k] * tiki->load_scale * scale;
+            out->maxs[k] = tiki->a->maxs[k] * tiki->load_scale * scale;
+        }
+    }
+
+    // The world box round the turned one.
+    ClearBounds(out->absmin, out->absmax);
+    for (i = 0; i < 8; i++) {
+        vec3_t corner, world;
+
+        corner[0] = (i & 1) ? out->maxs[0] : out->mins[0];
+        corner[1] = (i & 2) ? out->maxs[1] : out->mins[1];
+        corner[2] = (i & 4) ? out->maxs[2] : out->mins[2];
+
+        VectorCopy(out->origin, world);
+        for (k = 0; k < 3; k++) {
+            VectorMA(world, corner[k], axis[k], world);
+        }
+        AddPointToBounds(world, out->absmin, out->absmax);
+    }
+
+    return qtrue;
+}
+
+// Reads the map's static models, once a map.
+static void CG_RagdollLoadProps(void)
+{
+    void                 *buf = NULL;
+    long                  len;
+    dheader_t             header;
+    const lump_t         *lump;
+    const cStaticModel_t *in;
+    int                   i, count, kept = 0, skipped = 0, sized = 0;
+
+    if (rd_propsLoaded && !Q_stricmp(rd_propsMap, cgs.mapname)) {
+        return;
+    }
+
+    rd_propsLoaded = qtrue;
+    Q_strncpyz(rd_propsMap, cgs.mapname, sizeof(rd_propsMap));
+    rd_numProps = 0;
+
+    if (!cgs.mapname[0] || !cgi.FS_ReadFile) {
+        return;
+    }
+
+    len = cgi.FS_ReadFile(cgs.mapname, &buf, qtrue);
+    if (len < (long)sizeof(dheader_t) || !buf) {
+        if (buf) {
+            cgi.FS_FreeFile(buf);
+        }
+        return;
+    }
+
+    memcpy(&header, buf, sizeof(header));
+    for (i = 0; i < (int)(sizeof(dheader_t) / 4); i++) {
+        ((int *)&header)[i] = LittleLong(((int *)&header)[i]);
+    }
+
+    lump  = Q_GetLumpByVersion(&header, LUMP_STATICMODELDEF);
+    count = (lump->fileofs > 0 && lump->filelen > 0 && lump->fileofs + lump->filelen <= len)
+              ? lump->filelen / (int)sizeof(cStaticModel_t)
+              : 0;
+    in    = (const cStaticModel_t *)((const byte *)buf + lump->fileofs);
+
+    for (i = 0; i < count && rd_numProps < RD_MAX_PROPS; i++) {
+        char      path[MAX_QPATH];
+        char      name[sizeof(in[i].model) + 1];
+        rdProp_t *p = &rd_props[rd_numProps];
+        float     biggest = 0.0f;
+        int       k;
+
+        memcpy(name, in[i].model, sizeof(in[i].model));
+        name[sizeof(in[i].model)] = 0;
+
+        if (CG_RagdollPropSkipped(name)) {
+            skipped++;
+            continue;
+        }
+
+        if (!Q_stricmpn(name, "models", 6)) {
+            Q_strncpyz(path, name, sizeof(path));
+        } else {
+            Com_sprintf(path, sizeof(path), "models/%s", name);
+        }
+        cgi.FS_CanonicalFilename(path);
+
+        if (!CG_RagdollPropBox(&in[i], path, p)) {
+            continue;
+        }
+
+        for (k = 0; k < 3; k++) {
+            biggest = Q_max(biggest, p->maxs[k] - p->mins[k]);
+        }
+
+        if (biggest < RD_PROP_MIN_SIZE || biggest > RD_PROP_MAX_SIZE) {
+            sized++;
+            continue;
+        }
+
+        if (cg_ragdoll_log->integer > 1) {
+            cgi.Printf(
+                "ragdoll: prop %d %s at %.0f %.0f %.0f, box %.0f x %.0f x %.0f\n",
+                rd_numProps,
+                name,
+                p->origin[0],
+                p->origin[1],
+                p->origin[2],
+                p->maxs[0] - p->mins[0],
+                p->maxs[1] - p->mins[1],
+                p->maxs[2] - p->mins[2]
+            );
+        }
+
+        rd_numProps++;
+        kept++;
+    }
+
+    cgi.FS_FreeFile(buf);
+
+    if (cg_ragdoll_log->integer) {
+        cgi.Printf(
+            "ragdoll: %d of %d static models on %s are solid to corpses (%d foliage, lights or wire, %d too small or too big)\n",
+            kept,
+            count,
+            cgs.mapname,
+            skipped,
+            sized
+        );
+    }
+}
+
+// CG_Trace, and then the props.
+static void CG_RagdollTrace(
+    trace_t     *result,
+    const vec3_t start,
+    const vec3_t mins,
+    const vec3_t maxs,
+    const vec3_t end,
+    int          skipNumber,
+    int          mask,
+    qboolean     cylinder,
+    qboolean     cliptoentities,
+    const char  *description
+)
+{
+    vec3_t smin, smax;
+    int    i, k;
+
+    CG_Trace(result, start, mins, maxs, end, skipNumber, mask, cylinder, cliptoentities, description);
+
+    if (!cg_ragdoll_props || !cg_ragdoll_props->integer || !(mask & CONTENTS_SOLID)) {
+        return;
+    }
+
+    CG_RagdollLoadProps();
+
+    if (!rd_numProps || result->allsolid) {
+        return;
+    }
+
+    for (k = 0; k < 3; k++) {
+        smin[k] = Q_min(start[k], end[k]) + mins[k];
+        smax[k] = Q_max(start[k], end[k]) + maxs[k];
+    }
+
+    for (i = 0; i < rd_numProps; i++) {
+        const rdProp_t *p = &rd_props[i];
+        trace_t         tr;
+        clipHandle_t    box;
+
+        if (smin[0] > p->absmax[0] || smax[0] < p->absmin[0] || smin[1] > p->absmax[1] || smax[1] < p->absmin[1]
+            || smin[2] > p->absmax[2] || smax[2] < p->absmin[2]) {
+            continue;
+        }
+
+        if (rd_traceBody) {
+            int n;
+
+            for (n = 0; n < rd_traceBody->numIgnoredProps && rd_traceBody->ignoredProp[n] != i; n++) {
+            }
+
+            if (n < rd_traceBody->numIgnoredProps) {
+                continue;
+            }
+        }
+
+        box = cgi.CM_TempBoxModel(p->mins, p->maxs, CONTENTS_SOLID);
+        cgi.CM_TransformedBoxTrace(&tr, start, end, mins, maxs, box, mask, p->origin, p->angles, cylinder);
+
+        if (tr.allsolid || tr.fraction < result->fraction) {
+            tr.entityNum = ENTITYNUM_WORLD;
+            *result      = tr;
+        } else if (tr.startsolid) {
+            result->startsolid = qtrue;
+        }
+    }
+}
+
+// Props the body is already inside as it dies, which it is then left to pass
+// through. A soldier sitting on a bench, lying in a bunk or standing close in at
+// a table is inside that prop's box, since the box is solid right through where
+// the real thing is not; pushed out of it, the whole body was thrown clear of
+// it at once, a toe travelling forty eight units in one step.
+// Whether any of the body's joints is inside a prop's box.
+static qboolean CG_RagdollInsideProp(const cg_ragdoll_t *rd, const rdProp_t *p)
+{
+    int j, k;
+
+    for (j = 0; j < RD_NUM_JOINTS; j++) {
+        const float *x = rd->part[j].p;
+        vec3_t       d;
+        qboolean     inside = qtrue;
+
+        if (x[0] < p->absmin[0] - rd->radius || x[0] > p->absmax[0] + rd->radius || x[1] < p->absmin[1] - rd->radius
+            || x[1] > p->absmax[1] + rd->radius || x[2] < p->absmin[2] - rd->radius
+            || x[2] > p->absmax[2] + rd->radius) {
+            continue;
+        }
+
+        VectorSubtract(x, p->origin, d);
+        for (k = 0; k < 3; k++) {
+            const float local = DotProduct(d, p->axis[k]);
+
+            if (local < p->mins[k] - rd->radius || local > p->maxs[k] + rd->radius) {
+                inside = qfalse;
+                break;
+            }
+        }
+
+        if (inside) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
+static void CG_RagdollNoteEnclosingProps(cg_ragdoll_t *rd)
+{
+    int i;
+
+    rd->numIgnoredProps = 0;
+
+    if (!cg_ragdoll_props->integer) {
+        return;
+    }
+
+    CG_RagdollLoadProps();
+
+    for (i = 0; i < rd_numProps && rd->numIgnoredProps < (int)ARRAY_LEN(rd->ignoredProp); i++) {
+        if (CG_RagdollInsideProp(rd, &rd_props[i])) {
+            rd->ignoredProp[rd->numIgnoredProps++] = (short)i;
+            CG_RagdollLog(rd, "inside prop %d as it died; passing through it", i);
+        }
+    }
+}
+
+// Once the body is clear of a prop it died inside, the prop is solid to it
+// again: a corpse thrown back onto the bunk it was lying in lands on it.
+static void CG_RagdollReleaseEnclosingProps(cg_ragdoll_t *rd)
+{
+    int n = 0, i;
+
+    for (i = 0; i < rd->numIgnoredProps; i++) {
+        const int index = rd->ignoredProp[i];
+
+        if (index < rd_numProps && CG_RagdollInsideProp(rd, &rd_props[index])) {
+            rd->ignoredProp[n++] = (short)index;
+        }
+    }
+
+    rd->numIgnoredProps = n;
 }
 
 // For cg_ragdoll_debug 3: the last triangle a round went into, and where.
@@ -6110,12 +8012,21 @@ static void CG_RagdollWake(cg_ragdoll_t *rd)
         }
 
         rd->state = RD_ACTIVE;
+
+        // The clock starts again from now. It is not advanced while a body
+        // sleeps, so waking it left the whole sleep owed as simulation time:
+        // five steps were run on the next frame, the most a frame may take,
+        // and a body punted or shot as it woke travelled five frames' worth
+        // at once, the whole corpse jumping thirty and forty units.
+        rd->lastTime = cg.time;
+        rd->accum    = 0.0f;
     }
 
     rd->sleepPinned = qfalse;
     rd->sleepDrop   = 0.0f;
     rd->quietSince  = cg.time;
     rd->wakeUntil   = cg.time + RD_WAKE_TIME;
+    rd->lastWake    = cg.time;
     rd->wakeCount++;
 
     // A joint that had given up getting out of the world is given another go:
@@ -6358,7 +8269,7 @@ static cg_ragdoll_t *CG_RagdollUnderCrosshair(float *entry)
     VectorMA(start, cg_ragdoll_grabrange->value, dir, end);
 
     // Only as far as the first wall.
-    CG_Trace(&tr, start, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, RD_CLIPMASK, qfalse, qfalse, "ragdoll grab");
+    CG_RagdollTrace(&tr, start, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, RD_CLIPMASK, qfalse, qfalse, "ragdoll grab");
     length = cg_ragdoll_grabrange->value * tr.fraction;
 
     for (n = 0; n < MAX_RAGDOLLS; n++) {
@@ -6438,6 +8349,7 @@ static void CG_RagdollKeepAwake(cg_ragdoll_t *rd)
 
     rd->quietSince = cg.time;
     rd->wakeUntil  = cg.time + RD_WAKE_TIME;
+    rd->lastWake   = cg.time;
 }
 
 extern "C" void CG_RagdollGrabDown_f(void)
@@ -6778,7 +8690,7 @@ static void CG_RagdollGrabUpdate(void)
     VectorMA(start, rd_grab.dist, dir, target);
 
     // Never carried into a wall: the end of the beam stops short of it.
-    CG_Trace(&tr, start, vec3_origin, vec3_origin, target, cg.snap->ps.clientNum, RD_CLIPMASK, qfalse, qfalse, "ragdoll grab");
+    CG_RagdollTrace(&tr, start, vec3_origin, vec3_origin, target, cg.snap->ps.clientNum, RD_CLIPMASK, qfalse, qfalse, "ragdoll grab");
     if (tr.fraction < 1.0f) {
         VectorMA(tr.endpos, -4.0f, dir, target);
     }
@@ -6887,6 +8799,8 @@ static qboolean CG_RagdollDumpOpen(cg_ragdoll_t *rd, refEntity_t *model)
         "# C <contact> <onground> <buried>   bitmasks over the joints, low bit joint 0\n"
         "# L <limbburied>   bitmask over the limb bones, low bit bone 0, middle found inside the world\n"
         "# B2 <onbody>   bitmask over the joints, those being held up by another corpse rather than the world\n"
+        "# G <joint> <gap> <ease>   the joint the grabber holds (-1 for none), how far it is from where the\n"
+        "#     grabber wants it, and how far the grab has eased off against something in the way (0-1)\n"
         "# W <wakes>   how many times a shot or a blast has moved this corpse since it died\n"
         "# K <blast> <radius> <speed>   the explosion that threw this body, if any\n"
         "# R <chestrollfix> <chestrollerr>   degrees the back is being rolled, and what the last\n"
@@ -7065,6 +8979,16 @@ static void CG_RagdollDumpFrame(cg_ragdoll_t *rd, float weight)
         Com_sprintf(line, sizeof(line), "B2 %d\n", rd->onBodyMask);
         CG_RagdollDumpLine(rd, line);
 
+        Com_sprintf(
+            line,
+            sizeof(line),
+            "G %d %.1f %.2f\n",
+            rd->grabJoint,
+            rd->grabJoint >= 0 ? Distance(rd->grabTarget, rd->part[rd->grabJoint].p) : 0.0f,
+            rd->grabEase
+        );
+        CG_RagdollDumpLine(rd, line);
+
         // Whether this man was blown up. Recorded so that a claim about which
         // bodies misbehave -- that it is the ones caught in blasts -- can be
         // answered from the trace rather than from an impression.
@@ -7201,6 +9125,14 @@ void CG_InitRagdoll(void)
     cg_ragdoll_damping     = cgi.Cvar_Get("cg_ragdoll_damping", "0.02", CVAR_ARCHIVE);
     cg_ragdoll_friction    = cgi.Cvar_Get("cg_ragdoll_friction", "0.55", CVAR_ARCHIVE);
     cg_ragdoll_bounce      = cgi.Cvar_Get("cg_ragdoll_bounce", "0.15", CVAR_ARCHIVE);
+    // The same between two bodies. Flesh into flesh hardly bounces at all.
+    cg_ragdoll_bodybounce  = cgi.Cvar_Get("cg_ragdoll_bodybounce", "0", CVAR_ARCHIVE);
+    // Share of the limbs' motion relative to the rest of the body taken out
+    // each step (CG_RagdollInternalDamping), which calms limbs whipping about
+    // on a landing or a throw without slowing the body itself. 0 is off.
+    // Measured, 0.05 takes a fifth off the limb whipping in falls and punts;
+    // more costs the pose elsewhere, so it is left to be judged by eye.
+    cg_ragdoll_limbdamp    = cgi.Cvar_Get("cg_ragdoll_limbdamp", "0.05", CVAR_ARCHIVE);
     // Corpses used to have to be put to sleep fairly eagerly to hide a fidget
     // that came from the joint limits never quite settling. That is fixed at
     // the source now, so this only has to catch a body that has genuinely
@@ -7261,6 +9193,9 @@ void CG_InitRagdoll(void)
     // scaled by this. 0 keeps the hand-set sizes in rd_joints. Off until the
     // clipping metric says it helps: fatter shapes have hurt before (99fad083).
     cg_ragdoll_meshfit = cgi.Cvar_Get("cg_ragdoll_meshfit", "0", CVAR_ARCHIVE);
+    cg_ragdoll_props   = cgi.Cvar_Get("cg_ragdoll_props", "1", CVAR_ARCHIVE);
+    rd_propsLoaded     = qfalse;
+    rd_numProps        = 0;
     // The grabber (+rdgrab, rdpunt): how far it reaches, and how hard a punt
     // throws a body, in units per second.
     // The grabber is off until this is set, and setting it binds its keys.
@@ -7276,7 +9211,7 @@ void CG_InitRagdoll(void)
     cg_ragdoll_chestroll = cgi.Cvar_Get("cg_ragdoll_chestroll", "1.0", CVAR_ARCHIVE);
     cg_ragdoll_spinetwist = cgi.Cvar_Get("cg_ragdoll_spinetwist", "45", CVAR_ARCHIVE);
     cg_ragdoll_pinsleep   = cgi.Cvar_Get("cg_ragdoll_pinsleep", "1", CVAR_ARCHIVE);
-    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "2", CVAR_ARCHIVE);
+    cg_ragdoll_jointsize  = cgi.Cvar_Get("cg_ragdoll_jointsize", "3", CVAR_ARCHIVE);
     cg_ragdoll_shoulderslack = cgi.Cvar_Get("cg_ragdoll_shoulderslack", "9", CVAR_ARCHIVE);
     cg_ragdoll_bodypush   = cgi.Cvar_Get("cg_ragdoll_bodypush", "0.35", CVAR_ARCHIVE);
     cg_ragdoll_stuckhold  = cgi.Cvar_Get("cg_ragdoll_stuckhold", "0.1", CVAR_ARCHIVE);
@@ -7314,6 +9249,8 @@ void CG_InitRagdoll(void)
     cgi.Cvar_CheckRange(cg_ragdoll_damping, 0, 0.5f, qfalse);
     cgi.Cvar_CheckRange(cg_ragdoll_friction, 0, 1, qfalse);
     cgi.Cvar_CheckRange(cg_ragdoll_bounce, 0, 1, qfalse);
+    cgi.Cvar_CheckRange(cg_ragdoll_bodybounce, 0, 1, qfalse);
+    cgi.Cvar_CheckRange(cg_ragdoll_limbdamp, 0, 0.5f, qfalse);
 }
 
 void CG_ShutdownRagdoll(void)
@@ -7870,7 +9807,7 @@ static void CG_RagdollMeasureClipping(cg_ragdoll_t *rd, refEntity_t *model, int 
             if (v->xyz[2] <= lowest + RD_CLIP_UNDERSIDE && gap > 0.0f) {
                 VectorCopy(v->xyz, probe);
                 probe[2] -= RD_CLIP_PROBE;
-                CG_Trace(&tr, v->xyz, vec3_origin, vec3_origin, probe, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll gap");
+                CG_RagdollTrace(&tr, v->xyz, vec3_origin, vec3_origin, probe, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll gap");
 
                 if (!tr.startsolid && tr.fraction < 1.0f && tr.fraction * RD_CLIP_PROBE < gap) {
                     gap = tr.fraction * RD_CLIP_PROBE;
@@ -7883,7 +9820,7 @@ static void CG_RagdollMeasureClipping(cg_ragdoll_t *rd, refEntity_t *model, int 
         depth = RD_CLIP_PROBE;
         VectorCopy(v->xyz, probe);
         probe[2] += RD_CLIP_PROBE;
-        CG_Trace(&tr, probe, vec3_origin, vec3_origin, v->xyz, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll clipping");
+        CG_RagdollTrace(&tr, probe, vec3_origin, vec3_origin, v->xyz, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll clipping");
         if (!tr.startsolid) {
             depth = RD_CLIP_PROBE * (1.0f - tr.fraction);
         }
@@ -7904,7 +9841,7 @@ static void CG_RagdollMeasureClipping(cg_ragdoll_t *rd, refEntity_t *model, int 
             }
 
             length = Distance(boneWorld[v->bone], v->xyz);
-            CG_Trace(&tr, boneWorld[v->bone], vec3_origin, vec3_origin, v->xyz, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll clipping");
+            CG_RagdollTrace(&tr, boneWorld[v->bone], vec3_origin, vec3_origin, v->xyz, entityNum, RD_CLIPMASK, qfalse, qtrue, "ragdoll clipping");
 
             if (!tr.startsolid && length * (1.0f - tr.fraction) < depth) {
                 depth = length * (1.0f - tr.fraction);
@@ -8029,6 +9966,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             return;
         }
 
+        CG_RagdollNoteEnclosingProps(rd);
+
         CG_RagdollFindImpulse(rd);
         CG_RagdollFindBlast(rd);
 
@@ -8048,8 +9987,24 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         }
     }
 
+    // Or the next body woken, by a shot or the grabber, since a corpse that is
+    // already down is most of what gets looked at: set before picking a body
+    // up, the trace covers what it does from then on.
+    if (cg_ragdoll_dump->integer > 0 && !rd->dumpFile && rd->state == RD_ACTIVE && rd->lastWake
+        && cg.time - rd->lastWake < 100 && CG_RagdollDumpOpen(rd, model)) {
+        char left[16];
+
+        Com_sprintf(left, sizeof(left), "%d", cg_ragdoll_dump->integer - 1);
+        cgi.Cvar_Set("cg_ragdoll_dump", left);
+        CG_RagdollLog(rd, "tracing to %s", rd->dumpName);
+    }
+
     rd->entityNum     = cent->currentState.number;
     rd->lastEntityNum = rd->entityNum;
+    if (model != &rd->unsent) {
+        rd->unsent     = *model;
+        rd->haveUnsent = qtrue;
+    }
     VectorCopy(cent->lerpOrigin, rd->entOrigin);
     VectorCopy(cent->lerpAngles, rd->entAngles);
 
@@ -8086,6 +10041,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // costs as much elsewhere as it wins here.
     if (rd->state == RD_BLENDING && weight >= 1.0f) {
         rd->state = RD_ACTIVE;
+        CG_RagdollStartTwist(rd);
 
         // Nothing is measured again here, and it is worth saying why, because
         // it looks like an obvious thing to do and was tried at some length.
@@ -8192,6 +10148,14 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
         CG_RagdollDumpFrame(rd, weight);
 
+        if (CG_RagdollRestingOnLevel(rd) && rd->balanced) {
+            if (!rd->restingSince) {
+                rd->restingSince = cg.time;
+            }
+        } else {
+            rd->restingSince = 0;
+        }
+
         if (rd->state == RD_ACTIVE) {
             // Being slow is not the same as having come to rest. A body going
             // over a ledge, or working its way down a staircase, passes through
@@ -8205,12 +10169,12 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 rd->quietSince = cg.time;
             }
 
-            if (supported && cg.time - rd->quietSince > cg_ragdoll_sleeptime->integer) {
+            if (supported && rd->balanced && cg.time - rd->quietSince > cg_ragdoll_sleeptime->integer) {
                 rd->state = RD_SLEEPING;
                 CG_RagdollLog(rd, "asleep after %d ms", elapsed);
                 CG_RagdollNoteMovers(rd);
                 rd->measureClip = qtrue;
-            } else if (cg_ragdoll_duration->integer > 0 && elapsed > cg_ragdoll_duration->integer
+            } else if (cg_ragdoll_duration->integer > 0 && cg.time - Q_max(rd->startTime, rd->lastWake) > cg_ragdoll_duration->integer
                        && cg.time > rd->wakeUntil) {
                 // The lifetime cap is a budget, not a statement about the body.
                 // Applied on its own it freezes whatever pose the corpse is in
@@ -8218,7 +10182,27 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 // is left standing on its head in mid air. So a corpse that has
                 // nothing under it goes on simulating, and only a hard backstop
                 // far beyond any real settling time overrides that.
-                if (supported || elapsed > cg_ragdoll_duration->integer * RD_SLEEP_BACKSTOP) {
+                // Resting on level ground or another body, that is: not merely
+                // touching a wall with most of itself, or hooked on something
+                // by a joint wedged into it. Counted as support, those froze a
+                // body that had snagged a ledge on its way down, hanging off
+                // it against the wall.
+                //
+                // And only a body that has nearly stopped. Resting counts
+                // joints, and a body toppling off a ledge feet first has them
+                // on the ground the moment it lands: frozen there, it was left
+                // standing upright in mid fall. The cap is for a body that
+                // will not stop fidgeting, not for one still on its way down.
+                //
+                // Nor for one that has only just arrived. The cap counts from
+                // the last wake, and a body let go of that then hung by a knee
+                // over a beam for three seconds spent the whole allowance up
+                // there: it was frozen a sixth of a second after it reached the
+                // floor, still settling at sixty units a second. So it must
+                // have been lying there a second first, time enough for an
+                // ordinary settle to put it to sleep on its own.
+                if ((rd->restingSince && cg.time - rd->restingSince > RD_CAP_SETTLE && rd->lastMean < RD_CAP_MAX_MEAN)
+                    || cg.time - Q_max(rd->startTime, rd->lastWake) > cg_ragdoll_duration->integer * RD_SLEEP_BACKSTOP) {
                     rd->state = RD_SLEEPING;
                     CG_RagdollLog(rd, "asleep after %d ms, at the lifetime cap", elapsed);
                     CG_RagdollNoteMovers(rd);
@@ -8280,13 +10264,17 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             CG_RagdollWriteBoneModel(model, held, rd->boneAxis[b], out->matrix);
             rd->numOverrides++;
         }
+
+        CG_RagdollWriteClavicles(rd, model, drop);
     }
 
     if (!rd->numOverrides) {
         return;
     }
 
-    model->bone_override      = rd->overrides;
+    CG_RagdollRecenter(rd, model);
+
+    model->bone_override      = rd->drawOverrides;
     model->num_bone_overrides = rd->numOverrides;
 
     // Install the pose on the skeletor now, so that everything else this frame
@@ -8326,6 +10314,68 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 //  is what stops limbs stretching, but it also means nothing about the drawn
 //  skeleton reveals the particles collapsing underneath it. This is the only
 //  way to see that from outside.
+// Draws the corpses whose entities the server has stopped sending.
+//
+// The server decides what to send by where it thinks the corpse is, and that is
+// where the man died: the ragdoll is the client's alone. Carried or thrown out
+// of sight of that spot, a body lying in plain view stopped being drawn, and
+// came back only when the player moved so that the place of death could be seen
+// again: a body blinking out of existence.
+//
+// So a ragdoll whose entity has left the snapshot goes on being simulated and
+// drawn from the last model its entity handed over, as long as the spot its
+// entity stands at is out of sight from here. If that spot can be seen and the
+// entity has still gone, the server has taken the corpse away, and so does
+// this.
+void CG_RagdollAddUnsent(void)
+{
+    int viewLeaf;
+    int i;
+
+    if (!cg_ragdoll->integer || !cg.snap) {
+        return;
+    }
+
+    // Read the map's props as it starts rather than on the first death, which
+    // would otherwise pay for skinning every one of them in the middle of a
+    // firefight.
+    if (cg_ragdoll_props->integer) {
+        CG_RagdollLoadProps();
+    }
+
+    viewLeaf = cgi.CM_PointLeafnum(cg.refdef.vieworg);
+
+    for (i = 0; i < MAX_RAGDOLLS; i++) {
+        cg_ragdoll_t *rd = &cg_ragdolls[i];
+        centity_t    *cent;
+        refEntity_t   model;
+
+        if (rd->state == RD_FREE || rd->entityNum == ENTITYNUM_NONE || !rd->haveUnsent) {
+            continue;
+        }
+
+        cent = &cg_entities[rd->entityNum];
+
+        if (cent->currentValid) {
+            continue;
+        }
+
+        if (cgi.CM_LeafInPVS(viewLeaf, cgi.CM_PointLeafnum(cent->lerpOrigin))) {
+            continue;
+        }
+
+        model = rd->unsent;
+        CG_RagdollUpdateEntity(cent, &model);
+
+        // Freed, or left unposed, on the way through.
+        if (rd->state == RD_FREE || !model.bone_override) {
+            continue;
+        }
+
+        cgi.R_AddRefEntityToScene(&model, ENTITYNUM_NONE);
+    }
+}
+
 extern "C" int CG_RagdollDebugParticles(int entityNum, float *out, int maxJoints)
 {
     int i, n;

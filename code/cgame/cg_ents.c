@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cg_ents.c -- present snapshot entities, happens every single frame
 
 #include "cg_local.h"
+#include "cg_ragdoll.h"
 #include "cg_radar.h"
 
 /*
@@ -692,6 +693,11 @@ void CG_AddPacketEntities(void)
             CG_AddCEntity(cent);
         }
     }
+
+    // Added in OPM
+    //  Corpses the server has culled by where they died rather than where the
+    //  ragdoll has taken them.
+    CG_RagdollAddUnsent();
 
     // Add in the multibeams at the end
     for (num = 0; num < cg.snap->numEntities; num++) {
