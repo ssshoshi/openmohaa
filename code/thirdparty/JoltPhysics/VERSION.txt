@@ -1,0 +1,1 @@
+JoltPhysics v5.6.0 (https://github.com/jrouwe/JoltPhysics, tag v5.6.0): only the Jolt/ library and LICENSE are vendored. Built by cmake/libraries/jolt.cmake.
