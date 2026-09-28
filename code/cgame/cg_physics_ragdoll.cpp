@@ -130,8 +130,15 @@ static const prPartDef_t pr_parts[PR_NUM_PARTS] = {
 #define PR_SHOULDER_ABD_MIN  -45.0f
 #define PR_SHOULDER_ABD_MAX  180.0f
 
-// How far a knee or an elbow bends, degrees from straight.
-#define PR_HINGE_MAX 150.0f
+// How far a knee or an elbow bends, degrees from straight: the normative
+// ranges (AAOS: knee 135, elbow 150, less a little for an elbow at rest), and
+// never quite straight, as the particle solver's braces hold them (at least 20
+// degrees there). The least bend is a soft limit, so a leg that died straight
+// eases into it rather than being snapped.
+#define PR_KNEE_MAX           135.0f
+#define PR_ELBOW_MAX          145.0f
+#define PR_HINGE_MIN          10.0f
+#define PR_HINGE_MIN_STIFFNESS 10.0f // hertz
 
 // Friction in the joints, newton metres, which is most of what stops a limp
 // body flailing.
@@ -140,6 +147,23 @@ static const prPartDef_t pr_parts[PR_NUM_PARTS] = {
 #define PR_FRICTION_LIMB  2.0f
 #define PR_FRICTION_HINGE 1.0f
 #define PR_FRICTION_END   0.3f
+
+// The hold on the death pose while the body is still going limp: how stiff the
+// joints' motors are (hertz, critically damped) and, per kind of joint, the
+// most torque they have at the start (newton metres), fading to none.
+#define PR_TONE_FREQUENCY 4.0f
+
+static const float pr_tone[] = {
+    0.0f,   // PR_ROOT
+    120.0f, // PR_BACK
+    25.0f,  // PR_NECKJ
+    30.0f,  // PR_SHOULDER
+    15.0f,  // PR_ELBOW
+    5.0f,   // PR_WRIST
+    120.0f, // PR_HIP
+    80.0f,  // PR_KNEE
+    10.0f,  // PR_ANKLE
+};
 
 // The grabber's spring: natural frequency, radians a second (critically
 // damped), and the most it accelerates the joint held, units a second squared.
@@ -156,6 +180,9 @@ typedef struct {
 
     int    holdJoint;
     vec3_t holdTarget;
+
+    // The hold on the death pose: how long it lasts, and how far into it.
+    float toneTime, toneElapsed;
 
     // Gathered from the contacts of the latest step.
     qboolean contact[RD_NUM_JOINTS];
@@ -236,18 +263,30 @@ static JPH::Vec3 PR_AnySquare(JPH::Vec3Arg v)
     return PR_Normalized(fabsf(v.GetZ()) < 0.9f ? v.Cross(JPH::Vec3::sAxisZ()) : v.Cross(JPH::Vec3::sAxisX()), JPH::Vec3::sAxisX());
 }
 
-// A capsule between two points of a part's own space.
-static JPH::ShapeRefC PR_Capsule(JPH::Vec3Arg a, JPH::Vec3Arg b, float radius)
+// A capsule between two points of a part's own space, radiusA thick at a and
+// radiusB at b; a straight one if the taper cannot be made.
+static JPH::ShapeRefC PR_Capsule(JPH::Vec3Arg a, JPH::Vec3Arg b, float radiusA, float radiusB)
 {
-    const JPH::Vec3 d   = b - a;
-    const float     len = d.Length();
-    JPH::Quat       rot = JPH::Quat::sIdentity();
+    const JPH::Vec3 d    = b - a;
+    const float     len  = d.Length();
+    const float     half = Q_max(len * 0.5f, 0.001f);
+    JPH::Quat       rot  = JPH::Quat::sIdentity();
 
     if (len > 1e-5f) {
         rot = JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), d / len);
     }
 
-    JPH::RotatedTranslatedShapeSettings shape((a + b) * 0.5f, rot, new JPH::CapsuleShapeSettings(Q_max(len * 0.5f, 0.001f), radius));
+    // Its top, +Y, is at b.
+    if (fabsf(radiusA - radiusB) > 0.001f) {
+        JPH::RotatedTranslatedShapeSettings tapered((a + b) * 0.5f, rot, new JPH::TaperedCapsuleShapeSettings(half, radiusB, radiusA));
+        JPH::ShapeSettings::ShapeResult     result = tapered.Create();
+
+        if (!result.HasError()) {
+            return result.Get();
+        }
+    }
+
+    JPH::RotatedTranslatedShapeSettings shape((a + b) * 0.5f, rot, new JPH::CapsuleShapeSettings(half, (radiusA + radiusB) * 0.5f));
     JPH::ShapeSettings::ShapeResult     result = shape.Create();
 
     return result.HasError() ? JPH::ShapeRefC() : result.Get();
@@ -300,9 +339,10 @@ static JPH::Ref<JPH::SwingTwistConstraintSettings> PR_SwingTwist(
 }
 
 // A hinge about axis, the angle from the parent's direction to the child's,
-// limited to [-3, PR_HINGE_MAX] degrees or wider to take in how it starts.
+// limited to [PR_HINGE_MIN, maxDeg] degrees, the top widened to take in how it
+// starts; the bottom is soft.
 static JPH::Ref<JPH::HingeConstraintSettings> PR_Hinge(
-    JPH::RVec3Arg pivot, JPH::Vec3Arg axis, JPH::Vec3Arg parent, JPH::Vec3Arg child, float friction
+    JPH::RVec3Arg pivot, JPH::Vec3Arg axis, JPH::Vec3Arg parent, JPH::Vec3Arg child, float maxDeg, float friction
 )
 {
     JPH::Ref<JPH::HingeConstraintSettings> s  = new JPH::HingeConstraintSettings;
@@ -317,8 +357,14 @@ static JPH::Ref<JPH::HingeConstraintSettings> PR_Hinge(
     s->mHingeAxis2        = axis;
     s->mNormalAxis1       = n1;
     s->mNormalAxis2       = n2;
-    s->mLimitsMin         = Q_clamp_float(Q_min(DEG2RAD(-3.0f), angle - DEG2RAD(5.0f)), -JPH::JPH_PI, 0.0f);
-    s->mLimitsMax         = Q_clamp_float(Q_max(DEG2RAD(PR_HINGE_MAX), angle + DEG2RAD(5.0f)), 0.0f, JPH::JPH_PI);
+    // Jolt wants the bottom at or below zero and the top at or above it, so
+    // the least bend is kept by a soft limit at zero and a motor-free spring:
+    // the bottom sits at PR_HINGE_MIN by rotating what zero means, the
+    // normals being set that much apart.
+    s->mNormalAxis2       = JPH::Quat::sRotation(axis, -DEG2RAD(PR_HINGE_MIN)) * n2;
+    s->mLimitsMin         = 0.0f;
+    s->mLimitsMax         = Q_clamp_float(Q_max(DEG2RAD(maxDeg - PR_HINGE_MIN), angle - DEG2RAD(PR_HINGE_MIN) + DEG2RAD(5.0f)), 0.0f, JPH::JPH_PI);
+    s->mLimitsSpringSettings = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, PR_HINGE_MIN_STIFFNESS, 1.0f);
     s->mMaxFrictionTorque = friction;
     return s;
 }
@@ -336,7 +382,66 @@ static JPH::Vec3 PR_RangeNeutral(
     return PR_Normalized(d * cosf(abd) + out * sinf(abd), -up);
 }
 
-int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JOINTS], const float radius[RD_NUM_JOINTS])
+// Each joint's motors at a share of the hold on the death pose; off at none.
+static void CG_JoltRagdollTone(prRagdoll_t *pr, float share)
+{
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        const int index = pr->settings->GetConstraintIndexForBodyIndex(i);
+
+        if (index < 0) {
+            continue;
+        }
+
+        JPH::TwoBodyConstraint *c      = pr->ragdoll->GetConstraint(index);
+        const float             torque = pr_tone[pr_parts[i].kind] * share;
+        const JPH::EMotorState  state  = share > 0.0f ? JPH::EMotorState::Position : JPH::EMotorState::Off;
+
+        if (c->GetSubType() == JPH::EConstraintSubType::SwingTwist) {
+            JPH::SwingTwistConstraint *st = static_cast<JPH::SwingTwistConstraint *>(c);
+
+            st->GetSwingMotorSettings().SetTorqueLimit(torque);
+            st->GetTwistMotorSettings().SetTorqueLimit(torque);
+            st->SetSwingMotorState(state);
+            st->SetTwistMotorState(state);
+        } else if (c->GetSubType() == JPH::EConstraintSubType::Hinge) {
+            JPH::HingeConstraint *h = static_cast<JPH::HingeConstraint *>(c);
+
+            h->GetMotorSettings().SetTorqueLimit(torque);
+            h->SetMotorState(state);
+        }
+    }
+}
+
+// Every joint's motors aimed at the pose the body has now.
+static void CG_JoltRagdollAimTone(prRagdoll_t *pr)
+{
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        const int index = pr->settings->GetConstraintIndexForBodyIndex(i);
+
+        if (index < 0) {
+            continue;
+        }
+
+        JPH::TwoBodyConstraint *c = pr->ragdoll->GetConstraint(index);
+
+        if (c->GetSubType() == JPH::EConstraintSubType::SwingTwist) {
+            JPH::SwingTwistConstraint *st = static_cast<JPH::SwingTwistConstraint *>(c);
+
+            st->GetSwingMotorSettings() = JPH::MotorSettings(PR_TONE_FREQUENCY, 1.0f);
+            st->GetTwistMotorSettings() = JPH::MotorSettings(PR_TONE_FREQUENCY, 1.0f);
+            st->SetTargetOrientationCS(st->GetRotationInConstraintSpace());
+        } else if (c->GetSubType() == JPH::EConstraintSubType::Hinge) {
+            JPH::HingeConstraint *h = static_cast<JPH::HingeConstraint *>(c);
+
+            h->GetMotorSettings() = JPH::MotorSettings(PR_TONE_FREQUENCY, 1.0f);
+            h->SetTargetAngle(h->GetCurrentAngle());
+        }
+    }
+}
+
+int CG_JoltRagdollCreate(
+    const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JOINTS], const float radius[RD_NUM_JOINTS], float toneTime
+)
 {
     JPH::Vec3                     jp[RD_NUM_JOINTS], jv[RD_NUM_JOINTS];
     JPH::Vec3                     pelvisUp, pelvisRight, pelvisFwd, chestUp, chestRight, chestFwd;
@@ -406,14 +511,11 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
         pr->localA[i] = toLocal * a;
         pr->localB[i] = toLocal * b;
 
-        // As thick as the rig says: the trunk at its thicker end, a limb a
-        // little under its thinner one.
-        if (def->kind == PR_ROOT || def->kind == PR_BACK || def->kind == PR_NECKJ) {
-            r = Q_max(radius[def->a], radius[def->b]) * 0.9f;
-        } else {
-            r = Q_min(radius[def->a], radius[def->b]) * 0.85f;
-        }
-        r = Q_max(r, 1.0f) * PHYS_UNITS_TO_METRES;
+        // As thick at each end as the rig says the joint there is, as the
+        // particle solver's spheres are.
+        const float ra = Q_max(radius[def->a], 1.0f) * PHYS_UNITS_TO_METRES;
+        const float rb = Q_max(radius[def->b], 1.0f) * PHYS_UNITS_TO_METRES;
+        r              = Q_max(ra, rb);
 
         // The pelvis also spans the hips and the chest the shoulders, which is
         // where the legs and arms hang from.
@@ -421,8 +523,9 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
             const int                        l = i == PR_PELVIS ? RD_LTHIGH : RD_LUARM;
             const int                        rr = i == PR_PELVIS ? RD_RTHIGH : RD_RUARM;
             JPH::StaticCompoundShapeSettings compound;
-            JPH::ShapeRefC                   main  = PR_Capsule(pr->localA[i], pr->localB[i], r);
-            JPH::ShapeRefC                   across = PR_Capsule(toLocal * jp[l], toLocal * jp[rr], Q_max(radius[l], 1.0f) * 0.9f * PHYS_UNITS_TO_METRES);
+            JPH::ShapeRefC                   main  = PR_Capsule(pr->localA[i], pr->localB[i], ra, rb);
+            const float                      rs    = Q_max(radius[l], 1.0f) * 0.9f * PHYS_UNITS_TO_METRES;
+            JPH::ShapeRefC                   across = PR_Capsule(toLocal * jp[l], toLocal * jp[rr], rs, rs);
 
             if (!main || !across) {
                 return 0;
@@ -436,7 +539,7 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
             }
             part.SetShape(result.Get());
         } else {
-            JPH::ShapeRefC shape = PR_Capsule(pr->localA[i], pr->localB[i], r);
+            JPH::ShapeRefC shape = PR_Capsule(pr->localA[i], pr->localB[i], ra, rb);
 
             if (!shape) {
                 return 0;
@@ -473,10 +576,15 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
 
             switch (def->kind) {
             case PR_BACK:
-                part.mToParent = PR_SwingTwist(pivot, parentDir, pelvisRight, child, 25.0f, 20.0f, 15.0f, PR_FRICTION_BACK);
+                part.mToParent = PR_SwingTwist(pivot, parentDir, pelvisRight, child, 12.0f, 10.0f, 6.0f, PR_FRICTION_BACK);
                 break;
             case PR_NECKJ:
-                part.mToParent = PR_SwingTwist(pivot, parentDir, chestRight, child, 40.0f, 35.0f, 35.0f, PR_FRICTION_NECK);
+                // The neck on the chest, and the head on the neck.
+                if (i == PR_NECK) {
+                    part.mToParent = PR_SwingTwist(pivot, parentDir, chestRight, child, 15.0f, 12.0f, 15.0f, PR_FRICTION_NECK);
+                } else {
+                    part.mToParent = PR_SwingTwist(pivot, parentDir, chestRight, child, 22.0f, 18.0f, 30.0f, PR_FRICTION_NECK);
+                }
                 break;
             case PR_SHOULDER:
                 part.mToParent = PR_SwingTwist(
@@ -486,7 +594,7 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
                     child,
                     (PR_SHOULDER_FLEX_MAX - PR_SHOULDER_FLEX_MIN) * 0.5f,
                     (PR_SHOULDER_ABD_MAX - PR_SHOULDER_ABD_MIN) * 0.5f,
-                    70.0f,
+                    45.0f,
                     PR_FRICTION_LIMB
                 );
                 break;
@@ -498,26 +606,33 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
                     child,
                     (PR_HIP_FLEX_MAX - PR_HIP_FLEX_MIN) * 0.5f,
                     (PR_HIP_ABD_MAX - PR_HIP_ABD_MIN) * 0.5f,
-                    35.0f,
+                    10.0f,
                     PR_FRICTION_LIMB
                 );
                 break;
             case PR_ELBOW:
             case PR_KNEE: {
-                // Bending the way it is bent, when it is; else the way a man's
-                // does: an elbow forward, a knee back.
-                const JPH::Vec3 fwd   = def->kind == PR_ELBOW ? chestFwd : -pelvisFwd;
-                JPH::Vec3       axis  = PR_Normalized(parentDir.Cross(fwd), def->kind == PR_ELBOW ? right : -right);
-                const float     bend  = acosf(Q_clamp_float(parentDir.Dot(child), -1.0f, 1.0f));
+                // The way a man's bends, about the body's own side to side
+                // axis made square to the bone above: an elbow forward (about
+                // the right), a knee back (about the left).
+                const JPH::Vec3 anatomical = PR_Across(def->kind == PR_ELBOW ? right : -right, parentDir, PR_AnySquare(parentDir));
+                const JPH::Vec3 bentAbout  = PR_Normalized(parentDir.Cross(child), anatomical);
+                const float     bend       = acosf(Q_clamp_float(parentDir.Dot(child), -1.0f, 1.0f));
+                JPH::Vec3       axis       = anatomical;
 
-                if (bend > DEG2RAD(15.0f)) {
-                    axis = PR_Normalized(parentDir.Cross(child), axis);
+                // Bent enough to show its plane, that is the plane. An elbow
+                // bends whichever way the upper arm has turned; a knee only
+                // the way a knee goes. One bent the other way at the hand-over
+                // (the particles let a knee overshoot) starts outside its range
+                // and is brought round by the soft limit.
+                if (bend > DEG2RAD(15.0f) && (def->kind == PR_ELBOW || bentAbout.Dot(anatomical) > 0.0f)) {
+                    axis = bentAbout;
                 }
-                part.mToParent = PR_Hinge(pivot, axis, parentDir, child, PR_FRICTION_HINGE);
+                part.mToParent = PR_Hinge(pivot, axis, parentDir, child, def->kind == PR_KNEE ? PR_KNEE_MAX : PR_ELBOW_MAX, PR_FRICTION_HINGE);
                 break;
             }
             case PR_WRIST:
-                part.mToParent = PR_SwingTwist(pivot, parentDir, right, child, 70.0f, 35.0f, 30.0f, PR_FRICTION_END);
+                part.mToParent = PR_SwingTwist(pivot, parentDir, right, child, 50.0f, 30.0f, 30.0f, PR_FRICTION_END);
                 break;
             case PR_ANKLE:
                 part.mToParent = PR_SwingTwist(pivot, child, right, child, 35.0f, 20.0f, 10.0f, PR_FRICTION_END);
@@ -565,10 +680,15 @@ int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JO
         }
     }
 
-    pr->used       = qtrue;
-    pr->holdJoint  = -1;
-    pr->onBodyMask = 0;
+    pr->used        = qtrue;
+    pr->holdJoint   = -1;
+    pr->onBodyMask  = 0;
+    pr->toneTime    = toneTime;
+    pr->toneElapsed = 0.0f;
     memset(pr->contact, 0, sizeof(pr->contact));
+
+    CG_JoltRagdollAimTone(pr);
+    CG_JoltRagdollTone(pr, toneTime > 0.0f ? 1.0f : 0.0f);
 
     return slot + 1 + PR_MAX_RAGDOLLS * pr->generation;
 }
@@ -754,6 +874,19 @@ void CG_JoltRagdollsStep(float dt)
             continue;
         }
 
+        // The hold on the death pose, easing off as the particle solver's
+        // does (CG_RagdollLimpness).
+        if (pr->toneTime > 0.0f) {
+            float t;
+
+            pr->toneElapsed += dt;
+            t = Q_min(pr->toneElapsed / pr->toneTime, 1.0f);
+            CG_JoltRagdollTone(pr, 1.0f - t * t * (3.0f - 2.0f * t));
+            if (t >= 1.0f) {
+                pr->toneTime = 0.0f;
+            }
+        }
+
         // What it touches is gathered afresh by the step about to be taken.
         // Only a body still moving: one asleep keeps what it was lying on.
         if (CG_JoltRagdollAwake(n + 1 + PR_MAX_RAGDOLLS * pr->generation)) {
@@ -848,6 +981,53 @@ void CG_JoltRagdollContact(const JPH::Body& a, const JPH::Body& b, const JPH::Co
                 pr->contactNormal[joint][1] = up.GetY();
                 pr->contactNormal[joint][2] = up.GetZ();
             }
+        }
+    }
+}
+
+// For the harness and debugging: each joint's swing and twist (degrees) as
+// Jolt measures them, and each hinge's angle, printed with print.
+void CG_JoltRagdollReport(int handle, void (*print)(const char *fmt, ...))
+{
+    prRagdoll_t *pr = CG_JoltRagdollGet(handle);
+
+    if (!pr) {
+        return;
+    }
+
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        const int index = pr->settings->GetConstraintIndexForBodyIndex(i);
+
+        if (index < 0) {
+            continue;
+        }
+
+        const JPH::TwoBodyConstraint *c = pr->ragdoll->GetConstraint(index);
+
+        if (c->GetSubType() == JPH::EConstraintSubType::SwingTwist) {
+            const JPH::SwingTwistConstraint *st = static_cast<const JPH::SwingTwistConstraint *>(c);
+            JPH::Quat                        swing, twist;
+
+            st->GetRotationInConstraintSpace().GetSwingTwist(swing, twist);
+            print(
+                "  %-7s swing %5.1f (limits %5.1f %5.1f)  twist %6.1f (limit %5.1f)\n",
+                pr_parts[i].name,
+                RAD2DEG(2.0f * acosf(Q_min(1.0f, fabsf(swing.GetW())))),
+                RAD2DEG(st->GetPlaneHalfConeAngle()),
+                RAD2DEG(st->GetNormalHalfConeAngle()),
+                RAD2DEG(2.0f * atan2f(twist.GetX(), twist.GetW())),
+                RAD2DEG(st->GetTwistMaxAngle())
+            );
+        } else if (c->GetSubType() == JPH::EConstraintSubType::Hinge) {
+            const JPH::HingeConstraint *h = static_cast<const JPH::HingeConstraint *>(c);
+
+            print(
+                "  %-7s hinge %6.1f (limits %6.1f %6.1f)\n",
+                pr_parts[i].name,
+                RAD2DEG(h->GetCurrentAngle()),
+                RAD2DEG(h->GetLimitsMin()),
+                RAD2DEG(h->GetLimitsMax())
+            );
         }
     }
 }

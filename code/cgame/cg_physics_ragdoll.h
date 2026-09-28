@@ -32,9 +32,14 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_ragdoll_rig.h"
 
 // A body in the physics world, from its joints (units, units a second) and
-// their radii. Returns a handle, or 0 if it could not be made (no physics
-// world, or a degenerate pose), in which case the particles carry on.
-int CG_JoltRagdollCreate(const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JOINTS], const float radius[RD_NUM_JOINTS]);
+// their radii. For toneTime seconds its joints are held towards the pose it
+// has now, less and less (the death pose's hold, which the particle solver
+// lets go of over cg_ragdoll_limptime). Returns a handle, or 0 if it could not
+// be made (no physics world, or a degenerate pose), in which case the
+// particles carry on.
+int CG_JoltRagdollCreate(
+    const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JOINTS], const float radius[RD_NUM_JOINTS], float toneTime
+);
 void CG_JoltRagdollDestroy(int handle);
 
 // Where the joints are now and how fast they are going; and, since the last
@@ -56,3 +61,6 @@ void CG_JoltRagdollHold(int handle, int joint, const vec3_t target);
 qboolean CG_JoltRagdollAwake(int handle);
 void     CG_JoltRagdollSleep(int handle);
 void     CG_JoltRagdollWake(int handle);
+
+// Each joint's swing, twist and hinge angle as Jolt has them, for debugging.
+void CG_JoltRagdollReport(int handle, void (*print)(const char *fmt, ...));

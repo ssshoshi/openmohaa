@@ -9933,7 +9933,10 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 VectorCopy(rd->part[j].v, v[j]);
             }
 
-            rd->jolt = CG_JoltRagdollCreate(p, v, rd->jointRadius);
+            // The hold on the death pose lasts as long as the particles' would.
+            rd->jolt = CG_JoltRagdollCreate(
+                p, v, rd->jointRadius, Q_max(0.0f, (cg_ragdoll_limptime->integer - (cg.time - rd->startTime)) * 0.001f)
+            );
             CG_RagdollLog(rd, rd->jolt ? "carried by a Jolt ragdoll" : "no Jolt ragdoll could be made; the particles carry on");
         }
 
@@ -10312,4 +10315,15 @@ extern "C" int CG_RagdollDebugParticles(int entityNum, float *out, int maxJoints
     }
 
     return 0;
+}
+
+// For the harness: what the Jolt ragdoll carrying an entity's corpse has at
+// its joints (CG_JoltRagdollReport).
+extern "C" void CG_RagdollDebugJolt(int entityNum, void (*print)(const char *fmt, ...))
+{
+    cg_ragdoll_t *rd = CG_RagdollForEntity(entityNum);
+
+    if (rd && rd->jolt) {
+        CG_JoltRagdollReport(rd->jolt, print);
+    }
 }

@@ -23,6 +23,8 @@ extern "C" qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, i
 void RDJ_Init(float gravity);
 void RDJ_Build(const vec3_t floorN, int box, const vec3_t mins, const vec3_t maxs);
 void RDJ_Step(float frametime);
+extern "C" void CG_RagdollDebugJolt(int entityNum, void (*print)(const char *fmt, ...));
+static void RDJ_Print(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap); }
 #endif
 clientGameImport_t cgi;
 cg_t               cg;
@@ -1996,6 +1998,10 @@ static int RunScenario(const Scenario &sc)
           vec3_t d; VectorSubtract(wp[a1],wp[b1],d); lastSeg[1]=VectorLength(d); }
     }
 
+#ifdef RD_JOLT
+    // RD_JOLTREPORT prints what Jolt has at each joint as the run ends.
+    if (getenv("RD_JOLTREPORT")) CG_RagdollDebugJolt(entnum, RDJ_Print);
+#endif
     int ok = !bad && lateStretch < 0.02f && lateMove < 0.5f && deepest > -1.5f
              && worstPen < 0.34f && backBends == 0 && worstHyper < 0.5f && jointDev[0] < 70.0f && jointDev[1] < 60.0f && jointDev[2] < 60.0f && worstTwist < 50.0f && worstJointTwist < 30.0f && worstJointBend < 35.0f && kneeLateral < 5.0f && particleCollapse < 0.10f && footFlip < 55.0f;
     printf("%-26s | %5.1f%% %5.1f%% | %6.2f | %5.2f | %5d | %6.3f | %6.2f | %s\n",
@@ -2340,7 +2346,7 @@ extern "C" qboolean CG_PhysicsPunt(const vec3_t, const vec3_t, float, float) { r
 #ifndef RD_JOLT
 // Without --jolt the Jolt ragdoll is not built: making one fails, and the
 // particles carry every body.
-int CG_JoltRagdollCreate(const vec3_t[RD_NUM_JOINTS], const vec3_t[RD_NUM_JOINTS], const float[RD_NUM_JOINTS]) { return 0; }
+int CG_JoltRagdollCreate(const vec3_t[RD_NUM_JOINTS], const vec3_t[RD_NUM_JOINTS], const float[RD_NUM_JOINTS], float) { return 0; }
 void CG_JoltRagdollDestroy(int) {}
 qboolean CG_JoltRagdollRead(int, vec3_t[RD_NUM_JOINTS], vec3_t[RD_NUM_JOINTS], qboolean[RD_NUM_JOINTS], vec3_t[RD_NUM_JOINTS], int *) { return qfalse; }
 void CG_JoltRagdollAddVelocity(int, const vec3_t[RD_NUM_JOINTS]) {}
@@ -2348,6 +2354,7 @@ void CG_JoltRagdollHold(int, int, const vec3_t) {}
 qboolean CG_JoltRagdollAwake(int) { return qfalse; }
 void CG_JoltRagdollSleep(int) {}
 void CG_JoltRagdollWake(int) {}
+void CG_JoltRagdollReport(int, void (*)(const char *, ...)) {}
 #endif
 extern "C" void Com_Printf(const char *fmt, ...) { (void)fmt; }
 extern "C" void Com_Error(int level, const char *fmt, ...) { (void)level; printf("Com_Error: %s\n", fmt); exit(1); }
