@@ -46,6 +46,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "sentient.h"
 #include "barrels.h"
 #include "object.h"
+#include "player.h"
 
 #include <set>
 #include <vector>
@@ -108,6 +109,42 @@ static gphysKinematic_t gphys_kinematic[MAX_GENTITIES];
 #define GPHYS_PUSH_SPEED 150.0f
 #define GPHYS_PUSH_LIGHT 8.0f
 #define GPHYS_PUSH_HEAVY 80.0f
+
+// The grabber, from a single player client (cg_physics_movers.cpp): what each
+// player is carrying, by the point taken hold of, how far from his eye. The
+// spring is the client's: natural frequency in radians a second, the most it
+// accelerates, in units a second squared, and the most weight it holds up.
+#define GPHYS_GRAB_OMEGA     14.0f
+#define GPHYS_GRAB_MAX_ACCEL 4000.0f
+#define GPHYS_GRAB_MAX_MASS  40.0f
+#define GPHYS_GRAB_SPIN_KEEP 0.92f
+#define GPHYS_GRAB_RANGE     1024.0f
+#define GPHYS_GRAB_MIN_DIST  24.0f
+
+typedef struct {
+    int       entnum; // -1 for nothing
+    JPH::Vec3 local;  // metres, in the body's own space
+    float     dist;
+} gphysGrab_t;
+
+static gphysGrab_t gphys_grab[MAX_CLIENTS];
+
+// A player's box and what he holds do not collide, or holding a crate close
+// would have him forever shoving it away. Each player is a group of his own.
+static JPH::Ref<JPH::GroupFilterTable> gphys_holdFilter;
+
+#define GPHYS_HOLD_HOLDER 0
+#define GPHYS_HOLD_HELD   1
+
+static JPH::GroupFilterTable *G_PhysicsHoldFilter(void)
+{
+    if (!gphys_holdFilter) {
+        gphys_holdFilter = new JPH::GroupFilterTable(2);
+        gphys_holdFilter->DisableCollision(GPHYS_HOLD_HOLDER, GPHYS_HOLD_HELD);
+    }
+
+    return gphys_holdFilter;
+}
 static std::set<int>                 gphys_furnitureBrushes;
 
 static qboolean G_PhysicsSkipFurniture(void *ctx, int brushNum, const char *shader, int contents, const vec3_t mins, const vec3_t maxs)
@@ -205,6 +242,9 @@ void G_PhysicsShutdown(void)
     }
 
     memset(gphys_entities, 0, sizeof(gphys_entities));
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        gphys_grab[i].entnum = -1;
+    }
     for (int i = 0; i < MAX_GENTITIES; i++) {
         gphys_kinematic[i] = gphysKinematic_t();
     }
@@ -533,6 +573,12 @@ void G_PhysicsRemoveEntity(Entity *ent)
     bodies.DestroyBody(pe->id);
     pe->owned = qfalse;
 
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (gphys_grab[i].entnum == ent->entnum) {
+            gphys_grab[i].entnum = -1;
+        }
+    }
+
     // Whatever it held up.
     box.ExpandBy(JPH::Vec3::sReplicate(0.1f));
     bodies.ActivateBodiesInAABox(box, {}, {});
@@ -666,6 +712,10 @@ static void G_PhysicsFollowSentients(void)
             settings.mFriction    = 0.0f;
             settings.mRestitution = 0.0f;
             settings.mUserData    = PHYS_USERDATA_ENTITY_BASE + ent->entnum;
+            if (ent->IsSubclassOfPlayer()) {
+                settings.mCollisionGroup =
+                    JPH::CollisionGroup(G_PhysicsHoldFilter(), (JPH::CollisionGroup::GroupID)(ent->entnum + 1), GPHYS_HOLD_HOLDER);
+            }
 
             k->id = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
             if (k->id.IsInvalid()) {
@@ -787,6 +837,282 @@ void G_PhysicsPushedBy(Entity *ent, Entity *pusher, const Vector& direction, flo
 }
 
 //=============================================================
+// The grabber
+//=============================================================
+
+static void G_PhysicsSetHeld(int entnum, int holder)
+{
+    JPH::BodyLockWrite lock(gphys_world.system->GetBodyLockInterface(), gphys_entities[entnum].id);
+
+    if (lock.Succeeded()) {
+        lock.GetBody().SetCollisionGroup(
+            holder >= 0 ? JPH::CollisionGroup(G_PhysicsHoldFilter(), (JPH::CollisionGroup::GroupID)(holder + 1), GPHYS_HOLD_HELD)
+                        : JPH::CollisionGroup()
+        );
+    }
+}
+
+static void G_PhysicsDrop(int client)
+{
+    gphysGrab_t *g = &gphys_grab[client];
+
+    if (g->entnum >= 0 && gphys_entities[g->entnum].owned) {
+        G_PhysicsSetHeld(g->entnum, -1);
+    }
+    g->entnum = -1;
+}
+
+static float G_PhysicsBodyMass(JPH::BodyID id)
+{
+    JPH::BodyLockRead lock(gphys_world.system->GetBodyLockInterface(), id);
+
+    if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) {
+        return 0.0f;
+    }
+
+    return 1.0f / Q_max(1e-4f, lock.GetBody().GetMotionProperties()->GetInverseMass());
+}
+
+// A client command's player and the physics entity it names, when both are
+// fit: the entity a body, and within reach of him.
+static Player *G_PhysicsCommandTarget(gentity_t *ent, int argEntity, Entity **target)
+{
+    Player *player;
+    int     n;
+
+    if (!gphys_ready || !ent || !ent->client || !ent->entity || !ent->entity->IsSubclassOfPlayer()) {
+        return NULL;
+    }
+
+    player = (Player *)ent->entity;
+    if (argEntity <= 0) {
+        return player;
+    }
+
+    n = atoi(gi.Argv(argEntity));
+    if (n < 0 || n >= MAX_GENTITIES || !g_entities[n].entity || !G_PhysicsOwns(g_entities[n].entity)
+        || (g_entities[n].entity->centroid - player->EyePosition()).length() > GPHYS_GRAB_RANGE) {
+        return player;
+    }
+
+    *target = g_entities[n].entity;
+    return player;
+}
+
+// physgrab <entity> <x> <y> <z> <distance>: carry it by that point.
+qboolean G_PhysicsGrabCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 1, &target);
+    int     client;
+    vec3_t  point;
+
+    if (!player || gi.Argc() < 6) {
+        return qtrue;
+    }
+
+    client = player->edict - g_entities;
+    G_PhysicsDrop(client);
+
+    if (!target) {
+        gi.SendServerCommand(client, "physgrab_denied");
+        return qtrue;
+    }
+
+    point[0] = atof(gi.Argv(2));
+    point[1] = atof(gi.Argv(3));
+    point[2] = atof(gi.Argv(4));
+
+    {
+        JPH::BodyLockRead lock(gphys_world.system->GetBodyLockInterface(), gphys_entities[target->entnum].id);
+
+        if (!lock.Succeeded()) {
+            gi.SendServerCommand(client, "physgrab_denied");
+            return qtrue;
+        }
+        gphys_grab[client].local = JPH::Vec3(lock.GetBody().GetWorldTransform().Inversed() * JPH::RVec3(PhysToJolt(point)));
+    }
+
+    gphys_grab[client].entnum = target->entnum;
+    gphys_grab[client].dist   = Q_clamp_float(atof(gi.Argv(5)), GPHYS_GRAB_MIN_DIST, GPHYS_GRAB_RANGE);
+    G_PhysicsSetHeld(target->entnum, player->entnum);
+
+    if (g_physics_log->integer) {
+        gi.Printf("g_physics: player %d carries #%d, %.0f units off\n", client, target->entnum, gphys_grab[client].dist);
+    }
+    gphys_world.system->GetBodyInterface().ActivateBody(gphys_entities[target->entnum].id);
+    return qtrue;
+}
+
+// physdrop: let go.
+qboolean G_PhysicsDropCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 0, &target);
+
+    if (player) {
+        G_PhysicsDrop(player->edict - g_entities);
+    }
+    return qtrue;
+}
+
+// physdist <distance>: carry it nearer or farther.
+qboolean G_PhysicsDistCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 0, &target);
+
+    if (player && gi.Argc() >= 2) {
+        gphys_grab[player->edict - g_entities].dist = Q_clamp_float(atof(gi.Argv(1)), GPHYS_GRAB_MIN_DIST, GPHYS_GRAB_RANGE);
+    }
+    return qtrue;
+}
+
+// physpunt <entity> <x> <y> <z> <speed>: throw it along the view, from that
+// point; lighter things faster. Lets go of it first.
+qboolean G_PhysicsPuntCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 1, &target);
+    Vector  fwd, point;
+    float   mass, speed;
+
+    if (!player || gi.Argc() < 6) {
+        return qtrue;
+    }
+
+    G_PhysicsDrop(player->edict - g_entities);
+    if (!target) {
+        return qtrue;
+    }
+
+    mass = G_PhysicsBodyMass(gphys_entities[target->entnum].id);
+    if (mass <= 0.0f) {
+        return qtrue;
+    }
+
+    point = Vector(atof(gi.Argv(2)), atof(gi.Argv(3)), atof(gi.Argv(4)));
+    speed = Q_clamp_float(atof(gi.Argv(5)), 0.0f, 2000.0f);
+    player->GetViewAngles().AngleVectors(&fwd);
+
+    G_PhysicsImpulse(target, point, fwd * (speed * Q_min(1.0f, 20.0f / mass) * mass));
+    return qtrue;
+}
+
+// physnudge <entity> <x> <y> <z> <ix> <iy> <iz>: one of the client's props
+// struck it, with that impulse, in kilograms times units a second.
+qboolean G_PhysicsNudgeCmd(gentity_t *ent)
+{
+    Entity *target = NULL;
+    Player *player = G_PhysicsCommandTarget(ent, 1, &target);
+    Vector  point, impulse;
+    float   mass, most;
+
+    if (!player || !target || gi.Argc() < 8) {
+        return qtrue;
+    }
+
+    mass = G_PhysicsBodyMass(gphys_entities[target->entnum].id);
+    if (mass <= 0.0f) {
+        return qtrue;
+    }
+
+    point   = Vector(atof(gi.Argv(2)), atof(gi.Argv(3)), atof(gi.Argv(4)));
+    impulse = Vector(atof(gi.Argv(5)), atof(gi.Argv(6)), atof(gi.Argv(7)));
+
+    // Never more than a hard throw would give it.
+    most = mass * 400.0f;
+    if (impulse.length() > most) {
+        impulse *= most / impulse.length();
+    }
+
+    G_PhysicsImpulse(target, point, impulse);
+
+    if (g_physics_log->integer > 1) {
+        gi.Printf("g_physics: #%d struck by a client prop, %.0f u/s (%.1f kg)\n", target->entnum, impulse.length() / mass, mass);
+    }
+    return qtrue;
+}
+
+// Each step: what each player carries is pulled after the end of his beam.
+static void G_PhysicsGrabStep(float dt)
+{
+    JPH::BodyInterface &bodies = gphys_world.system->GetBodyInterface();
+
+    for (int client = 0; client < game.maxclients && client < MAX_CLIENTS; client++) {
+        gphysGrab_t *g = &gphys_grab[client];
+        Entity      *held;
+        Player      *player;
+        Vector       eye, fwd, target;
+        trace_t      tr;
+        JPH::Vec3    point, pointVel, accel, gravity;
+        float        mass, limit;
+
+        if (g->entnum < 0) {
+            continue;
+        }
+
+        held   = g_entities[g->entnum].entity;
+        player = (g_entities[client].entity && g_entities[client].entity->IsSubclassOfPlayer()) ? (Player *)g_entities[client].entity : NULL;
+        if (!held || !player || !G_PhysicsOwns(held) || player->health <= 0) {
+            G_PhysicsDrop(client);
+            continue;
+        }
+
+        eye = player->EyePosition();
+        player->GetViewAngles().AngleVectors(&fwd);
+        target = eye + fwd * g->dist;
+
+        // Short of walls and other props, as the beam is drawn.
+        tr = G_Trace(eye, vec_zero, vec_zero, target, held, CONTENTS_SOLID, qfalse, "physics grab");
+        if (tr.fraction < 1.0f) {
+            target = Vector(tr.endpos) - fwd * 4.0f;
+        }
+
+        {
+            JPH::BodyLockRead lock(gphys_world.system->GetBodyLockInterface(), gphys_entities[g->entnum].id);
+
+            if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) {
+                continue;
+            }
+
+            const JPH::Body& body = lock.GetBody();
+
+            point    = JPH::Vec3(body.GetWorldTransform() * g->local);
+            pointVel = body.GetPointVelocity(JPH::RVec3(point));
+            mass     = 1.0f / Q_max(1e-4f, body.GetMotionProperties()->GetInverseMass());
+        }
+
+        {
+            vec3_t t;
+
+            VectorCopy(target, t);
+            accel = (PhysToJolt(t) - point) * (GPHYS_GRAB_OMEGA * GPHYS_GRAB_OMEGA) - pointVel * (2.0f * GPHYS_GRAB_OMEGA);
+        }
+        gravity = -gphys_world.system->GetGravity();
+
+        limit = GPHYS_GRAB_MAX_ACCEL * PHYS_UNITS_TO_METRES;
+        if (accel.Length() > limit) {
+            accel = accel.Normalized() * limit;
+        }
+
+        {
+            JPH::Vec3   force = (accel + gravity) * mass;
+            const float most  = GPHYS_GRAB_MAX_MASS * (limit + gravity.Length());
+
+            if (force.Length() > most) {
+                force = force.Normalized() * most;
+            }
+
+            bodies.AddImpulse(gphys_entities[g->entnum].id, force * dt, JPH::RVec3(point));
+        }
+
+        bodies.SetAngularVelocity(gphys_entities[g->entnum].id, bodies.GetAngularVelocity(gphys_entities[g->entnum].id) * GPHYS_GRAB_SPIN_KEEP);
+        bodies.ActivateBody(gphys_entities[g->entnum].id);
+    }
+}
+
+//=============================================================
 // Stepping
 //=============================================================
 
@@ -839,6 +1165,7 @@ void G_PhysicsFrame(float frametime)
 
         while (steps < total) {
             G_PhysicsMoveSentients((float)(steps + 1) / total, dt);
+            G_PhysicsGrabStep(dt);
             gphys_world.system->Update(dt, 1, gphys_world.temp, gphys_world.jobs);
             gphys_accum -= dt;
             steps++;

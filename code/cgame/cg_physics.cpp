@@ -93,6 +93,7 @@ void CG_InitPhysics(void)
     Phys_RegisterJolt(CG_PhysicsTrace);
     Phys_CreateWorld(&phys_world, PHYS_MAX_BODIES);
     phys_system = phys_world.system;
+    CG_PhysicsListenForContacts();
     phys_temp   = phys_world.temp;
     phys_jobs   = phys_world.jobs;
 
@@ -211,6 +212,7 @@ void CG_PhysicsFrame(void)
             phys_steps        = 0;
         }
 
+        CG_PhysicsSendNudges();
         CG_PhysicsDrawProps(phys_accum / dt);
         CG_PhysicsDrawFurniture(phys_accum / dt);
     }

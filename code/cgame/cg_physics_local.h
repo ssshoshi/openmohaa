@@ -67,6 +67,9 @@ qboolean CG_PhysicsFurnitureBody(int index, JPH::BodyID *id, vec3_t middle);
 const physFurniture_t *CG_PhysicsFurnitureShape(int index);
 
 void CG_PhysicsFollowMovers(void);
+void CG_PhysicsLoadMoverModels(const void *bsp, long len);
+void CG_PhysicsListenForContacts(void);
+void CG_PhysicsSendNudges(void);
 void CG_PhysicsMoveMovers(float frac, float dt);
 void CG_PhysicsMoversHeld(void);
 void CG_PhysicsUnloadMovers(void);

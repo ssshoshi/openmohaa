@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cg_servercmds.c -- text commands sent by the server
 
 #include "cg_local.h"
+#include "cg_physics.h"
 #include "../fgame/bg_voteoptions.h"
 #include "cg_servercmds_filter.h"
 
@@ -407,6 +408,13 @@ static void CG_ServerCommand(qboolean modelOnly)
 
     if (!strcmp(cmd, "stopwatch")) {
         CG_Stopwatch_f();
+        return;
+    }
+
+    // Added in OPM
+    //  The server would not carry what the grabber took hold of.
+    if (!strcmp(cmd, "physgrab_denied")) {
+        CG_PhysicsGrabDenied();
         return;
     }
 

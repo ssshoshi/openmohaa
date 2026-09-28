@@ -8153,7 +8153,7 @@ extern "C" void CG_RagdollGrabNearer_f(void)
     }
 
     rd_grab.dist = Q_max(rd_grab.dist - RD_GRAB_WHEEL, RD_GRAB_MIN_DIST);
-    *CG_PhysicsGrabDistance() = Q_max(*CG_PhysicsGrabDistance() - RD_GRAB_WHEEL, RD_GRAB_MIN_DIST);
+    CG_PhysicsGrabSetDistance(Q_max(CG_PhysicsGrabDistance() - RD_GRAB_WHEEL, RD_GRAB_MIN_DIST));
 }
 
 extern "C" void CG_RagdollGrabFarther_f(void)
@@ -8163,7 +8163,7 @@ extern "C" void CG_RagdollGrabFarther_f(void)
     }
 
     rd_grab.dist = Q_min(rd_grab.dist + RD_GRAB_WHEEL, cg_ragdoll_grabrange->value);
-    *CG_PhysicsGrabDistance() = Q_min(*CG_PhysicsGrabDistance() + RD_GRAB_WHEEL, cg_ragdoll_grabrange->value);
+    CG_PhysicsGrabSetDistance(Q_min(CG_PhysicsGrabDistance() + RD_GRAB_WHEEL, cg_ragdoll_grabrange->value));
 }
 
 // Throws the body being carried, or knocks the one the crosshair is on: the
@@ -8458,7 +8458,7 @@ static void CG_RagdollGrabUpdate(void)
         vec3_t held;
 
         CG_RagdollViewRay(start, dir);
-        VectorMA(start, *CG_PhysicsGrabDistance(), dir, target);
+        VectorMA(start, CG_PhysicsGrabDistance(), dir, target);
 
         cgi.CM_BoxTrace(&tr, start, target, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse);
         if (tr.fraction < 1.0f) {

@@ -2307,12 +2307,13 @@ extern "C" int CG_GetBrushEntitiesInBounds(int, centity_t **, const vec3_t, cons
 // cg_props.cpp logs through the physics cvar too; the harness has no physics.
 cvar_t *cg_physics_log;
 // The grabber also takes hold of physics props; the harness has none.
-static float rd_noPropDistance;
 extern "C" qboolean CG_PhysicsGrabCandidate(const vec3_t, const vec3_t, float, float *) { return qfalse; }
 extern "C" qboolean CG_PhysicsGrabStart(const vec3_t, const vec3_t, float, float) { return qfalse; }
 extern "C" qboolean CG_PhysicsGrabHeld(void) { return qfalse; }
 extern "C" void CG_PhysicsGrabRelease(void) {}
-extern "C" float *CG_PhysicsGrabDistance(void) { return &rd_noPropDistance; }
+extern "C" float CG_PhysicsGrabDistance(void) { return 0.0f; }
+extern "C" void CG_PhysicsGrabSetDistance(float) {}
+extern "C" void CG_PhysicsGrabDenied(void) {}
 extern "C" void CG_PhysicsGrabSetTarget(const vec3_t) {}
 extern "C" void CG_PhysicsGrabPoint(vec3_t out) { VectorClear(out); }
 extern "C" qboolean CG_PhysicsPunt(const vec3_t, const vec3_t, float, float) { return qfalse; }

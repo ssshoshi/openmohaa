@@ -216,6 +216,7 @@ void CG_PhysicsLoadWorld(void)
 
     CG_PhysicsFindFurniture(buf, len);
     CG_PhysicsLoadFills(buf, len);
+    CG_PhysicsLoadMoverModels(buf, len);
     Phys_BuildBspWorld(phys_system, buf, len, &opt, &pw_bodies, &stats);
     cgi.FS_FreeFile(buf);
     CG_PhysicsLoadFurniture();

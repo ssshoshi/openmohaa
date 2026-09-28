@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 
 #include "gamecmds.h"
+#include "g_physics.h"
 #include "glb_local.h"
 #include "camera.h"
 #include "viewthing.h"
@@ -73,6 +74,12 @@ consolecmd_t G_ConsoleCmds[] = {
     {"addbot",          G_AddBotCommand,      qfalse},
     {"addbotnamed",     G_AddBotNamedCommand, qfalse},
     {"removebot",       G_RemoveBotCommand,   qfalse},
+    // Physics props, from the grabber and the client's props; single player
+    {"physgrab",        G_PhysicsGrabCmd,     qfalse},
+    {"physdrop",        G_PhysicsDropCmd,     qfalse},
+    {"physdist",        G_PhysicsDistCmd,     qfalse},
+    {"physpunt",        G_PhysicsPuntCmd,     qfalse},
+    {"physnudge",       G_PhysicsNudgeCmd,    qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif

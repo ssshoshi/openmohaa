@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 class Entity;
 class Vector;
+struct gentity_s;
 
 // Builds the level's physics world from its BSP. Called as entities spawn.
 void G_PhysicsInitLevel(const char *mapfile);
@@ -49,6 +50,14 @@ bool G_PhysicsAddEntity(Entity *ent);
 void G_PhysicsRemoveEntity(Entity *ent);
 // Whether the physics owns this entity.
 bool G_PhysicsOwns(const Entity *ent);
+
+// The grabber's and the client props' commands, from a single player client:
+// physgrab, physdrop, physdist, physpunt, physnudge (see g_physics.cpp).
+qboolean G_PhysicsGrabCmd(struct gentity_s *ent);
+qboolean G_PhysicsDropCmd(struct gentity_s *ent);
+qboolean G_PhysicsDistCmd(struct gentity_s *ent);
+qboolean G_PhysicsPuntCmd(struct gentity_s *ent);
+qboolean G_PhysicsNudgeCmd(struct gentity_s *ent);
 
 // Pushes a physics entity: an impulse in kilograms times units a second, at a
 // point in the world.
