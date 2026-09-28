@@ -2874,6 +2874,7 @@ void	R_ImageList_f( void );
 void	R_SkinList_f( void );
 // https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=516
 const void *RB_TakeScreenshotCmd( const void *data );
+void RB_TakeDeferredScreenshot( void );
 void	R_ScreenShot_f( void );
 
 void	R_InitFogTable( void );
@@ -3651,6 +3652,11 @@ typedef struct {
 	int height;
 	char *fileName;
 	qboolean jpeg;
+	// Added in OPM
+	//  Nonzero: written as a TGA resampled to this size, the thumbnail a saved
+	//  game carries (saveshot).
+	int destWidth;
+	int destHeight;
 } screenshotCommand_t;
 
 typedef struct {

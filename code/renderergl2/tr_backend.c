@@ -1831,6 +1831,9 @@ const void	*RB_SwapBuffers( const void *data ) {
 	R_CpuTimerEnd(CPUTIMER_PRESENT);
 	R_GpuTimerEnd(GPUTIMER_PRESENT);
 
+	// Added in OPM
+	RB_TakeDeferredScreenshot();
+
 	R_CpuTimerBegin(CPUTIMER_SWAPBUFFERS);
 
 	if ( !glState.finishCalled ) {

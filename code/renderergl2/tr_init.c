@@ -708,6 +708,11 @@ void RB_TakeScreenshotJPEG(int x, int y, int width, int height, char *fileName)
 	ri.Hunk_FreeTempMemory(buffer);
 }
 
+// Added in OPM: the screenshot waiting for the frame to be presented.
+static screenshotCommand_t	rb_pendingShot;
+static char					rb_pendingShotName[MAX_OSPATH];
+static qboolean				rb_havePendingShot;
+
 /*
 ==================
 RB_TakeScreenshotCmd
@@ -722,12 +727,110 @@ const void *RB_TakeScreenshotCmd( const void *data ) {
 	if(tess.numIndexes)
 		RB_EndSurface();
 
-	if (cmd->jpeg)
-		RB_TakeScreenshotJPEG( cmd->x, cmd->y, cmd->width, cmd->height, cmd->fileName);
-	else
-		RB_TakeScreenshot( cmd->x, cmd->y, cmd->width, cmd->height, cmd->fileName);
+	// Added in OPM
+	//  Taken when the frame is presented rather than here: see
+	//  RB_TakeDeferredScreenshot.
+	Q_strncpyz( rb_pendingShotName, cmd->fileName, sizeof(rb_pendingShotName) );
+	rb_pendingShot = *cmd;
+	rb_pendingShot.fileName = rb_pendingShotName;
+	rb_havePendingShot = qtrue;
 	
 	return (const void *)(cmd + 1);	
+}
+
+/*
+==================
+RB_ResampledScreenShot
+
+Added in OPM. The saved game thumbnail: the whole screen averaged down to
+destwidth x destheight, as the GL1 renderer writes it.
+==================
+*/
+static void RB_ResampledScreenShot( const char *filename, int destwidth, int destheight ) {
+	byte		*buffer;
+	byte		*source, *allsource;
+	byte		*src, *dst;
+	size_t		offset = 0;
+	int			padlen;
+	int			x, y;
+	int			r, g, b;
+	float		xScale, yScale;
+	int			xx, yy;
+
+	allsource = RB_ReadPixels(0, 0, glConfig.vidWidth, glConfig.vidHeight, &offset, &padlen);
+	source = allsource + offset;
+
+	buffer = ri.Hunk_AllocateTempMemory(destheight * destwidth * 3 + 18);
+	Com_Memset (buffer, 0, 18);
+	buffer[2]  = 2;		// uncompressed type
+	buffer[12] = destwidth & 255;
+	buffer[13] = destwidth >> 8;
+	buffer[14] = destheight & 255;
+	buffer[15] = destheight >> 8;
+	buffer[16] = 24;	// pixel size
+
+	// resample from source
+	xScale = glConfig.vidWidth / (float)(destwidth * 4);
+	yScale = glConfig.vidHeight / (float)(destheight * 3);
+	for ( y = 0 ; y < destheight ; y++ ) {
+		for ( x = 0 ; x < destwidth ; x++ ) {
+			r = g = b = 0;
+			for ( yy = 0 ; yy < 3 ; yy++ ) {
+				for ( xx = 0 ; xx < 4 ; xx++ ) {
+					src = source + (3 * glConfig.vidWidth + padlen) * (int)((y*3 + yy) * yScale) +
+						3 * (int) ((x*4 + xx) * xScale);
+					r += src[0];
+					g += src[1];
+					b += src[2];
+				}
+			}
+			dst = buffer + 18 + 3 * ( y * destwidth + x );
+			dst[0] = b / 12;
+			dst[1] = g / 12;
+			dst[2] = r / 12;
+		}
+	}
+
+	// gamma correct
+	if ( glConfig.deviceSupportsGamma ) {
+		R_GammaCorrect( buffer + 18, destheight * destwidth * 3 );
+	}
+
+	ri.FS_WriteFile( filename, buffer, destheight * destwidth * 3 + 18 );
+
+	ri.Hunk_FreeTempMemory( buffer );
+	ri.Hunk_FreeTempMemory( allsource );
+}
+
+/*
+==================
+RB_TakeDeferredScreenshot
+
+Added in OPM. Called from RB_SwapBuffers once the frame has been copied to the
+window. A screenshot command runs wherever it lands in the command list, and one
+queued between frames -- a saved game's thumbnail is asked for by the server,
+before the client has drawn anything -- read the window before this frame's
+image had been copied into it, and came out black.
+==================
+*/
+void RB_TakeDeferredScreenshot( void ) {
+	if ( !rb_havePendingShot ) {
+		return;
+	}
+
+	rb_havePendingShot = qfalse;
+
+	if ( glRefConfig.framebufferObject ) {
+		FBO_Bind( NULL );
+	}
+
+	if ( rb_pendingShot.destWidth > 0 && rb_pendingShot.destHeight > 0 ) {
+		RB_ResampledScreenShot( rb_pendingShot.fileName, rb_pendingShot.destWidth, rb_pendingShot.destHeight );
+	} else if ( rb_pendingShot.jpeg ) {
+		RB_TakeScreenshotJPEG( rb_pendingShot.x, rb_pendingShot.y, rb_pendingShot.width, rb_pendingShot.height, rb_pendingShot.fileName );
+	} else {
+		RB_TakeScreenshot( rb_pendingShot.x, rb_pendingShot.y, rb_pendingShot.width, rb_pendingShot.height, rb_pendingShot.fileName );
+	}
 }
 
 /*
@@ -752,6 +855,36 @@ void R_TakeScreenshot( int x, int y, int width, int height, char *name, qboolean
 	Q_strncpyz( fileName, name, sizeof(fileName) );
 	cmd->fileName = fileName;
 	cmd->jpeg = jpeg;
+	cmd->destWidth = 0;
+	cmd->destHeight = 0;
+}
+
+/*
+==================
+R_TakeResampledScreenshot
+
+Added in OPM
+==================
+*/
+static void R_TakeResampledScreenshot( const char *name, int destWidth, int destHeight ) {
+	static char	fileName[MAX_OSPATH];
+	screenshotCommand_t	*cmd;
+
+	cmd = R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_SCREENSHOT;
+
+	cmd->x = 0;
+	cmd->y = 0;
+	cmd->width = glConfig.vidWidth;
+	cmd->height = glConfig.vidHeight;
+	Q_strncpyz( fileName, name, sizeof(fileName) );
+	cmd->fileName = fileName;
+	cmd->jpeg = qfalse;
+	cmd->destWidth = destWidth;
+	cmd->destHeight = destHeight;
 }
 
 /* 
@@ -899,9 +1032,31 @@ void R_ScreenShot_f (void) {
 		silent = qfalse;
 	}
 
-	if ( ri.Cmd_Argc() == 2 && !silent ) {
+	if ( ri.Cmd_Argc() >= 2 && !silent ) {
 		// explicit filename
-		Com_sprintf( checkname, MAX_OSPATH, "screenshots/%s.tga", ri.Cmd_Argv( 1 ) );
+		// Fixed in OPM
+		//  A path is kept as given, and a size after it asks for a thumbnail
+		//  that size, as the GL1 renderer does: a saved game runs
+		//  "saveshot <path> 256 256". Taking only the one argument form, this
+		//  wrote a full size shotNNNN.tga into screenshots/ on every autosave
+		//  and left the save without its picture.
+		const char *name = ri.Cmd_Argv( 1 );
+
+		if ( strchr( name, '/' ) ) {
+			Q_strncpyz( checkname, name, sizeof( checkname ) );
+		} else {
+			Com_sprintf( checkname, MAX_OSPATH, "screenshots/%s.tga", name );
+		}
+
+		if ( ri.Cmd_Argc() > 3 ) {
+			const int width = atoi( ri.Cmd_Argv( 2 ) );
+			const int height = atoi( ri.Cmd_Argv( 3 ) );
+
+			if ( width > 0 && height > 0 ) {
+				R_TakeResampledScreenshot( checkname, width, height );
+				return;
+			}
+		}
 	} else {
 		// scan for a free filename
 
