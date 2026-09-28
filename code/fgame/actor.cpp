@@ -47,6 +47,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "parm.h"
 #include "../corepp/tiki.h"
 #include "smokesprite.h"
+#include "g_physics.h"
 
 #include <cmath>
 
@@ -3338,6 +3339,18 @@ void Actor::TouchStuff(mmove_t *mm)
         // Don't bother touching the world
         if (!other->entity || other->entity == world) {
             continue;
+        }
+
+        // Added in OPM
+        //  A physics prop in the way is pushed the way the actor is going.
+        if (G_PhysicsOwns(other->entity)) {
+            Vector going = velocity, toward = other->entity->centroid - origin;
+
+            going.z  = 0;
+            toward.z = 0;
+            if (going.length() > 1 && toward.normalize() > 0 && DotProduct(going, toward) > 0.2f * going.length()) {
+                G_PhysicsPushedBy(other->entity, this, going, going.length());
+            }
         }
 
         event = new Event(EV_Touch);

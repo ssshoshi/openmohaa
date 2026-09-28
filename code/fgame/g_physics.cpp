@@ -43,6 +43,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "level.h"
 #include "gamecvars.h"
 #include "g_physics.h"
+#include "sentient.h"
+#include "barrels.h"
+#include "object.h"
 
 #include <set>
 #include <vector>
@@ -85,6 +88,26 @@ typedef struct {
 } gphysFurniture_t;
 
 static std::vector<gphysFurniture_t> gphys_furniture;
+
+// Players and AI, as kinematic boxes that follow them. Props are pushed out of
+// the way of someone moving into them rather than through, and a prop knocked
+// towards someone stops against him instead of sealing him inside it.
+typedef struct {
+    Entity     *ent;
+    JPH::BodyID id;
+    vec3_t      size;
+    JPH::RVec3  from, to; // where the box goes over this frame's steps
+    qboolean    seen;
+} gphysKinematic_t;
+
+static gphysKinematic_t gphys_kinematic[MAX_GENTITIES];
+
+// Someone walking into a prop pushes it along at up to this speed, in units a
+// second. A prop over GPHYS_PUSH_LIGHT kilograms goes proportionally slower, and
+// one over GPHYS_PUSH_HEAVY does not go at all.
+#define GPHYS_PUSH_SPEED 150.0f
+#define GPHYS_PUSH_LIGHT 8.0f
+#define GPHYS_PUSH_HEAVY 80.0f
 static std::set<int>                 gphys_furnitureBrushes;
 
 static qboolean G_PhysicsSkipFurniture(void *ctx, int brushNum, const char *shader, int contents, const vec3_t mins, const vec3_t maxs)
@@ -171,10 +194,20 @@ void G_PhysicsShutdown(void)
             }
         }
 
+        for (int i = 0; i < MAX_GENTITIES; i++) {
+            if (!gphys_kinematic[i].id.IsInvalid()) {
+                bodies.RemoveBody(gphys_kinematic[i].id);
+                bodies.DestroyBody(gphys_kinematic[i].id);
+            }
+        }
+
         Phys_DestroyWorld(&gphys_world);
     }
 
     memset(gphys_entities, 0, sizeof(gphys_entities));
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        gphys_kinematic[i] = gphysKinematic_t();
+    }
     gphys_worldBodies.clear();
     gphys_furniture.clear();
     gphys_furnitureBrushes.clear();
@@ -307,6 +340,47 @@ void G_PhysicsInitLevel(const char *mapfile)
 //=============================================================
 // Entities
 //=============================================================
+
+// Whether an entity is one the physics takes, as it spawns or as a save game
+// brings it back: an unbroken crate or barrel, or a small interactive object.
+static bool G_PhysicsWants(Entity *ent)
+{
+    if (!ent || ent->edict->solid == SOLID_NOT) {
+        return false;
+    }
+
+    if (ent->IsSubclassOfCrateObject() || ent->isSubclassOf(BarrelObject)) {
+        return ent->takedamage != DAMAGE_NO;
+    }
+
+    if (ent->isSubclassOf(InteractObject)) {
+        return ent->size[0] <= 96 && ent->size[1] <= 96 && ent->size[2] <= 96;
+    }
+
+    return false;
+}
+
+void G_PhysicsRestoreLevel(void)
+{
+    int restored = 0;
+
+    G_PhysicsInitLevel(level.m_mapfile.c_str());
+    if (!gphys_ready) {
+        return;
+    }
+
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        Entity *ent = g_entities[i].entity;
+
+        if (G_PhysicsWants(ent) && G_PhysicsAddEntity(ent)) {
+            restored++;
+        }
+    }
+
+    if (g_physics_log->integer) {
+        gi.Printf("g_physics: %d entities are bodies again, from the save game\n", restored);
+    }
+}
 
 bool G_PhysicsOwns(const Entity *ent)
 {
@@ -516,6 +590,203 @@ void G_PhysicsDamaged(Entity *ent, float damage, const Vector& position, const V
 }
 
 //=============================================================
+// Players and AI
+//=============================================================
+
+static JPH::ShapeRefC G_PhysicsKinematicBox(const vec3_t size)
+{
+    vec3_t half;
+
+    VectorScale(size, 0.5f * PHYS_UNITS_TO_METRES, half);
+    const float radius = Q_min(JPH::cDefaultConvexRadius, 0.5f * Q_min(half[0], Q_min(half[1], half[2])));
+
+    JPH::BoxShapeSettings           box(JPH::Vec3(half[0], half[1], half[2]), radius);
+    JPH::ShapeSettings::ShapeResult result = box.Create();
+
+    return result.HasError() ? JPH::ShapeRefC() : result.Get();
+}
+
+static void G_PhysicsDropKinematic(gphysKinematic_t *k)
+{
+    if (!k->id.IsInvalid()) {
+        JPH::BodyInterface &bodies = gphys_world.system->GetBodyInterface();
+
+        bodies.RemoveBody(k->id);
+        bodies.DestroyBody(k->id);
+    }
+
+    *k = gphysKinematic_t();
+}
+
+// Before the steps: a box for everyone alive and solid, placed to move from
+// where it was to where they are now.
+static void G_PhysicsFollowSentients(void)
+{
+    JPH::BodyInterface &bodies = gphys_world.system->GetBodyInterface();
+    int                 i;
+
+    for (i = 0; i < MAX_GENTITIES; i++) {
+        gphys_kinematic[i].seen = qfalse;
+    }
+
+    for (i = 1; i <= SentientList.NumObjects(); i++) {
+        Sentient         *ent = SentientList.ObjectAt(i);
+        gphysKinematic_t *k;
+        vec3_t            size, centre;
+
+        if (!ent || ent->entnum < 0 || ent->entnum >= MAX_GENTITIES || ent->health <= 0 || ent->deadflag
+            || ent->edict->solid == SOLID_NOT || ent->edict->solid == SOLID_TRIGGER) {
+            continue;
+        }
+
+        k = &gphys_kinematic[ent->entnum];
+        if (k->ent != ent) {
+            G_PhysicsDropKinematic(k);
+        }
+
+        VectorSubtract(ent->maxs, ent->mins, size);
+        if (size[0] < 1.0f || size[1] < 1.0f || size[2] < 1.0f) {
+            continue;
+        }
+
+        VectorAdd(ent->mins, ent->maxs, centre);
+        VectorMA(ent->origin, 0.5f, centre, centre);
+
+        if (k->id.IsInvalid()) {
+            JPH::ShapeRefC shape = G_PhysicsKinematicBox(size);
+
+            if (!shape) {
+                continue;
+            }
+
+            JPH::BodyCreationSettings settings(
+                shape, JPH::RVec3(PhysToJolt(centre)), JPH::Quat::sIdentity(), JPH::EMotionType::Kinematic, PhysLayers::KINEMATIC
+            );
+            // No friction, so someone standing on a crate does not drag it.
+            settings.mFriction    = 0.0f;
+            settings.mRestitution = 0.0f;
+            settings.mUserData    = PHYS_USERDATA_ENTITY_BASE + ent->entnum;
+
+            k->id = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+            if (k->id.IsInvalid()) {
+                continue;
+            }
+
+            k->ent = ent;
+            VectorCopy(size, k->size);
+            k->from = k->to = settings.mPosition;
+        } else if (fabs(size[0] - k->size[0]) > 0.5f || fabs(size[1] - k->size[1]) > 0.5f || fabs(size[2] - k->size[2]) > 0.5f) {
+            // Crouched or stood.
+            JPH::ShapeRefC shape = G_PhysicsKinematicBox(size);
+
+            if (shape) {
+                bodies.SetShape(k->id, shape, false, JPH::EActivation::DontActivate);
+                VectorCopy(size, k->size);
+            }
+        }
+
+        k->seen = qtrue;
+        k->from = k->to;
+        k->to   = JPH::RVec3(PhysToJolt(centre));
+
+        // A teleport: there, not swept through everything between.
+        if ((k->to - k->from).Length() > 64.0f * PHYS_UNITS_TO_METRES) {
+            bodies.SetPosition(k->id, k->to, JPH::EActivation::DontActivate);
+            k->from = k->to;
+        }
+    }
+
+    for (i = 0; i < MAX_GENTITIES; i++) {
+        if (!gphys_kinematic[i].seen && !gphys_kinematic[i].id.IsInvalid()) {
+            G_PhysicsDropKinematic(&gphys_kinematic[i]);
+        }
+    }
+}
+
+// Each step: the boxes a part of the way along.
+static void G_PhysicsMoveSentients(float frac, float dt)
+{
+    JPH::BodyInterface &bodies = gphys_world.system->GetBodyInterface();
+
+    for (int i = 0; i < MAX_GENTITIES; i++) {
+        const gphysKinematic_t *k = &gphys_kinematic[i];
+
+        if (k->id.IsInvalid()) {
+            continue;
+        }
+
+        if (k->from == k->to) {
+            // Standing still: leave it asleep, but where it is.
+            if (bodies.GetPosition(k->id) != k->to) {
+                bodies.SetPosition(k->id, k->to, JPH::EActivation::DontActivate);
+            }
+            continue;
+        }
+
+        bodies.MoveKinematic(k->id, k->from + (k->to - k->from) * frac, JPH::Quat::sIdentity(), dt);
+    }
+}
+
+void G_PhysicsPushedBy(Entity *ent, Entity *pusher, const Vector& direction, float speed)
+{
+    vec3_t dir;
+    float  mass, target, along;
+
+    if (!G_PhysicsOwns(ent) || !pusher || speed <= 0.0f) {
+        return;
+    }
+
+    // Not what someone stands on.
+    if (pusher->absmin[2] >= ent->absmax[2] - 2.0f) {
+        return;
+    }
+
+    VectorSet(dir, direction[0], direction[1], 0.0f);
+    if (VectorNormalize(dir) < 0.001f) {
+        return;
+    }
+
+    JPH::BodyInterface &bodies = gphys_world.system->GetBodyInterface();
+    const JPH::BodyID   id     = gphys_entities[ent->entnum].id;
+
+    {
+        JPH::BodyLockRead lock(gphys_world.system->GetBodyLockInterface(), id);
+        if (!lock.Succeeded()) {
+            return;
+        }
+        mass = 1.0f / Q_max(1e-4f, lock.GetBody().GetMotionProperties()->GetInverseMass());
+    }
+
+    if (mass >= GPHYS_PUSH_HEAVY) {
+        return;
+    }
+
+    target = Q_min(speed, GPHYS_PUSH_SPEED) * Q_min(1.0f, GPHYS_PUSH_LIGHT / mass);
+
+    // Up to the speed, never slowing what already goes faster.
+    along = bodies.GetLinearVelocity(id).Dot(PhysToJolt(dir)) * PHYS_METRES_TO_UNITS;
+    if (along >= target) {
+        return;
+    }
+
+    bodies.AddImpulse(id, PhysToJolt(dir) * ((target - along) * mass));
+    bodies.ActivateBody(id);
+
+    if (g_physics_log->integer > 2) {
+        gi.Printf(
+            "g_physics: #%d pushed by #%d towards %.0f u/s (%.1f kg), at %.0f %.0f %.0f\n",
+            ent->entnum,
+            pusher->entnum,
+            target,
+            mass,
+            ent->origin[0],
+            ent->origin[1],
+            ent->origin[2]
+        );
+    }
+}
+
+//=============================================================
 // Stepping
 //=============================================================
 
@@ -560,11 +831,25 @@ void G_PhysicsFrame(float frametime)
         }
     }
 
+    G_PhysicsFollowSentients();
+
     gphys_accum = Q_min(gphys_accum + frametime, dt * GPHYS_MAX_STEPS);
-    while (gphys_accum >= dt && steps < GPHYS_MAX_STEPS) {
-        gphys_world.system->Update(dt, 1, gphys_world.temp, gphys_world.jobs);
-        gphys_accum -= dt;
-        steps++;
+    {
+        const int total = Q_min((int)(gphys_accum / dt), GPHYS_MAX_STEPS);
+
+        while (steps < total) {
+            G_PhysicsMoveSentients((float)(steps + 1) / total, dt);
+            gphys_world.system->Update(dt, 1, gphys_world.temp, gphys_world.jobs);
+            gphys_accum -= dt;
+            steps++;
+        }
+
+        // No step this frame: the boxes are where they are going.
+        if (!total) {
+            for (int i = 0; i < MAX_GENTITIES; i++) {
+                gphys_kinematic[i].to = gphys_kinematic[i].from;
+            }
+        }
     }
 
     if (!steps) {

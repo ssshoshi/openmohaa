@@ -1577,6 +1577,10 @@ qboolean G_ArchiveLevel(
         }
 
         if (arc.Loading()) {
+            // Added in OPM
+            //  Nothing was spawned, so nothing built the physics.
+            G_PhysicsRestoreLevel();
+
             arc.Close();
             LoadingSavegame = false;
             gi.Printf(HUD_MESSAGE_YELLOW "%s\n", gi.LV_ConvertString("Game Loaded"));

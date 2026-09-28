@@ -34,6 +34,9 @@ class Vector;
 void G_PhysicsInitLevel(const char *mapfile);
 // Forgets the level's world and every body in it.
 void G_PhysicsShutdown(void);
+// After a save game has brought the level's entities back: the world again,
+// and every prop a body again, asleep where it was saved.
+void G_PhysicsRestoreLevel(void);
 // Advances the simulation by the frame, and moves the entities it owns.
 void G_PhysicsFrame(float frametime);
 
@@ -52,3 +55,6 @@ bool G_PhysicsOwns(const Entity *ent);
 void G_PhysicsImpulse(Entity *ent, const Vector& point, const Vector& impulse);
 // The push a hit gives: damage along its direction, at where it struck.
 void G_PhysicsDamaged(Entity *ent, float damage, const Vector& position, const Vector& direction);
+// Someone moving into a physics entity (it blocked his movement): pushed along
+// the way he is going, at up to his speed, less the heavier it is.
+void G_PhysicsPushedBy(Entity *ent, Entity *pusher, const Vector& direction, float speed);

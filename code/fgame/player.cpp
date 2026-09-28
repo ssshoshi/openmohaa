@@ -54,6 +54,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "portableturret.h"
 #include "fixedturret.h"
 #include "clientvote.h"
+#include "g_physics.h"
 
 const Vector power_color(0.0, 1.0, 0.0);
 const Vector acolor(1.0, 1.0, 1.0);
@@ -3578,6 +3579,23 @@ void Player::TouchStuff(pmove_t *pm)
         // Don't bother touching the world
         if ((!other->entity) || (other->entity == world)) {
             continue;
+        }
+
+        // Added in OPM
+        //  A physics prop in the way is pushed the way the player is trying
+        //  to go, harder the harder he is trying.
+        if (G_PhysicsOwns(other->entity)) {
+            Vector fwd, right, wish, toward;
+
+            AngleVectors(Vector(0, pm->ps->viewangles[YAW], 0), fwd, right, NULL);
+            wish   = fwd * pm->cmd.forwardmove + right * pm->cmd.rightmove;
+            toward = other->entity->centroid - origin;
+            toward.z = 0;
+            wish.z   = 0;
+
+            if (wish.length() > 1 && toward.normalize() > 0 && DotProduct(wish, toward) > 0.2f * wish.length()) {
+                G_PhysicsPushedBy(other->entity, this, wish, 150.0f * Q_min(1.0f, wish.length() / 127.0f));
+            }
         }
 
         event = new Event(EV_Touch);
