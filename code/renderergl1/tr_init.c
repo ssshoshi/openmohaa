@@ -1393,7 +1393,9 @@ void R_Register( void )
 	r_lerpmodels = ri.Cvar_Get("r_lerpmodels", "1", 0);
 	r_lodCurveError = ri.Cvar_Get( "r_lodCurveError", "250", CVAR_ARCHIVE|CVAR_CHEAT );
 	r_flares = ri.Cvar_Get ("r_flares", "0", CVAR_ARCHIVE );
-	r_znear = ri.Cvar_Get( "r_znear", "4", CVAR_CHEAT );
+	// MOH:AA, Spearhead and Breakthrough all default to 3, not ioq3's 4; ironsight
+	// mods such as MOHAIM put the rear sight close enough to the eye that 4 cuts it off
+	r_znear = ri.Cvar_Get( "r_znear", "3", CVAR_CHEAT );
 	ri.Cvar_CheckRange( r_znear, 0.001f, 200, qtrue );
 	r_ignoreGLErrors = ri.Cvar_Get( "r_ignoreGLErrors", "1", CVAR_ARCHIVE );
 	r_fastsky = ri.Cvar_Get( "r_fastsky", "0", 0 );
