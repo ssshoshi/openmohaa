@@ -908,6 +908,10 @@ void CG_BugReportInit(void)
     if (!cgi.Cvar_Get("br_bound", "0", CVAR_ARCHIVE)->integer) {
         cgi.Cmd_Execute(EXEC_APPEND, "bind F8 bugreport\nseta br_bound 1\n");
     }
+    // And F7 for the cvar browser (client/cl_uicvarbrowser.cpp), the same way.
+    if (!cgi.Cvar_Get("cvb_bound", "0", CVAR_ARCHIVE)->integer) {
+        cgi.Cmd_Execute(EXEC_APPEND, "bind F7 cvarbrowser\nseta cvb_bound 1\n");
+    }
 
     memset(&br, 0, sizeof(br));
 }

@@ -78,6 +78,12 @@ void     UI_ActivateView3D(void);
 void     UI_MenuEscape(const char *name);
 void     UI_CreateScoreboard(void);
 qboolean UI_MenuActive(void);
+// Added in OPM
+//  The cvar browser (cl_uicvarbrowser.cpp)
+void     UI_InitCvarBrowser(void);
+void     UI_ShutdownCvarBrowser(void);
+qboolean UI_CvarBrowserOpen(void);
+void     UI_CvarBrowser_f(void);
 qboolean UI_MenuUp(void);
 void     UI_FocusMenuIfExists(void);
 void     UI_DrawConnect(void);
