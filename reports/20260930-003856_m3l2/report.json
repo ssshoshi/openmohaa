@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "20260930-003856_m3l2",
+  "type": "idea",
+  "category": "gameplay",
+  "title": "Make this section more difficult.",
+  "description": "Before the enemies run in they should throw smoke grenades(probably need to be pulled from spearhead). After that they throw regular grenades. Then they come running in w in waves. The players MG42 (and all other mg42s in the game) should have a barrel heating problem so they cant be non-stop.",
+  "build": {
+    "version": "Medal of Honor Allied Assault 1.12+0.83.0 (OpenMoHAA 0.83.0-unstable+0.eedef338) win_mingw64-x86_64 Sep 30 2026 UTC",
+    "renderer": "opengl2",
+    "gl_vendor": "NVIDIA Corporation",
+    "gl_renderer": "NVIDIA GeForce GTX 1080/PCIe/SSE2",
+    "resolution": [2560, 1440],
+    "fps": 38,
+    "fs_game": ""
+  },
+  "game": {
+    "map": "maps/m3l2.bsp",
+    "single_player": true,
+    "server_time": 1024300,
+    "player_origin": [-3647.56, 3145.94, 16.13],
+    "view_origin": [-3647.38, 3122.59, 69.72],
+    "view_angles": [6.54, 270.53, 0.00],
+    "health": 45,
+    "repro": "devmap m3l2; setviewpos -3648 3146 16 271",
+    "savegame": "br_20260930-003856_m3l2"
+  },
+  "aim": {
+    "hit": true,
+    "position": [-3641.73, 2515.29, 0.13],
+    "normal": [0.00, 0.00, 1.00],
+    "shader": "textures/wilderness/m3l3grass_bocroad",
+    "through_invisible": "",
+    "surface_flags": 65536,
+    "contents": 134217729,
+    "light": [255.00, 255.00, 255.00],
+    "distance": 611
+  },
+  "light_at_eye": [1.00, 1.00, 1.00],
+  "target": {
+    "kind": "entity",
+    "entnum": 206,
+    "etype": "general",
+    "angles": [0.00, 0.00, 0.00],
+    "model": "*64",
+    "origin": [-3648.00, 3075.00, 84.00],
+    "mins": [-32.00, -1.00, -44.00],
+    "maxs": [32.00, 1.00, 44.00],
+    "model_shaders": [],
+    "overlay": ["entity #206 (general): *64", "aim: -3642 2515 0 on textures/wilderness/m3l3grass_bocroad"]
+  },
+  "files": {
+    "screenshot": "screenshots/br_20260930-003856_m3l2.jpg",
+    "screenshot_marked": "screenshots/br_20260930-003856_m3l2_marked.jpg",
+    "server": "server.txt",
+    "sounds": "sounds.txt",
+    "config": "configs/bugreports/20260930-003856_m3l2/config.cfg"
+  }
+}
