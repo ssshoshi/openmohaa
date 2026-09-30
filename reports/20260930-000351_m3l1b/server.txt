@@ -1,0 +1,169 @@
+== level ==
+Map        : m3l1b
+Map script : maps/m3l1b.scr
+Spawnpoint : 
+Level time : 1520.35 (frame 30404)
+Cinematic  : no
+
+== player ==
+Origin     : ( 1575.49, -2167.08, 272.13 )
+Angles     : ( 0.00, 243.95, 0.00 )
+Health     : 750.0
+
+== target ==
+Entity #   : 278
+Class ID   : Actor
+Classname  : Actor
+Targetname : mg42_bunker_2_gunner
+Modelname  : models/human/german_wehrmact_grenadier.tik
+Animname   : american_salute
+Origin     : ( 1551.38, -2232.87, 272.13 )
+Angles     : ( 0.00, 55.00, 0.00 )
+Bounds     : Mins( -15.00, -15.00, 0.00 ) Maxs( 15.00, 15.00, 8.00 )
+Velocity   : ( 0.00, 0.00, 0.00 )
+SVFLAGS    : 8000
+Movetype   : 0
+Solidtype  : 0
+Contents   : 40000000
+Parent     : 1023
+Health     : 0.0 / 100.0
+Physics    : not a kind the physics moves
+
+== actor ==
+Think      : killed killed
+Enemy      : none
+Enemy on   : yes
+Leash      : 512
+Min/max    : 128 / 1024
+
+== scripts ==
+num     state      label           script         
+------- ---------- --------------- ---------------
+0000000 suspended       IdleMain   anim/idle.scr
+0000001 suspendedIdleStandTransition  anim/stand.scr
+0000002 suspended          start  anim/stand.scr
+0000003  waiting          Start anim/motionblend.scr
+0000004  waiting          Start anim/motionblend.scr
+0000005  waiting          start    anim/aim.scr
+0000006 suspended          start    anim/run.scr
+0000007 suspended          start anim/runto_casual.scr
+0000008 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000009 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000010 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000011 suspended          start    anim/run.scr
+0000012 suspended          start anim/runto_casual.scr
+0000013 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000014 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000015 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000016 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000017 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000018 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000019 suspended          start    anim/run.scr
+0000020 suspended          start anim/runto_casual.scr
+0000021 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000022 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000023 suspended          start    anim/run.scr
+0000024 suspended          start anim/runto_casual.scr
+0000025 suspended          start    anim/run.scr
+0000026 suspended          start anim/runto_casual.scr
+0000027 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000028 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000029  waiting                 maps/m3l1b.scr
+0000030  waiting                 maps/m3l1b.scr
+0000031 suspended                global/breathe.scr
+0000032 suspended                global/breathe.scr
+0000033 suspended                global/breathe.scr
+0000034 suspended                global/breathe.scr
+0000035 suspended                global/breathe.scr
+0000036 suspended                global/breathe.scr
+0000037  waiting     breatheout global/breathe.scr
+0000038  waiting     breatheout global/breathe.scr
+0000039  waiting     breatheout global/breathe.scr
+0000040  waitingbunker_dust_trigger  maps/m3l1b.scr
+0000041  running          start global/earthquake.scr
+0000042 suspended                 maps/m3l1b.scr
+0000043 suspended                 maps/m3l1b.scr
+0000044 suspended                 maps/m3l1b.scr
+0000045 suspended                 maps/m3l1b.scr
+0000046 suspended                 maps/m3l1b.scr
+0000047 suspended                 maps/m3l1b.scr
+0000048 suspended                 maps/m3l1b.scr
+0000049 suspended                 maps/m3l1b.scr
+0000050  waiting                 maps/m3l1b.scr
+0000051  waiting                 maps/m3l1b.scr
+0000052 suspended                global/minefield.scr
+0000053 suspended                global/minefield.scr
+0000054 suspended                global/minefield.scr
+0000055 suspended                global/minefield.scr
+0000056 suspended                global/minefield.scr
+0000057 suspended                global/minefield.scr
+0000058 suspended                global/minefield.scr
+0000059 suspendedexplosive_barrel_spawn global/barrel.scr
+0000060 suspendedexplosive_barrel_spawn global/barrel.scr
+0000061 suspendedexplosive_barrel_launch_dummy_fly global/barrel.scr
+0000062 suspendedexplosive_barrel_spawn global/barrel.scr
+0000063 suspendedexplosive_barrel_spawn global/barrel.scr
+0000064 suspended          start    anim/run.scr
+0000065 suspended          start anim/runto_casual.scr
+0000066 suspended          start    anim/run.scr
+0000067 suspended          start anim/runto_casual.scr
+0000068 suspended          start    anim/run.scr
+0000069 suspended          start anim/runto_casual.scr
+0000070 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000071 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000072 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000073 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000074 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000075 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000076 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000077 suspended          start    anim/run.scr
+0000078 suspended          start anim/runto_casual.scr
+0000079 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000080 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000081 suspended          start    anim/run.scr
+0000082 suspended          start anim/runto_casual.scr
+0000083 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000084 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000085 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000086 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000087 suspended          start    anim/run.scr
+0000088 suspended          start anim/runto_casual.scr
+0000089 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000090 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000091 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000092 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000093 suspended          start    anim/run.scr
+0000094 suspended          start anim/runto_casual.scr
+0000095 suspended          start    anim/run.scr
+0000096 suspended          start anim/runto_casual.scr
+0000097 suspended          start    anim/run.scr
+0000098 suspended          start anim/runto_casual.scr
+0000099  waiting          Start anim/motionblend.scr
+0000100  waiting          Start anim/motionblend.scr
+0000101  waiting          Start anim/motionblend.scr
+0000102  waiting          Start anim/motionblend.scr
+0000103 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000104 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000105 suspended          start    anim/run.scr
+0000106 suspended          start anim/runto_casual.scr
+0000107 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000108 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000109 suspended          start    anim/run.scr
+0000110 suspended          start anim/runto_casual.scr
+0000111  waiting          Start anim/motionblend.scr
+0000112  waiting          Start anim/motionblend.scr
+0000113  waiting          Start anim/motionblend.scr
+0000114  waiting          Start anim/motionblend.scr
+0000115  waiting          Start anim/motionblend.scr
+0000116 suspended          start    anim/run.scr
+0000117 suspended          start anim/runto_casual.scr
+0000118  waiting          Start anim/motionblend.scr
+0000119  waiting          Start anim/motionblend.scr
+0000120  waiting          Start anim/motionblend.scr
+0000121  waiting          Start anim/motionblend.scr
+0000122  waiting          Start anim/motionblend.scr
+0000123  waiting          Start anim/motionblend.scr
+0000124  waiting          start    anim/aim.scr
+------- ---------- --------------- ---------------
+205 total scripts compiled
+125 total threads ( 1 running thread(s), 27 waiting thread(s), 97 suspended thread(s) )

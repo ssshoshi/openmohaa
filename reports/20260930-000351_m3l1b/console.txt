@@ -1,0 +1,300 @@
+[2026-09-30 00:53:49 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-30 00:53:49 UTC-5.000] ^~^~^ Warning: Can't find player animation 'mg_charge'.
+[2026-09-30 00:53:49 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:53:49 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:53:49 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:53:49 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:53:49 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:53:49 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:53:49 UTC-5.000] OpenAL: Set stream error - sound/null.wav
+[2026-09-30 00:53:49 UTC-5.000] ragdoll 1875414: entity 345 died, starting a ragdoll
+[2026-09-30 00:53:50 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-30 00:53:50 UTC-5.000] ^~^~^ Warning: Can't find player animation 'mg_charge'.
+[2026-09-30 00:53:50 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-30 00:53:50 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:53:50 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:53:50 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:53:50 UTC-5.000] ragdoll 1875635 [slot 77, entity 345, active]: carried by a Jolt ragdoll
+[2026-09-30 00:53:50 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-30 00:53:50 UTC-5.000] ^~^~^ Warning: Can't find player animation 'mg_charge'.
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:53:50 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:53:50 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:53:50 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:53:50 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-30 00:53:51 UTC-5.000] ragdoll 1876585 [slot 77, entity 345, sleeping]: asleep after 1171 ms
+[2026-09-30 00:53:51 UTC-5.000] ragdoll 1876585 [slot 77, entity 345, sleeping]: mesh: 68 of 3029 vertices more than 1 unit in the world (2.2%), deepest 5.6 on Bip01 L Toe0; underside 0.0 above the ground
+[2026-09-30 00:53:51 UTC-5.000] ragdoll 1876714 [slot 26, entity -1, sleeping]: woken
+[2026-09-30 00:53:51 UTC-5.000] ragdoll 1876714 [slot 77, entity 345, sleeping]: woken
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:53:51 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:53:51 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:53:51 UTC-5.000] ragdoll 1876743 [slot 77, entity 345, active]: struck: joints kicked up to 133 u/s
+[2026-09-30 00:53:51 UTC-5.000] MUSIC: changing from [ aux3 | aux3 ] to [ failure | normal ]
+[2026-09-30 00:53:51 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:53:51 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:53:51 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:53:51 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:53:51 UTC-5.000] CL_ProcessServerCommand: fadesound '4000.00'
+[2026-09-30 00:53:51 UTC-5.000] Called FadeSound with: 4000.000000
+[2026-09-30 00:53:51 UTC-5.000] CL_ProcessServerCommand: fadesound '4000.00'
+[2026-09-30 00:53:51 UTC-5.000] Called FadeSound with: 4000.000000
+[2026-09-30 00:53:52 UTC-5.000] ragdoll 1877548 [slot 77, entity 345, sleeping]: asleep after 2134 ms
+[2026-09-30 00:53:52 UTC-5.000] ragdoll 1877548 [slot 77, entity 345, sleeping]: mesh: 341 of 3029 vertices more than 1 unit in the world (11.3%), deepest 64.0 on Bip01 R Hand; underside 0.0 above the ground
+[2026-09-30 00:53:52 UTC-5.000] physics: 300 steps in the last 5.0 s, 4512 us each, worst 5454 us; 906 bodies awake
+[2026-09-30 00:53:57 UTC-5.000] physics: 300 steps in the last 5.0 s, 4141 us each, worst 5174 us; 824 bodies awake
+[2026-09-30 00:54:01 UTC-5.000] Loading game...m3l20014
+[2026-09-30 00:54:01 UTC-5.000] OPENMOHAA Archive Version 14
+[2026-09-30 00:54:01 UTC-5.000] SV_ArchiveServerFile(false)
+[2026-09-30 00:54:01 UTC-5.000] ------- S_StopAllSounds (stop music) -------
+[2026-09-30 00:54:01 UTC-5.000] MUSIC: changing from [ failure | normal ] to [ none | none ]
+[2026-09-30 00:54:01 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-30 00:54:01 UTC-5.000] ------ Server Initialization ------
+[2026-09-30 00:54:01 UTC-5.000] Server: m3l2
+[2026-09-30 00:54:01 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-30 00:54:01 UTC-5.000] ==== CleanupGame ====
+[2026-09-30 00:54:01 UTC-5.000] SV_ArchiveLevelFile()
+[2026-09-30 00:54:01 UTC-5.000] OPENMOHAA Archive Version 14
+[2026-09-30 00:54:01 UTC-5.000] soundtrack switched to music/m3l2.mus.
+[2026-09-30 00:54:01 UTC-5.000] MOHAA Archive Version 14
+[2026-09-30 00:54:01 UTC-5.000] 9380304 memory allocated for navigation.
+[2026-09-30 00:54:01 UTC-5.000] Game Loaded
+[2026-09-30 00:54:01 UTC-5.000] Going from CS_PRIMED to CS_ACTIVE for Shoshi
+[2026-09-30 00:54:01 UTC-5.000] ------ Server Initialization Complete ------ 2038.27 seconds
+[2026-09-30 00:54:01 UTC-5.000] CL_ProcessServerCommand: fadesound '100.00'
+[2026-09-30 00:54:01 UTC-5.000] Called FadeSound with: 100.000000
+[2026-09-30 00:54:01 UTC-5.000] CL_ProcessServerCommand: fadesound '100.00'
+[2026-09-30 00:54:01 UTC-5.000] Called FadeSound with: 100.000000
+[2026-09-30 00:54:01 UTC-5.000] MUSIC: changing from [ none | none ] to [ failure | normal ]
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887024 [slot 77, entity 345, sleeping]: woken by the physics
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887024 [slot 77, entity 345, sleeping]: woken
+[2026-09-30 00:54:01 UTC-5.000] ------- S_StopAllSounds (stop music) -------
+[2026-09-30 00:54:01 UTC-5.000] MUSIC: changing from [ failure | normal ] to [ none | none ]
+[2026-09-30 00:54:01 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-30 00:54:01 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-30 00:54:01 UTC-5.000] Loading Previous Sound State.
+[2026-09-30 00:54:01 UTC-5.000] ------- S_StopAllSounds (don't stop music) -------
+[2026-09-30 00:54:01 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-30 00:54:01 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-30 00:54:01 UTC-5.000] SOUNDTRACK: Loading music/m3l2.mus
+[2026-09-30 00:54:01 UTC-5.000] MUSIC: changing from [ none | none ] to [ normal | normal ]
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 42, entity 16, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 58, entity 48, sleeping, stand-in]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 43, entity 68, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 44, entity 69, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 45, entity 244, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 46, entity 323, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 47, entity 327, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 48, entity 328, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 49, entity 344, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 50, entity 352, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 51, entity 353, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 52, entity 361, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 53, entity 364, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 54, entity 366, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 55, entity 367, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 56, entity 369, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 57, entity 370, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 0, entity 372, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 1, entity 375, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 2, entity 376, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 3, entity 377, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 4, entity 378, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 5, entity 379, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 6, entity 382, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 7, entity 383, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 8, entity 386, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 9, entity 388, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 10, entity 391, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 11, entity 393, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 12, entity 397, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 13, entity 400, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] MUSIC: changing from [ normal | normal ] to [ aux3 | aux3 ]
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 0, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 1, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 2, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 3, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 4, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 5, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 6, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 7, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 8, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 9, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 10, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 11, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 12, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 13, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 46, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 49, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 50, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 51, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 52, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 53, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 54, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 55, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 56, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 57, entity -1, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 58, entity -1, sleeping, stand-in]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 74, entity 17, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 75, entity 6, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 76, entity 49, sleeping]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 77, entity 345, active]: its entity left the snapshot
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 42, entity -1, sleeping]: adopted by entity 16
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 0 ms ago, 349.8 units away
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 43, entity -1, sleeping]: adopted by entity 68
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 44, entity -1, sleeping]: adopted by entity 69
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 45, entity -1, sleeping]: adopted by entity 244
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 46, entity -1, sleeping]: adopted by entity 323
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 47, entity -1, sleeping]: adopted by entity 327
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 48, entity -1, sleeping]: adopted by entity 328
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 49, entity -1, sleeping]: adopted by entity 344
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 50, entity -1, sleeping]: adopted by entity 352
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 51, entity -1, sleeping]: adopted by entity 353
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 52, entity -1, sleeping]: adopted by entity 361
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 53, entity -1, sleeping]: adopted by entity 364
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 54, entity -1, sleeping]: adopted by entity 366
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 55, entity -1, sleeping]: adopted by entity 367
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 56, entity -1, sleeping]: adopted by entity 369
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 57, entity -1, sleeping]: adopted by entity 370
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 0, entity -1, sleeping]: adopted by entity 372
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 1, entity -1, sleeping]: adopted by entity 375
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 2, entity -1, sleeping]: adopted by entity 376
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 3, entity -1, sleeping]: adopted by entity 377
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 4, entity -1, sleeping]: adopted by entity 378
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 5, entity -1, sleeping]: adopted by entity 379
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 6, entity -1, sleeping]: adopted by entity 382
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 7, entity -1, sleeping]: adopted by entity 383
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 8, entity -1, sleeping]: adopted by entity 386
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 9, entity -1, sleeping]: adopted by entity 388
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 10, entity -1, sleeping]: adopted by entity 391
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 11, entity -1, sleeping]: adopted by entity 393
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 12, entity -1, sleeping]: adopted by entity 397
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887108 [slot 13, entity -1, sleeping]: adopted by entity 400
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 42, entity 16, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 43, entity 68, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 44, entity 69, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 45, entity 244, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 46, entity 323, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 47, entity 327, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 48, entity 328, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 49, entity 344, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 50, entity 352, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 51, entity 353, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 52, entity 361, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 53, entity 364, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 54, entity 366, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 55, entity 367, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 56, entity 369, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 57, entity 370, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 0, entity 372, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 1, entity 375, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 2, entity 376, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 3, entity 377, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 4, entity 378, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 5, entity 379, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 6, entity 382, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 7, entity 383, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 8, entity 386, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 9, entity 388, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 10, entity 391, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 11, entity 393, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 12, entity 397, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 13, entity 400, sleeping]: orphaned: its entity was reset
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 42, entity -1, sleeping]: adopted by entity 16
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 146 ms ago, 349.7 units away
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 43, entity -1, sleeping]: adopted by entity 68
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 44, entity -1, sleeping]: adopted by entity 69
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 45, entity -1, sleeping]: adopted by entity 244
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 46, entity -1, sleeping]: adopted by entity 323
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 47, entity -1, sleeping]: adopted by entity 327
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 48, entity -1, sleeping]: adopted by entity 328
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 49, entity -1, sleeping]: adopted by entity 344
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 50, entity -1, sleeping]: adopted by entity 352
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 51, entity -1, sleeping]: adopted by entity 353
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 52, entity -1, sleeping]: adopted by entity 361
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 53, entity -1, sleeping]: adopted by entity 364
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 54, entity -1, sleeping]: adopted by entity 366
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 55, entity -1, sleeping]: adopted by entity 367
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 56, entity -1, sleeping]: adopted by entity 369
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 57, entity -1, sleeping]: adopted by entity 370
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 0, entity -1, sleeping]: adopted by entity 372
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 1, entity -1, sleeping]: adopted by entity 375
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 2, entity -1, sleeping]: adopted by entity 376
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 3, entity -1, sleeping]: adopted by entity 377
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 4, entity -1, sleeping]: adopted by entity 378
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 5, entity -1, sleeping]: adopted by entity 379
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 6, entity -1, sleeping]: adopted by entity 382
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 7, entity -1, sleeping]: adopted by entity 383
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 8, entity -1, sleeping]: adopted by entity 386
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 9, entity -1, sleeping]: adopted by entity 388
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 10, entity -1, sleeping]: adopted by entity 391
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 11, entity -1, sleeping]: adopted by entity 393
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 12, entity -1, sleeping]: adopted by entity 397
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887254 [slot 13, entity -1, sleeping]: adopted by entity 400
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887291 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 183 ms ago, 349.7 units away
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887314 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 206 ms ago, 349.7 units away
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887332 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 224 ms ago, 349.7 units away
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887349 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 241 ms ago, 349.7 units away
+[2026-09-30 00:54:01 UTC-5.000] ragdoll 1887364 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 256 ms ago, 349.7 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887383 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 275 ms ago, 349.7 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887400 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 292 ms ago, 349.6 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887417 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 309 ms ago, 349.6 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887434 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 326 ms ago, 349.6 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887434 [slot 77, entity 345, sleeping]: asleep after 12020 ms
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887434 [slot 77, entity 345, sleeping]: mesh: 348 of 3029 vertices more than 1 unit in the world (11.5%), deepest 64.0 on Bip01 R Hand; underside 0.0 above the ground
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887458 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 350 ms ago, 349.6 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887481 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 373 ms ago, 349.5 units away
+[2026-09-30 00:54:02 UTC-5.000] ragdoll 1887498 [slot 58, entity -1, sleeping, stand-in]: not taken by entity 48: tiki same, orphaned 390 ms ago, 349.5 units away
+[2026-09-30 00:54:02 UTC-5.000] physics: 287 steps in the last 5.0 s, 4161 us each, worst 5743 us; 825 bodies awake
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:54:03 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:54:03 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.wav
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.mp3
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.ogg
+[2026-09-30 00:54:03 UTC-5.000] Can't read sound file sound/null.opus
+[2026-09-30 00:54:03 UTC-5.000] WARNING: Failed to open sound sound/null.wav!
+[2026-09-30 00:54:03 UTC-5.000] OpenAL: Failed to load sound file.
+[2026-09-30 00:54:03 UTC-5.000] OpenAL: Set stream error - sound/null.wav
+[2026-09-30 00:54:05 UTC-5.000] ----- Server Shutdown (Server quit) -----
+[2026-09-30 00:54:05 UTC-5.000] ==== ShutdownGame ====
+[2026-09-30 00:54:05 UTC-5.000] ------ Unloading Game ------
+[2026-09-30 00:54:05 UTC-5.000] ---------------------------
+[2026-09-30 00:54:05 UTC-5.000] ------ Unloading ClientGame ------
+[2026-09-30 00:54:05 UTC-5.000] ------- S_StopAllSounds (stop music) -------
+[2026-09-30 00:54:05 UTC-5.000] MUSIC: changing from [ aux3 | aux3 ] to [ none | none ]
+[2026-09-30 00:54:05 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-30 00:54:05 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-30 00:54:05 UTC-5.000] ----- Client Shutdown (Client quit) -----
+[2026-09-30 00:54:05 UTC-5.000] ------ Unloading ClientGame ------
+[2026-09-30 00:54:05 UTC-5.000] ------- S_StopAllSounds (stop music) -------
+[2026-09-30 00:54:05 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-30 00:54:05 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-30 00:54:05 UTC-5.000] ------- Sound Shutdown (full) -------
+[2026-09-30 00:54:05 UTC-5.000] OpenAL: Destroying channels...
+[2026-09-30 00:54:05 UTC-5.000] OpenAL: Channels destroyed successfully.
+[2026-09-30 00:54:05 UTC-5.000] OpenAL: Destroying context...
+[2026-09-30 00:54:05 UTC-5.000] OpenAL: Context destroyed successfully.
+[2026-09-30 00:54:05 UTC-5.000] OpenAL: Closing device...
+[2026-09-30 00:54:05 UTC-5.000] OpenAL: Device closed successfully.
+[2026-09-30 00:54:05 UTC-5.000] ------- Sound Shutdown Complete -------
+[2026-09-30 00:54:05 UTC-5.000] RE_Shutdown( 1 )
+[2026-09-30 00:54:05 UTC-5.000] ------- FBO_Shutdown -------
+[2026-09-30 00:54:05 UTC-5.000] ------- R_ShutdownVaos -------
+[2026-09-30 00:54:05 UTC-5.000] ------- GLSL_ShutdownGPUShaders -------
+[2026-09-30 00:54:05 UTC-5.000] -----------------------

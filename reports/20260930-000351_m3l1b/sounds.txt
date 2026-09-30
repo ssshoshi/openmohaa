@@ -1,0 +1,14 @@
+== channels ==
+3D         1  playing ent    0 ch  0  vol 0.44  at 2325 -3025 -382  dist 200-2500  sound/characters/fs_dirt_04.wav
+3D         3  playing ent    0 ch  0  vol 0.58  at 1945 -2883 -504  dist 200-2500  sound/characters/fs_mud_02.wav
+3D         4  playing ent    0 ch  0  vol 0.43  at 184 -2842 -385  dist 200-2500  sound/characters/fs_dirt_02.wav
+3D         5  playing ent    0 ch  1  vol 0.48  at 1884 -2877 -504  dist 130-1600  sound/characters/body_mvmtgear_01.wav
+3D         6  playing ent    0 ch  1  vol 0.59  at 856 -2501 -396  dist 130-1600  sound/characters/body_mvmtgear_04.wav
+3D         7  playing ent    0 ch  0  vol 0.43  at 922 -2458 -397  dist 200-2500  sound/characters/fs_dirt_03.wav
+3D         8  playing ent    0 ch  1  vol 0.47  at 922 -2458 -397  dist 130-1600  sound/characters/body_mvmtgear_02.wav
+3D        31  playing ent  339 ch  6  vol 0.90  at -1024 -5632 -440  dist 1000-8000  sound/weapons/explo/exp_dirt_02.wav
+
+== looping ==
+
+== music ==
+triggered: none
