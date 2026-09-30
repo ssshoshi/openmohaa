@@ -1696,6 +1696,18 @@ UI_KeyEvent
 */
 void UI_KeyEvent(int key, unsigned int time)
 {
+    // Added in OPM
+    //  The key that opened the cvar browser closes it again, although the
+    //  window has the keyboard.
+    if (UI_CvarBrowserOpen()) {
+        const char *binding = Key_GetBinding(key);
+
+        if (binding && !Q_stricmp(binding, "cvarbrowser")) {
+            UI_CvarBrowser_f();
+            return;
+        }
+    }
+
     uWinMan.KeyEvent(key, time);
 }
 
@@ -5130,6 +5142,8 @@ void CL_ShutdownUI(void)
     Cmd_RemoveCommand("ui_saveconsolepos");
     Cmd_RemoveCommand("ui_loadconsolepos");
     Cmd_RemoveCommand("ui_testlist");
+    // Added in OPM
+    UI_ShutdownCvarBrowser();
     Cmd_RemoveCommand("clear");
     Cmd_RemoveCommand("ui_hud");
     Cmd_RemoveCommand("ui_resetcvars");
@@ -5343,6 +5357,8 @@ void CL_InitializeUI(void)
     Cmd_AddCommand("ui_saveconsolepos", SaveConsoleRectangle);
     Cmd_AddCommand("ui_loadconsolepos", LoadConsoleRectangle);
     Cmd_AddCommand("ui_testlist", UI_TestListCtrl_f);
+    // Added in OPM
+    UI_InitCvarBrowser();
     Cmd_AddCommand("clear", UI_ClearConsole_f);
     Cmd_AddCommand("ui_hud", UI_Hud_f);
     Cmd_AddCommand("ui_resetcvars", UI_ResetCvars);
