@@ -395,6 +395,11 @@ CLASS_DECLARATION(Weapon, TurretGun, NULL) {
 
 TurretGun::TurretGun()
 {
+    // Added in OPM
+    m_fBarrelHeat   = 0;
+    m_fLastHeatShot = -1000;
+    m_bOverheated   = false;
+
     entflags |= ECF_TURRET;
 
     AddWaitTill(STRING_ONTARGET);
@@ -827,8 +832,8 @@ void TurretGun::P_ThinkActive(void)
     if (m_iFiring != TURRETFIRESTATE_NONE) {
         m_iFiring = TURRETFIRESTATE_FIRING;
 
-        if (ReadyToFire(FIRE_PRIMARY)) {
-            Fire(FIRE_PRIMARY);
+        if (ReadyToFire(FIRE_PRIMARY) && !m_bOverheated) {
+            HeatFire(FIRE_PRIMARY);
             m_fCurrViewJitter = m_fViewJitter;
         }
     }
@@ -1209,8 +1214,8 @@ void TurretGun::AI_DoFiring()
             m_iFiring = TURRETFIRESTATE_FIRING;
         }
 
-        if (IsFiring() && ReadyToFire(FIRE_PRIMARY)) {
-            Fire(FIRE_PRIMARY);
+        if (IsFiring() && ReadyToFire(FIRE_PRIMARY) && !m_bOverheated) {
+            HeatFire(FIRE_PRIMARY);
         }
 
         return;
@@ -1240,7 +1245,9 @@ void TurretGun::AI_DoFiring()
         }
         break;
     case TURRETFIRESTATE_FIRING:
-        Fire(FIRE_PRIMARY);
+        if (!m_bOverheated) {
+            HeatFire(FIRE_PRIMARY);
+        }
 
         if (m_fMaxBurstTime > 0) {
             if (m_fFireToggleTime < level.time) {
@@ -1264,8 +1271,69 @@ void TurretGun::AI_ThinkActive()
     AI_DoFiring();
 }
 
+// Added in OPM
+// Whether this turret is an MG42 whose barrel overheats: the mounted and the
+// bipod MG42 of Allied Assault, Spearhead and Breakthrough, or a mod's
+// replacement of them, while g_mg42_overheat is on. Flak guns, cannons and
+// vehicle guns never do.
+bool TurretGun::Overheats()
+{
+    return g_mg42_overheat && g_mg42_overheat->integer && model.length() && Q_stristr(model.c_str(), "mg42") != NULL;
+}
+
+// Fires, and heats the barrel for it. At g_mg42_heatmax the gun is
+// overheated and HeatFire is not called again until CoolBarrel has taken the
+// heat down to g_mg42_heatresume; the player is told. The AI of 2.0 and later
+// calls this every frame it holds the trigger, so heat is counted only for
+// calls at least half a fire delay apart: once a shot.
+void TurretGun::HeatFire(firemode_t mode)
+{
+    Fire(mode);
+
+    if (!Overheats() || level.time - m_fLastHeatShot < FireDelay(mode) * 0.5f) {
+        return;
+    }
+
+    m_fLastHeatShot = level.time;
+    m_fBarrelHeat += g_mg42_heatpershot->value;
+
+    if (!m_bOverheated && m_fBarrelHeat >= g_mg42_heatmax->value) {
+        m_bOverheated = true;
+        gi.DPrintf("%s (entity %d) overheated at %.2f\n", model.c_str(), entnum, level.time);
+        if (owner && owner->IsSubclassOfPlayer()) {
+            gi.centerprintf(owner->edict, "The barrel has overheated!");
+        }
+    }
+}
+
+// Once a frame: the barrel sheds g_mg42_cooldown heat a second, starting
+// g_mg42_cooldelay seconds after the last shot.
+void TurretGun::CoolBarrel()
+{
+    if (!Overheats()) {
+        m_fBarrelHeat = 0;
+        m_bOverheated = false;
+        return;
+    }
+
+    if (m_fBarrelHeat > 0 && level.time - m_fLastHeatShot >= g_mg42_cooldelay->value) {
+        m_fBarrelHeat = Q_max(0.0f, m_fBarrelHeat - g_mg42_cooldown->value * level.frametime);
+    }
+
+    if (m_bOverheated && m_fBarrelHeat <= g_mg42_heatresume->value) {
+        m_bOverheated = false;
+        gi.DPrintf("%s (entity %d) cooled at %.2f\n", model.c_str(), entnum, level.time);
+        if (owner && owner->IsSubclassOfPlayer()) {
+            gi.centerprintf(owner->edict, "The barrel has cooled down.");
+        }
+    }
+}
+
 void TurretGun::Think(void)
 {
+    // Added in OPM
+    CoolBarrel();
+
     if (!owner && (m_bHadOwner || !aim_target)) {
         ThinkIdle();
     } else if (owner && owner->IsSubclassOfPlayer()) {

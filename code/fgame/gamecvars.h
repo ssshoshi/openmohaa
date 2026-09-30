@@ -147,6 +147,12 @@ extern cvar_t *g_gametype;
 extern cvar_t *g_gametypestring;
 extern cvar_t *g_realismmode;
 extern cvar_t *g_teamdamage;
+extern cvar_t *g_mg42_overheat;
+extern cvar_t *g_mg42_heatpershot;
+extern cvar_t *g_mg42_heatmax;
+extern cvar_t *g_mg42_heatresume;
+extern cvar_t *g_mg42_cooldown;
+extern cvar_t *g_mg42_cooldelay;
 extern cvar_t *g_healthdrop;
 extern cvar_t *g_healrate;
 

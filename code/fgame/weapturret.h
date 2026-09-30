@@ -112,6 +112,17 @@ private:
     Vector m_vMuzzlePosition;
     float  m_fMaxUseAngle;
 
+    // Added in OPM
+    //  The barrel's heat (see TurretGun::HeatFire). Not archived: a save made
+    //  with a hot barrel loads with a cool one, and saves stay readable.
+    float m_fBarrelHeat;
+    float m_fLastHeatShot;
+    bool  m_bOverheated;
+
+    bool  Overheats();
+    void  HeatFire(firemode_t mode);
+    void  CoolBarrel();
+
 protected:
     void         ThinkIdle();
     void         P_SetTargetAngles(Vector        &vTargAngles);
