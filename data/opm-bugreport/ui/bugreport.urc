@@ -1,0 +1,331 @@
+// The in-game report menu (code/cgame/cg_bugreport.cpp). Opened by the
+// report key (bugreport) once a target is locked; Submit runs br_submit.
+menu "bugreport" 420 344 NONE 0
+align centerx centery
+bgcolor 0 0 0 0.85
+borderstyle "RAISED"
+bgfill 0.05 0.05 0.08 0.85
+
+resource
+Label
+{
+title "REPORT"
+name "Default"
+rect 12 8 300 24
+fgcolor 1.00 0.85 0.30 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+font facfont-20
+textalign left
+}
+
+resource
+Label
+{
+title "The crosshair target is captured. Pick a type and area, then describe it."
+name "Default"
+rect 12 34 396 16
+fgcolor 0.80 0.80 0.80 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+font verdana-12
+textalign left
+}
+
+resource
+Label
+{
+title "Type"
+name "Default"
+rect 12 58 60 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+font verdana-14
+textalign left
+}
+
+resource
+Button
+{
+title "Bug"
+name "Default"
+rect 80 58 80 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_type bug"
+}
+
+resource
+Button
+{
+title "Idea"
+name "Default"
+rect 164 58 80 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_type idea"
+}
+
+resource
+Button
+{
+title "Feedback"
+name "Default"
+rect 248 58 80 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_type feedback"
+}
+
+resource
+Label
+{
+name "Default"
+rect 336 58 80 20
+fgcolor 1.00 0.85 0.30 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+linkcvar "br_type"
+font verdana-14
+textalign left
+}
+
+resource
+Label
+{
+title "Area"
+name "Default"
+rect 12 86 60 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+font verdana-14
+textalign left
+}
+
+resource
+Button
+{
+title "Physics"
+name "Default"
+rect 80 86 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category physics"
+}
+
+resource
+Button
+{
+title "Texture"
+name "Default"
+rect 146 86 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category texture"
+}
+
+resource
+Button
+{
+title "Lighting"
+name "Default"
+rect 212 86 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category lighting"
+}
+
+resource
+Button
+{
+title "Sound"
+name "Default"
+rect 278 86 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category sound"
+}
+
+resource
+Button
+{
+title "Model"
+name "Default"
+rect 344 86 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category model"
+}
+
+resource
+Button
+{
+title "Script"
+name "Default"
+rect 80 110 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category script"
+}
+
+resource
+Button
+{
+title "Gameplay"
+name "Default"
+rect 146 110 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category gameplay"
+}
+
+resource
+Button
+{
+title "Perf"
+name "Default"
+rect 212 110 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category performance"
+}
+
+resource
+Button
+{
+title "Other"
+name "Default"
+rect 278 110 62 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "set br_category other"
+}
+
+resource
+Label
+{
+name "Default"
+rect 348 110 70 20
+fgcolor 1.00 0.85 0.30 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+linkcvar "br_category"
+font verdana-14
+textalign left
+}
+
+resource
+Label
+{
+title "Title"
+name "Default"
+rect 12 142 60 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+font verdana-14
+textalign left
+}
+
+resource
+Field
+{
+name "Default"
+rect 80 140 328 22
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.00 0.00 0.00 0.60
+borderstyle "INDENT_BORDER"
+linkcvar "br_title"
+font verdana-14
+textalign left
+}
+
+resource
+Label
+{
+title "Details"
+name "Default"
+rect 12 170 70 20
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+font verdana-14
+textalign left
+}
+
+resource
+MultiLineEdit
+{
+name "Default"
+rect 80 170 328 124
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.00 0.00 0.00 0.60
+borderstyle "INDENT_BORDER"
+linkcvar "br_desc"
+font verdana-12
+}
+
+resource
+Button
+{
+title "Re-aim"
+name "Default"
+rect 12 308 90 24
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.20 0.22 0.30 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "bugreport"
+}
+
+resource
+Button
+{
+title "Cancel"
+name "Default"
+rect 110 308 90 24
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.35 0.15 0.15 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "bugreport cancel"
+}
+
+resource
+Button
+{
+title "Submit"
+name "Default"
+rect 318 308 90 24
+fgcolor 1.00 1.00 1.00 1.00
+bgcolor 0.15 0.40 0.20 1.00
+borderstyle "3D_BORDER"
+clicksound "sound/menu/scroll.wav"
+stuffcommand "br_submit"
+}

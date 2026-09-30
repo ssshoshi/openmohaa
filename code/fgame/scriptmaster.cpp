@@ -1161,6 +1161,11 @@ void ScriptMaster::AllowPause(bool allow)
 
 void ScriptMaster::PrintStatus(void)
 {
+    gi.Printf("%s", GetStatus().c_str());
+}
+
+str ScriptMaster::GetStatus(void)
+{
     str                              status;
     int                              iThreadNum       = 0;
     int                              iThreadRunning   = 0;
@@ -1213,7 +1218,7 @@ void ScriptMaster::PrintStatus(void)
     status += str(iThreadNum) + " total threads ( " + str(iThreadRunning) + " running thread(s), " + str(iThreadWaiting)
             + " waiting thread(s), " + str(iThreadSuspended) + " suspended thread(s) )\n";
 
-    gi.Printf(status.c_str());
+    return status;
 }
 
 void ScriptMaster::PrintThread(int iThreadNum)

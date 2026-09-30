@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_local.h"
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
+#include "cg_bugreport.h"
 #include "../fgame/bg_voteoptions.h"
 
 void CG_TargetCommand_f(void);
@@ -509,6 +510,9 @@ static consoleCommand_t commands[] = {
     {"phys_mass",              &CG_PhysicsMass_f           },
     {"phys_forget",            &CG_PhysicsForget_f         },
     {"phys_reload",            &CG_PhysicsReload_f         },
+    //  In-game reports
+    {"bugreport",              &CG_BugReport_f             },
+    {"br_submit",              &CG_BugReportSubmit_f       },
     {"viewpos",                &CG_Viewpos_f               },
     {"sizeup",                 &CG_SizeUp_f                },
     {"sizedown",               &CG_SizeDown_f              },

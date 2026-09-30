@@ -26,6 +26,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../server/server.h"
 #include "snd_codec.h"
 
+#include <string>
+
 typedef struct {
     const char *funcname;
     void      **funcptr;
@@ -108,6 +110,7 @@ static char       current_soundtrack[128];
 static void S_OPENAL_PlayMP3();
 static void S_OPENAL_StopMP3();
 static void S_OPENAL_Pitch();
+static void S_OPENAL_ListActive();
 static int
 S_OPENAL_SpatializeStereoSound(const vec3_t listener_origin, const vec3_t listener_left, const vec3_t origin);
 static void   S_OPENAL_reverb(int iChannel, int iReverbType, float fReverbLevel);
@@ -719,6 +722,8 @@ qboolean S_OPENAL_Init()
     Cmd_AddCommand("tmstop", S_TriggeredMusic_Stop);
     // Added in 2.0
     Cmd_AddCommand("tmvolume", S_TriggeredMusic_Volume);
+    // Added in OPM
+    Cmd_AddCommand("s_listactive", S_OPENAL_ListActive);
 
     S_OPENAL_ClearLoopingSounds();
     load_sfx_info();
@@ -755,6 +760,8 @@ void S_OPENAL_Shutdown()
     Cmd_RemoveCommand("tmstop");
     // Added in 2.0
     Cmd_RemoveCommand("tmvolume");
+    // Added in OPM
+    Cmd_RemoveCommand("s_listactive");
 
     S_OPENAL_NukeContext();
 
@@ -903,6 +910,92 @@ void S_DumpInfo()
             openal.channel
                 [MAX_SOUNDSYSTEM_CHANNELS_3D + MAX_SOUNDSYSTEM_CHANNELS_2D + MAX_SOUNDSYSTEM_CHANNELS_2D_STREAM + i]
         );
+    }
+}
+
+/*
+==============
+S_OPENAL_ListActive
+
+Added in OPM.
+s_listactive [file]: every sound playing, with its entity, where it is and how
+loud, the looping sounds and the music. Written to the file when one is given
+(an in-game report, cg_bugreport.cpp), else printed.
+==============
+*/
+static void S_OPENAL_ListActive()
+{
+    static const char *chanNames[] = {"3D", "2D", "2D stream", "misc"};
+    const int          counts[]    = {
+        MAX_SOUNDSYSTEM_CHANNELS_3D,
+        MAX_SOUNDSYSTEM_CHANNELS_2D,
+        MAX_SOUNDSYSTEM_CHANNELS_2D_STREAM,
+        MAX_SOUNDSYSTEM_MISC_CHANNELS
+    };
+    std::string out;
+    int         base = 0;
+    int         i, k;
+
+    out += "== channels ==\n";
+    for (k = 0; k < 4; k++) {
+        for (i = 0; i < counts[k]; i++) {
+            openal_channel *chan = openal.channel[base + i];
+            ALint           status;
+
+            if (!chan || !chan->pSfx || chan->pSfx == (sfx_t *)-16) {
+                continue;
+            }
+
+            qalGetSourceiv(chan->source, AL_SOURCE_STATE, &status);
+            if (status != AL_PLAYING && status != AL_PAUSED) {
+                continue;
+            }
+
+            out += va(
+                "%-9s %2d  %-7s ent %4d ch %2d  vol %.2f  at %.0f %.0f %.0f  dist %.0f-%.0f  %s\n",
+                chanNames[k],
+                i,
+                status == AL_PLAYING ? "playing" : "paused",
+                chan->iEntNum,
+                chan->iEntChannel,
+                chan->fVolume,
+                chan->vOrigin[0],
+                chan->vOrigin[1],
+                chan->vOrigin[2],
+                chan->fMinDist,
+                chan->fMaxDist,
+                chan->pSfx->name[0] ? chan->pSfx->name : "(nameless)"
+            );
+        }
+        base += counts[k];
+    }
+
+    out += "\n== looping ==\n";
+    for (i = 0; i < MAX_SOUNDSYSTEM_LOOP_SOUNDS; i++) {
+        const openal_loop_sound_t *loop = &openal.loop_sounds[i];
+
+        if (!loop->bInUse || !loop->pSfx) {
+            continue;
+        }
+        out += va(
+            "%3d  %-7s vol %.2f  at %.0f %.0f %.0f  %s\n",
+            i,
+            loop->bPlaying ? "playing" : "idle",
+            loop->fVolume,
+            loop->vOrigin[0],
+            loop->vOrigin[1],
+            loop->vOrigin[2],
+            loop->pSfx->name
+        );
+    }
+
+    out += "\n== music ==\n";
+    out += va("triggered: %s\n", openal.tm_filename[0] ? openal.tm_filename : "none");
+
+    if (Cmd_Argc() > 1) {
+        FS_WriteFile(Cmd_Argv(1), out.c_str(), (int)out.length());
+    } else {
+        Com_Printf("%s", out.c_str());
     }
 }
 

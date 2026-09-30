@@ -53,6 +53,8 @@ jobs:
         mkdir package
         find ./build -maxdepth 2 \( -name '*.exe' -o -name '*.dll' \) -newer ./build/CMakeCache.txt \
           -exec cp -v {} package/ \;
+        mkdir package/main
+        cp -v ./build/data/*.pk3 package/main/
         echo "${{ github.sha }}" > package/COMMIT
         ls -l package
 

@@ -137,6 +137,7 @@ public:
     GameScript *GetTempScript(const char *data);
 
     void PrintStatus(void);
+    str  GetStatus(void);
     void PrintThread(int iThreadNum);
 };
 

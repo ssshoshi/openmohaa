@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_radar.h"
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
+#include "cg_bugreport.h"
 
 #ifdef _WIN32
 #    include <windows.h>
@@ -740,6 +741,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
     CG_RegisterCvars();
     CG_InitRagdoll();
     CG_InitPhysics();
+    CG_BugReportInit();
 
     L_InitEvents();
 

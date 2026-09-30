@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_parsemsg.h"
+#include "cg_bugreport.h"
 
 //============================================================================
 
@@ -1348,6 +1349,9 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
     }
 
     // actually issue the rendering calls
+    // Added in OPM
+    CG_BugReportFrame();
+
     CG_TIMER_BEGIN(CGT_RENDERSCENE);
     CG_DrawActive(stereoView);
     CG_TIMER_END(CGT_RENDERSCENE);
