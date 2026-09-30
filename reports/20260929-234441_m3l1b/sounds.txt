@@ -1,0 +1,7 @@
+== channels ==
+3D        31  playing ent   14 ch  8  vol 0.48  at 1548 -1696 256  dist 48-320  sound/null.wav
+
+== looping ==
+
+== music ==
+triggered: none

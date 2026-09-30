@@ -1,0 +1,300 @@
+[2026-09-29 23:38:34 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:34 UTC-5.000] physics: 244 steps in the last 5.0 s, 105 us each, worst 16154 us; 1 bodies awake
+[2026-09-29 23:38:34 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:35 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:35 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:36 UTC-5.000] LOCALIZATION ERROR: 'Cvars and cheats (F7)' does not have a localization entry
+[2026-09-29 23:38:36 UTC-5.000] LOCALIZATION ERROR: 'win_mingw64 x86_64' does not have a localization entry
+[2026-09-29 23:38:36 UTC-5.000] LOCALIZATION ERROR: 'Restart Video' does not have a localization entry
+[2026-09-29 23:38:36 UTC-5.000] LOCALIZATION ERROR: 'Restart Sound' does not have a localization entry
+[2026-09-29 23:38:36 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:37 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:37 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:38 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:38 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:39 UTC-5.000] physics: 300 steps in the last 5.0 s, 38 us each, worst 60 us; 1 bodies awake
+[2026-09-29 23:38:39 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:40 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:40 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:41 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:41 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:42 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:43 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:44 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:44 UTC-5.000] physics: 300 steps in the last 5.0 s, 38 us each, worst 80 us; 1 bodies awake
+[2026-09-29 23:38:44 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:45 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:45 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:45 UTC-5.000] LOCALIZATION ERROR: 'Clear out the bunker.' does not have a localization entry
+[2026-09-29 23:38:46 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:47 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:48 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:48 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:49 UTC-5.000] physics: 300 steps in the last 5.0 s, 39 us each, worst 76 us; 1 bodies awake
+[2026-09-29 23:38:49 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:50 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:51 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:51 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:52 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:53 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:54 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:54 UTC-5.000] physics: 300 steps in the last 5.0 s, 38 us each, worst 75 us; 1 bodies awake
+[2026-09-29 23:38:54 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:55 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:56 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:57 UTC-5.000] music set to normal with fallback normal
+[2026-09-29 23:38:57 UTC-5.000] ...loading built-in 'glsl/lightall_vp.glsl'
+[2026-09-29 23:38:57 UTC-5.000] ...loading built-in 'glsl/lightall_fp.glsl'
+[2026-09-29 23:38:57 UTC-5.000] ------- GPU shader -------
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_AlphaTest'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_BaseColor'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_DiffuseMap'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_GlobalFogColor'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_GlobalFogParams'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_LightMap'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_ModelMatrix'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_ModelViewProjectionMatrix'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_NormalMap'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_NormalScale'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtAmbient'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtCapsules'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtLights[0]'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtParams'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtShadowBaked'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtShadowDynamic'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtShadowStatic'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtSunColor'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtSunDir'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_RtSunShadow'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_SpecularMap'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_SpecularScale'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_VertColor'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_VertexLerp'
+[2026-09-29 23:38:57 UTC-5.000] active uniform: 'u_ViewOrigin'
+[2026-09-29 23:38:59 UTC-5.000] physics: 301 steps in the last 5.0 s, 40 us each, worst 82 us; 1 bodies awake
+[2026-09-29 23:39:04 UTC-5.000] physics: 300 steps in the last 5.0 s, 46 us each, worst 84 us; 1 bodies awake
+[2026-09-29 23:39:05 UTC-5.000] LOCALIZATION ERROR: 'saved latched' does not have a localization entry
+[2026-09-29 23:39:09 UTC-5.000] physics: 300 steps in the last 5.0 s, 46 us each, worst 75 us; 1 bodies awake
+[2026-09-29 23:39:14 UTC-5.000] physics: 301 steps in the last 5.0 s, 47 us each, worst 85 us; 3 bodies awake
+[2026-09-29 23:39:19 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 82 us; 3 bodies awake
+[2026-09-29 23:39:23 UTC-5.000] LOCALIZATION ERROR: 'Emitter Mode' does not have a localization entry
+[2026-09-29 23:39:23 UTC-5.000] LOCALIZATION ERROR: 'read-only user' does not have a localization entry
+[2026-09-29 23:39:24 UTC-5.000] physics: 301 steps in the last 5.0 s, 48 us each, worst 117 us; 3 bodies awake
+[2026-09-29 23:39:25 UTC-5.000] LOCALIZATION ERROR: 'cheat command' does not have a localization entry
+[2026-09-29 23:39:29 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 71 us; 3 bodies awake
+[2026-09-29 23:39:34 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 68 us; 3 bodies awake
+[2026-09-29 23:39:39 UTC-5.000] physics: 301 steps in the last 5.0 s, 48 us each, worst 73 us; 3 bodies awake
+[2026-09-29 23:39:39 UTC-5.000] ^~^~^ Game (Event: 'listbase_item_selected', Object: 'UICvarBrowser') : Index 1 out of range.
+[2026-09-29 23:39:39 UTC-5.000] Index 1 out of range.
+[2026-09-29 23:39:44 UTC-5.000] ^~^~^ Game (Event: 'listbase_item_selected', Object: 'UICvarBrowser') : Index 1 out of range.
+[2026-09-29 23:39:44 UTC-5.000] Index 1 out of range.
+[2026-09-29 23:39:44 UTC-5.000] physics: 300 steps in the last 5.0 s, 47 us each, worst 71 us; 3 bodies awake
+[2026-09-29 23:39:44 UTC-5.000] ^~^~^ Game (Event: 'listbase_item_selected', Object: 'UICvarBrowser') : Index 1 out of range.
+[2026-09-29 23:39:44 UTC-5.000] Index 1 out of range.
+[2026-09-29 23:39:49 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 75 us; 3 bodies awake
+[2026-09-29 23:39:54 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 102 us; 3 bodies awake
+[2026-09-29 23:39:59 UTC-5.000] physics: 300 steps in the last 5.0 s, 49 us each, worst 84 us; 3 bodies awake
+[2026-09-29 23:40:01 UTC-5.000] ^~^~^ Game (Event: 'listbase_item_selected', Object: 'UICvarBrowser') : Index 1 out of range.
+[2026-09-29 23:40:01 UTC-5.000] Index 1 out of range.
+[2026-09-29 23:40:04 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 83 us; 3 bodies awake
+[2026-09-29 23:40:09 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 75 us; 3 bodies awake
+[2026-09-29 23:40:14 UTC-5.000] physics: 300 steps in the last 5.0 s, 47 us each, worst 72 us; 3 bodies awake
+[2026-09-29 23:40:19 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 85 us; 3 bodies awake
+[2026-09-29 23:40:20 UTC-5.000] ^~^~^ Game (Event: 'listbase_item_selected', Object: 'UICvarBrowser') : Index 1 out of range.
+[2026-09-29 23:40:20 UTC-5.000] Index 1 out of range.
+[2026-09-29 23:40:24 UTC-5.000] physics: 301 steps in the last 5.0 s, 48 us each, worst 85 us; 3 bodies awake
+[2026-09-29 23:40:29 UTC-5.000] CHEAT: godmode ON
+[2026-09-29 23:40:29 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 90 us; 3 bodies awake
+[2026-09-29 23:40:34 UTC-5.000] physics: 300 steps in the last 5.0 s, 48 us each, worst 84 us; 3 bodies awake
+[2026-09-29 23:40:34 UTC-5.000] WARNING- DOWNGRADING TO OLD ANIMATION FORMAT FOR FILE: models/weapons/highstandard/hs_pistol_fire_aim.skc
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/silencedpistol.tik
+[2026-09-29 23:40:34 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 23:40:34 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 23:40:34 UTC-5.000] WARNING- DOWNGRADING TO OLD ANIMATION FORMAT FOR FILE: models/weapons/KAR98sniper/KAR98sniper_fire_aim.skc
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/kar98sniper.tik
+[2026-09-29 23:40:34 UTC-5.000] WARNING- DOWNGRADING TO OLD ANIMATION FORMAT FOR FILE: models/weapons/mp44/mp44_fire_aim.skc
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/mp44.tik
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/m2frag_grenade_sp.tik
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/steilhandgranate.tik
+[2026-09-29 23:40:34 UTC-5.000] WARNING- DOWNGRADING TO OLD ANIMATION FORMAT FOR FILE: models/weapons/bazooka/bazooka_fire_aim.skc
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/bazooka.tik
+[2026-09-29 23:40:34 UTC-5.000] WARNING- DOWNGRADING TO OLD ANIMATION FORMAT FOR FILE: models/weapons/panzerschreck/panzerschreck_fire_aim.skc
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/panzerschreck.tik
+[2026-09-29 23:40:34 UTC-5.000] TIKI_InitTiki: could not find surface 'panzerschreck2' in 'models/weapons/panzerschreck.tik' (check referenced skb/skd files).
+[2026-09-29 23:40:34 UTC-5.000] WARNING- DOWNGRADING TO OLD ANIMATION FORMAT FOR FILE: models/weapons/shotgun/shotgun_fire_aim.skc
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/weapons/shotgun.tik
+[2026-09-29 23:40:34 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:34 UTC-5.000] cache models/items/papers.tik
+[2026-09-29 23:40:35 UTC-5.000] WARNING: textures/models/weapons/mp44sight.tga not present, using textures/models/weapons/mp44sight.jpg instead
+[2026-09-29 23:40:41 UTC-5.000] physics: 292 steps in the last 5.0 s, 48 us each, worst 75 us; 3 bodies awake
+[2026-09-29 23:40:41 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 23:40:41 UTC-5.000] cache models/gear/german_heer_camohelm.tik
+[2026-09-29 23:40:41 UTC-5.000] WARNING: textures/models/human/heer/splinterhelmet0.tga not present, using textures/models/human/heer/splinterhelmet0.jpg instead
+[2026-09-29 23:40:41 UTC-5.000] ragdoll 130650: entity 23 died, starting a ragdoll
+[2026-09-29 23:40:41 UTC-5.000] ragdoll 130853 [slot 0, entity 23, active]: carried by a Jolt ragdoll
+[2026-09-29 23:40:42 UTC-5.000] ragdoll 131824 [slot 0, entity 23, sleeping]: asleep after 1174 ms
+[2026-09-29 23:40:42 UTC-5.000] ragdoll 131824 [slot 0, entity 23, sleeping]: mesh: 130 of 2926 vertices more than 1 unit in the world (4.4%), deepest 7.3 on Bip01 Spine; underside 0.0 above the ground
+[2026-09-29 23:40:43 UTC-5.000] ragdoll 132072 [slot 0, entity 23, sleeping]: woken
+[2026-09-29 23:40:44 UTC-5.000] ragdoll 133311 [slot 0, entity 23, sleeping]: asleep after 2661 ms
+[2026-09-29 23:40:44 UTC-5.000] ragdoll 133311 [slot 0, entity 23, sleeping]: mesh: 156 of 2926 vertices more than 1 unit in the world (5.3%), deepest 6.6 on Bip01 Spine2; underside 0.0 above the ground
+[2026-09-29 23:40:46 UTC-5.000] physics: 298 steps in the last 5.0 s, 115 us each, worst 549 us; 4 bodies awake
+[2026-09-29 23:40:51 UTC-5.000] physics: 300 steps in the last 5.0 s, 86 us each, worst 118 us; 4 bodies awake
+[2026-09-29 23:40:54 UTC-5.000] FLIP TABLE: dude location before move: ( 1616.600 -1824.008 -79.875 )
+[2026-09-29 23:40:54 UTC-5.000] FLIP TABLE: dude location before move: ( 1631.000 -1665.000 -79.000 )
+[2026-09-29 23:40:56 UTC-5.000] physics: 302 steps in the last 5.0 s, 91 us each, worst 129 us; 21 bodies awake
+[2026-09-29 23:40:56 UTC-5.000] physics: static//static_germanhelmet_wehrmact.tik moved; its 1 clip brushes are gone (contents where it stood 0x38020001, now 0x18020000)
+[2026-09-29 23:40:56 UTC-5.000] physics: static//static_germanhelmet_wehrmact.tik moved; its 1 clip brushes are gone (contents where it stood 0x38020001, now 0x18020000)
+[2026-09-29 23:40:56 UTC-5.000] physics: static//german_lantern.tik moved; its 2 clip brushes are gone (contents where it stood 0x38020001, now 0x38020001)
+[2026-09-29 23:40:56 UTC-5.000] physics: furniture 2 (textures/german/minen_post) moved; 22 surfaces drawn apart, its brushes gone from the collision model
+[2026-09-29 23:40:56 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 23:40:57 UTC-5.000] ragdoll 146513: entity 21 died, starting a ragdoll
+[2026-09-29 23:40:57 UTC-5.000] ragdoll 146728 [slot 1, entity 21, active]: carried by a Jolt ragdoll
+[2026-09-29 23:40:58 UTC-5.000] ^~^~^ Attack medium range default case for unarmed weapon group - fix attack.scr
+[2026-09-29 23:40:58 UTC-5.000] ragdoll 147379: entity 22 died, starting a ragdoll
+[2026-09-29 23:40:58 UTC-5.000] ragdoll 147487 [slot 1, entity 21, sleeping]: asleep after 974 ms
+[2026-09-29 23:40:58 UTC-5.000] ragdoll 147487 [slot 1, entity 21, sleeping]: mesh: 142 of 2665 vertices more than 1 unit in the world (5.3%), deepest 6.7 on Bip01 Spine; underside 0.0 above the ground
+[2026-09-29 23:40:58 UTC-5.000] ragdoll 147592 [slot 2, entity 22, active]: carried by a Jolt ragdoll
+[2026-09-29 23:40:59 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 23:40:59 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 23:40:59 UTC-5.000] ragdoll 148552 [slot 2, entity 22, sleeping]: asleep after 1173 ms
+[2026-09-29 23:40:59 UTC-5.000] ragdoll 148552 [slot 2, entity 22, sleeping]: mesh: 179 of 2764 vertices more than 1 unit in the world (6.5%), deepest 6.9 on Bip01 Spine; underside 0.0 above the ground
+[2026-09-29 23:41:00 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 23:41:00 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 23:41:01 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 23:41:01 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 23:41:01 UTC-5.000] physics: 300 steps in the last 5.0 s, 110 us each, worst 456 us; 8 bodies awake
+[2026-09-29 23:41:03 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 23:41:03 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 23:41:05 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 23:41:05 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 23:41:06 UTC-5.000] physics: 300 steps in the last 5.0 s, 66 us each, worst 106 us; 8 bodies awake
+[2026-09-29 23:41:06 UTC-5.000] ^~^~^ Attack medium range default case for unarmed weapon group - fix attack.scr
+[2026-09-29 23:41:06 UTC-5.000] ragdoll 155366: entity 282 died, starting a ragdoll
+[2026-09-29 23:41:06 UTC-5.000] ragdoll 155581 [slot 3, entity 282, active]: carried by a Jolt ragdoll
+[2026-09-29 23:41:08 UTC-5.000] ragdoll 156996 [slot 3, entity 282, sleeping]: asleep after 1630 ms
+[2026-09-29 23:41:08 UTC-5.000] ragdoll 156996 [slot 3, entity 282, sleeping]: mesh: 182 of 2675 vertices more than 1 unit in the world (6.8%), deepest 8.2 on Bip01 Spine; underside 0.0 above the ground
+[2026-09-29 23:41:09 UTC-5.000] physics: asked the server to carry entity 48, 28 units away
+[2026-09-29 23:41:11 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-29 23:41:11 UTC-5.000] ^~^~^ Warning: Can't find player animation 'smg_charge'.
+[2026-09-29 23:41:11 UTC-5.000] physics: 301 steps in the last 5.0 s, 100 us each, worst 295 us; 7 bodies awake
+[2026-09-29 23:41:13 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 23:41:13 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 23:41:14 UTC-5.000] (anim/cornerright.scr, 145):
+				local.canseetarget = self canshoot self.enemy
+				local.canseetarget = self ^
+[2026-09-29 23:41:14 UTC-5.000] ^~^~^ Script Error : canshoot applied to NULL listener
+
+[2026-09-29 23:41:14 UTC-5.000] (anim/cornerright.scr, 166):
+		self setmotionanim (self.weapongroup + "_wall_right_shoot_outro")
+		self ^
+[2026-09-29 23:41:14 UTC-5.000] ^~^~^ Script Error : unknown animation 'unarmed_wall_right_shoot_outro' in 'models/human/ai_heer_late/heer_soldier_gefreiter_hat.tik'
+
+[2026-09-29 23:41:14 UTC-5.000] ^~^~^ Event '13' does not exist.
+[2026-09-29 23:41:14 UTC-5.000] ^~^~^ Failed execution of event for class 'ClientGameCommandManager'
+[2026-09-29 23:41:14 UTC-5.000] ^~^~^ Event '28' does not exist.
+[2026-09-29 23:41:14 UTC-5.000] ^~^~^ Failed execution of event for class 'ClientGameCommandManager'
+[2026-09-29 23:41:14 UTC-5.000] ragdoll 163054: entity 20 died, starting a ragdoll
+[2026-09-29 23:41:14 UTC-5.000] ragdoll 163268 [slot 4, entity 20, active]: carried by a Jolt ragdoll
+[2026-09-29 23:41:15 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-29 23:41:15 UTC-5.000] ^~^~^ Warning: Can't find player animation 'smg_charge'.
+[2026-09-29 23:41:15 UTC-5.000] ragdoll 164713 [slot 4, entity 20, sleeping]: asleep after 1659 ms
+[2026-09-29 23:41:15 UTC-5.000] ragdoll 164713 [slot 4, entity 20, sleeping]: mesh: 1 of 2847 vertices more than 1 unit in the world (0.0%), deepest 1.2 on helper Lknee; underside 0.0 above the ground
+[2026-09-29 23:41:15 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-29 23:41:15 UTC-5.000] ^~^~^ Warning: Can't find player animation 'smg_charge'.
+[2026-09-29 23:41:16 UTC-5.000] physics: 301 steps in the last 5.0 s, 106 us each, worst 295 us; 8 bodies awake
+[2026-09-29 23:41:19 UTC-5.000] WeaponClassNameToNum: Unknown Weapon class StG 44
+[2026-09-29 23:41:19 UTC-5.000] ^~^~^ Warning: Can't find player animation 'smg_charge'.
+[2026-09-29 23:41:21 UTC-5.000] physics: 300 steps in the last 5.0 s, 76 us each, worst 122 us; 8 bodies awake
+[2026-09-29 23:41:22 UTC-5.000] ragdoll 170908 [slot 1, entity 21, sleeping]: woken
+[2026-09-29 23:41:22 UTC-5.000] ragdoll 170919 [slot 1, entity 21, active]: struck: joints kicked up to 286 u/s
+[2026-09-29 23:41:22 UTC-5.000] ragdoll 171070: 1 mesh traces in the last second, 138.7 us each, 138.7 us in all
+[2026-09-29 23:41:22 UTC-5.000] Got 64 Smg Rounds
+[2026-09-29 23:41:22 UTC-5.000] ragdoll 171834 [slot 1, entity 21, sleeping]: asleep after 25321 ms
+[2026-09-29 23:41:22 UTC-5.000] ragdoll 171834 [slot 1, entity 21, sleeping]: mesh: 207 of 2665 vertices more than 1 unit in the world (7.8%), deepest 5.8 on Bip01 Spine2; underside 0.0 above the ground
+[2026-09-29 23:41:26 UTC-5.000] physics: 300 steps in the last 5.0 s, 91 us each, worst 239 us; 7 bodies awake
+[2026-09-29 23:41:31 UTC-5.000] physics: 301 steps in the last 5.0 s, 71 us each, worst 123 us; 8 bodies awake
+[2026-09-29 23:41:36 UTC-5.000] physics: 300 steps in the last 5.0 s, 72 us each, worst 104 us; 8 bodies awake
+[2026-09-29 23:41:41 UTC-5.000] physics: 301 steps in the last 5.0 s, 72 us each, worst 108 us; 8 bodies awake
+[2026-09-29 23:41:46 UTC-5.000] physics: 300 steps in the last 5.0 s, 72 us each, worst 104 us; 8 bodies awake
+[2026-09-29 23:41:51 UTC-5.000] physics: 301 steps in the last 5.0 s, 72 us each, worst 118 us; 8 bodies awake
+[2026-09-29 23:41:56 UTC-5.000] physics: 300 steps in the last 5.0 s, 72 us each, worst 129 us; 8 bodies awake
+[2026-09-29 23:42:00 UTC-5.000] ragdoll 209451 [slot 0, entity 23, sleeping]: woken
+[2026-09-29 23:42:00 UTC-5.000] ragdoll 209504 [slot 0, entity 23, active]: its entity left the snapshot
+[2026-09-29 23:42:00 UTC-5.000] ragdoll 209860 [slot 0, entity 23, sleeping]: asleep after 79210 ms
+[2026-09-29 23:42:00 UTC-5.000] ragdoll 209860 [slot 0, entity 23, sleeping]: mesh: 143 of 2926 vertices more than 1 unit in the world (4.9%), deepest 6.7 on Bip01 Spine2; underside 0.0 above the ground
+[2026-09-29 23:42:01 UTC-5.000] physics: 300 steps in the last 5.0 s, 85 us each, worst 205 us; 4 bodies awake
+[2026-09-29 23:42:02 UTC-5.000] ragdoll 211454 [slot 0, entity 23, sleeping]: orphaned: its entity was reset
+[2026-09-29 23:42:02 UTC-5.000] ragdoll 211454 [slot 0, entity -1, sleeping]: adopted by entity 23
+[2026-09-29 23:42:02 UTC-5.000] ragdoll 211454 [slot 0, entity 23, sleeping]: woken
+[2026-09-29 23:42:02 UTC-5.000] ragdoll 211860 [slot 0, entity 23, sleeping]: asleep after 81210 ms
+[2026-09-29 23:42:03 UTC-5.000] ragdoll 211860 [slot 0, entity 23, sleeping]: mesh: 156 of 2926 vertices more than 1 unit in the world (5.3%), deepest 6.7 on Bip01 Spine2; underside 0.0 above the ground
+[2026-09-29 23:42:06 UTC-5.000] physics: 301 steps in the last 5.0 s, 77 us each, worst 257 us; 5 bodies awake
+[2026-09-29 23:42:11 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 98 us; 5 bodies awake
+[2026-09-29 23:42:16 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 145 us; 5 bodies awake
+[2026-09-29 23:42:21 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 106 us; 5 bodies awake
+[2026-09-29 23:42:26 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 104 us; 5 bodies awake
+[2026-09-29 23:42:31 UTC-5.000] physics: 301 steps in the last 5.0 s, 69 us each, worst 111 us; 5 bodies awake
+[2026-09-29 23:42:36 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 119 us; 5 bodies awake
+[2026-09-29 23:42:41 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 109 us; 5 bodies awake
+[2026-09-29 23:42:46 UTC-5.000] physics: 301 steps in the last 5.0 s, 69 us each, worst 105 us; 5 bodies awake
+[2026-09-29 23:42:51 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 117 us; 5 bodies awake
+[2026-09-29 23:42:56 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 107 us; 5 bodies awake
+[2026-09-29 23:43:01 UTC-5.000] physics: 301 steps in the last 5.0 s, 69 us each, worst 92 us; 5 bodies awake
+[2026-09-29 23:43:06 UTC-5.000] physics: 300 steps in the last 5.0 s, 68 us each, worst 104 us; 5 bodies awake
+[2026-09-29 23:43:11 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 121 us; 5 bodies awake
+[2026-09-29 23:43:16 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 100 us; 5 bodies awake
+[2026-09-29 23:43:21 UTC-5.000] physics: 301 steps in the last 5.0 s, 70 us each, worst 151 us; 5 bodies awake
+[2026-09-29 23:43:26 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 118 us; 5 bodies awake
+[2026-09-29 23:43:31 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 153 us; 5 bodies awake
+[2026-09-29 23:43:36 UTC-5.000] physics: 300 steps in the last 5.0 s, 69 us each, worst 128 us; 5 bodies awake
+[2026-09-29 23:43:41 UTC-5.000] physics: 301 steps in the last 5.0 s, 69 us each, worst 114 us; 5 bodies awake
+[2026-09-29 23:43:46 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 103 us; 5 bodies awake
+[2026-09-29 23:43:51 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 134 us; 5 bodies awake
+[2026-09-29 23:43:56 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 102 us; 5 bodies awake
+[2026-09-29 23:44:01 UTC-5.000] physics: 300 steps in the last 5.0 s, 71 us each, worst 150 us; 5 bodies awake
+[2026-09-29 23:44:06 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 101 us; 5 bodies awake
+[2026-09-29 23:44:11 UTC-5.000] physics: 300 steps in the last 5.0 s, 71 us each, worst 139 us; 5 bodies awake
+[2026-09-29 23:44:16 UTC-5.000] physics: 301 steps in the last 5.0 s, 70 us each, worst 115 us; 5 bodies awake
+[2026-09-29 23:44:21 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 117 us; 5 bodies awake
+[2026-09-29 23:44:26 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 126 us; 5 bodies awake
+[2026-09-29 23:44:31 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 159 us; 5 bodies awake
+[2026-09-29 23:44:36 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 110 us; 5 bodies awake
+[2026-09-29 23:44:41 UTC-5.000] physics: 301 steps in the last 5.0 s, 70 us each, worst 113 us; 5 bodies awake
+[2026-09-29 23:44:41 UTC-5.000] Wrote screenshots/br_20260929-234441_m3l1b.jpg
+[2026-09-29 23:44:42 UTC-5.000] Wrote screenshots/br_20260929-234441_m3l1b_marked.jpg
+[2026-09-29 23:44:42 UTC-5.000] Writing bugreports/20260929-234441_m3l1b/config.cfg.
+[2026-09-29 23:44:42 UTC-5.000] bugreport: report saved: 20260929-234441_m3l1b
+[2026-09-29 23:44:42 UTC-5.000] Saving to br_20260929-234441_m3l1b...
+[2026-09-29 23:44:42 UTC-5.000] SV_ArchiveLevelFile()
+[2026-09-29 23:44:42 UTC-5.000] Game Saved
+[2026-09-29 23:44:42 UTC-5.000] SV_ArchiveServerFile(false)
+[2026-09-29 23:44:42 UTC-5.000] LOCALIZATION ERROR: 'Omaha Beach - Inside the Bunker' does not have a localization entry
+[2026-09-29 23:44:42 UTC-5.000] Done.
+[2026-09-29 23:44:46 UTC-5.000] physics: 289 steps in the last 5.0 s, 72 us each, worst 139 us; 5 bodies awake
+[2026-09-29 23:44:51 UTC-5.000] physics: 300 steps in the last 5.0 s, 74 us each, worst 152 us; 5 bodies awake
+[2026-09-29 23:44:56 UTC-5.000] physics: 301 steps in the last 5.0 s, 71 us each, worst 132 us; 5 bodies awake
+[2026-09-29 23:45:01 UTC-5.000] physics: 300 steps in the last 5.0 s, 80 us each, worst 249 us; 5 bodies awake
+[2026-09-29 23:45:06 UTC-5.000] physics: 300 steps in the last 5.0 s, 72 us each, worst 132 us; 5 bodies awake
+[2026-09-29 23:45:11 UTC-5.000] physics: 300 steps in the last 5.0 s, 71 us each, worst 151 us; 5 bodies awake
+[2026-09-29 23:45:16 UTC-5.000] physics: 300 steps in the last 5.0 s, 72 us each, worst 122 us; 5 bodies awake
+[2026-09-29 23:45:21 UTC-5.000] physics: 301 steps in the last 5.0 s, 72 us each, worst 129 us; 5 bodies awake
+[2026-09-29 23:45:26 UTC-5.000] physics: 300 steps in the last 5.0 s, 78 us each, worst 241 us; 5 bodies awake
+[2026-09-29 23:45:31 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 179 us; 5 bodies awake
+[2026-09-29 23:45:36 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 110 us; 5 bodies awake
+[2026-09-29 23:45:41 UTC-5.000] physics: 300 steps in the last 5.0 s, 70 us each, worst 122 us; 5 bodies awake
+[2026-09-29 23:45:46 UTC-5.000] physics: 301 steps in the last 5.0 s, 71 us each, worst 131 us; 5 bodies awake
+[2026-09-29 23:45:51 UTC-5.000] physics: 300 steps in the last 5.0 s, 71 us each, worst 122 us; 5 bodies awake
+[2026-09-29 23:45:56 UTC-5.000] physics: 300 steps in the last 5.0 s, 73 us each, worst 178 us; 5 bodies awake
+[2026-09-29 23:46:01 UTC-5.000] physics: 301 steps in the last 5.0 s, 73 us each, worst 128 us; 5 bodies awake
+[2026-09-29 23:46:06 UTC-5.000] physics: 300 steps in the last 5.0 s, 73 us each, worst 132 us; 5 bodies awake
+[2026-09-29 23:46:11 UTC-5.000] physics: 300 steps in the last 5.0 s, 75 us each, worst 235 us; 5 bodies awake
+[2026-09-29 23:46:16 UTC-5.000] physics: 301 steps in the last 5.0 s, 78 us each, worst 149 us; 5 bodies awake
+[2026-09-29 23:46:21 UTC-5.000] physics: 300 steps in the last 5.0 s, 72 us each, worst 174 us; 5 bodies awake
