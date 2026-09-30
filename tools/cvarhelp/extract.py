@@ -13,6 +13,8 @@ cvars the descriptions file does not cover yet.
   tools/cvarhelp/extract.py --cheats      # help/cheats.txt, generated
   tools/cvarhelp/extract.py --write       # help/cvars.txt: new cvars added,
                                           # locations refreshed, descriptions kept
+  tools/cvarhelp/extract.py --context --prefix r_   # what the code does with them
+  tools/cvarhelp/extract.py --merge new.tsv         # name<TAB>min<TAB>max<TAB>description
 """
 
 import argparse
@@ -105,6 +107,11 @@ def scan():
             if name:
                 ranges[name] = [m.group(2), m.group(3), m.group(4) == "qtrue"]
 
+        for var, cname in ASSIGN.findall(text):
+            e = cvars.get(cname.lower())
+            if e is not None and var not in e.setdefault("vars", []):
+                e["vars"].append(var)
+
         for m in CVAR_GET.finditer(text):
             name, default, flags = m.group(1), m.group(2), m.group(3)
             ln = line_of(m.start())
@@ -113,6 +120,11 @@ def scan():
                 "name": name, "default": unquote(default), "flags": [], "where": [], "comment": "",
             })
             entry["flags"] = sorted(set(entry["flags"]) | set(flags))
+            entry.setdefault("vars", [])
+            before = text[max(0, m.start() - 80):m.start()]
+            am = re.search(r"(\w+)\s*=\s*(?:\w+\s*(?:\.|->)\s*)?$", before)
+            if am and am.group(1) not in entry["vars"]:
+                entry["vars"].append(am.group(1))
             entry["where"].append(f"{rel}:{ln + 1}")
             if not entry["comment"]:
                 entry["comment"] = comment_near(lines, ln)
@@ -181,18 +193,84 @@ def write_help(cvars):
     print(f"{len(rows)} cvars in help/cvars.txt", file=sys.stderr)
 
 
+def usage_lines(cvars, names, per=6):
+    """Lines that read each cvar: through its variable, or by name."""
+    wanted = {}
+    for key in names:
+        v = cvars[key]
+        pats = [re.escape(x) + r"\s*->\s*(?:integer|value|string|modified)" for x in v.get("vars", []) if len(x) > 3]
+        pats.append(r'"' + re.escape(v["name"]) + r'"')
+        wanted[key] = re.compile("|".join(pats))
+    found = {k: [] for k in names}
+    for path in sources():
+        rel = os.path.relpath(path, ROOT)
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        for i, line in enumerate(lines):
+            if "Cvar_Get" in line or "Cvar_CheckRange" in line:
+                continue
+            for key, pat in wanted.items():
+                if len(found[key]) < per and pat.search(line):
+                    found[key].append(f"{rel}:{i + 1}: {line.strip()[:160]}")
+    return found
+
+
+def merge(tsv):
+    rows = read_help()
+    n = 0
+    with open(tsv, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            name, lo, hi, desc = (line.split("\t") + ["", "", "", ""])[:4]
+            row = rows.get(name.lower())
+            if row is None:
+                print(f"not a known cvar: {name}", file=sys.stderr)
+                continue
+            row[1], row[2], row[4] = lo, hi, desc
+            n += 1
+    path = os.path.join(HELP, "cvars.txt")
+    with open(path, encoding="utf-8") as f:
+        header = [l for l in f if l.startswith("#")]
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.writelines(header)
+        for key in sorted(rows):
+            f.write("\t".join(rows[key]) + "\n")
+    print(f"{n} descriptions merged", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--missing", action="store_true", help="cvars without a description yet")
     ap.add_argument("--cheats", action="store_true", help="write help/cheats.txt")
     ap.add_argument("--prefix", default="", help="only cvars starting with this")
     ap.add_argument("--write", action="store_true", help="add new cvars to help/cvars.txt")
+    ap.add_argument("--context", action="store_true", help="each cvar with the lines that use it")
+    ap.add_argument("--merge", metavar="TSV", help="descriptions to fold into help/cvars.txt")
     args = ap.parse_args()
 
     cvars, cheats = scan()
 
     if args.write:
         write_help(cvars)
+        return
+
+    if args.merge:
+        merge(args.merge)
+        return
+
+    if args.context:
+        keys = [k for k in sorted(cvars) if k.startswith(args.prefix.lower())]
+        found = usage_lines(cvars, keys)
+        for k in keys:
+            v = cvars[k]
+            rng = f"  range {v['range'][0]}..{v['range'][1]}" if "range" in v else ""
+            print(f"== {v['name']}  default \"{v['default']}\"  [{' '.join(v['flags'])}]{rng}  {v['where'][0]}")
+            if v["comment"]:
+                print(f"   // {v['comment'][:300]}")
+            for u in found[k]:
+                print(f"   {u}")
         return
 
     if args.cheats:
