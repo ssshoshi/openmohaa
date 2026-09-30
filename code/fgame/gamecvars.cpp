@@ -511,7 +511,7 @@ void CVAR_Init(void)
     g_teamdamage = gi.Cvar_Get("g_teamdamage", "0", 0);
 
     // Added in OPM
-    //  MG42 barrels overheat (TurretGun::HeatFire): each shot adds heat, the
+    //  MG42 barrels overheat (TurretGun::ShotFired): each shot adds heat, the
     //  barrel sheds it once the firing stops, and at the limit the gun will
     //  not fire until it has cooled to the resume level. About five seconds
     //  of fire at 20 rounds a second, and three to be usable again.

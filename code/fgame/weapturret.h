@@ -113,14 +113,13 @@ private:
     float  m_fMaxUseAngle;
 
     // Added in OPM
-    //  The barrel's heat (see TurretGun::HeatFire). Not archived: a save made
+    //  The barrel's heat (see TurretGun::ShotFired). Not archived: a save made
     //  with a hot barrel loads with a cool one, and saves stay readable.
     float m_fBarrelHeat;
     float m_fLastHeatShot;
     bool  m_bOverheated;
 
     bool  Overheats();
-    void  HeatFire(firemode_t mode);
     void  CoolBarrel();
 
 protected:
@@ -129,6 +128,11 @@ protected:
     virtual void P_ThinkActive();
 
 public:
+    // Added in OPM
+    //  An overheated MG42 is not ready to fire; each shot heats its barrel
+    qboolean ReadyToFire(firemode_t mode, qboolean playsound = qtrue) override;
+    void     ShotFired(firemode_t mode) override;
+
     CLASS_PROTOTYPE(TurretGun);
 
     TurretGun();

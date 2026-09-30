@@ -832,8 +832,8 @@ void TurretGun::P_ThinkActive(void)
     if (m_iFiring != TURRETFIRESTATE_NONE) {
         m_iFiring = TURRETFIRESTATE_FIRING;
 
-        if (ReadyToFire(FIRE_PRIMARY) && !m_bOverheated) {
-            HeatFire(FIRE_PRIMARY);
+        if (ReadyToFire(FIRE_PRIMARY)) {
+            Fire(FIRE_PRIMARY);
             m_fCurrViewJitter = m_fViewJitter;
         }
     }
@@ -1214,8 +1214,8 @@ void TurretGun::AI_DoFiring()
             m_iFiring = TURRETFIRESTATE_FIRING;
         }
 
-        if (IsFiring() && ReadyToFire(FIRE_PRIMARY) && !m_bOverheated) {
-            HeatFire(FIRE_PRIMARY);
+        if (IsFiring() && ReadyToFire(FIRE_PRIMARY)) {
+            Fire(FIRE_PRIMARY);
         }
 
         return;
@@ -1245,8 +1245,10 @@ void TurretGun::AI_DoFiring()
         }
         break;
     case TURRETFIRESTATE_FIRING:
+        // Added in OPM
+        //  This path does not ask ReadyToFire
         if (!m_bOverheated) {
-            HeatFire(FIRE_PRIMARY);
+            Fire(FIRE_PRIMARY);
         }
 
         if (m_fMaxBurstTime > 0) {
@@ -1281,16 +1283,22 @@ bool TurretGun::Overheats()
     return g_mg42_overheat && g_mg42_overheat->integer && model.length() && Q_stristr(model.c_str(), "mg42") != NULL;
 }
 
-// Fires, and heats the barrel for it. At g_mg42_heatmax the gun is
-// overheated and HeatFire is not called again until CoolBarrel has taken the
-// heat down to g_mg42_heatresume; the player is told. The AI of 2.0 and later
-// calls this every frame it holds the trigger, so heat is counted only for
-// calls at least half a fire delay apart: once a shot.
-void TurretGun::HeatFire(firemode_t mode)
+// Every firing path asks this (the mounted and the bipod MG42, player and
+// AI): an overheated barrel will not fire until CoolBarrel has taken its heat
+// down to g_mg42_heatresume.
+qboolean TurretGun::ReadyToFire(firemode_t mode, qboolean playsound)
 {
-    Fire(mode);
+    if (m_bOverheated) {
+        return qfalse;
+    }
+    return Weapon::ReadyToFire(mode, playsound);
+}
 
-    if (!Overheats() || level.time - m_fLastHeatShot < FireDelay(mode) * 0.5f) {
+// Each shot that leaves the barrel heats it; at g_mg42_heatmax the gun is
+// overheated, and the player is told.
+void TurretGun::ShotFired(firemode_t mode)
+{
+    if (!Overheats()) {
         return;
     }
 
