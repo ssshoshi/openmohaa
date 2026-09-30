@@ -154,7 +154,7 @@ def script(report, have_save, tag, extra):
     return "\n".join(out) + "\n"
 
 
-def launch(home, report, timeout):
+def launch(home, report, timeout, sets=()):
     target = 0
     version = report["build"].get("version", "")
     if "Spearhead" in version:
@@ -168,7 +168,8 @@ def launch(home, report, timeout):
         f.write(f'openmohaa.exe +set fs_basepath "{GAME_ROOT_WIN}" +set fs_homepath "{REPRO_DIR_WIN}\\home" '
                 f"+set logfile 2 +set developer 1 +set cheats 1 +set cl_playintro 0 +set ui_skip_eamovie 1 "
                 f"+set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set com_target_game {target} "
-                f"+exec repro.cfg\n")
+                + "".join(f'+set {k} "{v}" ' for k, v in sets)
+                + "+exec repro.cfg\n")
     proc = subprocess.Popen(["cmd.exe", "/c", REPRO_DIR_WIN + r"\run.bat"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(8)
@@ -197,6 +198,8 @@ def main():
     ap.add_argument("--build", required=True, help="folder with openmohaa.exe, cgame.dll, game.dll and the renderers")
     ap.add_argument("--tag", default="repro", help="name for this run's screenshot (before, after...)")
     ap.add_argument("--extra", action="append", default=[], help="console command to run before the screenshot")
+    ap.add_argument("--set", action="append", default=[], metavar="CVAR=VALUE",
+                    help="a cvar set at launch, before the renderer starts (repeatable)")
     ap.add_argument("--out", help="folder to copy the screenshot and log to")
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
@@ -210,7 +213,8 @@ def main():
     with open(os.path.join(home, "repro.cfg"), "w", newline="\n") as f:
         f.write(script(report, have_save, args.tag, args.extra))
 
-    finished = launch(home, report, args.timeout)
+    sets = [tuple(s.split("=", 1)) for s in args.set if "=" in s]
+    finished = launch(home, report, args.timeout, sets)
 
     log = os.path.join(home, "qconsole.log")
     text = open(log, encoding="utf-8", errors="replace").read().replace("\r", "") if os.path.isfile(log) else ""
