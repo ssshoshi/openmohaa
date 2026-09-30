@@ -1343,6 +1343,17 @@ str Weapon::GetTagBarrel() const
 //======================
 //Weapon::Shoot
 //======================
+/*
+====================
+Weapon::ShotFired
+
+Added in OPM
+  A shot left the barrel. For weapons that keep track of their shots (the
+  MG42's barrel heat).
+====================
+*/
+void Weapon::ShotFired(firemode_t mode) {}
+
 void Weapon::Shoot(Event *ev)
 {
     Vector     pos, forward, right, up, vBarrel, delta;
@@ -1383,6 +1394,9 @@ void Weapon::Shoot(Event *ev)
         ForceIdle();
         return;
     }
+
+    // Added in OPM
+    ShotFired(mode);
 
     GetMuzzlePosition(pos, vBarrel, forward, right, up);
     ApplyFireKickback(forward, 1000.0);

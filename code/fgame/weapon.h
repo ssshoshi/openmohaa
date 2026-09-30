@@ -258,6 +258,9 @@ protected:
     virtual void ApplyFireKickback(const Vector& org, float kickback);
     void         SetAimAnim(Event *ev);
     virtual void Shoot(Event *ev);
+    // Added in OPM
+    //  Called by Shoot for each shot that leaves the barrel
+    virtual void ShotFired(firemode_t mode);
     void         Secondary(Event *ev);
     void         SetFireType(Event *ev);
     void         SetAIRange(Event *ev);
