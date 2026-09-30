@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "20260929-213054_m1l1",
+  "type": "bug",
+  "category": "model",
+  "title": "Harness report from the menu",
+  "description": "First line\\nSecond line",
+  "build": {
+    "version": "Medal of Honor Allied Assault 1.12+0.83.0 (OpenMoHAA 0.83.0-unstable+0.dee8e155) win_mingw64-x86_64 Sep 30 2026 UTC",
+    "renderer": "opengl2",
+    "gl_vendor": "NVIDIA Corporation",
+    "gl_renderer": "NVIDIA GeForce GTX 1080/PCIe/SSE2",
+    "resolution": [1280, 720],
+    "fps": 34,
+    "fs_game": ""
+  },
+  "game": {
+    "map": "maps/m1l1.bsp",
+    "single_player": true,
+    "server_time": 88350,
+    "player_origin": [-2494.00, -3134.94, 57.13],
+    "view_origin": [-2493.15, -3135.79, 139.10],
+    "view_angles": [5.26, -44.97, 0.00],
+    "health": 93,
+    "repro": "devmap m1l1; setviewpos -2494 -3135 57 -45",
+    "savegame": "br_20260929-213054_m1l1"
+  },
+  "aim": {
+    "hit": true,
+    "position": [-1816.42, -3811.87, 51.00],
+    "normal": [-0.02, 0.09, 1.00],
+    "shader": "textures/common/sandclip",
+    "through_invisible": "",
+    "surface_flags": 16777376,
+    "contents": 671088641,
+    "light": [127.50, 148.75, 255.00],
+    "distance": 961
+  },
+  "light_at_eye": [0.39, 0.53, 1.00],
+  "target": {
+    "kind": "entity",
+    "entnum": 188,
+    "etype": "modelanim",
+    "angles": [0.79, 181.85, 260.33],
+    "model": "models/vehicles/opeltruck.tik",
+    "origin": [-2116.75, -3530.19, 91.69],
+    "mins": [-339.54, -84.79, -2.12],
+    "maxs": [402.96, 84.51, 166.75],
+    "model_shaders": [{"surface": "opel1", "shader": "opel"}, {"surface": "opel2", "shader": "opel_cull"}, {"surface": "opel3", "shader": "opel"}, {"surface": "opel4", "shader": "opel"}, {"surface": "opelwindows", "shader": "opelwindows"}, {"surface": "opelhub", "shader": "opelhub"}, {"surface": "opeltread", "shader": "opeltread"}, {"surface": "opel5", "shader": "opel"}, {"surface": "opellights", "shader": "opellights"}, {"surface": "opelhubstill", "shader": "opelhub_norotate"}, {"surface": "opeltreadstill", "shader": "opeltread_norotate"}],
+    "overlay": ["entity #188 (modelanim): models/vehicles/opeltruck.tik", "aim: -1816 -3812 51 on textures/common/sandclip"]
+  },
+  "files": {
+    "screenshot": "screenshots/br_20260929-213054_m1l1.jpg",
+    "screenshot_marked": "screenshots/br_20260929-213054_m1l1_marked.jpg",
+    "server": "server.txt",
+    "sounds": "sounds.txt",
+    "config": "configs/bugreports/20260929-213054_m1l1/config.cfg"
+  }
+}

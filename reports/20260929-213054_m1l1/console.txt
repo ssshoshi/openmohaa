@@ -1,0 +1,300 @@
+------------------
+Event system initialized: 8 classes 164 events 10496 total memory in response list
+
+[2026-09-29 21:29:51 UTC-5.000] CM_LoadMap( maps/m1l1.bsp, 1 )
+[2026-09-29 21:29:51 UTC-5.000] 
+
+-----------PARSING 'ubersound/uberdialog.scr'------------
+[2026-09-29 21:29:51 UTC-5.000] Any SetCurrentTiki errors means that tiki wasn't prefetched and tiki-specific sounds for it won't work. To fix prefetch the tiki. Ignore if you don't use that tiki on this level.
+[2026-09-29 21:29:51 UTC-5.000] CG_Command_ProcessFile: ubersound/uberdialog.scr
+[2026-09-29 21:29:51 UTC-5.000] Couldn't load sound: sound/null.wav
+[2026-09-29 21:29:51 UTC-5.000] Parse/Load time: 0.087000 seconds.
+[2026-09-29 21:29:51 UTC-5.000] -------------PARSING 'ubersound/uberdialog.scr' DONE---------------
+
+[2026-09-29 21:29:51 UTC-5.000] 
+
+-----------PARSING 'ubersound/ubersound.scr'------------
+[2026-09-29 21:29:51 UTC-5.000] Any SetCurrentTiki errors means that tiki wasn't prefetched and tiki-specific sounds for it won't work. To fix prefetch the tiki. Ignore if you don't use that tiki on this level.
+[2026-09-29 21:29:51 UTC-5.000] CG_Command_ProcessFile: ubersound/ubersound.scr
+[2026-09-29 21:29:51 UTC-5.000] ^~^~^ Game (Event: 'aliascache', Object: 'ClientGameCommandManager') : Index 13 out of range.
+[2026-09-29 21:29:51 UTC-5.000] Index 13 out of range.
+[2026-09-29 21:29:51 UTC-5.000] ^~^~^ Event 'm' does not exist.
+[2026-09-29 21:29:51 UTC-5.000] ^~^~^ Failed execution of event for class 'ClientGameCommandManager'
+[2026-09-29 21:29:51 UTC-5.000] Parse/Load time: 0.210000 seconds.
+[2026-09-29 21:29:51 UTC-5.000] -------------PARSING 'ubersound/ubersound.scr' DONE---------------
+
+[2026-09-29 21:29:51 UTC-5.000] Z_TagMalloc, Negative or zero size 0 tag 12
+[2026-09-29 21:29:51 UTC-5.000] WARNING: textures/algiers/grndset_2af.tga not present, using textures/algiers/grndset_2af.jpg instead
+[2026-09-29 21:29:52 UTC-5.000] WARNING: textures/brest/brstwset_1flt.tga not present, using textures/brest/brstwset_1flt.jpg instead
+[2026-09-29 21:29:52 UTC-5.000] WARNING: textures/algiers/afrik_wall1b.tga not present, using textures/algiers/afrik_wall1b.jpg instead
+[2026-09-29 21:29:53 UTC-5.000] WARNING: textures/interior/sp_carpet_townhall.tga not present, using textures/interior/sp_carpet_townhall.jpg instead
+[2026-09-29 21:29:53 UTC-5.000] WARNING: textures/algiers/afrik_wall1a.tga not present, using textures/algiers/afrik_wall1a.jpg instead
+[2026-09-29 21:29:53 UTC-5.000] WARNING: textures/algiers/afrik_wall1brick.tga not present, using textures/algiers/afrik_wall1brick.jpg instead
+[2026-09-29 21:29:53 UTC-5.000] WARNING: textures/algiers/algierwall1.tga not present, using textures/algiers/algierwall1.jpg instead
+[2026-09-29 21:29:54 UTC-5.000] WARNING: textures/algiers/afrik_wall2des1.tga not present, using textures/algiers/afrik_wall2des1.jpg instead
+[2026-09-29 21:29:54 UTC-5.000] WARNING: textures/mohtest/drkgry1flt.tga not present, using textures/mohtest/drkgry1flt.jpg instead
+[2026-09-29 21:29:54 UTC-5.000] WARNING: textures/algiers/pierset_3ptty.tga not present, using textures/algiers/pierset_3ptty.jpg instead
+[2026-09-29 21:29:54 UTC-5.000] WARNING: textures/algiers/afrik_wall2FLTdrk.tga not present, using textures/algiers/afrik_wall2FLTdrk.jpg instead
+[2026-09-29 21:29:54 UTC-5.000] WARNING: textures/misc_outside/bark_set1.tga not present, using textures/misc_outside/bark_set1.jpg instead
+[2026-09-29 21:29:55 UTC-5.000] WARNING: textures/algiers/lthouse_wal1b.tga not present, using textures/algiers/lthouse_wal1b.jpg instead
+[2026-09-29 21:29:55 UTC-5.000] WARNING: textures/algiers/algierwall1b_mozaic_brn.tga not present, using textures/algiers/algierwall1b_mozaic_brn.jpg instead
+[2026-09-29 21:29:55 UTC-5.000] WARNING: textures/central_europe/shutter_set2.tga not present, using textures/central_europe/shutter_set2.jpg instead
+[2026-09-29 21:29:55 UTC-5.000] WARNING: textures/general_structure/beam_wood1.tga not present, using textures/general_structure/beam_wood1.jpg instead
+[2026-09-29 21:29:55 UTC-5.000] WARNING: textures/algiers/algierwall1b_mozaic_bl.tga not present, using textures/algiers/algierwall1b_mozaic_bl.jpg instead
+[2026-09-29 21:29:55 UTC-5.000] WARNING: textures/algiers/algierwall1b_mozaic_red.tga not present, using textures/algiers/algierwall1b_mozaic_red.jpg instead
+[2026-09-29 21:29:56 UTC-5.000] WARNING: textures/algiers/whsflrset1_1b.tga not present, using textures/algiers/whsflrset1_1b.jpg instead
+[2026-09-29 21:29:56 UTC-5.000] WARNING: textures/general_structure/door_offwhite2.tga not present, using textures/general_structure/door_offwhite2.jpg instead
+[2026-09-29 21:29:56 UTC-5.000] WARNING: textures/general_structure/jh_tileroof1.tga not present, using textures/general_structure/jh_tileroof1.jpg instead
+[2026-09-29 21:29:57 UTC-5.000] WARNING: textures/general_structure/plank_flat.tga not present, using textures/general_structure/plank_flat.jpg instead
+[2026-09-29 21:29:57 UTC-5.000] WARNING: textures/mohtest/joistcap.tga not present, using textures/mohtest/joistcap.jpg instead
+[2026-09-29 21:29:57 UTC-5.000] WARNING: textures/algiers/algierwall1win.tga not present, using textures/algiers/algierwall1win.jpg instead
+[2026-09-29 21:29:57 UTC-5.000] WARNING: textures/algiers/algierwall1b.tga not present, using textures/algiers/algierwall1b.jpg instead
+[2026-09-29 21:29:57 UTC-5.000] WARNING: textures/mohtest/slatewldrty1.tga not present, using textures/mohtest/slatewldrty1.jpg instead
+[2026-09-29 21:29:57 UTC-5.000] WARNING: textures/algiers/pierset_1a1b.tga not present, using textures/algiers/pierset_1a1b.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/central_europe/small_cobble.tga not present, using textures/central_europe/small_cobble.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/mohcommon/environ_puddle.tga not present, using textures/mohcommon/environ_puddle.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/algiers/algierwall1drk_blumozwd.tga not present, using textures/algiers/algierwall1drk_blumozwd.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/mohtest/core1tan.tga not present, using textures/mohtest/core1tan.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/algiers/algier_ciel5.tga not present, using textures/algiers/algier_ciel5.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/mohtest/fltwalldmg.tga not present, using textures/mohtest/fltwalldmg.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/algiers/stset_2sand.tga not present, using textures/algiers/stset_2sand.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/algiers/arzewpj_1.tga not present, using textures/algiers/arzewpj_1.jpg instead
+[2026-09-29 21:29:58 UTC-5.000] WARNING: textures/algiers/arzewpj_2.tga not present, using textures/algiers/arzewpj_2.jpg instead
+[2026-09-29 21:29:59 UTC-5.000] WARNING: textures/algiers/algierwall1drk_1flat.tga not present, using textures/algiers/algierwall1drk_1flat.jpg instead
+[2026-09-29 21:29:59 UTC-5.000] WARNING: env/mohnight1_rt.tga not present, using env/mohnight1_rt.jpg instead
+[2026-09-29 21:29:59 UTC-5.000] WARNING: env/mohnight1_bk.tga not present, using env/mohnight1_bk.jpg instead
+[2026-09-29 21:29:59 UTC-5.000] WARNING: env/mohnight1_lf.tga not present, using env/mohnight1_lf.jpg instead
+[2026-09-29 21:30:00 UTC-5.000] WARNING: env/mohnight1_ft.tga not present, using env/mohnight1_ft.jpg instead
+[2026-09-29 21:30:00 UTC-5.000] WARNING: env/mohnight1_up.tga not present, using env/mohnight1_up.jpg instead
+[2026-09-29 21:30:00 UTC-5.000] WARNING: env/mohnight1_dn.tga not present, using env/mohnight1_dn.jpg instead
+[2026-09-29 21:30:00 UTC-5.000] WARNING: textures/sky/talonclouds.tga not present, using textures/sky/talonclouds.jpg instead
+[2026-09-29 21:30:01 UTC-5.000] WARNING: textures/algiers/doccrtset_1stepsml.tga not present, using textures/algiers/doccrtset_1stepsml.jpg instead
+[2026-09-29 21:30:01 UTC-5.000] WARNING: textures/algiers/algierwall1drk_redmozwd.tga not present, using textures/algiers/algierwall1drk_redmozwd.jpg instead
+[2026-09-29 21:30:01 UTC-5.000] WARNING: textures/algiers/grndset_1.tga not present, using textures/algiers/grndset_1.jpg instead
+[2026-09-29 21:30:02 UTC-5.000] WARNING: textures/mohtest/door4.tga not present, using textures/mohtest/door4.jpg instead
+[2026-09-29 21:30:02 UTC-5.000] WARNING: textures/german/minenpost_top.tga not present, using textures/german/minenpost_top.jpg instead
+[2026-09-29 21:30:02 UTC-5.000] WARNING: textures/algiers/jh_portarz_bk.tga not present, using textures/algiers/jh_portarz_bk.jpg instead
+[2026-09-29 21:30:03 UTC-5.000] WARNING: textures/general_industrial/jh_barrelbottom1.tga not present, using textures/general_industrial/jh_barrelbottom1.jpg instead
+[2026-09-29 21:30:03 UTC-5.000] WARNING: textures/general_industrial/jh_barrel1.tga not present, using textures/general_industrial/jh_barrel1.jpg instead
+[2026-09-29 21:30:03 UTC-5.000] stitched 2170 LoD cracks
+[2026-09-29 21:30:04 UTC-5.000] ...loaded 3655 faces, 615 meshes, 0 trisurfs, 0 flares
+[2026-09-29 21:30:04 UTC-5.000] Sun taken from worldspawn: dir 0.43 -0.75 0.50, light 42.5 63.8 127.5, casting shadows
+[2026-09-29 21:30:10 UTC-5.000] Z_TagMalloc, Negative or zero size 0 tag 12
+[2026-09-29 21:30:10 UTC-5.000] Using ter_maxtris = 24576
+[2026-09-29 21:30:10 UTC-5.000] R_LevelMarksLoad: maps/m1l1.dcl not found
+[2026-09-29 21:30:10 UTC-5.000] Couldn't find image file for shader textures/menu/exit
+[2026-09-29 21:30:10 UTC-5.000] SOUNDTRACK: Loading music/m1l1.mus
+[2026-09-29 21:30:10 UTC-5.000] MUSIC: changing from [ none | none ] to [ normal | normal ]
+[2026-09-29 21:30:11 UTC-5.000] WARNING: reused image textures/effects/fire_ring.tga with mixed flags (65 vs 1)
+[2026-09-29 21:30:11 UTC-5.000] WARNING: textures/models/human/germanmaps/afrikakorps/DAKofficert.tga not present, using textures/models/human/germanmaps/afrikakorps/DAKofficert.jpg instead
+[2026-09-29 21:30:11 UTC-5.000] WARNING: textures/models/human/germanmaps/afrikakorps/DAKtrenchcoat.tga not present, using textures/models/human/germanmaps/afrikakorps/DAKtrenchcoat.jpg instead
+[2026-09-29 21:30:11 UTC-5.000] WARNING: textures/models/human/DAK_new/WPantsDAK.tga not present, using textures/models/human/DAK_new/WPantsDAK.jpg instead
+[2026-09-29 21:30:11 UTC-5.000] WARNING: textures/models/human/usmaps/ranger/av_captain.tga not present, using textures/models/human/usmaps/ranger/av_captain.jpg instead
+[2026-09-29 21:30:12 UTC-5.000] WARNING: textures/models/101knife.tga not present, using textures/models/101knife.jpg instead
+[2026-09-29 21:30:12 UTC-5.000] WARNING: textures/models/human/usmaps/ranger/ranger_jacket2.tga not present, using textures/models/human/usmaps/ranger/ranger_jacket2.jpg instead
+[2026-09-29 21:30:12 UTC-5.000] WARNING: textures/models/human/usmaps/insignia/ranger_pfc.tga not present, using textures/models/human/usmaps/insignia/ranger_pfc.jpg instead
+[2026-09-29 21:30:12 UTC-5.000] WARNING: reused image textures/models/weapons/mg42/mg42.tga with mixed flags (2 vs 3)
+[2026-09-29 21:30:12 UTC-5.000] WARNING: textures/models/weapons/kar98/mauserammo.tga not present, using textures/models/weapons/kar98/mauserammo.jpg instead
+[2026-09-29 21:30:12 UTC-5.000] Couldn't find image file for shader ThompsonSMG3
+[2026-09-29 21:30:13 UTC-5.000] WARNING: textures/models/human/usmaps/helmets/UShelmet.tga not present, using textures/models/human/usmaps/helmets/UShelmet.jpg instead
+[2026-09-29 21:30:13 UTC-5.000] Couldn't find image file for shader poopy
+[2026-09-29 21:30:13 UTC-5.000] WARNING: textures/models/human/germanmaps/afrikakorps/DAKgefreiter2.tga not present, using textures/models/human/germanmaps/afrikakorps/DAKgefreiter2.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/hangrenate.tga not present, using textures/hangrenate.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/germanmaps/afrikakorps/tunicprivate2.tga not present, using textures/models/human/germanmaps/afrikakorps/tunicprivate2.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/usmaps/ranger/jacket_cpt_alt.tga not present, using textures/models/human/usmaps/ranger/jacket_cpt_alt.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/usmaps/insignia/1st_ranger.tga not present, using textures/models/human/usmaps/insignia/1st_ranger.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/usmaps/helmets/US_Cpt_blank.tga not present, using textures/models/human/usmaps/helmets/US_Cpt_blank.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/usmaps/insignia/1st_ranger_pfc.tga not present, using textures/models/human/usmaps/insignia/1st_ranger_pfc.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/usmaps/helmets/UShelmet_net.tga not present, using textures/models/human/usmaps/helmets/UShelmet_net.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] WARNING: textures/models/human/usmaps/insignia/1st_ranger_pfc_hbt.tga not present, using textures/models/human/usmaps/insignia/1st_ranger_pfc_hbt.jpg instead
+[2026-09-29 21:30:14 UTC-5.000] Loading Special Effects...
+[2026-09-29 21:30:14 UTC-5.000] Tiki:LoadFile Couldn't load models/fx/fx_fence_wood.tik
+[2026-09-29 21:30:14 UTC-5.000] Skeletor CacheAnimSkel: Could not open binary file models/fx/fx_fence_wood.skc
+[2026-09-29 21:30:14 UTC-5.000] ^~^~^ TIKI_InitTiki: Couldn't load models/fx/fx_fence_wood.tik
+[2026-09-29 21:30:14 UTC-5.000] ------- Sound End Registration -------
+[2026-09-29 21:30:14 UTC-5.000] ------- Sound End Registration Complete -------
+[2026-09-29 21:30:14 UTC-5.000] 101 msec to draw all images
+[2026-09-29 21:30:14 UTC-5.000] Z_TouchMemory: 6 msec
+[2026-09-29 21:30:14 UTC-5.000] CL_EndRegistration: -0.11 seconds
+[2026-09-29 21:30:14 UTC-5.000] CL_InitCGame: 23.43 seconds
+[2026-09-29 21:30:14 UTC-5.000] Going from CS_PRIMED to CS_ACTIVE for Shoshi
+[2026-09-29 21:30:14 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-29 21:30:14 UTC-5.000] Loading Previous Sound State.
+[2026-09-29 21:30:14 UTC-5.000] ------- S_StopAllSounds (don't stop music) -------
+[2026-09-29 21:30:14 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-29 21:30:44 UTC-5.000] Couldn't find image file for shader textures/hud/radar_allies.tga
+[2026-09-29 21:30:44 UTC-5.000] Couldn't find image file for shader textures/hud/radar_axis.tga
+[2026-09-29 21:30:44 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 21:30:44 UTC-5.000] cache models/player/allied_airborne_101st_1.tik
+[2026-09-29 21:30:44 UTC-5.000] WARNING: textures/models/human/usmaps/airborne/aircoat_101st_2.tga not present, using textures/models/human/usmaps/airborne/aircoat_101st_2.jpg instead
+[2026-09-29 21:30:44 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 21:30:44 UTC-5.000] cache models/player/german_wehrmacht_soldier.tik
+[2026-09-29 21:30:44 UTC-5.000] WARNING: textures/models/human/heer/WPantsfgrey_alt.tga not present, using textures/models/human/heer/WPantsfgrey_alt.jpg instead
+[2026-09-29 21:30:44 UTC-5.000] WARNING: textures/models/human/heer/wh_soldat.tga not present, using textures/models/human/heer/wh_soldat.jpg instead
+[2026-09-29 21:30:44 UTC-5.000] WARNING: textures/models/human/heer/heerhelmet.tga not present, using textures/models/human/heer/heerhelmet.jpg instead
+[2026-09-29 21:30:44 UTC-5.000] props: 21 of 135 static models on maps/m1l1.bsp are solid (17 of them move); 114 foliage, lights or wire, 0 too small or too big
+[2026-09-29 21:30:44 UTC-5.000] physics: 100 hidden faces covered, on 7 brush models and the furniture
+[2026-09-29 21:30:44 UTC-5.000] physics: 0 pieces of furniture in the brushwork move, 0 could not be shaped
+[2026-09-29 21:30:44 UTC-5.000] physics: maps/m1l1.bsp: 2100 brushes (0 failed, 93 clip brushes standing in for props), 229 patches, 18 terrain patches, 36392 triangles, 231 bodies in 98 ms
+[2026-09-29 21:30:44 UTC-5.000] physics: 17 props move, 4 are fixed, 0 could not be shaped; 16 small props are wrapped in clip brushes (the clip brushes go when they move)
+[2026-09-29 21:30:44 UTC-5.000] ...loading built-in 'glsl/lightall_vp.glsl'
+[2026-09-29 21:30:44 UTC-5.000] ...loading built-in 'glsl/lightall_fp.glsl'
+[2026-09-29 21:30:44 UTC-5.000] ------- GPU shader -------
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_AlphaTest'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_BaseColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_DiffuseMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_GlobalFogColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_GlobalFogParams'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_LightMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_LocalViewOrigin'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ModelViewProjectionMatrix'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_NormalMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_NormalScale'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightAmbient'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightOrigin'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightRadius'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ShadowMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_SpecularMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_SpecularScale'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_VertColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ViewOrigin'
+[2026-09-29 21:30:44 UTC-5.000] ...loading built-in 'glsl/lightall_vp.glsl'
+[2026-09-29 21:30:44 UTC-5.000] ...loading built-in 'glsl/lightall_fp.glsl'
+[2026-09-29 21:30:44 UTC-5.000] ------- GPU shader -------
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_AlphaTest'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_BaseColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_DiffuseMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_GlobalFogColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_GlobalFogParams'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_LocalViewOrigin'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ModelViewProjectionMatrix'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_NormalMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_NormalScale'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightAmbient'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightOrigin'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightRadius'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ShadowMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_SpecularMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_SpecularScale'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_VertColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ViewOrigin'
+[2026-09-29 21:30:44 UTC-5.000] ...loading built-in 'glsl/lightall_vp.glsl'
+[2026-09-29 21:30:44 UTC-5.000] ...loading built-in 'glsl/lightall_fp.glsl'
+[2026-09-29 21:30:44 UTC-5.000] ------- GPU shader -------
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_AlphaTest'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_BaseColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_DiffuseMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_GlobalFogColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_GlobalFogParams'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ModelMatrix'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ModelViewProjectionMatrix'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_NormalMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_NormalScale'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightAmbient'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightOrigin'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_PrimaryLightRadius'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ShadowMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_SpecularMap'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_SpecularScale'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_VertColor'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_VertexLerp'
+[2026-09-29 21:30:44 UTC-5.000] active uniform: 'u_ViewOrigin'
+[2026-09-29 21:30:44 UTC-5.000] LOCALIZATION ERROR: 'Time Left:' does not have a localization entry
+[2026-09-29 21:30:44 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 21:30:44 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 21:30:44 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:44 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:46 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 21:30:46 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 21:30:46 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:46 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:48 UTC-5.000] Forward velocity: 193.265
+[2026-09-29 21:30:48 UTC-5.000] notarget ON
+[2026-09-29 21:30:49 UTC-5.000] BRTEST pick
+[2026-09-29 21:30:49 UTC-5.000] physics: 300 steps in the last 5.0 s, 89 us each, worst 229 us; 24 bodies awake
+[2026-09-29 21:30:50 UTC-5.000] Wrote screenshots/brtest_pick.jpg
+[2026-09-29 21:30:51 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 21:30:51 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 21:30:51 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:51 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:51 UTC-5.000] BRTEST lock
+[2026-09-29 21:30:53 UTC-5.000] Wrote screenshots/brtest_menu.jpg
+[2026-09-29 21:30:53 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 21:30:53 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 21:30:53 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:53 UTC-5.000] No active weapon in slot #: "0"
+[2026-09-29 21:30:53 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 21:30:53 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 21:30:53 UTC-5.000] Weapon::SurfaceCommand : group material7 not found.
+[2026-09-29 21:30:53 UTC-5.000] Weapon::SurfaceCommand : group material8 not found.
+[2026-09-29 21:30:53 UTC-5.000] TIKI_FixFrameNum: illegal frame number 77 (total: 57) in anim 'truck_out_captain' in 'models/human/ai_dak/afrika_nco_p38.tik'
+[2026-09-29 21:30:53 UTC-5.000] TIKI_FixFrameNum: illegal frame number 60 (total: 57) in anim 'truck_out_guy01' in 'models/human/ai_dak/afrika_nco_p38.tik'
+[2026-09-29 21:30:53 UTC-5.000] TIKI_FixFrameNum: illegal frame number 63 (total: 47) in anim 'truck_out_guy02' in 'models/human/ai_dak/afrika_nco_p38.tik'
+[2026-09-29 21:30:53 UTC-5.000] TIKI_FixFrameNum: illegal frame number 56 (total: 47) in anim 'truck_out_guy03' in 'models/human/ai_dak/afrika_nco_p38.tik'
+[2026-09-29 21:30:53 UTC-5.000] ^~^~^ Add the following line to the *_precache.scr map script:
+[2026-09-29 21:30:53 UTC-5.000] cache models/human/ai_dak/afrika_nco_p38.tik
+[2026-09-29 21:30:54 UTC-5.000] WARNING: textures/models/human/germanmaps/afrikakorps/tunicnco_4.tga not present, using textures/models/human/germanmaps/afrikakorps/tunicnco_4.jpg instead
+[2026-09-29 21:30:54 UTC-5.000] BRTEST submit
+[2026-09-29 21:30:54 UTC-5.000] Wrote screenshots/br_20260929-213054_m1l1.jpg
+[2026-09-29 21:30:54 UTC-5.000] Wrote screenshots/br_20260929-213054_m1l1_marked.jpg
+[2026-09-29 21:30:54 UTC-5.000] Captain said dfr_army_g06
+[2026-09-29 21:30:54 UTC-5.000] Couldn't find animation 'dfr_army_g06' in 'models/human/ai_ranger/1st_ranger_cpt.tik' - trying sound alias instead.
+[2026-09-29 21:30:54 UTC-5.000] Writing bugreports/20260929-213054_m1l1/config.cfg.
+[2026-09-29 21:30:54 UTC-5.000] bugreport: report saved: 20260929-213054_m1l1
+[2026-09-29 21:30:54 UTC-5.000] Saving to br_20260929-213054_m1l1...
+[2026-09-29 21:30:54 UTC-5.000] SV_ArchiveLevelFile()
+[2026-09-29 21:30:54 UTC-5.000] Game Saved
+[2026-09-29 21:30:54 UTC-5.000] SV_ArchiveServerFile(false)
+[2026-09-29 21:30:54 UTC-5.000] LOCALIZATION ERROR: 'Rangers Lead the Way' does not have a localization entry
+[2026-09-29 21:30:54 UTC-5.000] Done.
+[2026-09-29 21:30:54 UTC-5.000] physics: 292 steps in the last 5.0 s, 117 us each, worst 256 us; 11 bodies awake
+[2026-09-29 21:30:55 UTC-5.000] Random float: 0.476 Model was: models/human/german_afrika_officer.tik Model is: models/human/ai_dak/afrika_nco_p38.tik
+[2026-09-29 21:30:59 UTC-5.000] Press the OBJECTIVE key  ( TAB ) to see your objectives.
+[2026-09-29 21:30:59 UTC-5.000] physics: 300 steps in the last 5.0 s, 92 us each, worst 298 us; 13 bodies awake
+[2026-09-29 21:31:00 UTC-5.000] BRTEST console
+[2026-09-29 21:31:00 UTC-5.000] Wrote screenshots/br_20260929-213100_m1l1.jpg
+[2026-09-29 21:31:00 UTC-5.000] Wrote screenshots/br_20260929-213100_m1l1_marked.jpg
+[2026-09-29 21:31:00 UTC-5.000] Writing bugreports/20260929-213100_m1l1/config.cfg.
+[2026-09-29 21:31:00 UTC-5.000] bugreport: report saved: 20260929-213100_m1l1
+[2026-09-29 21:31:00 UTC-5.000] Saving to br_20260929-213100_m1l1...
+[2026-09-29 21:31:00 UTC-5.000] SV_ArchiveLevelFile()
+[2026-09-29 21:31:00 UTC-5.000] Game Saved
+[2026-09-29 21:31:00 UTC-5.000] SV_ArchiveServerFile(false)
+[2026-09-29 21:31:00 UTC-5.000] Done.
+[2026-09-29 21:31:02 UTC-5.000] ^~^~^ BAD FAILSAFE: -3958.89 -2521.05 151.36, 'friendly'
+[2026-09-29 21:31:02 UTC-5.000] (entnum 37, radnum 41) blocked, doing failsafe
+[2026-09-29 21:31:02 UTC-5.000] (entnum 37, radnum 41) failsafe finished
+[2026-09-29 21:31:04 UTC-5.000] physics: 299 steps in the last 5.0 s, 109 us each, worst 399 us; 11 bodies awake
+[2026-09-29 21:31:05 UTC-5.000] Forward velocity: 184.441
+[2026-09-29 21:31:05 UTC-5.000] Forward velocity: -66.345
+[2026-09-29 21:31:05 UTC-5.000] BRTEST done
+[2026-09-29 21:31:05 UTC-5.000] ----- Server Shutdown (Server quit) -----
+[2026-09-29 21:31:05 UTC-5.000] ==== ShutdownGame ====
+[2026-09-29 21:31:06 UTC-5.000] ------ Unloading Game ------
+[2026-09-29 21:31:06 UTC-5.000] ---------------------------
+[2026-09-29 21:31:06 UTC-5.000] ------ Unloading ClientGame ------
+[2026-09-29 21:31:06 UTC-5.000] ------- S_StopAllSounds (stop music) -------
+[2026-09-29 21:31:06 UTC-5.000] MUSIC: changing from [ normal | normal ] to [ none | none ]
+[2026-09-29 21:31:06 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-29 21:31:06 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-29 21:31:06 UTC-5.000] ----- Client Shutdown (Client quit) -----
+[2026-09-29 21:31:06 UTC-5.000] ------ Unloading ClientGame ------
+[2026-09-29 21:31:06 UTC-5.000] ------- S_StopAllSounds (stop music) -------
+[2026-09-29 21:31:06 UTC-5.000] ------- S_StopAllSounds Complete-------
+[2026-09-29 21:31:06 UTC-5.000] Called FadeSound with: 0.000000
+[2026-09-29 21:31:06 UTC-5.000] ------- Sound Shutdown (full) -------
+[2026-09-29 21:31:06 UTC-5.000] OpenAL: Destroying channels...
+[2026-09-29 21:31:06 UTC-5.000] OpenAL: Channels destroyed successfully.
+[2026-09-29 21:31:06 UTC-5.000] OpenAL: Destroying context...
+[2026-09-29 21:31:06 UTC-5.000] OpenAL: Context destroyed successfully.
+[2026-09-29 21:31:06 UTC-5.000] OpenAL: Closing device...
+[2026-09-29 21:31:06 UTC-5.000] OpenAL: Device closed successfully.
+[2026-09-29 21:31:06 UTC-5.000] ------- Sound Shutdown Complete -------
+[2026-09-29 21:31:06 UTC-5.000] RE_Shutdown( 1 )
+[2026-09-29 21:31:06 UTC-5.000] ------- FBO_Shutdown -------
+[2026-09-29 21:31:06 UTC-5.000] ------- R_ShutdownVaos -------
+[2026-09-29 21:31:06 UTC-5.000] ------- GLSL_ShutdownGPUShaders -------
+[2026-09-29 21:31:06 UTC-5.000] -----------------------

@@ -1,0 +1,167 @@
+== level ==
+Map        : m1l1
+Map script : maps/m1l1.scr
+Spawnpoint : 
+Level time : 88.40 (frame 1035)
+Cinematic  : no
+
+== player ==
+Origin     : ( -2494.05, -3134.99, 57.13 )
+Angles     : ( 0.00, 315.03, 0.00 )
+Health     : 697.6
+
+== target ==
+Entity #   : 188
+Class ID   : script_model
+Classname  : ScriptModel
+Targetname : introtruck2
+Modelname  : models/vehicles/opeltruck.tik
+Animname   : stop_wheels
+Origin     : ( -2116.78, -3530.24, 91.71 )
+Angles     : ( 0.82, -178.22, -99.71 )
+Bounds     : Mins( -56.00, -56.00, 0.00 ) Maxs( 56.00, 56.00, 72.00 )
+Velocity   : ( 0.00, 0.00, 0.00 )
+SVFLAGS    : 8000
+Movetype   : 3
+Solidtype  : 0
+Contents   : 0
+Parent     : 1023
+Health     : 0.0 / 0.0
+Physics    : not a kind the physics moves
+
+== scripts ==
+num     state      label           script         
+------- ---------- --------------- ---------------
+0000000 suspended     transition  anim/stand.scr
+0000001 suspended                 anim/stand.scr
+0000002  waiting          Start anim/motionblend.scr
+0000003 suspended                global/friendly.scr
+0000004  waiting                global/friendly.scr
+0000005 suspended                 anim/shoot.scr
+0000006 suspended                 anim/shoot.scr
+0000007 suspended          start    anim/run.scr
+0000008 suspended          start anim/runto_casual.scr
+0000009 suspended          start    anim/run.scr
+0000010 suspended          start anim/runto_casual.scr
+0000011 suspended                global/friendly.scr
+0000012  waiting                global/friendly.scr
+0000013 suspended                global/friendly.scr
+0000014  waiting                global/friendly.scr
+0000015  running                anim/continue_last_anim.scr
+0000016  running                anim/continue_last_anim.scr
+0000017  waiting     breatheout global/breathe.scr
+0000018  waiting     breatheout global/breathe.scr
+0000019  waiting                  maps/m1l1.scr
+0000020  waiting                  maps/m1l1.scr
+0000021 suspended                  maps/m1l1.scr
+0000022 suspended                  maps/m1l1.scr
+0000023  waiting                  maps/m1l1.scr
+0000024 suspended                  maps/m1l1.scr
+0000025 suspended                  maps/m1l1.scr
+0000026  waiting                  maps/m1l1.scr
+0000027 suspended                  maps/m1l1.scr
+0000028 suspended                  maps/m1l1.scr
+0000029 suspended                  maps/m1l1.scr
+0000030 suspended                  maps/m1l1.scr
+0000031 suspended                  maps/m1l1.scr
+0000032  waiting                  maps/m1l1.scr
+0000033 suspended         Reload anim/reload.scr
+0000034 suspended         Reload anim/reload.scr
+0000035  waiting                global/friendly.scr
+0000036 suspended                global/friendly.scr
+0000037 suspended                global/friendly.scr
+0000038  waiting                global/friendly.scr
+0000039 suspended                global/friendly.scr
+0000040 suspended                global/friendly.scr
+0000041  waiting                global/friendly.scr
+0000042 suspended                global/friendly.scr
+0000043 suspended                global/friendly.scr
+0000044  waiting                global/friendly.scr
+0000045 suspended                global/friendly.scr
+0000046 suspended                global/friendly.scr
+0000047  waiting                  maps/m1l1.scr
+0000048 suspended          start    anim/run.scr
+0000049 suspended          start anim/runto_casual.scr
+0000050  waiting          start    anim/aim.scr
+0000051 suspended                anim/attack.scr
+0000052 suspended                anim/attack.scr
+0000053  waiting                anim/attack.scr
+0000054  waiting                global/friendly.scr
+0000055  waiting                global/friendly.scr
+0000056  waiting                global/friendly.scr
+0000057 suspended    areatrigger global/friendly.scr
+0000058 suspended    areatrigger global/friendly.scr
+0000059 suspended    areatrigger global/friendly.scr
+0000060 suspended    areatrigger global/friendly.scr
+0000061  waiting           main global/shutter.scr
+0000062 suspended   shutterthink global/shutter.scr
+0000063 suspended        shutter global/shutter.scr
+0000064 suspended   shutterthink global/shutter.scr
+0000065 suspended        shutter global/shutter.scr
+0000066  waiting     breatheout global/breathe.scr
+0000067 suspendeddoor_locked_wood global/door_locked.scr
+0000068 suspendeddoor_locked_wood global/door_locked.scr
+0000069 suspended           lock global/door_locked.scr
+0000070 suspendeddoor_locked_wood global/door_locked.scr
+0000071 suspendeddoor_locked_wood global/door_locked.scr
+0000072 suspendeddoor_locked_wood global/door_locked.scr
+0000073 suspendeddoor_locked_wood global/door_locked.scr
+0000074 suspendeddoor_locked_wood global/door_locked.scr
+0000075 suspendeddoor_locked_wood global/door_locked.scr
+0000076 suspendeddoor_locked_wood global/door_locked.scr
+0000077  waiting     breatheout global/breathe.scr
+0000078  waiting     breatheout global/breathe.scr
+0000079  waiting     breatheout global/breathe.scr
+0000080 suspended                global/friendly.scr
+0000081  waiting                global/friendly.scr
+0000082  waiting     breatheout global/breathe.scr
+0000083  waiting     breatheout global/breathe.scr
+0000084  waiting     breatheout global/breathe.scr
+0000085  waiting     breatheout global/breathe.scr
+0000086  waiting     breatheout global/breathe.scr
+0000087  waiting     breatheout global/breathe.scr
+0000088  waiting     breatheout global/breathe.scr
+0000089  waiting     breatheout global/breathe.scr
+0000090  waiting     breatheout global/breathe.scr
+0000091 suspended                  global/ai.scr
+0000092 suspended                  global/ai.scr
+0000093 suspended                  global/ai.scr
+0000094 suspended                  global/ai.scr
+0000095 suspended                  global/ai.scr
+0000096 suspended                  global/ai.scr
+0000097  waiting     breatheout global/breathe.scr
+0000098  waiting     breatheout global/breathe.scr
+0000099  waiting     breatheout global/breathe.scr
+0000100  waiting     breatheout global/breathe.scr
+0000101  waiting     breatheout global/breathe.scr
+0000102  waiting     breatheout global/breathe.scr
+0000103  waiting     breatheout global/breathe.scr
+0000104  waiting     breatheout global/breathe.scr
+0000105  waiting     killplayer   maps/m1l1.scr
+0000106  waiting     killplayer   maps/m1l1.scr
+0000107 suspended    sniperthink   global/ai.scr
+0000108 suspended    sniperthink   global/ai.scr
+0000109 suspended          start    anim/run.scr
+0000110 suspended          start anim/runto_casual.scr
+0000111 suspended                anim/attack.scr
+0000112  waiting          Start anim/motionblend.scr
+0000113  waiting          Start anim/motionblend.scr
+0000114  waiting          Start anim/motionblend.scr
+0000115  waiting          start    anim/aim.scr
+0000116 suspended    sniperthink   global/ai.scr
+0000117 suspended                  global/ai.scr
+0000118 suspended    sniperthink   global/ai.scr
+0000119 suspended                  global/ai.scr
+0000120  waiting     breatheout global/breathe.scr
+0000121  waiting          start hrrtm/mapmodels/m1l1.scr
+0000122  waiting     breatheout global/breathe.scr
+0000123  waiting          start hrrtm/mapmodels/m1l1.scr
+0000124 suspended                anim/attack.scr
+0000125 suspended                anim/attack.scr
+0000126 suspended                global/breathe.scr
+0000127 suspended          start    anim/run.scr
+0000128 suspended          start anim/runto_casual.scr
+0000129  waiting          Start anim/motionblend.scr
+------- ---------- --------------- ---------------
+204 total scripts compiled
+130 total threads ( 2 running thread(s), 55 waiting thread(s), 73 suspended thread(s) )

@@ -1,0 +1,13 @@
+== channels ==
+3D         0  playing ent    0 ch  6  vol 1.17  at -3947 -1208 428  dist 800-8000  sound/weapons/explo/explo_bazooka3.wav
+3D         1  playing ent    0 ch  0  vol 0.36  at -2797 -3055 61  dist 200-2500  sound/characters/fs_sand_05.wav
+3D         4  playing ent    0 ch  0  vol 0.62  at -3346 -2819 144  dist 200-2500  sound/characters/fs_sand_03.wav
+3D         5  playing ent    0 ch  0  vol 0.39  at -3062 -2823 94  dist 200-2500  sound/characters/fs_sand_02.wav
+3D        31  playing ent  190 ch  6  vol 1.14  at -4338 -1053 474  dist 400-8000  sound/weapons/fire/mauser98fire1.wav
+2D stream 30  playing ent   36 ch  8  vol 1.30  at -2987 -2370 222  dist 10000-10000  sound/dialogue/multiplayer/a/amdfr_g_06j.wav
+2D stream 31  playing ent  191 ch  5  vol 1.50  at -2711 -3270 59  dist 1000-4000  sound/vehicle/truck_intro.wav
+
+== looping ==
+
+== music ==
+triggered: sound/music/mus_11a_surprise.mp3
