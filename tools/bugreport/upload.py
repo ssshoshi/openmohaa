@@ -54,10 +54,12 @@ AREAS = {
 
 
 def run(cmd, **kw):
-    kw.setdefault("check", True)
     kw.setdefault("text", True)
     kw.setdefault("capture_output", True)
-    return subprocess.run(cmd, **kw)
+    result = subprocess.run(cmd, **kw)
+    if result.returncode:
+        sys.exit(f"failed: {' '.join(cmd)}\n{result.stderr.strip()}")
+    return result
 
 
 def default_homes():
@@ -184,7 +186,9 @@ def push_assets(repo, rid, stage):
     for name in os.listdir(stage):
         shutil.copyfile(os.path.join(stage, name), os.path.join(dest, name))
     run(["git", "-C", path, "add", "reports/" + rid])
-    run(["git", "-C", path, "commit", "-q", "-m", f"chore: assets for in-game report {rid}"])
+    # Nothing new when a report is sent again after the issue failed.
+    if subprocess.run(["git", "-C", path, "diff", "--cached", "--quiet"]).returncode:
+        run(["git", "-C", path, "commit", "-q", "-m", f"chore: assets for in-game report {rid}"])
     # gh's credential helper, so no separate git login is needed.
     run(["git", "-C", path, "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
          "push", "-q", "origin", f"HEAD:refs/heads/{ASSET_BRANCH}"])
