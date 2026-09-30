@@ -30,4 +30,8 @@ label needs-review     fbca04 "Untrusted; look before acting on it"
 
 label agent:fixable    0e8a16 "Triage thinks the cause is clear"
 label agent:fix        0e8a16 "Ask the agent for a draft fix PR"
+label agent:working    bfd4f2 "The local agent is on it right now"
+label agent:pr-open    0e8a16 "The agent opened a draft fix PR"
+label agent:attempted  e4e669 "The agent tried a fix and did not open a PR"
+label triaged          c2e0c6 "The agent has triaged this report"
 label duplicate        cfd3d7 "Already reported"

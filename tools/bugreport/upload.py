@@ -179,22 +179,25 @@ def asset_checkout(repo):
     return path
 
 
-def push_assets(repo, rid, stage):
+def push_assets(repo, rid, stage, folder="reports", message=None):
+    """Commits stage/'s files to <folder>/<rid>/ on the asset branch; returns
+    (raw URL base, tree URL) pinned to that commit."""
     path = asset_checkout(repo)
-    dest = os.path.join(path, "reports", rid)
+    sub = f"{folder}/{rid}"
+    dest = os.path.join(path, sub)
     os.makedirs(dest, exist_ok=True)
     for name in os.listdir(stage):
         shutil.copyfile(os.path.join(stage, name), os.path.join(dest, name))
-    run(["git", "-C", path, "add", "reports/" + rid])
+    run(["git", "-C", path, "add", sub])
     # Nothing new when a report is sent again after the issue failed.
     if subprocess.run(["git", "-C", path, "diff", "--cached", "--quiet"]).returncode:
-        run(["git", "-C", path, "commit", "-q", "-m", f"chore: assets for in-game report {rid}"])
+        run(["git", "-C", path, "commit", "-q", "-m", message or f"chore: assets for in-game report {rid}"])
     # gh's credential helper, so no separate git login is needed.
     run(["git", "-C", path, "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
          "push", "-q", "origin", f"HEAD:refs/heads/{ASSET_BRANCH}"])
     sha = run(["git", "-C", path, "rev-parse", "HEAD"]).stdout.strip()
-    return f"https://raw.githubusercontent.com/{repo}/{sha}/reports/{rid}", \
-        f"https://github.com/{repo}/tree/{sha}/reports/{rid}"
+    return f"https://raw.githubusercontent.com/{repo}/{sha}/{sub}", \
+        f"https://github.com/{repo}/tree/{sha}/{sub}"
 
 
 def fence(text, lang=""):
