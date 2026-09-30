@@ -1,0 +1,7 @@
+== channels ==
+3D        31  playing ent    0 ch  6  vol 0.90  at 1813 -2022 88  dist 3000-8000  sound/weapons/explo/exp_interior_02.wav
+
+== looping ==
+
+== music ==
+triggered: none

@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "20260930-000734_m3l1b",
+  "type": "bug",
+  "category": "lighting",
+  "title": "bright props",
+  "description": "certain props seem brighter than other things in dark maps",
+  "build": {
+    "version": "Medal of Honor Allied Assault 1.12+0.83.0 (OpenMoHAA 0.83.0-unstable+0.eedef338) win_mingw64-x86_64 Sep 30 2026 UTC",
+    "renderer": "opengl2",
+    "gl_vendor": "NVIDIA Corporation",
+    "gl_renderer": "NVIDIA GeForce GTX 1080/PCIe/SSE2",
+    "resolution": [2560, 1440],
+    "fps": 100,
+    "fs_game": ""
+  },
+  "game": {
+    "map": "maps/m3l1b.bsp",
+    "single_player": true,
+    "server_time": 1741650,
+    "player_origin": [1812.94, -2022.19, 88.13],
+    "view_origin": [1815.86, -2028.35, 169.41],
+    "view_angles": [30.03, -64.62, 0.88],
+    "health": 100,
+    "repro": "devmap m3l1b; setviewpos 1813 -2022 88 -65",
+    "savegame": "br_20260930-000734_m3l1b"
+  },
+  "aim": {
+    "hit": true,
+    "position": [1876.14, -2155.39, 88.13],
+    "normal": [0.00, 0.00, 1.00],
+    "shader": "textures/algiers/whsflrset1_1a",
+    "through_invisible": "",
+    "surface_flags": 65536,
+    "contents": 1,
+    "light": [79.53, 74.82, 63.67],
+    "distance": 162
+  },
+  "light_at_eye": [1.00, 0.93, 0.77],
+  "target": {
+    "kind": "static_model",
+    "index": 174,
+    "static_index": 174,
+    "solid": true,
+    "dynamic": true,
+    "physics_why": "small enough to move",
+    "angles": [44.57, 76.09, -99.94],
+    "model": "static//bottle_large.tik",
+    "origin": [1884.11, -2147.91, 94.69],
+    "mins": [-6.79, -6.83, 0.16],
+    "maxs": [6.75, 6.72, 23.62],
+    "model_shaders": [],
+    "overlay": ["static model #174: static//bottle_large.tik", "  moves   small enough to move", "light at the crosshair: 80 75 64   (1876 -2155 88)", "light at the eye: 1 1 1"]
+  },
+  "files": {
+    "screenshot": "screenshots/br_20260930-000734_m3l1b.jpg",
+    "screenshot_marked": "screenshots/br_20260930-000734_m3l1b_marked.jpg",
+    "server": "server.txt",
+    "sounds": "sounds.txt",
+    "config": "configs/bugreports/20260930-000734_m3l1b/config.cfg"
+  }
+}
