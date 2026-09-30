@@ -1,0 +1,86 @@
+name: "PR Checks"
+
+# The checks main's ruleset requires. Kept fast: one Linux build (with GL2, which
+# the release matrix doesn't build), the Windows build that actually gets
+# played, the unit tests, and the PR title (it becomes the squash commit).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  title:
+    name: "PR title"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: amannn/action-semantic-pull-request@v5
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        # Matches the history: fix(render): ..., feat(cgame): ..., chore(misc): ...
+        types: |
+          feat
+          fix
+          perf
+          refactor
+          docs
+          test
+          build
+          ci
+          chore
+          revert
+        requireScope: false
+        subjectPattern: ^[a-z].+[^.]$
+        subjectPatternError: |
+          The subject "{subject}" should start lowercase and not end with a period.
+
+  linux:
+    name: "Linux (GL2) + unit tests"
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Install required packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          flex bison ninja-build cmake clang libsdl2-dev libopenal-dev libcurl4-openssl-dev
+
+    - uses: actions/checkout@v4
+      with:
+        path: 'source'
+
+    - name: Configure CMake
+      working-directory: ${{github.workspace}}
+      # USE_RENDERER_DLOPEN must stay ON: the static path compiles the renderer
+      # into the client binary, and GL1 and GL2 cannot both be linked that way.
+      env:
+        CC: clang
+        CXX: clang++
+      run: |
+        cmake -S ./source -B ./build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DBUILD_RENDERER_GL2=ON \
+          -DUSE_RENDERER_DLOPEN=ON
+
+    - name: Build
+      working-directory: ${{github.workspace}}
+      run: cmake --build ./build --parallel
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: ctest --output-on-failure
+
+  windows:
+    uses: ./.github/workflows/shared-build-mingw.yml

@@ -1,0 +1,59 @@
+name: "Upstream Sync"
+
+# Mirrors openmoh/openmohaa main into this fork's upstream-main, then opens (or
+# leaves open) a PR merging it into main. main itself carries the fork's own
+# work, so upstream never lands in it without review and green checks.
+#
+# Uses the UPSTREAM_SYNC_TOKEN secret when present (a fine-grained PAT with
+# contents, pull requests and workflows write on this repo). The default
+# GITHUB_TOKEN can't push commits that touch .github/workflows, and PRs it
+# opens don't trigger pr-checks.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    if: github.repository != 'openmoh/openmohaa'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+    - name: Fast-forward upstream-main
+      run: |
+        git remote add upstream https://github.com/openmoh/openmohaa.git
+        git fetch --no-tags upstream main
+        git fetch --no-tags origin upstream-main
+        if ! git merge-base --is-ancestor origin/upstream-main upstream/main; then
+          echo "::error::upstream-main has diverged from openmoh/openmohaa main; it must only ever mirror upstream."
+          exit 1
+        fi
+        git push origin upstream/main:refs/heads/upstream-main
+
+    - name: Open merge PR
+      run: |
+        ahead=$(git rev-list --count origin/main..upstream/main)
+        echo "upstream-main has $ahead commit(s) not in main"
+        if [ "$ahead" = "0" ]; then
+          exit 0
+        fi
+        open=$(gh pr list --base main --head upstream-main --state open --json number --jq 'length')
+        if [ "$open" != "0" ]; then
+          echo "A merge PR is already open."
+          exit 0
+        fi
+        gh pr create --base main --head upstream-main \
+          --title "chore: merge upstream openmoh/openmohaa" \
+          --body "Merges $ahead new upstream commit(s) from openmoh/openmohaa main. Merge with a **merge commit**, not a squash, so the upstream history stays shared and later syncs don't conflict on the same changes."

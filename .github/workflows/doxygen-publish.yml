@@ -11,6 +11,8 @@ concurrency:
 
 jobs:
   build:
+    # The docs site is upstream's; forks have no Pages site to deploy to.
+    if: github.repository == 'openmoh/openmohaa'
     runs-on: ubuntu-latest
     steps:
       - name: Get and install Doxygen

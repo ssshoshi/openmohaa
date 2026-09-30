@@ -23,6 +23,8 @@ env:
 jobs:
   build:
     strategy:
+      # One target failing shouldn't hide whether the others build.
+      fail-fast: false
       matrix:
         architecture: [
           {name: 'amd64',   os: "ubuntu-22.04-arm", package: 'x86-64-linux-gnu',      triple: 'x86_64-linux-gnu',      arch_option: 'linux-x86_64'},
@@ -48,23 +50,23 @@ jobs:
     # Packages
     ###
 
-    - uses: awalsh128/cache-apt-pkgs-action@latest
-      name: Install required packages
-      with:
-        packages: flex bison ninja-build cmake clang libpulse-dev portaudio19-dev libasound2-dev libjack-dev libpipewire-0.3-dev qtbase5-dev libdbus-1-dev
-        version: "${{ runner.os }}-${{ runner.arch }}-v1"
+    # Plain apt instead of cache-apt-pkgs-action: that action installs against
+    # a stale package index and, when the mirror 404s, carries on with nothing
+    # installed.
+    - name: Install required packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends flex bison ninja-build cmake clang libpulse-dev portaudio19-dev libasound2-dev libjack-dev libpipewire-0.3-dev qtbase5-dev libdbus-1-dev
 
     - name: Settings
       working-directory: ${{github.workspace}}
       run: |
         echo "HOST_TRIPLE=$(gcc -dumpmachine)" >> $GITHUB_ENV
 
-    - uses: awalsh128/cache-apt-pkgs-action@latest
-      name: Install required cross-platform packages (${{ matrix.architecture.package }})
+    - name: Install required cross-platform packages (${{ matrix.architecture.package }})
       if: env.HOST_TRIPLE != matrix.architecture.triple
-      with:
-        packages: gcc-12-${{ matrix.architecture.package }} g++-12-${{ matrix.architecture.package }}
-        version: "${{ runner.os }}-${{ runner.arch }}-v1"
+      run: |
+        sudo apt-get install -y --no-install-recommends gcc-12-${{ matrix.architecture.package }} g++-12-${{ matrix.architecture.package }}
 
     - name: Settings
       working-directory: ${{github.workspace}}

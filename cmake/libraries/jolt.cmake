@@ -42,7 +42,28 @@ foreach(_v ${_OPM_SAVED})
     endif()
 endforeach()
 
+# Jolt picks its SIMD flags from CMAKE_SYSTEM_PROCESSOR, which is the build
+# host's when cross-compiling with a bare --target (as the Linux CI does): an
+# i686 build on an arm64 runner got no -msse flags at all while the compiler
+# still took Jolt's x86 intrinsics path. Hand it the architecture the compiler
+# actually targets instead.
+if(NOT MSVC)
+    include(utils/arch)
+    set(_OPM_WAS_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+    if(ARCH STREQUAL "x86" OR ARCH STREQUAL "i386")
+        set(CMAKE_SYSTEM_PROCESSOR "x86")
+    elseif(ARCH STREQUAL "arm64")
+        set(CMAKE_SYSTEM_PROCESSOR "aarch64")
+    else()
+        set(CMAKE_SYSTEM_PROCESSOR "${ARCH}")
+    endif()
+endif()
+
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
+
+if(NOT MSVC)
+    set(CMAKE_SYSTEM_PROCESSOR "${_OPM_WAS_PROCESSOR}")
+endif()
 
 foreach(_v ${_OPM_SAVED})
     if(_OPM_HAD_${_v})
