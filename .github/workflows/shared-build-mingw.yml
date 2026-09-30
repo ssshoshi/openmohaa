@@ -37,7 +37,7 @@ jobs:
       working-directory: ${{github.workspace}}
       run: |
         cmake -S ./source -B ./build -G Ninja \
-          -DCMAKE_TOOLCHAIN_FILE=./source/cmake/toolchains/mingw-w64-x86_64.cmake \
+          -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/source/cmake/toolchains/mingw-w64-x86_64.cmake \
           -DCMAKE_BUILD_TYPE=${{inputs.build_type}} \
           -DBUILD_RENDERER_GL2=ON \
           -DUSE_RENDERER_DLOPEN=ON \
