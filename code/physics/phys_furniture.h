@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "phys_jolt.h"
 #include "../qcommon/qfiles.h"
 
+#include <set>
 #include <vector>
 
 typedef struct {
@@ -38,9 +39,39 @@ typedef struct {
     std::vector<std::vector<float>> hulls;    // convex pieces, three floats a point, in the world
     vec3_t                          mins, maxs;
     char                            shader[64]; // the visible shader with the most brushes
+    bool                            forced;     // a rule made it furniture, whatever its shape
 } physFurniture_t;
+
+// What the search made of one group of touching detail brushes with something
+// visible on it, for the editor to say why a piece is, or is not, furniture.
+typedef struct {
+    int    firstBrush; // the brush a rule names it by
+    int    numBrushes;
+    int    other;      // the brush it touches, when that is why; else -1
+    vec3_t mins, maxs;
+    bool   furniture;
+    char   verdict[96];
+} physFurnitureCheck_t;
+
+// One visible detail brush and the group it fell in, for naming single brushes
+// when a group is the whole building.
+typedef struct {
+    int    num;
+    int    group; // its group's firstBrush
+    vec3_t mins, maxs;
+    char   shader[64];
+} physFurnitureBrush_t;
 
 // The pieces of furniture in the world's brushwork. Found by shape: a group of
 // touching detail brushes, small, with something seen on it, that stands on
 // something and touches nothing else solid.
-void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> *out);
+//
+// The brushes in forced (rules said they move) are taken out of the groups
+// they would join and grouped only with each other: a sign and its post come
+// away from the beam they touch, and are furniture whatever their shape, as
+// long as something draws them. checks, when given, gets a verdict for every
+// group with something visible on it, and brushes every visible detail brush.
+void Phys_FindFurniture(
+    const void *bsp, long len, std::vector<physFurniture_t> *out, const std::set<int> *forced = NULL,
+    std::vector<physFurnitureCheck_t> *checks = NULL, std::vector<physFurnitureBrush_t> *brushes = NULL
+);

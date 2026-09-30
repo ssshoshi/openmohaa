@@ -510,6 +510,7 @@ static consoleCommand_t commands[] = {
     {"phys_mass",              &CG_PhysicsMass_f           },
     {"phys_forget",            &CG_PhysicsForget_f         },
     {"phys_reload",            &CG_PhysicsReload_f         },
+    {"phys_furniture",         &CG_PhysicsFurniture_f      },
     //  In-game reports
     {"bugreport",              &CG_BugReport_f             },
     {"br_submit",              &CG_BugReportSubmit_f       },
