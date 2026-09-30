@@ -142,6 +142,7 @@ cvar_t *g_gametype;
 cvar_t *g_gametypestring;
 cvar_t *g_realismmode;
 cvar_t *g_teamdamage;
+cvar_t *g_bulletpenetration;
 cvar_t *g_healthdrop;
 cvar_t *g_healrate;
 
@@ -502,6 +503,10 @@ void CVAR_Init(void)
     }
 
     g_teamdamage = gi.Cvar_Get("g_teamdamage", "0", 0);
+    // Added in OPM
+    //  Allied Assault's weapons with Spearhead's bullet penetration: see
+    //  Weapon::GetBulletThrough.
+    g_bulletpenetration = gi.Cvar_Get("g_bulletpenetration", "1", CVAR_ARCHIVE);
     g_healthdrop = gi.Cvar_Get("g_healthdrop", "1", 0);
     if (g_protocol >= protocol_e::PROTOCOL_MOHTA_MIN) {
         g_healrate = gi.Cvar_Get("g_healrate", "10", 0);
