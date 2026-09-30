@@ -1,0 +1,63 @@
+name: Shared build workflow (Windows x64, mingw-w64)
+
+# Cross-compiles the Windows x64 build from Linux with the same toolchain file
+# used locally (cmake/toolchains/mingw-w64-x86_64.cmake), GL2 included. This is
+# the build that actually gets played, so it's the one PRs are gated on and the
+# one the rolling release ships.
+
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        required: false
+        type: string
+        default: 'RelWithDebInfo'
+
+jobs:
+  build:
+    name: "Windows x64 (mingw)"
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Install required packages
+      # Plain apt instead of cache-apt-pkgs-action: that action installs
+      # against a stale package index and, when the mirror 404s, carries on
+      # with nothing installed.
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          flex bison ninja-build cmake \
+          gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+
+    - uses: actions/checkout@v4
+      with:
+        path: 'source'
+
+    - name: Configure CMake
+      working-directory: ${{github.workspace}}
+      run: |
+        cmake -S ./source -B ./build -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=./source/cmake/toolchains/mingw-w64-x86_64.cmake \
+          -DCMAKE_BUILD_TYPE=${{inputs.build_type}} \
+          -DBUILD_RENDERER_GL2=ON \
+          -DUSE_RENDERER_DLOPEN=ON \
+          -DGIT_REVISION_BUILD_NUMBER=${{ github.run_number }}
+
+    - name: Build
+      working-directory: ${{github.workspace}}
+      run: cmake --build ./build --parallel
+
+    - name: Package
+      working-directory: ${{github.workspace}}
+      run: |
+        mkdir package
+        find ./build -maxdepth 2 \( -name '*.exe' -o -name '*.dll' \) -newer ./build/CMakeCache.txt \
+          -exec cp -v {} package/ \;
+        echo "${{ github.sha }}" > package/COMMIT
+        ls -l package
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: 'out-windows-x64-mingw'
+        path: ${{github.workspace}}/package
+        if-no-files-found: error

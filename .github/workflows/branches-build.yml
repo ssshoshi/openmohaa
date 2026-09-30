@@ -1,10 +1,19 @@
 name: "Builds"
 
+# The full release matrix. Most pull requests are gated by pr-checks.yml
+# alone; this runs when main moves (republishing the rolling 'dev' release),
+# on PRs that change the build itself, and on demand.
 on:
   push:
     branches:
-      - '**'
+      - 'main'
   pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - '.github/workflows/branches-build.yml'
+      - '.github/workflows/shared-build*.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,13 +28,16 @@ jobs:
    with:
       environment: 'testing'
 
+  build-mingw:
+   uses: ./.github/workflows/shared-build-mingw.yml
+
   # Initially create a release with 1 job
   # so multiple files can be uploaded at the same time afterwards
   create-release:
     if: github.event_name != 'pull_request' && github.ref_name == 'main'
     runs-on: ubuntu-24.04
     environment: 'testing'
-    needs: [build-all]
+    needs: [build-all, build-mingw]
 
     steps:
     - name: Release
@@ -50,6 +62,7 @@ jobs:
           'windows-x64-pdb',
           'windows-x86-pdb',
           'windows-arm64-pdb',
+          'windows-x64-mingw',
           'macos-multiarch-arm64-x86_64',
         ]
 
