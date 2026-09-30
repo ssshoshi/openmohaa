@@ -1,0 +1,6 @@
+== channels ==
+
+== looping ==
+
+== music ==
+triggered: sound/music/mus_17a_mystery.mp3

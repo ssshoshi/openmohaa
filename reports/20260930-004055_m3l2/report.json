@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "20260930-004055_m3l2",
+  "type": "idea",
+  "category": "texture",
+  "title": "gap in terrain",
+  "description": "Certain areas in the game has a small gap between the trerrain textures.",
+  "build": {
+    "version": "Medal of Honor Allied Assault 1.12+0.83.0 (OpenMoHAA 0.83.0-unstable+0.eedef338) win_mingw64-x86_64 Sep 30 2026 UTC",
+    "renderer": "opengl2",
+    "gl_vendor": "NVIDIA Corporation",
+    "gl_renderer": "NVIDIA GeForce GTX 1080/PCIe/SSE2",
+    "resolution": [2560, 1440],
+    "fps": 53,
+    "fs_game": ""
+  },
+  "game": {
+    "map": "maps/m3l2.bsp",
+    "single_player": true,
+    "server_time": 1141950,
+    "player_origin": [-2565.06, 1461.88, -23.63],
+    "view_origin": [-2561.13, 1469.44, 57.25],
+    "view_angles": [37.67, 62.56, 0.00],
+    "health": 45,
+    "repro": "devmap m3l2; setviewpos -2565 1462 -24 63",
+    "savegame": "br_20260930-004055_m3l2"
+  },
+  "aim": {
+    "hit": true,
+    "position": [-2510.39, 1567.19, -27.79],
+    "normal": [0.14, 0.01, 0.99],
+    "shader": "textures/common/grassclip",
+    "through_invisible": "",
+    "surface_flags": 524448,
+    "contents": 536870913,
+    "light": [255.00, 255.00, 255.00],
+    "distance": 139
+  },
+  "light_at_eye": [1.00, 1.00, 1.00],
+  "target": {
+    "kind": "world",
+    "overlay": ["world", "surface: textures/common/grassclip   flags 0x800a0 contents 0x20000001"]
+  },
+  "files": {
+    "screenshot": "screenshots/br_20260930-004055_m3l2.jpg",
+    "screenshot_marked": "screenshots/br_20260930-004055_m3l2_marked.jpg",
+    "server": "server.txt",
+    "sounds": "sounds.txt",
+    "config": "configs/bugreports/20260930-004055_m3l2/config.cfg"
+  }
+}
