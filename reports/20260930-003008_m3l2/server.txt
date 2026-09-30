@@ -1,0 +1,101 @@
+== level ==
+Map        : m3l2
+Map script : maps/m3l2.scr
+Spawnpoint : 
+Level time : 397.20 (frame 7941)
+Cinematic  : no
+
+== player ==
+Origin     : ( -3601.13, 3536.81, 176.13 )
+Angles     : ( 0.00, 77.75, 0.00 )
+Health     : 340.0
+
+== target ==
+none (not an entity)
+
+== scripts ==
+num     state      label           script         
+------- ---------- --------------- ---------------
+0000000 suspended                 anim/shoot.scr
+0000001  waiting     SayManager anim/saymanager.scr
+0000002  waiting          start    anim/aim.scr
+0000003 suspended          start anim/runto_cover.scr
+0000004 suspended          start anim/runto_inopen.scr
+0000005 suspended          Start anim/motionblend.scr
+0000006 suspended                 anim/stand.scr
+0000007 suspended                 anim/stand.scr
+0000008  waiting                global/friendly.scr
+0000009  waiting                global/friendly.scr
+0000010 suspended                global/friendly.scr
+0000011  waiting                global/friendly.scr
+0000012 suspended          start global/breathe.scr
+0000013  waiting                  maps/m3l2.scr
+0000014  waiting                  maps/m3l2.scr
+0000015  waiting                global/friendly.scr
+0000016  waiting                global/friendly.scr
+0000017 suspended                global/friendly.scr
+0000018 suspendeddoor_locked_wood global/door_locked.scr
+0000019 suspendeddoor_locked_wood global/door_locked.scr
+0000020  waiting          start global/breathe.scr
+0000021  waiting          start global/breathe.scr
+0000022 suspended                global/ambient.scr
+0000023 suspended                global/ambient.scr
+0000024 suspended                global/ambient.scr
+0000025 suspended                global/ambient.scr
+0000026 suspended                global/ambient.scr
+0000027 suspended                global/ambient.scr
+0000028 suspended                global/ambient.scr
+0000029 suspended                global/ambient.scr
+0000030 suspended                global/ambient.scr
+0000031 suspended                global/ambient.scr
+0000032 suspended                global/ambient.scr
+0000033 suspended                global/ambient.scr
+0000034 suspended                global/ambient.scr
+0000035 suspended                global/ambient.scr
+0000036  waiting                  maps/m3l2.scr
+0000037 suspended                  maps/m3l2.scr
+0000038 suspended                  maps/m3l2.scr
+0000039 suspended                  maps/m3l2.scr
+0000040 suspended                  maps/m3l2.scr
+0000041  waiting          start global/breathe.scr
+0000042  waiting          start global/breathe.scr
+0000043  waiting         mumble global/breathe.scr
+0000044 suspended          start global/breathe.scr
+0000045  waiting          start global/breathe.scr
+0000046  waiting          start global/breathe.scr
+0000047  waiting          start global/breathe.scr
+0000048  waiting          start global/breathe.scr
+0000049  waiting          start global/breathe.scr
+0000050  waiting         mumble global/breathe.scr
+0000051 suspended          start global/breathe.scr
+0000052  waiting          start global/breathe.scr
+0000053  waiting          start global/breathe.scr
+0000054  waiting          start global/breathe.scr
+0000055  waiting          start global/breathe.scr
+0000056  waiting          start global/breathe.scr
+0000057  waiting          start global/breathe.scr
+0000058 suspended                global/cabinet.scr
+0000059 suspended                global/cabinet.scr
+0000060  waiting                global/ambient.scr
+0000061  waiting                global/friendly.scr
+0000062  waiting                global/friendly.scr
+0000063 suspended                global/friendly.scr
+0000064 suspended    areatrigger global/friendly.scr
+0000065 suspended    areatrigger global/friendly.scr
+0000066 suspended                  maps/m3l2.scr
+0000067  waiting     checkdeath global/cabinet.scr
+0000068  waiting     checkdeath global/cabinet.scr
+0000069 suspended       IdleMain   anim/idle.scr
+0000070 suspended                 anim/stand.scr
+0000071 suspended                 anim/stand.scr
+0000072 suspended                 anim/stand.scr
+0000073  waiting          start global/breathe.scr
+0000074 suspended                  maps/m3l2.scr
+0000075  waiting          start global/breathe.scr
+0000076 suspended                  maps/m3l2.scr
+0000077  waiting          start global/breathe.scr
+0000078 suspended                  maps/m3l2.scr
+0000079  waiting          start    anim/aim.scr
+------- ---------- --------------- ---------------
+205 total scripts compiled
+80 total threads ( 0 running thread(s), 36 waiting thread(s), 44 suspended thread(s) )

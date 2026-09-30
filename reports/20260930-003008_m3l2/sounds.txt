@@ -1,0 +1,9 @@
+== channels ==
+3D        30  playing ent  324 ch  2  vol 0.90  at -3048 3072 0  dist 160-1000  sound/weapons/foley/karrechambernpc1.wav
+3D        31  playing ent  338 ch  6  vol 1.14  at -3049 3087 71  dist 400-8000  sound/weapons/fire/mauser98fire1.wav
+2D stream 31  playing ent   72 ch  8  vol 1.05  at -3401 -6657 -349  dist 160-1200  sound/dialogue/m3l2/a/dfr_m3l3_339k.wav
+
+== looping ==
+
+== music ==
+triggered: sound/music/mus_17a_mystery.mp3
