@@ -42,3 +42,39 @@ report's `pending` marker becomes `sent`, holding the issue's URL.
 
 Needs `gh` logged in with repo scope, and Pillow to stamp the overlay onto the
 outlined screenshot (the game's screenshots are taken before its 2D pass).
+
+## Triage and fixes (local, on a Claude subscription)
+
+```sh
+tools/bugreport/triage.py                # one pass: triage new reports, fix requested ones
+tools/bugreport/triage.py --dry-run      # what a pass would do
+tools/bugreport/triage.py --loop 900     # keep going, a pass every 15 minutes
+tools/bugreport/triage.py --issue 5 --mode fix
+```
+
+It runs headless Claude Code (`claude -p`), logged in with your Claude
+subscription, so no API key is needed; runs count against the subscription's
+usage limits.
+
+- **Triage** takes every open `source:ingame` issue not yet `triaged`: it reads
+  the report, looks for duplicates, finds the likely code, reproduces the
+  report from its savegame on the real GPU when a screenshot can show the
+  problem, and posts one `Triage (automated)` comment. It labels the issue
+  `triaged`, and `agent:fixable` when the cause is clear and contained.
+- **Fix** starts when you add `agent:fix` to an issue. In a fresh worktree
+  (`~/projects/openmohaa-agent/fix-<n>`, branch `fix/<n>-<slug>`) it makes the
+  fix, builds it for Windows, takes before and after screenshots from the
+  savegame, and opens a **draft** pull request that says `Fixes #<n>`. It
+  never merges; you review and merge. If it cannot fix it, it comments and
+  labels `agent:attempted`.
+
+Only issues you opened are handled, and only an `agent:fix` label you added
+starts a fix. The agent may use only an allow-list of tools (reading and
+searching the code, gh for issues and pull requests, git on its own branch,
+the build, repro.py and post.py) and everything else is refused. Transcripts
+are kept in `~/.cache/openmohaa-bugreport/logs/`.
+
+`repro.py` can also be used by hand: it reproduces a report in an isolated
+install (`D:\Medal of Honor\bugrepro`, its own home path) and refuses to run
+while the game is open. `post.py` comments on an issue or pull request with
+images.

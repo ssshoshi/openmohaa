@@ -149,6 +149,8 @@ def run_claude(mode, cwd, text, number):
     log = os.path.join(LOG_DIR, f"issue-{number}-{mode}-{datetime.datetime.now():%Y%m%d-%H%M%S}.log")
     cmd = ["claude", "-p", text,
            "--permission-mode", "dontAsk",
+           # No MCP servers or plugin connectors: the agent needs none.
+           "--strict-mcp-config",
            "--allowedTools", " ".join(TOOLS[mode]),
            "--add-dir", upload.CACHE_DIR,
            "--add-dir", "/mnt/d/Medal of Honor/bugrepro",
