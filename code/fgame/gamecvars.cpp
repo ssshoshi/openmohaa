@@ -148,6 +148,7 @@ cvar_t *g_mg42_heatmax;
 cvar_t *g_mg42_heatresume;
 cvar_t *g_mg42_cooldown;
 cvar_t *g_mg42_cooldelay;
+cvar_t *g_bulletpenetration;
 cvar_t *g_healthdrop;
 cvar_t *g_healrate;
 
@@ -520,6 +521,10 @@ void CVAR_Init(void)
     g_mg42_heatresume  = gi.Cvar_Get("g_mg42_heatresume", "40", CVAR_ARCHIVE);
     g_mg42_cooldown    = gi.Cvar_Get("g_mg42_cooldown", "20", CVAR_ARCHIVE);
     g_mg42_cooldelay   = gi.Cvar_Get("g_mg42_cooldelay", "0.5", CVAR_ARCHIVE);
+    // Added in OPM
+    //  Allied Assault's weapons with Spearhead's bullet penetration: see
+    //  Weapon::GetBulletThrough.
+    g_bulletpenetration = gi.Cvar_Get("g_bulletpenetration", "1", CVAR_ARCHIVE);
     g_healthdrop = gi.Cvar_Get("g_healthdrop", "1", 0);
     if (g_protocol >= protocol_e::PROTOCOL_MOHTA_MIN) {
         g_healrate = gi.Cvar_Get("g_healrate", "10", 0);

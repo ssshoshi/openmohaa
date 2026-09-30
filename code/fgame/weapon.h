@@ -455,6 +455,10 @@ public:
     //
     Listener  *GetScriptOwner(void) override;
     float      GetBulletRange(firemode_t mode);
+    // Added in OPM
+    //  How far a bullet from this mode goes through wood and metal: the
+    //  weapon's own throughwood / throughmetal, or Spearhead's for its model.
+    void       GetBulletThrough(int mode, float *wood, float *metal);
     float      GetSpreadFactor(firemode_t mode);
     float      GetChargeFraction(void) const;
     float      GetCurrentFireSpreadMult(firemode_t mode) const;

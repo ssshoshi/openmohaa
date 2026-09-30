@@ -1430,6 +1430,7 @@ void Weapon::Shoot(Event *ev)
                 float             fSpreadFactor;
                 int               tracerFrequency;
                 SafePtr<Sentient> ownerPtr;
+                float             throughWood, throughMetal;
 
                 if (owner) {
                     if (owner->client) {
@@ -1466,6 +1467,7 @@ void Weapon::Shoot(Event *ev)
                 }
 
                 ownerPtr = owner;
+                GetBulletThrough(mode, &throughWood, &throughMetal);
 
                 if (!owner && IsSubclassOfVehicleTurretGun()) {
                     VehicleTurretGun *turretGun = static_cast<VehicleTurretGun *>(this);
@@ -1489,8 +1491,8 @@ void Weapon::Shoot(Event *ev)
                     ownerPtr,
                     tracerFrequency,
                     &tracercount[mode],
-                    bulletthroughwood[mode],
-                    bulletthroughmetal[mode],
+                    throughWood,
+                    throughMetal,
                     this,
                     tracerspeed[mode]
                 );
@@ -4197,6 +4199,56 @@ qboolean Weapon::MuzzleClear(void)
 float Weapon::GetBulletRange(firemode_t mode)
 {
     return bulletrange[mode];
+}
+
+//======================
+//Weapon::GetBulletThrough
+//
+// Added in OPM
+// Spearhead gave its rifles, BAR, StG 44 and MG42s bullets that carry on
+// through wood and metal, less damaging for how far they went through
+// (BulletAttack), with throughwood / throughmetal in their tikis. Allied
+// Assault's tikis have neither, so its guns stop at the thinnest plank. With
+// g_bulletpenetration, a weapon that sets neither gets Spearhead's values for
+// its model; one that sets its own keeps them. Like Spearhead, rock, brick and
+// plaster still stop every bullet, and submachine guns, pistols and the
+// shotgun go through nothing.
+//======================
+void Weapon::GetBulletThrough(int mode, float *wood, float *metal)
+{
+    static const struct {
+        const char *model; // the tiki, without its folder
+        float       wood, metal;
+    } spearhead[] = {
+        {"m1_garand.tik",           24, 8 },
+        {"kar98.tik",               24, 8 },
+        {"kar98sniper.tik",         24, 8 },
+        {"springfield.tik",         24, 8 },
+        {"bar.tik",                 24, 8 },
+        {"mp44.tik",                24, 8 },
+        {"mg42_gun.tik",            56, 32},
+        {"mg42_bipod.tik",          56, 32},
+        {"mg42_bipod_nonstatic.tik", 56, 32},
+    };
+    const char *name;
+
+    *wood  = bulletthroughwood[mode];
+    *metal = bulletthroughmetal[mode];
+
+    if (*wood || *metal || !g_bulletpenetration || !g_bulletpenetration->integer || !model.length()) {
+        return;
+    }
+
+    name = strrchr(model.c_str(), '/');
+    name = name ? name + 1 : model.c_str();
+
+    for (size_t i = 0; i < ARRAY_LEN(spearhead); i++) {
+        if (!Q_stricmp(name, spearhead[i].model)) {
+            *wood  = spearhead[i].wood;
+            *metal = spearhead[i].metal;
+            return;
+        }
+    }
 }
 
 //======================

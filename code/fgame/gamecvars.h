@@ -153,6 +153,7 @@ extern cvar_t *g_mg42_heatmax;
 extern cvar_t *g_mg42_heatresume;
 extern cvar_t *g_mg42_cooldown;
 extern cvar_t *g_mg42_cooldelay;
+extern cvar_t *g_bulletpenetration;
 extern cvar_t *g_healthdrop;
 extern cvar_t *g_healrate;
 
