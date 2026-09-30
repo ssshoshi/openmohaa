@@ -1405,6 +1405,25 @@ qboolean G_PhysicsInfoCmd(gentity_t *ent)
     return qtrue;
 }
 
+// For a bug report: what the physics makes of an entity, on one line.
+str G_PhysicsDescribe(Entity *ent)
+{
+    static const char *names[] = {"fixed", "moves", "off"};
+    float              ruleMass, mass = 0.0f;
+    const char        *why;
+    const int          state = G_PhysicsEditState(ent);
+
+    if (state < 0) {
+        return "not a kind the physics moves";
+    }
+
+    G_PhysicsDecide(ent, &ruleMass, &why);
+    if (G_PhysicsOwns(ent)) {
+        mass = G_PhysicsBodyMass(gphys_entities[ent->entnum].id);
+    }
+    return va("%s, %.1f kg, key %s: %s", names[state], mass, G_PhysicsEntityKey(ent), why ? why : "");
+}
+
 // physrules: the file again, and every entity as it now says.
 qboolean G_PhysicsRulesCmd(gentity_t *ent)
 {

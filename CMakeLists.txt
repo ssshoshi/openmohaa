@@ -83,6 +83,7 @@ include(client)
 include(basegame)
 #include(missionpack)
 include(launcher)
+include(data)
 
 include(post_configure)
 #include(installer)

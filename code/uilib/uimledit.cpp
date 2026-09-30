@@ -194,6 +194,18 @@ void UIMultiLineEdit::Draw(void)
     selectionpoint_t *topsel = NULL;
     selectionpoint_t *botsel = NULL;
 
+    // Added in OPM
+    //  A linked cvar was only ever read into the box: write what is typed back
+    //  to it, as a Field does (the in-game report's description, br_desc).
+    if (m_changed && m_cvarname.length()) {
+        str text;
+
+        getData(text);
+        if (text != uii.Cvar_GetString(m_cvarname, "")) {
+            uii.Cvar_Set(m_cvarname, text);
+        }
+    }
+
     SortSelection(&topsel, &botsel);
 
     m_lines.IterateFromHead();

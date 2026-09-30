@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "gamecmds.h"
 #include "g_physics.h"
+#include "g_bugreport.h"
 #include "glb_local.h"
 #include "camera.h"
 #include "viewthing.h"
@@ -83,6 +84,8 @@ consolecmd_t G_ConsoleCmds[] = {
     {"physlist",        G_PhysicsListCmd,     qfalse},
     {"physinfo",        G_PhysicsInfoCmd,     qfalse},
     {"physrules",       G_PhysicsRulesCmd,    qfalse},
+    // In-game reports: the game's side of the bundle (g_bugreport.cpp)
+    {"bugreport_server", G_BugReportServerCmd, qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif

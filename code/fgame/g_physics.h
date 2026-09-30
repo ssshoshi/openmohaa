@@ -66,6 +66,9 @@ qboolean G_PhysicsNudgeCmd(struct gentity_s *ent);
 qboolean G_PhysicsListCmd(struct gentity_s *ent);
 qboolean G_PhysicsInfoCmd(struct gentity_s *ent);
 qboolean G_PhysicsRulesCmd(struct gentity_s *ent);
+// What the physics makes of an entity, on one line, for a bug report.
+class str;
+str G_PhysicsDescribe(Entity *ent);
 
 // Pushes a physics entity: an impulse in kilograms times units a second, at a
 // point in the world.
