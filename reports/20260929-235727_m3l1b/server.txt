@@ -1,0 +1,116 @@
+== level ==
+Map        : m3l1b
+Map script : maps/m3l1b.scr
+Spawnpoint : 
+Level time : 1136.75 (frame 22732)
+Cinematic  : no
+
+== player ==
+Origin     : ( 1801.79, -2023.43, -79.88 )
+Angles     : ( 0.00, 178.34, 0.00 )
+Health     : 750.0
+
+== target ==
+Entity #   : 113
+Class ID   : func_barrel
+Classname  : BarrelObject
+Targetname : 
+Modelname  : *78
+Animname   : ( N/A )
+Origin     : ( 1740.29, -2018.26, -73.00 )
+Angles     : ( 360.00, 305.05, 90.00 )
+Bounds     : Mins( -7.00, -7.00, -1.00 ) Maxs( 7.00, 7.00, 17.00 )
+Velocity   : ( 0.00, 0.00, 0.00 )
+SVFLAGS    : 8000
+Movetype   : 0
+Solidtype  : 3
+Contents   : ffffffff
+Parent     : 1023
+Health     : 75.0 / 75.0
+Physics    : moves, 2.7 kg, key *78: a barrel
+
+== scripts ==
+num     state      label           script         
+------- ---------- --------------- ---------------
+0000000  waiting     breatheout global/breathe.scr
+0000001  waiting     breatheout global/breathe.scr
+0000002  waiting     breatheout global/breathe.scr
+0000003  waiting     breatheout global/breathe.scr
+0000004  waiting     breatheout global/breathe.scr
+0000005  waiting     breatheout global/breathe.scr
+0000006  waiting     breatheout global/breathe.scr
+0000007  waiting     breatheout global/breathe.scr
+0000008  waiting     breatheout global/breathe.scr
+0000009  waiting     breatheout global/breathe.scr
+0000010  waiting     breatheout global/breathe.scr
+0000011  waiting     breatheout global/breathe.scr
+0000012  waiting     breatheout global/breathe.scr
+0000013  waiting     breatheout global/breathe.scr
+0000014  waiting     breatheout global/breathe.scr
+0000015  waiting     breatheout global/breathe.scr
+0000016  waiting         mumble global/breathe.scr
+0000017 suspended     breatheout global/breathe.scr
+0000018  waiting     breatheout global/breathe.scr
+0000019  waiting     breatheout global/breathe.scr
+0000020  waiting     breatheout global/breathe.scr
+0000021  waiting     breatheout global/breathe.scr
+0000022  waiting     breatheout global/breathe.scr
+0000023 suspended                 maps/m3l1b.scr
+0000024 suspended                 maps/m3l1b.scr
+0000025 suspended                 maps/m3l1b.scr
+0000026 suspended                 maps/m3l1b.scr
+0000027 suspended                 maps/m3l1b.scr
+0000028 suspended                 maps/m3l1b.scr
+0000029 suspended                 maps/m3l1b.scr
+0000030 suspended                 maps/m3l1b.scr
+0000031 suspended                 maps/m3l1b.scr
+0000032 suspended                 maps/m3l1b.scr
+0000033 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000034 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000035 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000036 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000037 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000038 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000039 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000040 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000041 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000042 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000043 suspendedbunker_dust_trigger  maps/m3l1b.scr
+0000044 suspended                global/minefield.scr
+0000045 suspended                global/minefield.scr
+0000046 suspended                global/minefield.scr
+0000047 suspended                global/minefield.scr
+0000048 suspended                global/minefield.scr
+0000049 suspended                global/minefield.scr
+0000050 suspended                global/minefield.scr
+0000051  waiting         mumble global/breathe.scr
+0000052 suspended     breatheout global/breathe.scr
+0000053  waiting     breatheout global/breathe.scr
+0000054 suspendedexplosive_barrel_spawn global/barrel.scr
+0000055 suspendedexplosive_barrel_spawn global/barrel.scr
+0000056 suspendedexplosive_barrel_spawn global/barrel.scr
+0000057 suspendedexplosive_barrel_spawn global/barrel.scr
+0000058 suspendedexplosive_barrel_spawn global/barrel.scr
+0000059 suspendedexplosive_barrel_spawn global/barrel.scr
+0000060  waiting     breatheout global/breathe.scr
+0000061  waiting     breatheout global/breathe.scr
+0000062  waiting     breatheout global/breathe.scr
+0000063  waiting     breatheout global/breathe.scr
+0000064  waiting     breatheout global/breathe.scr
+0000065  waiting     breatheout global/breathe.scr
+0000066  waiting     breatheout global/breathe.scr
+0000067  waiting     breatheout global/breathe.scr
+0000068  waiting     breatheout global/breathe.scr
+0000069  waiting     breatheout global/breathe.scr
+0000070  waiting     breatheout global/breathe.scr
+0000071  waiting     breatheout global/breathe.scr
+0000072  waiting     breatheout global/breathe.scr
+0000073  waiting     breatheout global/breathe.scr
+0000074  waitingbunker_dust_trigger  maps/m3l1b.scr
+0000075 suspended       IdleMain   anim/idle.scr
+0000076 suspendedIdleStandTransition  anim/stand.scr
+0000077 suspendedIdleStandTransition  anim/stand.scr
+0000078 suspended          start  anim/stand.scr
+------- ---------- --------------- ---------------
+204 total scripts compiled
+79 total threads ( 0 running thread(s), 39 waiting thread(s), 40 suspended thread(s) )

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "20260929-235727_m3l1b",
+  "type": "bug",
+  "category": "texture",
+  "title": "The cans and barrels don't have a bottom texture.",
+  "description": "The cans and barrels turned physics objects don't have textures on the bottom.",
+  "build": {
+    "version": "Medal of Honor Allied Assault 1.12+0.83.0 (OpenMoHAA 0.83.0-unstable+0.eedef338) win_mingw64-x86_64 Sep 30 2026 UTC",
+    "renderer": "opengl2",
+    "gl_vendor": "NVIDIA Corporation",
+    "gl_renderer": "NVIDIA GeForce GTX 1080/PCIe/SSE2",
+    "resolution": [2560, 1440],
+    "fps": 143,
+    "fs_game": ""
+  },
+  "game": {
+    "map": "maps/m3l1b.bsp",
+    "single_player": true,
+    "server_time": 1137200,
+    "player_origin": [1801.75, -2023.38, -79.88],
+    "view_origin": [1789.89, -2023.03, -0.10],
+    "view_angles": [53.04, 178.34, 0.00],
+    "health": 100,
+    "repro": "devmap m3l1b; setviewpos 1802 -2023 -80 178",
+    "savegame": "br_20260929-235727_m3l1b"
+  },
+  "aim": {
+    "hit": true,
+    "position": [1729.87, -2021.29, -79.88],
+    "normal": [0.00, 0.00, 1.00],
+    "shader": "textures/algiers/whsflrset1_1a",
+    "through_invisible": "",
+    "surface_flags": 65536,
+    "contents": 1,
+    "light": [172.99, 161.60, 134.50],
+    "distance": 100
+  },
+  "light_at_eye": [1.00, 0.93, 0.76],
+  "target": {
+    "kind": "entity",
+    "entnum": 113,
+    "etype": "general",
+    "angles": [0.00, 304.98, 89.91],
+    "model": "*78",
+    "origin": [1740.25, -2018.25, -72.94],
+    "mins": [-6.00, -6.00, 0.00],
+    "maxs": [6.00, 6.00, 16.00],
+    "model_shaders": [],
+    "overlay": ["entity #113 (general): *78", "surface: textures/algiers/whsflrset1_1a   flags 0x10000 contents 0x1", "model shaders: "]
+  },
+  "files": {
+    "screenshot": "screenshots/br_20260929-235727_m3l1b.jpg",
+    "screenshot_marked": "screenshots/br_20260929-235727_m3l1b_marked.jpg",
+    "server": "server.txt",
+    "sounds": "sounds.txt",
+    "config": "configs/bugreports/20260929-235727_m3l1b/config.cfg"
+  }
+}
