@@ -263,6 +263,12 @@ m3l1b entity *185 fixed                the brush entity with model *185
 class func_barrel mass 30              every barrel weighs 30 kg
 ```
 
+### Player
+
+|Name     |Default|Description
+|---------|-------|-----------
+|g_splean |1      |Lean (the lean left and right keys) in single player too, which Allied Assault does not allow; 0 keeps the original game's no lean. Multiplayer and the expansions are unchanged
+
 ### Enemy AI
 
 Single-player enemies get behaviour the original game's AI lacks. Each part has its own switch, and `ai_enhanced 0` turns them all off, for the original behaviour.

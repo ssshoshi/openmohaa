@@ -78,6 +78,7 @@ cvar_t *sv_friction;
 // Added in OPM
 cvar_t *sv_ragdoll;
 cvar_t *g_keepcorpses;
+cvar_t *g_splean;
 cvar_t *sv_waterfriction;
 cvar_t *sv_waterspeed;
 cvar_t *sv_traceinfo;
@@ -412,6 +413,10 @@ void CVAR_Init(void)
     //  Single player only: dead actors stay where they fell for the rest of
     //  the level instead of being queued five deep and removed out of sight.
     g_keepcorpses    = gi.Cvar_Get("g_keepcorpses", "1", CVAR_ARCHIVE);
+    // Added in OPM
+    //  Lets the player lean in single player, which the base game does not.
+    //  It rides the serverinfo string so the client predicts the same lean.
+    g_splean         = gi.Cvar_Get("g_splean", "1", CVAR_ARCHIVE | CVAR_SERVERINFO);
     sv_stopspeed     = gi.Cvar_Get("sv_stopspeed", "100", 0);
     sv_waterfriction = gi.Cvar_Get("sv_waterfriction", "1", 0);
     sv_waterspeed    = gi.Cvar_Get("sv_waterspeed", "400", 0);
