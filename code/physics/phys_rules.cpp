@@ -269,6 +269,20 @@ bool PhysRules::Forget(const char *map, const char *kind, const char *key)
     return true;
 }
 
+std::vector<std::string> PhysRules::Keys(const char *map, const char *kind, int state) const
+{
+    const std::string        m = map && map[0] ? Phys_RuleMap(map) : "";
+    const std::string        k = PR_Lower(kind);
+    std::vector<std::string> out;
+
+    for (size_t i = 0; i < lines.size(); i++) {
+        if (lines[i].text.empty() && lines[i].map == m && lines[i].kind == k && lines[i].rule.state == state) {
+            out.push_back(lines[i].key);
+        }
+    }
+    return out;
+}
+
 int PhysRules::Count() const
 {
     int n = 0;
@@ -286,7 +300,8 @@ const char *PhysRules::Header()
            "//\n"
            "//   [map] model <model> <settings>     every one of a model (static/chair.tik)\n"
            "//   <map> static <number> <settings>   one of the map's static models\n"
-           "//   <map> furniture <brush> <settings> a piece of furniture in the brushwork\n"
+           "//   <map> furniture <brush> <settings> a piece of furniture in the brushwork; moves\n"
+           "//                                      lets in a group whose shape was turned down\n"
            "//   <map> entity <key> <settings>      an entity: *N for a brush model, else x,y,z\n"
            "//   [map] class <class> <settings>     every entity of a class (func_crate)\n"
            "//\n"

@@ -41,6 +41,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_props.h"
 #include "../physics/phys_rules.h"
 
+#include <algorithm>
 #include <cstdarg>
 #include <map>
 #include <string>
@@ -156,6 +157,16 @@ qboolean CG_PhysicsFurnitureRule(int firstBrush, const char **why, float *mass)
 
     *why = r.from;
     return r.rule.state == PHYS_RULE_MOVES ? qtrue : qfalse;
+}
+
+void CG_PhysicsForcedFurniture(std::set<int> *out)
+{
+    const std::vector<std::string> keys = pe_rules.Keys(cgs.mapname, "furniture", PHYS_RULE_MOVES);
+
+    out->clear();
+    for (size_t i = 0; i < keys.size(); i++) {
+        out->insert(atoi(keys[i].c_str()));
+    }
 }
 
 static void CG_PhysicsEditSay(const char *fmt, ...)
@@ -928,6 +939,158 @@ void CG_PhysicsForget_f(void)
 
     CG_PhysicsEditSay("%s: its rule is gone", scope.label.c_str());
     CG_PhysicsEditApply(&scope);
+}
+
+// phys_furniture [range]: why the brushwork near the crosshair is, or is not,
+// furniture: each group of detail brushes with something to see on it, its
+// size and the test that turned it down, and the single brushes nearest the
+// aim, for when a group is the whole building.
+// phys_furniture force <brush> [brush...] takes those brushes out of their
+// groups and lets them in as furniture together, whatever their shape, with a
+// rule each ("<map> furniture <brush> moves"); phys_furniture unforce <brush>
+// [brush...] forgets them.
+void CG_PhysicsFurniture_f(void)
+{
+    const std::vector<physFurnitureCheck_t>& checks = CG_PhysicsFurnitureChecks();
+    const char                              *arg    = cgi.Argc() > 1 ? cgi.Argv(1) : "";
+
+    if (!Q_stricmp(arg, "force") || !Q_stricmp(arg, "unforce")) {
+        const qboolean force = !Q_stricmp(arg, "force") ? qtrue : qfalse;
+        std::string    text, names;
+        int            changed = 0;
+
+        if (cgi.Argc() < 3 || !cgs.mapname[0]) {
+            cgi.Printf("usage: phys_furniture %s <brush> [brush...]\n", arg);
+            return;
+        }
+
+        CG_PhysicsRulesLoad();
+        if (pe_rules.Empty()) {
+            pe_rules.Parse(PhysRules::Header());
+        }
+        for (int a = 2; a < cgi.Argc(); a++) {
+            const char *brush = cgi.Argv(a);
+
+            if (atoi(brush) <= 0 && strcmp(brush, "0")) {
+                continue;
+            }
+            if (force) {
+                pe_rules.SetState(cgs.mapname, "furniture", brush, PHYS_RULE_MOVES);
+            } else if (!pe_rules.Forget(cgs.mapname, "furniture", brush)) {
+                continue;
+            }
+            names += names.empty() ? brush : std::string(" ") + brush;
+            changed++;
+        }
+        if (!changed) {
+            CG_PhysicsEditSay("phys_furniture: no rules changed");
+            return;
+        }
+
+        text = pe_rules.Write();
+        if (cgi.FS_WriteFile(PE_FILE, text.data(), (int)text.size()) < 0) {
+            CG_PhysicsEditSay("phys_furniture: could not write %s", PE_FILE);
+            return;
+        }
+        CG_PhysicsReloadWorld();
+        CG_PhysicsEditSay(
+            force ? "brush %s let in as furniture (%s)" : "brush %s left to the shape tests again (%s)", names.c_str(), PE_FILE
+        );
+        return;
+    }
+
+    {
+        const float                       range = arg[0] ? (float)atof(arg) : 96.0f;
+        std::vector<std::pair<float, int>> near;
+        trace_t                           tr;
+        vec3_t                            end, at;
+
+        if (!cg.snap) {
+            return;
+        }
+        if (!cg_physics_furniture->integer) {
+            cgi.Printf("phys_furniture: cg_physics_furniture is 0, so nothing was searched\n");
+            return;
+        }
+
+        VectorMA(cg.refdef.vieworg, 4096.0f, cg.refdef.viewaxis[0], end);
+        CG_Trace(&tr, cg.refdef.vieworg, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SOLID, qfalse, qfalse, "phys_furniture");
+        VectorCopy(tr.endpos, at);
+
+        for (size_t i = 0; i < checks.size(); i++) {
+            float d2 = 0.0f;
+
+            // From the aim point to the group's box.
+            for (int k = 0; k < 3; k++) {
+                const float v = at[k] < checks[i].mins[k] ? checks[i].mins[k] - at[k] : at[k] > checks[i].maxs[k] ? at[k] - checks[i].maxs[k] : 0.0f;
+                d2 += v * v;
+            }
+            if (d2 <= range * range) {
+                near.push_back(std::make_pair(d2, (int)i));
+            }
+        }
+        std::sort(near.begin(), near.end());
+
+        cgi.Printf("Brushwork within %.0f of %.0f %.0f %.0f (%s):\n", range, at[0], at[1], at[2], cgs.mapname);
+        if (near.empty()) {
+            cgi.Printf("  nothing: aim closer, or give a larger range\n");
+        }
+        for (size_t n = 0; n < near.size() && n < 6; n++) {
+            const physFurnitureCheck_t& c = checks[near[n].second];
+
+            cgi.Printf(
+                "  %sbrush %d: %d brush%s, %.0f x %.0f x %.0f at %.0f %.0f %.0f: %s\n",
+                c.furniture ? "^2" : "^3",
+                c.firstBrush,
+                c.numBrushes,
+                c.numBrushes == 1 ? "" : "es",
+                c.maxs[0] - c.mins[0],
+                c.maxs[1] - c.mins[1],
+                c.maxs[2] - c.mins[2],
+                (c.mins[0] + c.maxs[0]) * 0.5f,
+                (c.mins[1] + c.maxs[1]) * 0.5f,
+                c.mins[2],
+                c.verdict
+            );
+        }
+        // The single brushes nearest the aim, and the group each fell in.
+        {
+            const std::vector<physFurnitureBrush_t>& brushes = CG_PhysicsFurnitureBrushes();
+            std::vector<std::pair<float, int>>      closest;
+
+            for (size_t i = 0; i < brushes.size(); i++) {
+                float d2 = 0.0f;
+
+                for (int k = 0; k < 3; k++) {
+                    const float v = at[k] < brushes[i].mins[k] ? brushes[i].mins[k] - at[k]
+                                  : at[k] > brushes[i].maxs[k] ? at[k] - brushes[i].maxs[k]
+                                                                : 0.0f;
+                    d2 += v * v;
+                }
+                if (d2 <= range * range) {
+                    closest.push_back(std::make_pair(d2, (int)i));
+                }
+            }
+            std::sort(closest.begin(), closest.end());
+
+            cgi.Printf("Nearest brushes:\n");
+            for (size_t n = 0; n < closest.size() && n < 12; n++) {
+                const physFurnitureBrush_t& b = brushes[closest[n].second];
+
+                cgi.Printf(
+                    "  brush %d: %.0f x %.0f x %.0f, %.0f away, %s (group %d)\n",
+                    b.num,
+                    b.maxs[0] - b.mins[0],
+                    b.maxs[1] - b.mins[1],
+                    b.maxs[2] - b.mins[2],
+                    sqrtf(closest[n].first),
+                    b.shader,
+                    b.group
+                );
+            }
+        }
+        cgi.Printf("phys_furniture force <brush> [brush...] frees brushes from their group as one piece of furniture.\n");
+    }
 }
 
 // phys_reload: physics.txt read again, after editing it by hand.

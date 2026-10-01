@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "g_local.h"
 #include "actor.h"
+#include "ai_enhance.h"
 #include "scriptthread.h"
 #include "scriptclass.h"
 #include "doors.h"
@@ -2954,7 +2955,12 @@ Actor::Actor()
 
     m_fMaxShareDistSquared = 0;
     m_iRunHomeTime         = 0;
-    m_iSuppressChance      = 50;
+    m_iSuppressChance      = AI_Enhanced(ai_suppress) ? ai_suppress_chance->integer : 50;
+    m_iOPMLastGrenadeTime  = 0;
+    m_bOPMGrenadeAmmoSet   = false;
+    m_bOPMDefaultGrenades  = false;
+    m_iOPMNextArcSearchTime = 0;
+    m_iOPMHoldGrenadeTime   = 0;
 
     m_bBreathSteam = false;
 
@@ -3124,6 +3130,14 @@ void Actor::EventStart(Event *ev)
     SetControllerTag(ARMS_TAG, gi.Tag_NumForName(edict->tiki, "Bip01 L UpperArm"));
 
     JoinNearbySquads(1024);
+
+    // OPM: Germans whose model and script give them no grenades carry a
+    //  few, so they can throw them (in the stock maps most never could).
+    if (AI_Enhanced(ai_grenades) && m_Team == TEAM_GERMAN && !m_bOPMGrenadeAmmoSet && ai_grenade_ammo->integer > 0
+        && !AmmoCount("grenade")) {
+        GiveAmmo("grenade", ai_grenade_ammo->integer);
+        m_bOPMDefaultGrenades = true;
+    }
 
     if (level.Spawned()) {
         Unregister(STRING_SPAWN);
@@ -4116,7 +4130,7 @@ which means it won't check for actors located behind the target.
 */
 bool Actor::FriendlyInLineOfFire(Entity *other)
 {
-    if (g_target_game <= target_game_e::TG_MOH) {
+    if (g_target_game <= target_game_e::TG_MOH && !AI_Enhanced(ai_suppress)) {
         return false;
     }
 
@@ -5265,6 +5279,10 @@ void Actor::EventKilled(Event *ev)
     Sentient *pBuddy;
     Sentient *sent;
     Player   *player;
+
+    if (m_iOPMHoldGrenadeTime) {
+        DropHeldGrenade();
+    }
 
     DispatchEventKilled(ev, true);
 
@@ -10203,12 +10221,325 @@ bool Actor::GrenadeWillHurtTeamAt(const Vector& vTo)
 {
     Sentient *pSquadMate;
     for (pSquadMate = m_pNextSquadMate; pSquadMate != this; pSquadMate = pSquadMate->m_pNextSquadMate) {
+        if (AI_Enhanced(ai_grenades)) {
+            // OPM: within the blast (256), as meant. The reconstructed check
+            //  below compares the distance itself with 65536 (256 squared),
+            //  so no actor with a squadmate anywhere ever threw.
+            if ((pSquadMate->origin - vTo).lengthSquared() < Square(256)) {
+                return true;
+            }
+            continue;
+        }
+
         if ((pSquadMate->origin - vTo).length() < 65536) {
             return true;
         }
     }
 
     return false;
+}
+
+/*
+===============
+Actor::GrenadeArcClear
+
+Whether a grenade thrown from vFrom at vVel flies fTime seconds clear of the
+world, glass that has not been shot out and the like (bodies aside: it only
+bounces off those).
+===============
+*/
+bool Actor::GrenadeArcClear(const Vector& vFrom, const Vector& vVel, float fTime)
+{
+    static const int iSteps = 12;
+    const Vector     vMins(-3, -3, -3);
+    const Vector     vMaxs(3, 3, 3);
+    float            fGravity = sv_gravity->value * 0.8f;
+    Vector           vPrev    = vFrom;
+    int              i;
+
+    for (i = 1; i <= iSteps; i++) {
+        float  t = fTime * i / iSteps;
+        Vector vPoint;
+
+        vPoint = vFrom + vVel * t;
+        vPoint.z -= 0.5f * fGravity * t * t;
+
+        if (!G_SightTrace(
+                vPrev,
+                vMins,
+                vMaxs,
+                vPoint,
+                this,
+                NULL,
+                MASK_GRENADEPATH & ~(CONTENTS_BODY | CONTENTS_BBOX),
+                qfalse,
+                "Actor::GrenadeArcClear"
+            )) {
+            return false;
+        }
+
+        vPrev = vPoint;
+    }
+
+    return true;
+}
+
+/*
+===============
+Actor::FindGrenadeArc
+
+When the stock throw finds no way to vTo: the flattest throw, flat to a steep
+lob, that lands at vTo or on the floor just beside it, for instance up
+through a window that has been shot out or under a ceiling. Not where the
+blast would reach the thrower, and no farther than ai_grenade_range.
+===============
+*/
+bool Actor::FindGrenadeArc(const Vector& vTo, Vector *pvVel)
+{
+    static const float fMaxSpeed    = 850;
+    static const float fMinDistance = 300; // the blast reaches 256
+    float              fGravity     = sv_gravity->value * 0.8f;
+    Vector             vTargets[5];
+    int                i, n;
+
+    if (fGravity <= 0 || level.inttime < m_iOPMNextArcSearchTime) {
+        return false;
+    }
+    m_iOPMNextArcSearchTime = level.inttime + 1000;
+
+    vTargets[0] = vTo;
+    for (i = 1; i < 5; i++) {
+        float   fYaw = (i - 1) * 90 + crandom() * 30;
+        Vector  vSide(cos(DEG2RAD(fYaw)) * 48, sin(DEG2RAD(fYaw)) * 48, 0);
+        trace_t trace;
+
+        // On the floor there.
+        trace = G_Trace(
+            vTo + vSide + Vector(0, 0, 32),
+            vec_zero,
+            vec_zero,
+            vTo + vSide - Vector(0, 0, 64),
+            this,
+            MASK_SOLID,
+            qfalse,
+            "Actor::FindGrenadeArc"
+        );
+        vTargets[i] = trace.endpos;
+        vTargets[i].z += 4;
+    }
+
+    for (n = 0; n < 5; n++) {
+        Vector vDelta = vTargets[n] - origin;
+        Vector vFrom  = GrenadeThrowPoint(origin, vDelta, STRING_ANIM_GRENADETHROW_SCR);
+        Vector vFlat  = vTargets[n] - vFrom;
+        float  fDist;
+        float  fTime;
+
+        vFlat.z = 0;
+        fDist   = vFlat.length();
+        if ((vTargets[n] - origin).length() < fMinDistance || fDist > ai_grenade_range->value) {
+            continue;
+        }
+
+        for (fTime = Q_max(0.5f, fDist / 800.0f); fTime <= 3.0f; fTime += 0.2f) {
+            Vector vVel = (vTargets[n] - vFrom) * (1.0f / fTime);
+
+            vVel.z += 0.5f * fGravity * fTime;
+            if (vVel.length() > fMaxSpeed) {
+                continue;
+            }
+
+            if (GrenadeArcClear(vFrom, vVel, fTime)) {
+                *pvVel = vVel;
+                AI_Debug(
+                    "%s finds a throw %.0f away, %.1f s in the air%s",
+                    TargetName().c_str(),
+                    fDist,
+                    fTime,
+                    n ? ", beside the target" : ""
+                );
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/*
+===============
+Actor::SquadThrewGrenadeRecently
+
+Whether this actor or a squadmate threw a grenade within ai_grenade_cooldown
+seconds, so that a squad does not all throw at once.
+===============
+*/
+bool Actor::SquadThrewGrenadeRecently(void)
+{
+    Sentient *pSquadMate;
+    int       iSince = level.inttime - (int)(ai_grenade_cooldown->value * 1000);
+
+    if (m_iOPMLastGrenadeTime && m_iOPMLastGrenadeTime > iSince) {
+        return true;
+    }
+
+    for (pSquadMate = m_pNextSquadMate; pSquadMate != this; pSquadMate = pSquadMate->m_pNextSquadMate) {
+        if (!pSquadMate->IsSubclassOfActor()) {
+            continue;
+        }
+
+        Actor *pActor = static_cast<Actor *>(pSquadMate);
+        if (pActor->m_iOPMLastGrenadeTime && pActor->m_iOPMLastGrenadeTime > iSince) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The grenade a German holds in his throwing hand while he winds up: the
+// throw animations have nothing in it until the grenade is let go.
+static const char *OPM_HELD_GRENADE_MODEL = "models/static/steilhangrenate.tik";
+static const char *OPM_HELD_GRENADE_TAG   = "tag_weapon_right";
+
+/*
+===============
+Actor::HoldGrenade
+
+Puts a grenade in his hand as he starts to throw, once the animation has
+moved his gun to the other hand. It drops if he is killed holding it.
+===============
+*/
+void Actor::HoldGrenade(void)
+{
+    Event *ev;
+
+    if (!AI_Enhanced(ai_grenades) || m_Team != TEAM_GERMAN) {
+        return;
+    }
+
+    ev = new Event(EV_AttachModel);
+    ev->AddString(OPM_HELD_GRENADE_MODEL);
+    ev->AddString(OPM_HELD_GRENADE_TAG);
+    ev->AddFloat(0.52f);
+    ev->AddString("");
+    ev->AddInteger(1); // dropped if he dies
+    ev->AddFloat(4);   // and gone a few seconds later
+    PostEvent(ev, 0.3f);
+
+    m_iOPMHoldGrenadeTime = level.inttime + 300;
+}
+
+/*
+===============
+Actor::ReleaseHeldGrenade
+
+The grenade leaves his hand: the one held for show goes.
+===============
+*/
+void Actor::ReleaseHeldGrenade(void)
+{
+    Event *ev;
+
+    if (m_Team != TEAM_GERMAN) {
+        return;
+    }
+
+    m_iOPMHoldGrenadeTime = 0;
+    CancelEventsOfType(EV_AttachModel);
+
+    if (ai_debug && ai_debug->integer >= 2) {
+        int i, iHeld = 0;
+
+        for (i = 0; i < MAX_MODEL_CHILDREN; i++) {
+            Entity *ent = children[i] != ENTITYNUM_NONE ? G_GetEntity(children[i]) : NULL;
+            if (ent && ent->model == OPM_HELD_GRENADE_MODEL) {
+                iHeld++;
+            }
+        }
+        AI_Debug("%s lets go of the grenade (%d held for show)", TargetName().c_str(), iHeld);
+    }
+
+    ev = new Event(EV_RemoveAttachedModel);
+    ev->AddString(OPM_HELD_GRENADE_TAG);
+    ev->AddFloat(0);
+    ev->AddString(OPM_HELD_GRENADE_MODEL);
+    ProcessEvent(ev);
+}
+
+/*
+===============
+Actor::DropHeldGrenade
+
+Killed with the grenade in his hand: it falls, live (ai_grenade_drop).
+===============
+*/
+void Actor::DropHeldGrenade(void)
+{
+    Vector vHand;
+    Vector vDir;
+
+    if (!m_iOPMHoldGrenadeTime || level.inttime < m_iOPMHoldGrenadeTime
+        || level.inttime > m_iOPMHoldGrenadeTime + 3700) {
+        // Not in his hand (yet, or any more: the throw was cut short).
+        m_iOPMHoldGrenadeTime = 0;
+        return;
+    }
+
+    ReleaseHeldGrenade();
+
+    if (!ai_grenade_drop->integer || !AmmoCount("grenade")) {
+        return;
+    }
+
+    if (!GetTag(OPM_HELD_GRENADE_TAG, &vHand)) {
+        vHand = origin + Vector(0, 0, 48);
+    }
+
+    vDir = Vector(crandom(), crandom(), 0.5f);
+    vDir.normalize();
+    ProjectileAttack(vHand, vDir, this, "models/projectiles/steilhandgranate.tik", 0, 40 + random() * 40);
+    UseAmmo("grenade", 1);
+
+    AI_Debug("%s is killed holding a grenade: it drops, live", TargetName().c_str());
+}
+
+/*
+===============
+Actor::GrenadeThrowError
+
+A throw does not go quite where it is meant to: mostly a little off, but now
+and then (ai_grenade_fumble percent) badly wrong: it slips and lands a few
+yards in front of him, falls short, or goes wide.
+===============
+*/
+void Actor::GrenadeThrowError(Vector& dir, float& speed)
+{
+    Vector vAngles;
+
+    vAngles = dir.toAngles();
+
+    if (random() * 100 >= ai_grenade_fumble->value) {
+        vAngles[YAW] += crandom() * 1.5f;
+        speed *= 1.0f + crandom() * 0.02f;
+    } else {
+        switch (rand() % 3) {
+        case 0:
+            speed *= 0.35f + random() * 0.15f;
+            AI_Debug("%s: the grenade slips", TargetName().c_str());
+            break;
+        case 1:
+            speed *= 0.8f + random() * 0.08f;
+            AI_Debug("%s: the grenade falls short", TargetName().c_str());
+            break;
+        default:
+            vAngles[YAW] += (6 + random() * 4) * (rand() & 1 ? 1 : -1);
+            AI_Debug("%s: the grenade goes wide", TargetName().c_str());
+            break;
+        }
+    }
+
+    AngleVectors(vAngles, dir, NULL, NULL);
 }
 
 /*
@@ -10313,15 +10644,54 @@ peMode is the toss mode.
 */
 bool Actor::DecideToThrowGrenade(const Vector& vTo, Vector *pvVel, eGrenadeTossMode *peMode, bool bDesperate)
 {
+    bool bVerbose = ai_debug && ai_debug->integer >= 2;
+
     if (!AmmoCount("grenade")) {
+        if (bVerbose) {
+            AI_Debug("%s: no grenade to throw", TargetName().c_str());
+        }
+        return false;
+    }
+
+    if (AI_Enhanced(ai_grenades) && SquadThrewGrenadeRecently()) {
+        if (bVerbose) {
+            AI_Debug("%s: squad threw a grenade recently", TargetName().c_str());
+        }
         return false;
     }
 
     if (GrenadeWillHurtTeamAt(vTo)) {
+        if (bVerbose) {
+            AI_Debug("%s: a squadmate is near the target", TargetName().c_str());
+        }
         return false;
     }
 
-    return CanGetGrenadeFromAToB(origin, vTo, bDesperate, pvVel, peMode);
+    if (CanGetGrenadeFromAToB(origin, vTo, bDesperate, pvVel, peMode)) {
+        return true;
+    }
+
+    // OPM: when the stock throw cannot reach, look for one that can.
+    if (AI_Enhanced(ai_grenades) && !bDesperate && FindGrenadeArc(vTo, pvVel)) {
+        *peMode = AI_GREN_TOSS_THROW;
+        return true;
+    }
+
+    if (bVerbose) {
+        AI_Debug(
+            "%s: no throw reaches the target, %.0f away, from (%.0f %.0f %.0f) to (%.0f %.0f %.0f)",
+            TargetName().c_str(),
+            (vTo - origin).length(),
+            origin.x,
+            origin.y,
+            origin.z,
+            vTo.x,
+            vTo.y,
+            vTo.z
+        );
+    }
+
+    return false;
 }
 
 /*
@@ -10411,8 +10781,25 @@ void Actor::Grenade_EventFire(Event *ev)
         }
     }
 
+    if (AI_Enhanced(ai_grenades)) {
+        ReleaseHeldGrenade();
+        GrenadeThrowError(dir, speed);
+    }
+
     ProjectileAttack(pos, dir, this, strGrenade, 0, speed);
     UseAmmo("grenade", 1);
+
+    m_iOPMLastGrenadeTime = level.inttime;
+    AI_Debug(
+        "%s throws a grenade (%s), speed %.0f, from (%.0f %.0f %.0f), %.0f degrees off where he faces",
+        TargetName().c_str(),
+        m_eGrenadeMode == AI_GREN_TOSS_ROLL ? "toss" : "throw",
+        speed,
+        pos.x,
+        pos.y,
+        pos.z,
+        fabs(AngleSubtract(dir.toYaw(), angles[1]))
+    );
 }
 
 /*
@@ -10455,6 +10842,13 @@ Actor::EventSetAmmoGrenade
 */
 void Actor::EventSetAmmoGrenade(Event *ev)
 {
+    // OPM: a script's grenades replace the ai_grenade_ammo ones.
+    if (m_bOPMDefaultGrenades) {
+        UseAmmo("grenade", AmmoCount("grenade"));
+        m_bOPMDefaultGrenades = false;
+    }
+    m_bOPMGrenadeAmmoSet = true;
+
     GiveAmmo("grenade", ev->GetInteger(1));
 }
 
@@ -10759,7 +11153,9 @@ Vector Actor::GunTarget(bool bNoCollision, const vec3_t position, const vec3_t f
     Vector dir = mTargetPos - EyePosition();
     dir.normalize();
 
-    if (g_target_game > target_game_e::TG_MOH) {
+    // OPM: in Allied Assault too with ai_enhanced: no shots at what is well
+    //  off to the side of where the gun points.
+    if (g_target_game > target_game_e::TG_MOH || AI_Enhanced(ai_enhanced)) {
         if (DotProduct(forward, dir) < aiMaxDeviation->value) {
             Vector vOut;
 

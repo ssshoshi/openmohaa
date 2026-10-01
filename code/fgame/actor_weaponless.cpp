@@ -89,6 +89,7 @@ void Actor::State_Weaponless_Normal(void)
             ANIM_MODE_NORMAL,
             m_eGrenadeMode == AI_GREN_TOSS_ROLL ? STRING_ANIM_GRENADETOSS_SCR : STRING_ANIM_GRENADETHROW_SCR
         );
+        HoldGrenade();
         TransitionState(ACTOR_STATE_WEAPONLESS_GRENADE);
     } else {
         TransitionState(ACTOR_STATE_WEAPONLESS_START, 1000);

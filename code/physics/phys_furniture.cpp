@@ -38,10 +38,19 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // The table legs that are only drawn (brushes the compiler did not keep for
 // collision) are picked up from the surfaces inside the group's box, and are
 // given a box of their own in the body.
+//
+// Rules that say a brush moves (physics.txt, "<map> furniture <brush> moves")
+// take it out of the group it would join and group it only with the other
+// brushes rules name that it touches; such a group is furniture whatever its
+// shape. Touching detail brushes chain far: m3l1b's mine sign is nailed to a
+// post that reaches the ceiling beams, and its group is 645 brushes, the whole
+// bunker's woodwork. Naming the sign's and the post's brushes frees just them.
+// The verdicts say which test turned a group down, and by which brush.
 
 #include "phys_furniture.h"
 #include "phys_world.h"
 
+#include <climits>
 #include <map>
 #include <algorithm>
 
@@ -140,7 +149,10 @@ static void PF_AddBoxHull(physFurniture_t *f, const vec3_t mins, const vec3_t ma
     f->hulls.push_back(hull);
 }
 
-void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> *out)
+void Phys_FindFurniture(
+    const void *bsp, long len, std::vector<physFurniture_t> *out, const std::set<int> *forced,
+    std::vector<physFurnitureCheck_t> *checks, std::vector<physFurnitureBrush_t> *brushList
+)
 {
     dheader_t           header;
     const dshader_t    *shaders;
@@ -157,6 +169,12 @@ void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> 
     int                    i, j, k;
 
     out->clear();
+    if (checks) {
+        checks->clear();
+    }
+    if (brushList) {
+        brushList->clear();
+    }
 
     if (!bsp || len < (long)sizeof(dheader_t)) {
         return;
@@ -244,6 +262,10 @@ void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> 
         for (j = i + 1; j < (int)candidates.size(); j++) {
             const pfBrush_t *b = &solids[candidates[j]];
 
+            // A forced brush groups only with forced brushes.
+            if (forced && (forced->count(a->num) != 0) != (forced->count(b->num) != 0)) {
+                continue;
+            }
             if (PF_Touch(a->mins, a->maxs, b->mins, b->maxs, PF_TOUCH)) {
                 parent[PF_Find(parent, i)] = PF_Find(parent, j);
             }
@@ -260,54 +282,113 @@ void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> 
     for (std::map<int, std::vector<int>>::const_iterator it = groups.begin(); it != groups.end(); ++it) {
         const std::vector<int>& members = it->second;
         physFurniture_t         f;
+        physFurnitureCheck_t    check;
         vec3_t                  size;
-        qboolean                visible = qfalse, building = qfalse, support = qfalse, blocked = qfalse;
+        qboolean                visible = qfalse, support = qfalse;
+        int                     building = -1, blocker = -1, blockerShader = -1, firstBrush = INT_MAX;
         std::map<int, int>      shaderUse;
         std::vector<int>        loose;
 
+        f.forced = false;
         ClearBounds(f.mins, f.maxs);
         for (j = 0; j < (int)members.size(); j++) {
             const pfBrush_t *b = &solids[members[j]];
 
             AddPointToBounds(b->mins, f.mins, f.maxs);
             AddPointToBounds(b->maxs, f.mins, f.maxs);
+            firstBrush = Q_min(firstBrush, b->num);
+            if (forced && forced->count(b->num)) {
+                f.forced = true;
+            }
 
             if (b->visible) {
                 visible = qtrue;
                 shaderUse[b->shader]++;
-                if (PF_Building(shaders[b->shader].shader)) {
-                    building = qtrue;
+                if (building < 0 && PF_Building(shaders[b->shader].shader)) {
+                    building = b->shader;
                 }
             }
         }
 
-        VectorSubtract(f.maxs, f.mins, size);
-        if (!visible || building || size[0] > PF_MAX_WIDTH || size[1] > PF_MAX_WIDTH || size[2] > PF_MAX_HEIGHT
-            || size[0] < PF_MIN_SIZE || size[1] < PF_MIN_SIZE || size[2] < PF_MIN_SIZE
-            || size[0] * size[1] * size[2] < PF_MIN_VOLUME) {
+        // Nothing to see: clip, caulk and the like, never furniture and not
+        // worth a verdict.
+        if (!visible) {
             continue;
         }
 
-        // Standing on something, touching nothing else.
-        for (j = 0; j < (int)solids.size() && !blocked; j++) {
-            const pfBrush_t *o = &solids[j];
+        if (brushList) {
+            for (j = 0; j < (int)members.size(); j++) {
+                const pfBrush_t     *b = &solids[members[j]];
+                physFurnitureBrush_t e;
 
-            if (!PF_Touch(f.mins, f.maxs, o->mins, o->maxs, PF_SUPPORT)) {
-                continue;
-            }
-
-            if (std::find(members.begin(), members.end(), j) != members.end()) {
-                continue;
-            }
-
-            if (o->maxs[2] <= f.mins[2] + PF_SUPPORT) {
-                support = qtrue;
-            } else {
-                blocked = qtrue;
+                if (!b->visible) {
+                    continue;
+                }
+                e.num   = b->num;
+                e.group = firstBrush;
+                VectorCopy(b->mins, e.mins);
+                VectorCopy(b->maxs, e.maxs);
+                Q_strncpyz(e.shader, shaders[b->shader].shader, sizeof(e.shader));
+                brushList->push_back(e);
             }
         }
 
-        if (blocked || !support) {
+        check.firstBrush = firstBrush;
+        check.numBrushes = (int)members.size();
+        check.other      = -1;
+        check.furniture  = false;
+        check.verdict[0] = 0;
+        VectorCopy(f.mins, check.mins);
+        VectorCopy(f.maxs, check.maxs);
+
+        VectorSubtract(f.maxs, f.mins, size);
+        if (f.forced) {
+            // Whatever its shape.
+        } else if (building >= 0) {
+            Com_sprintf(check.verdict, sizeof(check.verdict), "textured as building (%s)", shaders[building].shader);
+        } else if (size[0] > PF_MAX_WIDTH || size[1] > PF_MAX_WIDTH) {
+            Com_sprintf(check.verdict, sizeof(check.verdict), "too wide: %.0f x %.0f (at most %.0f)", size[0], size[1], PF_MAX_WIDTH);
+        } else if (size[2] > PF_MAX_HEIGHT) {
+            Com_sprintf(check.verdict, sizeof(check.verdict), "too tall: %.0f (at most %.0f)", size[2], PF_MAX_HEIGHT);
+        } else if (size[0] < PF_MIN_SIZE || size[1] < PF_MIN_SIZE || size[2] < PF_MIN_SIZE
+                   || size[0] * size[1] * size[2] < PF_MIN_VOLUME) {
+            Com_sprintf(check.verdict, sizeof(check.verdict), "too small: %.0f x %.0f x %.0f", size[0], size[1], size[2]);
+        }
+
+        // Standing on something, touching nothing else.
+        if (!f.forced && !check.verdict[0]) {
+            for (j = 0; j < (int)solids.size() && blocker < 0; j++) {
+                const pfBrush_t *o = &solids[j];
+
+                if (!PF_Touch(f.mins, f.maxs, o->mins, o->maxs, PF_SUPPORT)) {
+                    continue;
+                }
+
+                if (std::find(members.begin(), members.end(), j) != members.end()) {
+                    continue;
+                }
+
+                if (o->maxs[2] <= f.mins[2] + PF_SUPPORT) {
+                    support = qtrue;
+                } else {
+                    blocker       = o->num;
+                    blockerShader = o->shader;
+                }
+            }
+
+            if (blocker >= 0) {
+                check.other = blocker;
+                Com_sprintf(check.verdict, sizeof(check.verdict), "touches brush %d (%s) above its foot", blocker,
+                    shaders[blockerShader].shader);
+            } else if (!support) {
+                Com_sprintf(check.verdict, sizeof(check.verdict), "stands on nothing");
+            }
+        }
+
+        if (check.verdict[0]) {
+            if (checks) {
+                checks->push_back(check);
+            }
             continue;
         }
 
@@ -367,6 +448,10 @@ void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> 
         }
 
         if (f.surfaces.empty()) {
+            if (checks) {
+                Com_sprintf(check.verdict, sizeof(check.verdict), "nothing draws it");
+                checks->push_back(check);
+            }
             continue;
         }
 
@@ -446,6 +531,11 @@ void Phys_FindFurniture(const void *bsp, long len, std::vector<physFurniture_t> 
             Q_strncpyz(f.shader, best >= 0 ? shaders[best].shader : "", sizeof(f.shader));
         }
 
+        if (checks) {
+            check.furniture = true;
+            Com_sprintf(check.verdict, sizeof(check.verdict), f.forced ? "furniture: a rule lets it in" : "furniture");
+            checks->push_back(check);
+        }
         out->push_back(f);
     }
 }

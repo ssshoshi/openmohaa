@@ -82,6 +82,7 @@ extern "C" {
     void     CG_PhysicsMass_f(void);
     void     CG_PhysicsForget_f(void);
     void     CG_PhysicsReload_f(void);
+    void     CG_PhysicsFurniture_f(void);
     void     CG_PhysicsEditDraw2D(void);
     qboolean CG_PhysicsEditServerCommand(const char *cmd);
 
