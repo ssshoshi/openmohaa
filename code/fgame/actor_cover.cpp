@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // actor_cover.cpp
 
 #include "actor.h"
+#include "ai_enhance.h"
 
 static int Cover_HideTime(int iTeam)
 {
@@ -331,6 +332,11 @@ void Actor::State_Cover_Target(void)
         );
         TransitionState(ACTOR_STATE_COVER_GRENADE);
     } else if (CanSeeEnemy(500) && CanShootEnemy(500)) {
+        TransitionState(ACTOR_STATE_COVER_SHOOT, 0);
+    } else if (AI_Enhanced(ai_suppress) && CanSuppressEnemy()) {
+        // OPM: a burst at where the enemy was last seen, rather than
+        //  ducking back as soon as it is out of sight.
+        AI_Debug("%s (cover) suppresses its enemy's last known position", TargetName().c_str());
         TransitionState(ACTOR_STATE_COVER_SHOOT, 0);
     } else {
         TransitionState(ACTOR_STATE_COVER_HIDE, Cover_HideTime(m_Team));

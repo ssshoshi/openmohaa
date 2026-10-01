@@ -1017,6 +1017,7 @@ public:
     void          State_Turret_Wait(void);
     void          State_Turret_Shoot(void);             // Added in 2.0
     void          State_Turret_Retarget_Suppress(void); // Added in 2.0
+    bool          CanSuppressEnemy(void);               // OPM: shared by turret and cover
     void          State_Turret_Retarget_Sniper_Node(void);
     void          State_Turret_Retarget_Step_Side_Small(void);
     void          State_Turret_Retarget_Path_Exact(void);

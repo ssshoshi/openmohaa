@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "g_local.h"
 #include "actor.h"
+#include "ai_enhance.h"
 #include "scriptthread.h"
 #include "scriptclass.h"
 #include "doors.h"
@@ -2954,7 +2955,7 @@ Actor::Actor()
 
     m_fMaxShareDistSquared = 0;
     m_iRunHomeTime         = 0;
-    m_iSuppressChance      = 50;
+    m_iSuppressChance      = AI_Enhanced(ai_suppress) ? ai_suppress_chance->integer : 50;
 
     m_bBreathSteam = false;
 
@@ -4116,7 +4117,7 @@ which means it won't check for actors located behind the target.
 */
 bool Actor::FriendlyInLineOfFire(Entity *other)
 {
-    if (g_target_game <= target_game_e::TG_MOH) {
+    if (g_target_game <= target_game_e::TG_MOH && !AI_Enhanced(ai_suppress)) {
         return false;
     }
 
@@ -10752,7 +10753,9 @@ Vector Actor::GunTarget(bool bNoCollision, const vec3_t position, const vec3_t f
     Vector dir = mTargetPos - EyePosition();
     dir.normalize();
 
-    if (g_target_game > target_game_e::TG_MOH) {
+    // OPM: in Allied Assault too with ai_enhanced: no shots at what is well
+    //  off to the side of where the gun points.
+    if (g_target_game > target_game_e::TG_MOH || AI_Enhanced(ai_enhanced)) {
         if (DotProduct(forward, dir) < aiMaxDeviation->value) {
             Vector vOut;
 

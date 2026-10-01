@@ -244,6 +244,17 @@ m3l1b entity *185 fixed                the brush entity with model *185
 class func_barrel mass 30              every barrel weighs 30 kg
 ```
 
+### Enemy AI
+
+Single-player enemies get behaviour the original game's AI lacks. Each part has its own switch, and `ai_enhanced 0` turns them all off, for the original behaviour.
+
+|Name               |Default|Description
+|-------------------|-------|-----------
+|ai_enhanced        |1      |All the AI improvements below on or off; also, as in Spearhead and Breakthrough, enemies only hit what is roughly where their gun points (`g_aimaxdeviation`), not something well off to the side
+|ai_suppress        |1      |Enemies who lose sight of you fire at where they last saw you for a while (as in Spearhead and Breakthrough), rather than at once going quiet; and they hold fire when a squadmate is in the way
+|ai_suppress_chance |50     |Percent chance an enemy suppresses when it could (takes effect for enemies spawned after it is set)
+|ai_debug           |0      |1 logs each AI decision to the console
+
 ### Chat
 
 Chat messages are logged to console and in the logfile by default, without requiring to set the `developer` variable.
