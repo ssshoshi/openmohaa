@@ -446,7 +446,7 @@ static void CG_OrchDrawPanel(void)
 
             CG_OrchColor(color, 0.0f, 0.0f, 0.0f, 0.45f * alpha);
             cgi.R_SetColor(color);
-            cgi.R_DrawStretchPic(x - 6.0f, top - 3.0f, width + 12.0f, line * n + 6.0f, 0, 0, 1, 1, 0);
+            cgi.R_DrawBox(x - 6.0f, top - 3.0f, width + 12.0f, line * n + 6.0f);
         }
 
         if (m->heard) {
