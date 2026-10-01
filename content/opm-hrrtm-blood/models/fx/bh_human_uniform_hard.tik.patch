@@ -1,0 +1,62 @@
+--- a/models/fx/bh_human_uniform_hard.tik
++++ b/models/fx/bh_human_uniform_hard.tik
+@@ -1,3 +1,4 @@
++// OPM: the HRRTM blood addon effect with wall splats that land at once
+ 
+ 
+ TIKI
+@@ -37,7 +38,6 @@
+ 		// single splatting piece1
+ 		sfx originspawn
+ 		(
+-			fadein 4.5 0 0 0 7
+ 			model models/fx/blood_long.tik
+ 			align
+ 			alpha 1.0
+@@ -77,32 +77,30 @@
+ 
+ 			physicsrate every
+ 		)		
+-		// single splatting piece2
+-		sfx originspawn
+-		(
+-			fadein 4.5 0 0 0 7
+-			model models/fx/blood_long.tik
+-			align
+-			alpha 1.0
+-			count 1
+-			life 1.0
+-	//		fadedelay 0.5
+-            scalemin 2.0
+-            scalemax 2.5
+-            scalerate 1.5
+-			velocity -320
++		// splat on the wall behind (OPM: fast and short-lived, so it lands at once and only on near walls)
++		sfx originspawn
++		(
++			model models/fx/blood_long.tik
++			align
++			alpha 1.0
++			count 1
++			life 0.2
++            scalemin 2.0
++            scalemax 2.5
++            scalerate 1.5
++			velocity -1200
++			randvelaxis 0 crandom 60 crandom 60
+ 			accel 0 0 -800
+ 			collision
+ 			dietouch
+ 			bouncedecal 
+ 			decalshader blood_splat
+-			decalradius 15		
++			decalradius 18
+ 		)
+ 
+ 		// single splatting piece3
+ 		sfx originspawn
+ 		(
+-			fadein 4.5 0 0 0 7
+ 			model models/fx/blood_long.tik
+ 			align
+ 			alpha .7

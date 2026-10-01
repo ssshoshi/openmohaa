@@ -1,0 +1,23 @@
+--- a/global/cabinet.scr
++++ b/global/cabinet.scr
+@@ -222,7 +222,19 @@
+ 	self playsound cabinetopen
+ 	self anim open
+ 
+-	local.ent waittill animdone
++	// OPM: die partway through the fall, once he is out of the cabinet, so the
++	// ragdoll takes the fall over instead of the canned one ending on the floor.
++	// The cabinet is a solid box: a ragdoll started inside it stays stuck there.
++	// The animation runs 1.33 s and he lands about 0.85 s in.
++	local.start = level.time
++	local.d = local.ent.origin - self.origin
++	local.d[2] = 0
++	while (vector_length local.d < 48 && level.time - local.start < 0.55)
++	{
++		waitframe
++		local.d = local.ent.origin - self.origin
++		local.d[2] = 0
++	}
+ 	local.ent bedead
+ 	
+ end
