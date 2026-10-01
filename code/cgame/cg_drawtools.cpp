@@ -312,6 +312,11 @@ static void CG_DrawPauseIcon()
     float     x, y, w, h;
 
     if (paused->integer) {
+        if (CG_OrchFreecamActive()) {
+            // Added in OPM
+            //  The orchestrator's panel says the world is frozen; keep the view clear
+            return;
+        }
         handle = cgs.media.pausedShader;
     } else {
         if (cg.predicted_player_state.pm_flags & PMF_LEVELEXIT) {

@@ -43,6 +43,18 @@ extern "C" {
     void CG_OrchStatus_f(void);
     // orch_state: one line of JSON describing where the player is and looks.
     void CG_OrchState_f(void);
+    // orch_freeze [here]: freeze the world (pause) and move a free camera
+    // through it; again to resume where the player was, "here" to resume at
+    // the camera.
+    void CG_OrchFreeze_f(void);
+    // orch_fly: walk or fly while frozen; noclip otherwise.
+    void CG_OrchFly_f(void);
+    // orch_return: back to where the player last froze.
+    void CG_OrchReturn_f(void);
+    // Whether the free camera is on: the player's body is drawn, not the view model.
+    qboolean CG_OrchFreecamActive(void);
+    // Moves the free camera and gives its view. qfalse when it is off.
+    qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles);
     // Once a frame before the scene: outlines.
     void CG_OrchFrame(void);
     // Once a frame after it: the panel and the steps of a shot.

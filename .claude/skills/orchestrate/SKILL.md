@@ -76,12 +76,19 @@ finished talking (or clicked a shot). Then:
    so "undo that" can be done.
 6. Commit code changes in the worktree as they land (conventional commit messages).
 
+While frozen (`"frozen": true` in `orch.py state` and shot JSON) the view and
+aim are the free camera's; `player_origin` is still where the body stands.
+"Resume here" is `orch.py cmd "orch_freeze here"`; if that put them somewhere
+bad ("I'm under the map"), `orch.py cmd orch_return`. "Freeze" / "unfreeze"
+are `orch.py cmd orch_freeze`.
+
 Shots also save the game (`orch_<id>`) in single player: "load shot 3" is
 `orch.py cmd "loadgame <savegame>"` with the savegame from that shot's event.
 
 ## Keys the user has (rebindable)
 
-F10 orchestrator mode on/off, MOUSE3 screenshot, hold MOUSE4 to talk (the
+F10 orchestrator mode on/off, F11 freeze/resume the world (they walk around
+it; N flies), MOUSE3 screenshot, hold MOUSE4 to talk (the
 sidecar reads it, only while the game has the focus; `--ptt-key` changes it,
 `--always-on` drops it). Pressing it while you speak cuts your reply short.
 Voice-only, handled by the sidecar: "mute", "unmute", "cancel that".

@@ -32,6 +32,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // same timeline as what was said. Replies come back as orch_msg commands,
 // through the command directory (com_cmddir), and are shown in a panel.
 //
+// orch_freeze (F11) pauses the world and lets the player walk, or fly with
+// orch_fly (N), through it: AI, scripts and physics stay where they were. The
+// engine keeps making movement commands while paused (cl_freecam) without
+// sending them; the camera runs Pmove on its own copy of the player state.
+//
 // A shot writes:
 //   orch/events/<id>.json          where the player is and what is aimed at
 //   orch/events/<id>.server.txt    what the game knows of it (single player)
@@ -55,6 +60,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 static cvar_t *orch_active;
 static cvar_t *orch_shotsave;
+static cvar_t *orch_flyspeed;
 
 enum {
     ORCH_SHOT_IDLE,
@@ -84,6 +90,19 @@ typedef struct {
 } orchState_t;
 
 static orchState_t orch;
+
+// The free camera, while the world is frozen.
+typedef struct {
+    qboolean      active;
+    qboolean      fly;
+    playerState_t ps;     // a copy of the player's, moved by Pmove
+    int           time;   // the camera's own command clock: the server's is frozen
+    int           lastMs;
+    vec3_t        mins, maxs; // the player's box, from the last Pmove
+    vec3_t        frozeAt;    // where the player was when frozen, for orch_return
+} orchFreecam_t;
+
+static orchFreecam_t fc;
 
 //=============================================================
 // Helpers
@@ -145,7 +164,9 @@ static std::string CG_OrchPlayerJson(const char *indent)
     j += in + "\"player_origin\": " + CG_JsonVec(cg.snap->ps.origin) + ",\n";
     j += in + "\"view_origin\": " + CG_JsonVec(cg.refdef.vieworg) + ",\n";
     j += in + "\"view_angles\": " + CG_JsonVec(cg.refdefViewAngles) + ",\n";
-    j += in + va("\"health\": %d", cg.snap->ps.stats[STAT_HEALTH]);
+    j += in + va("\"health\": %d,\n", cg.snap->ps.stats[STAT_HEALTH]);
+    // The view is the free camera's, not the player's, while frozen.
+    j += in + va("\"frozen\": %s", fc.active ? "true" : "false");
     return j;
 }
 
@@ -270,6 +291,195 @@ void CG_OrchState_f(void)
         }
     }
     cgi.Printf("%s\n", j.c_str());
+}
+
+//=============================================================
+// Freezing the world
+//=============================================================
+
+static qboolean CG_OrchPaused(void)
+{
+    return cgi.Cvar_Get("paused", "0", 0)->integer ? qtrue : qfalse;
+}
+
+static void CG_OrchFreecamBegin(void)
+{
+    if (!CG_OrchSinglePlayer()) {
+        CG_OrchAddMsg("Freezing works in single player only", qfalse);
+        return;
+    }
+
+    fc.ps = cg.predicted_player_state;
+    VectorCopy(cg.predicted_player_state.origin, fc.frozeAt);
+    fc.ps.pm_flags = 0;
+    VectorClear(fc.ps.velocity);
+    fc.time           = 1000;
+    fc.ps.commandTime = fc.time;
+    fc.lastMs         = cgi.Milliseconds();
+    fc.active         = qtrue;
+
+    cgi.Cvar_Set("cl_freecam", "1");
+    if (!CG_OrchPaused()) {
+        cgi.Cmd_Execute(EXEC_NOW, "pause\n");
+    }
+    CG_OrchAddMsg(fc.fly ? "Frozen, flying. F11 resumes, N walks." : "Frozen. F11 resumes, N flies.", qfalse);
+}
+
+// Whether the player could stand where the camera is: not in a wall, and with
+// a floor under it (flying lets the camera out of the map).
+static const char *CG_OrchCantStandHere(void)
+{
+    trace_t tr;
+    vec3_t  down, up;
+
+    if (VectorCompare(fc.mins, fc.maxs)) {
+        return NULL; // hasn't moved
+    }
+
+    CG_Trace(&tr, fc.ps.origin, fc.mins, fc.maxs, fc.ps.origin, fc.ps.clientNum, MASK_PLAYERSOLID, qfalse, qtrue, "orch");
+    if (tr.startsolid || tr.allsolid) {
+        return "inside something";
+    }
+
+    // A floor not far below. Under the terrain or outside the map there is
+    // only the sky box's bottom, or nothing.
+    VectorCopy(fc.ps.origin, down);
+    down[2] -= 1024.0f;
+    CG_Trace(&tr, fc.ps.origin, fc.mins, fc.maxs, down, fc.ps.clientNum, MASK_PLAYERSOLID, qfalse, qtrue, "orch");
+    if (tr.fraction >= 1.0f || (tr.surfaceFlags & SURF_SKY)) {
+        return "nothing to stand on";
+    }
+
+    // Under the ground, what is overhead is a floor seen from below: it faces
+    // up. Ceilings face down.
+    VectorCopy(fc.ps.origin, up);
+    up[2] += 8192.0f;
+    CG_Trace(&tr, fc.ps.origin, vec3_origin, vec3_origin, up, fc.ps.clientNum, MASK_PLAYERSOLID, qfalse, qfalse, "orch");
+    if (tr.fraction < 1.0f && tr.plane.normal[2] > 0.7f && !(tr.surfaceFlags & SURF_SKY)) {
+        return "under the ground";
+    }
+    return NULL;
+}
+
+// here: the player goes to where the camera is, looking where it looks.
+static void CG_OrchFreecamEnd(qboolean here)
+{
+    if (here) {
+        const char *why = CG_OrchCantStandHere();
+
+        if (why) {
+            CG_OrchAddMsg(va("Can't resume here: %s", why), qfalse);
+            return;
+        }
+    }
+
+    fc.active = qfalse;
+    cgi.Cvar_Set("cl_freecam", here ? "-1" : "0");
+    if (CG_OrchPaused()) {
+        cgi.Cmd_Execute(EXEC_NOW, "pause\n");
+    }
+    if (here) {
+        // Sent with the first commands after the pause.
+        cgi.SendClientCommand(va("tele %.1f %.1f %.1f", fc.ps.origin[0], fc.ps.origin[1], fc.ps.origin[2]));
+    }
+    CG_OrchAddMsg(here ? "Resumed here" : "Resumed", qfalse);
+}
+
+void CG_OrchFreeze_f(void)
+{
+    const qboolean here = cgi.Argc() > 1 && !Q_stricmp(cgi.Argv(1), "here") ? qtrue : qfalse;
+
+    if (!cg.snap) {
+        return;
+    }
+    if (!orch_active->integer) {
+        cgi.Printf("orch_freeze: turn the orchestrator on first (orch)\n");
+        return;
+    }
+
+    if (fc.active) {
+        CG_OrchFreecamEnd(here);
+    } else if (!here) {
+        CG_OrchFreecamBegin();
+    }
+}
+
+void CG_OrchFly_f(void)
+{
+    if (!cg.snap || !orch_active->integer) {
+        return;
+    }
+
+    if (fc.active) {
+        fc.fly = !fc.fly;
+        CG_OrchAddMsg(fc.fly ? "Flying" : "Walking", qfalse);
+    } else {
+        // The real thing; the server says whether it's on.
+        cgi.SendClientCommand("noclip");
+    }
+}
+
+// orch_return: back to where the player last froze, after a "here" gone wrong.
+void CG_OrchReturn_f(void)
+{
+    if (!cg.snap || !orch_active->integer || fc.active || VectorCompare(fc.frozeAt, vec3_origin)) {
+        return;
+    }
+    cgi.SendClientCommand(va("tele %.1f %.1f %.1f", fc.frozeAt[0], fc.frozeAt[1], fc.frozeAt[2]));
+    CG_OrchAddMsg("Back to where you froze", qfalse);
+}
+
+qboolean CG_OrchFreecamActive(void)
+{
+    return fc.active;
+}
+
+qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles)
+{
+    const int now = cgi.Milliseconds();
+    int       dt;
+
+    if (!fc.active) {
+        return qfalse;
+    }
+    if (!CG_OrchPaused()) {
+        // Unpaused some other way (the pause key, a menu).
+        fc.active = qfalse;
+        cgi.Cvar_Set("cl_freecam", "0");
+        return qfalse;
+    }
+
+    dt        = now - fc.lastMs;
+    fc.lastMs = now;
+    if (dt > 100) {
+        dt = 100;
+    }
+
+    if (dt > 0) {
+        pmove_t pm;
+
+        memset(&pm, 0, sizeof(pm));
+        cgi.GetUserCmd(cgi.GetCurrentCmdNumber(), &pm.cmd);
+
+        fc.time += dt;
+        pm.cmd.serverTime = fc.time;
+        fc.ps.pm_type     = fc.fly ? PM_NOCLIP : PM_NORMAL;
+        fc.ps.speed       = (int)(cg.predicted_player_state.speed * (fc.fly ? orch_flyspeed->value : 1.0f));
+
+        pm.ps            = &fc.ps;
+        pm.trace         = CG_PlayerTrace;
+        pm.pointcontents = CG_PointContents;
+        pm.tracemask     = MASK_PLAYERSOLID;
+        pm.protocol      = cg_protocol;
+        Pmove(&pm);
+        VectorCopy(pm.mins, fc.mins);
+        VectorCopy(pm.maxs, fc.maxs);
+    }
+
+    VectorCopy(fc.ps.origin, origin);
+    origin[2] += fc.ps.viewheight;
+    VectorCopy(fc.ps.viewangles, angles);
+    return qtrue;
 }
 
 //=============================================================
@@ -427,7 +637,22 @@ static void CG_OrchDrawPanel(void)
 
         cgi.R_SetColor(color);
         cgi.R_DrawString(font, label, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
-        y += line * 1.4f;
+        y += line;
+
+        if (fc.active) {
+            CG_OrchColor(color, 0.5f, 0.85f, 1.0f, 1.0f);
+            cgi.R_SetColor(color);
+            cgi.R_DrawString(
+                font,
+                fc.fly ? "FROZEN  flying   F11 resume   N walk" : "FROZEN  walking   F11 resume   N fly",
+                x / cgs.uiHiResScale[0],
+                y / cgs.uiHiResScale[1],
+                -1,
+                cgs.uiHiResScale
+            );
+            y += line;
+        }
+        y += line * 0.4f;
     }
 
     // The replies, oldest first.
@@ -486,12 +711,24 @@ void CG_OrchInit(void)
 {
     orch_active   = cgi.Cvar_Get("orch_active", "0", 0);
     orch_shotsave = cgi.Cvar_Get("orch_shotsave", "1", CVAR_ARCHIVE);
+    orch_flyspeed = cgi.Cvar_Get("orch_flyspeed", "2", CVAR_ARCHIVE);
 
     // Once, on the first run, on keys the stock binds leave free. Rebinding
     // or unbinding them afterwards sticks.
-    if (!cgi.Cvar_Get("orch_bound", "0", CVAR_ARCHIVE)->integer) {
-        cgi.Cmd_Execute(EXEC_APPEND, "bind F10 orch\nbind MOUSE3 orch_shot\nseta orch_bound 1\n");
+    // orch_bound counts the sets of keys bound so far.
+    {
+        const int bound = cgi.Cvar_Get("orch_bound", "0", CVAR_ARCHIVE)->integer;
+
+        if (bound < 1) {
+            cgi.Cmd_Execute(EXEC_APPEND, "bind F10 orch\nbind MOUSE3 orch_shot\n");
+        }
+        if (bound < 2) {
+            cgi.Cmd_Execute(EXEC_APPEND, "bind F11 orch_freeze\nbind n orch_fly\nseta orch_bound 2\n");
+        }
     }
 
     memset(&orch, 0, sizeof(orch));
+    memset(&fc, 0, sizeof(fc));
+    // A camera left on by the last cgame (vid_restart while frozen).
+    cgi.Cvar_Set("cl_freecam", "0");
 }

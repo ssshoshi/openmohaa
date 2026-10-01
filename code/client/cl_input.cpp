@@ -322,6 +322,7 @@ void IN_CenterView (void) {
 //==========================================================================
 
 cvar_t	*cl_upspeed;
+cvar_t	*cl_freecam;
 cvar_t	*cl_forwardspeed;
 cvar_t	*cl_sidespeed;
 
@@ -450,7 +451,7 @@ void CL_MouseEvent( int dx, int dy, int time ) {
 		if( cl.mousey > cls.glconfig.vidHeight )
 			cl.mousey = cls.glconfig.vidHeight;
 	}
-	else if ( !paused->integer )
+	else if ( !paused->integer || cl_freecam->integer > 0 )
 	{
 		cl.mouseDx[cl.mouseIndex] += dx;
 		cl.mouseDy[cl.mouseIndex] += dy;
@@ -1096,6 +1097,30 @@ void CL_WritePacket( void ) {
 
 /*
 =================
+CL_FreecamAngles
+
+Added in OPM
+The free camera turns the view; put it back when the camera is done.
+cl_freecam -1 ends it keeping where it looked.
+=================
+*/
+static void CL_FreecamAngles( void ) {
+	static qboolean	active;
+	static vec3_t	saved;
+
+	if ( cl_freecam->integer > 0 && !active ) {
+		VectorCopy( cl.viewangles, saved );
+		active = qtrue;
+	} else if ( cl_freecam->integer <= 0 && active ) {
+		if ( !cl_freecam->integer ) {
+			VectorCopy( saved, cl.viewangles );
+		}
+		active = qfalse;
+	}
+}
+
+/*
+=================
 CL_SendCmd
 
 Called every frame to builds and sends a command packet to the server.
@@ -1107,8 +1132,18 @@ void CL_SendCmd( void ) {
 		return;
 	}
 
+	CL_FreecamAngles();
+
 	// don't send commands if paused
 	if ( com_sv_running->integer && paused->integer  ) {
+		// Added in OPM
+		//  The orchestrator's free camera (cgame/cg_orch.cpp) moves through
+		//  the frozen world with the commands made while paused. They are
+		//  never sent, and carry the frozen server time, so the server would
+		//  ignore them anyway.
+		if ( cl_freecam->integer > 0 ) {
+			CL_CreateNewCommands();
+		}
 		return;
 	}
 
@@ -1209,6 +1244,8 @@ void CL_InitInput( void ) {
 #endif
 
 	cl_nodelta = Cvar_Get ("cl_nodelta", "0", 0);
+	// Added in OPM: set by cgame/cg_orch.cpp; the view moves while paused
+	cl_freecam = Cvar_Get ("cl_freecam", "0", CVAR_ROM);
 	cl_debugMove = Cvar_Get ("cl_debugMove", "0", 0);
 }
 

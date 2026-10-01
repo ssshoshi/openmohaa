@@ -419,6 +419,7 @@ extern qboolean	scr_initialized;
 // cvars
 //
 extern	cvar_t	*cl_nodelta;
+extern	cvar_t	*cl_freecam;
 extern	cvar_t	*cl_debugMove;
 extern	cvar_t	*cl_noprint;
 extern	cvar_t	*cl_timegraph;

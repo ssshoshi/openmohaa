@@ -661,6 +661,17 @@ extern "C" {
     void CG_BuildSolidList(void);
     int CG_GetBrushEntitiesInBounds(int iMaxEnts, centity_t** pEntList, const vec3_t vMins, const vec3_t vMaxs);
     int  CG_PointContents(const vec3_t point, int passEntityNum);
+    void CG_PlayerTrace(
+        trace_t     *result,
+        const vec3_t start,
+        const vec3_t mins,
+        const vec3_t maxs,
+        const vec3_t end,
+        int          skipNumber,
+        int          mask,
+        qboolean     cylinder,
+        qboolean     tracedeep
+    );
     void CG_ClipMoveToEntities(
         const vec3_t start,
         const vec3_t mins,

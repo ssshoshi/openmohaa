@@ -29,6 +29,14 @@ All the exchange is files under the live install's home path,
   press, so a word started early isn't lost. Pressing it while a reply is
   being spoken cuts the reply short. `--ptt-key v` (or `mouse5`, `f11`, ...)
   picks another key; `--always-on` listens all the time instead.
+- **F11**: freeze the world. AI, scripts, physics and ragdolls stop where
+  they are (the game is paused) while you keep walking around, with
+  collisions. **N** switches to flying through everything and back
+  (`orch_flyspeed`, 2 by default). F11 again resumes where you were;
+  `orch_freeze here` (say "resume here") resumes at the camera instead, unless
+  it's inside something or over nothing. `orch_return` goes back to where you
+  froze, for a "here" that went wrong (under the terrain isn't caught). When
+  not frozen, N is the ordinary `noclip`.
 - **MOUSE3** (wheel click): screenshot. It records what is under the crosshair
   and the player's position, takes a clean and an outlined screenshot, and in
   single player saves the game as `orch_<id>`.
