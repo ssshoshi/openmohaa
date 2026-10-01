@@ -26,10 +26,11 @@ WIDTH="${OMBENCH_WIDTH:-1280}"
 HEIGHT="${OMBENCH_HEIGHT:-720}"
 INTERVAL="${OMBENCH_INTERVAL:-100}"
 MEASURE_MS="${OMBENCH_MEASURE_MS:-16000}"
-# Single player campaign maps take far longer to spawn than a DM map -- m1l1
-# was 30s in a captured log, against a couple of seconds for dm/mohdm1 -- and
-# finishloadingscreen issued before the load finishes does nothing.
-LOADWAIT="${OMBENCH_LOADWAIT:-9000}"
+# The cfg holds at `waitload` until the map has loaded, however long that takes.
+# Only binaries older than the waitload command need a fixed wait instead: set
+# OMBENCH_LOADWAIT to the ms to wait (9000 suits DM maps, ~45000 single player).
+LOADWAIT="${OMBENCH_LOADWAIT:-}"
+if [ -n "$LOADWAIT" ]; then LOADCMD="wait $LOADWAIT"; else LOADCMD="waitload"; fi
 # Extra cvars, e.g. OMBENCH_CVARS="r_vaoCache 1". Semicolon separated for more
 # than one: "r_vaoCache 1; r_finish 1". Applied on the launch line rather than
 # in the cfg because several of the interesting ones are CVAR_LATCH -- notably
@@ -86,7 +87,7 @@ mkdir -p "$OUT/main" "$SHOTDIR"
   echo "seta logfile 2"
   echo "echo OMBENCH_START"
   echo "devmap $MAP"
-  echo "wait $LOADWAIT"
+  echo "$LOADCMD"
   echo "echo OMBENCH_MAPLOADED"
   echo "finishloadingscreen"
   echo "wait 3000"
@@ -98,7 +99,7 @@ mkdir -p "$OUT/main" "$SHOTDIR"
     if [ "$i" -lt "$REPEATS" ]; then
       case "$RESTART" in
         vid_restart) echo "vid_restart"; echo "wait 8000" ;;
-        map)         echo "devmap $MAP"; echo "wait $LOADWAIT"; echo "finishloadingscreen"; echo "wait 3000" ;;
+        map)         echo "devmap $MAP"; echo "$LOADCMD"; echo "finishloadingscreen"; echo "wait 3000" ;;
         none)        : ;;
       esac
     fi
@@ -126,7 +127,7 @@ fi
 cat > "$OUT/run.bat" <<BAT
 @echo off
 cd /d "$win_install"
-openmohaa.exe$cvar_args +set cl_renderer $RENDERER +set fs_basepath "$win_base" +set fs_homepath "$win_out" +set logfile 2 +set cl_playintro 0 +set ui_skip_eamovie 1 +set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set r_fullscreen 0 +set r_mode -1 +set r_customwidth $WIDTH +set r_customheight $HEIGHT +exec bench.cfg
+openmohaa.exe$cvar_args +set cl_renderer $RENDERER +set fs_basepath "$win_base" +set fs_homepath "$win_out" +set logfile 2 +set cl_playintro 0 +set ui_autoContinue 1 +set ui_skip_eamovie 1 +set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set r_fullscreen 0 +set r_mode -1 +set r_customwidth $WIDTH +set r_customheight $HEIGHT +exec bench.cfg
 BAT
 
 echo "bench: install   $INSTALL"

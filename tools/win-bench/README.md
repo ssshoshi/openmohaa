@@ -28,7 +28,7 @@ OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
 | `OMBENCH_WIDTH/HEIGHT` | `1280`/`720` | render resolution (`r_mode -1` custom) |
 | `OMBENCH_INTERVAL` | `300` | `r_gpuTimers` averaging window, in frames |
 | `OMBENCH_MEASURE_MS` | `16000` | length of the measurement window |
-| `OMBENCH_LOADWAIT` | `9000` | ms to wait for the map to spawn before `finishloadingscreen`; raise well past this for single player campaign maps |
+| `OMBENCH_LOADWAIT` | -- | only for binaries without the `waitload` command: a fixed ms wait for the map to load (9000 for DM maps, ~45000 for single player) |
 | `OMBENCH_TIMEOUT`  | `140` | hard ceiling (s) before the run is force-killed |
 | `OMBENCH_CVARS`    | -- | extra cvars, applied on the launch line: `"r_vaoCache 1; r_finish 1"` |
 | `OMBENCH_REPEATS`  | `1` | measurement windows inside one process |
@@ -41,7 +41,9 @@ OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
    console log (`qconsole.log`) and screenshots are readable from WSL.
 2. Launches `openmohaa.exe` in the background through `cmd.exe /c`.
 3. Waits (by polling `qconsole.log`) for the `OMBENCH_MAPLOADED` marker.
-4. The cfg itself issues **`finishloadingscreen`** — the console command MOHAA's CONTINUE
+4. The cfg holds at **`waitload`** until the map has loaded, and the launch line sets
+   `ui_autoContinue 1` so the load goes straight into the game. The cfg still issues
+   **`finishloadingscreen`** — the console command MOHAA's CONTINUE
    button runs (`stuffcommand` in `ui/loadingbar.txt`; it calls `UI_ActivateView3D`). That
    clears the post-load **CONTINUE** card in-engine, so no synthetic input or window focus is
    needed. This is the "no user intervention" part. (`dismiss.ps1` is a keypress fallback,
