@@ -794,6 +794,17 @@ public:
     ScriptThreadLabel m_PreAlarmThread;
     /* 2.0: Suppress chance */
     int m_iSuppressChance;
+    // OPM: when this actor last threw a grenade (not saved: a load only
+    //  lets a squad throw again a little sooner).
+    int m_iOPMLastGrenadeTime;
+    // OPM: whether the model or a script set this actor's grenades, and
+    //  whether it carries the ai_grenade_ammo ones instead.
+    bool m_bOPMGrenadeAmmoSet;
+    bool m_bOPMDefaultGrenades;
+    // OPM: when this actor may next search for a throw (the search is costly).
+    int m_iOPMNextArcSearchTime;
+    // OPM: when the grenade he winds up with appears in his hand (0: none).
+    int m_iOPMHoldGrenadeTime;
     /* used for turret actot to run back to home Turret_SelectState() */
     int m_iRunHomeTime;
     /* no cover path for initial turret state */
@@ -1090,6 +1101,13 @@ public:
     Vector        CalcKickVelocity(Vector       &vDelta, float fDist) const;
     bool          CanKickGrenade(Vector         &vFrom, Vector         &vTo, Vector         &vFace, Vector *pvVel);
     bool          GrenadeWillHurtTeamAt(const Vector         &vTo);
+    bool          SquadThrewGrenadeRecently(void);
+    bool          GrenadeArcClear(const Vector &vFrom, const Vector &vVel, float fTime);
+    bool          FindGrenadeArc(const Vector &vTo, Vector *pvVel);
+    void          HoldGrenade(void);
+    void          ReleaseHeldGrenade(void);
+    void          DropHeldGrenade(void);
+    void          GrenadeThrowError(Vector& dir, float& speed);
     bool          CanGetGrenadeFromAToB(
                  const Vector         &vFrom, const Vector         &vTo, bool bDesperate, Vector *pvVel, eGrenadeTossMode *peMode
              );

@@ -135,6 +135,7 @@ void Actor::Turret_SelectState(void)
                 ANIM_MODE_NORMAL,
                 m_eGrenadeMode == AI_GREN_TOSS_ROLL ? STRING_ANIM_GRENADETOSS_SCR : STRING_ANIM_GRENADETHROW_SCR
             );
+            HoldGrenade();
             TransitionState(ACTOR_STATE_TURRET_GRENADE, 0);
             return;
         }

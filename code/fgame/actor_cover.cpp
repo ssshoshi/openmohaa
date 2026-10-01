@@ -330,6 +330,7 @@ void Actor::State_Cover_Target(void)
             ANIM_MODE_NORMAL,
             m_eGrenadeMode == AI_GREN_TOSS_ROLL ? STRING_ANIM_GRENADETOSS_SCR : STRING_ANIM_GRENADETHROW_SCR
         );
+        HoldGrenade();
         TransitionState(ACTOR_STATE_COVER_GRENADE);
     } else if (CanSeeEnemy(500) && CanShootEnemy(500)) {
         TransitionState(ACTOR_STATE_COVER_SHOOT, 0);
