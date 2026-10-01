@@ -1,0 +1,8 @@
+# The voice sidecar (sidecar.py), installed on Windows by setup_windows.ps1.
+numpy
+sounddevice           # microphone and speakers (bundles PortAudio)
+webrtcvad-wheels      # voice activity detection
+faster-whisper        # speech to text (CTranslate2)
+nvidia-cublas-cu12    # CUDA libraries for faster-whisper on the GPU
+nvidia-cudnn-cu12==9.*
+kokoro-onnx           # text to speech
