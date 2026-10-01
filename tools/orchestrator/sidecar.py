@@ -63,7 +63,8 @@ PROMPT = ("Medal of Honor, OpenMoHAA, MOHAA, cvar, ragdoll, AI, AI paths, actor,
           "splinepath, trigger, script, thread, noclip, savegame, shader, texture, GL2, m1l1, m3l2.")
 
 # What Whisper makes up from noise.
-HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "thank you for watching", "bye"}
+HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "thank you for watching", "bye",
+                  "cough", "coughing", "cough cough", "ahem", "ahem ahem", "sigh", "sighs"}
 PROMPT_WORDS = set(re.findall(r"[a-z0-9]+", PROMPT.lower()))
 
 
@@ -75,7 +76,8 @@ def made_up(text, segments):
         return True
     if len(words) >= 3 and sum(w in PROMPT_WORDS for w in words) >= 0.8 * len(words):
         return True
-    return all(s.no_speech_prob > 0.6 or s.avg_logprob < -1.0 for s in segments)
+    # Whisper's own silence test: both scores have to agree, or real speech said quietly is lost
+    return all(s.no_speech_prob > 0.6 and s.avg_logprob < -1.0 for s in segments)
 
 LOCAL_COMMANDS = {
     "mute": re.compile(r"^\W*(mute|stop listening)\W*$", re.I),
