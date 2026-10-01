@@ -70,6 +70,7 @@ The orchestrator lets an agent listen to the player while they play and change t
 
 - `orch [on|off]` (bound to `F10` on the first run): orchestrator mode.
 - `orch_shot` (bound to `MOUSE3`): a screenshot plus a description of what is under the crosshair, written to `orch/events/` in the home directory. In single player it also saves the game as `orch_<id>`; `set orch_shotsave 0` turns that off.
+- `orch_freeze [here]` (bound to `F11`): single player only. Pauses the world and lets the player walk, or fly with `orch_fly` (`N`), through it. Run it again to resume where the player was, or with `here` to move the player to the camera first. `orch_return` moves the player back to where they last froze. `set orch_flyspeed 2` sets how fast flying is.
 - `orch_msg [-heard] <text>`, `orch_status <state>`, `orch_state`: used by the tools to show replies and read the player's position.
 
 ## Graphics

@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_orch.h"
 #include "../corepp/tiki.h"
 
 static qboolean cg_forceModelAllowed = qfalse;
@@ -1078,6 +1079,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     // Fixed in OPM
     //  Draw world model body when in camera
     bThirdPerson |= (cg.snap->ps.pm_flags & PMF_CAMERA_VIEW && !(cg.snap->ps.pm_flags & PMF_TURRET));
+    // Added in OPM
+    //  The body stays where the player froze while a free camera looks around
+    bThirdPerson |= CG_OrchFreecamActive();
 
     if ((cg.snap->ps.pm_flags & PMF_INTERMISSION) && s1->number == cg.snap->ps.clientNum && !bThirdPerson) {
         // Don't render the first-person model during intermission

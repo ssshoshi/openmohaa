@@ -701,6 +701,16 @@ static int CG_CalcViewValues(void)
         AnglesToAxis(cg.refdefViewAngles, cg.SoundAxis);
     }
 
+    // Added in OPM
+    //  The orchestrator's free camera, while the world is frozen
+    if (CG_OrchFreecamView(cg.refdef.vieworg, cg.refdefViewAngles)) {
+        cg.renderingThirdPerson = qtrue;
+        VectorCopy(cg.refdef.vieworg, cg.currentViewPos);
+        VectorCopy(cg.refdefViewAngles, cg.currentViewAngles);
+        VectorCopy(cg.refdef.vieworg, cg.SoundOrg);
+        AnglesToAxis(cg.refdefViewAngles, cg.SoundAxis);
+    }
+
     // position eye reletive to origin
     AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);
 

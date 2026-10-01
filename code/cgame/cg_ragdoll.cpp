@@ -35,6 +35,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_orch.h"
 #include "cg_parsemsg.h"
 #include "cg_props.h"
 #include "cg_physics.h"
@@ -9820,6 +9821,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
     bThirdPerson = cg_3rd_person->integer ? qtrue : qfalse;
     bThirdPerson |= (cg.snap->ps.pm_flags & PMF_CAMERA_VIEW && !(cg.snap->ps.pm_flags & PMF_TURRET)) ? qtrue : qfalse;
+    bThirdPerson |= CG_OrchFreecamActive();
 
     rd = CG_RagdollForEntity(cent->currentState.number);
 
