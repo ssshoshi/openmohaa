@@ -114,6 +114,7 @@ cvar_t        *ui_compass;
 cvar_t        *ui_weaponsbar;
 cvar_t        *ui_weaponsbartime;
 cvar_t        *ui_itemsbar;
+cvar_t        *ui_autoContinue;
 cvar_t        *ui_health_start;
 cvar_t        *ui_health_end;
 cvar_t        *ui_gmboxspam;
@@ -3987,6 +3988,31 @@ void UI_FinishLoadingScreen_f(void)
 
 /*
 ====================
+UI_LoadDone
+
+True once a map load has finished: in game, or waiting at the CONTINUE button
+====================
+*/
+static qboolean UI_LoadDone(void)
+{
+    return !server_loading || server_loading_waiting;
+}
+
+/*
+====================
+UI_WaitLoad_f
+
+Holds the rest of the command buffer until the current map load finishes,
+so scripts don't have to guess a load time with wait
+====================
+*/
+static void UI_WaitLoad_f(void)
+{
+    Cmd_WaitUntil(UI_LoadDone);
+}
+
+/*
+====================
 S_ServerLoaded
 ====================
 */
@@ -4051,7 +4077,7 @@ void UI_ServerLoaded(void)
         return;
     }
 
-    if (ui_sCurrentLoadingMenu == "loading_default") {
+    if (ui_sCurrentLoadingMenu == "loading_default" || ui_autoContinue->integer) {
         UI_FinishLoadingScreen_f();
         return;
     }
@@ -5154,6 +5180,7 @@ void CL_ShutdownUI(void)
     Cmd_RemoveCommand("locationprint");
     Cmd_RemoveCommand("startserver");
     Cmd_RemoveCommand("finishloadingscreen");
+    Cmd_RemoveCommand("waitload");
     Cmd_RemoveCommand("playermodel");
     Cmd_RemoveCommand("ui_applyplayermodel");
     Cmd_RemoveCommand("ui_getplayermodel");
@@ -5268,6 +5295,7 @@ void CL_InitializeUI(void)
     ui_weaponsbar      = Cvar_Get("ui_weaponsbar", "1", 1);
     ui_weaponsbartime  = Cvar_Get("ui_weaponsbartime", "2500", 1);
     ui_itemsbar        = Cvar_Get("ui_itemsbar", "0", 1);
+    ui_autoContinue    = Cvar_Get("ui_autoContinue", "0", CVAR_ARCHIVE);
     sound_overlay      = Cvar_Get("soundoverlay", "0", 0);
     ui_debugload       = Cvar_Get("ui_debugload", "0", 0);
     Cvar_Get("ui_signshader", "", 0);
@@ -5369,6 +5397,7 @@ void CL_InitializeUI(void)
     Cmd_AddCommand("ui_removehud", UI_RemoveHud_f);
     Cmd_AddCommand("startserver", UI_StartServer_f);
     Cmd_AddCommand("finishloadingscreen", UI_FinishLoadingScreen_f);
+    Cmd_AddCommand("waitload", UI_WaitLoad_f);
     Cmd_AddCommand("playermodel", UI_PlayerModel_f);
     Cmd_AddCommand("ui_applyplayermodel", UI_ApplyPlayerModel_f);
     Cmd_AddCommand("ui_getplayermodel", UI_GetPlayerModel_f);

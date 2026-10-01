@@ -36,7 +36,7 @@ cam_target			code/fgame/camera.cpp:2052	Camera path editor: the selected node's 
 cam_watch			code/fgame/camera.cpp:2056	Camera path editor: the selected node's watch.
 cg_3rd_person	0	1	code/cgame/cg_main.c:153	Third-person camera: the view follows behind the player instead of looking through their eyes. Cheat-protected.
 cg_acidtrip	0		code/cgame/cg_main.c:178	Debug effect: warps the view with a psychedelic wobble. The number is how many passes of the warp are applied. Cheat-protected.
-cg_allowvote	0	1	code/client/cl_ui.cpp:2491	Whether the server allows votes. The client copies it from the server's g_allowvote so the menu can show or hide the vote options; setting it yourself changes nothing on the server.
+cg_allowvote	0	1	code/client/cl_ui.cpp:2492	Whether the server allows votes. The client copies it from the server's g_allowvote so the menu can show or hide the vote options; setting it yourself changes nothing on the server.
 cg_animationviewmodel	0	1	code/cgame/cg_main.c:173	Keep animating the first-person weapon (view model) even while dead or in states that normally freeze it. Set by the server.
 cg_animspeed			code/cgame/cg_main.c:140	Speed multiplier for client-side animation playback, for debugging animations. 1 is normal speed. Cheat-protected.
 cg_autoswitch	0	1	code/client/cl_main.cpp:3691	Switch to a weapon automatically when you pick up one that is better than the one in your hands.
@@ -248,7 +248,7 @@ cl_forceavidemo	0	1	code/client/cl_main.cpp:3603	Record video frames even when n
 cl_forceModel	0	1	code/client/cl_main.cpp:3694	Legacy: force player models.
 cl_freelook	0	1	code/client/cl_main.cpp:3617	Mouse look: moving the mouse turns and looks up and down.
 cl_freezeDemo	0	1	code/client/cl_main.cpp:3594	Pause demo playback.
-cl_greenfps	0	1	code/client/cl_ui.cpp:5311	Draw the frame rate counter in green.
+cl_greenfps	0	1	code/client/cl_ui.cpp:5339	Draw the frame rate counter in green.
 cl_guid			code/client/cl_main.cpp:3766	Read-only: the client's unique ID sent to servers.
 cl_guidServerUniq	0	1	code/client/cl_main.cpp:3687	Make the client ID different for each server.
 cl_lanForcePackets	0	1	code/client/cl_main.cpp:3685	On LAN servers, send a packet every frame regardless of cl_maxpackets.
@@ -261,7 +261,7 @@ cl_motdString			code/client/cl_main.cpp:3677	Read-only: the last message of the 
 cl_mouseAccel			code/client/cl_main.cpp:3616	Mouse acceleration: faster movement turns further. 0 is off.
 cl_mouseAccelOffset	0.001	50000	code/client/cl_main.cpp:3623	Offset for mouse acceleration style 1, set to your highest mouse rate.
 cl_mouseAccelStyle	0	1	code/client/cl_main.cpp:3620	Mouse acceleration curve: 0 legacy linear, 1 power curve.
-cl_movieaudio	0	1	code/client/cl_ui.cpp:5313	Play the audio of in-game movies.
+cl_movieaudio	0	1	code/client/cl_ui.cpp:5341	Play the audio of in-game movies.
 cl_netprofile	0	1	code/client/cl_main.cpp:3590	Collect client network statistics.
 cl_netprofileoverlay	0		code/client/cl_main.cpp:3591	Show client network statistics on screen (value sets the vertical offset).
 cl_nodelta	0	1	code/client/cl_input.cpp:1211	Debug: ask for full snapshots instead of deltas.
@@ -269,7 +269,7 @@ cl_noprint	0	1	code/client/cl_main.cpp:3580	Do not print server messages in the 
 cl_packetdelay	0		code/qcommon/common.c:1929	Debug: delay outgoing packets by this many milliseconds, to simulate lag.
 cl_packetdup	0	5	code/client/cl_main.cpp:3612	Send each movement command this many extra times, to survive packet loss.
 cl_pitchspeed			code/client/cl_main.cpp:3608	Keyboard look up/down speed in degrees per second.
-cl_playintro	0	1	code/client/cl_ui.cpp:5312	Play the intro movies at startup.
+cl_playintro	0	1	code/client/cl_ui.cpp:5340	Play the intro movies at startup.
 cl_radar_blink_time			code/client/cl_main.cpp:3682	Seconds between compass radar blinks.
 cl_radar_icon_size			code/client/cl_main.cpp:3680	Size of teammate icons on the compass radar.
 cl_radar_speak_time			code/client/cl_main.cpp:3681	Seconds a teammate's icon highlights on the radar after they speak.
@@ -357,7 +357,7 @@ debugSound	0	1	code/cgame/cg_commands.cpp:3851	Debug: print sound events handled
 dedicated	0	2	code/fgame/gamecvars.cpp:342	Dedicated server: 0 not, 1 LAN, 2 internet. Set at startup.
 detail	0	1	code/cgame/cg_tempmodels.cpp:232	Spawn detail-only effect particles.
 developer	0	2	code/renderergl1/tr_init.c:1587	Developer mode: extra messages, debug commands; skips intros.
-dlg_badsave			code/client/cl_ui.cpp:5315	Text shown for an invalid savegame.
+dlg_badsave			code/client/cl_ui.cpp:5343	Text shown for an invalid savegame.
 dm_filter_empty	0	1	code/client/cl_uiserverlist.cpp:534	Server browser: hide empty servers.
 dm_filter_full	0	1	code/client/cl_uiserverlist.cpp:535	Server browser: hide full servers.
 dm_filter_listen	0	1	code/client/cl_uiserverlist.cpp:533	Server browser: show listen (non-dedicated) servers.
@@ -597,7 +597,7 @@ g_turret_convergetime			code/fgame/gamecvars.cpp:686	Seconds an AI turret gunner
 g_turret_spread			code/fgame/gamecvars.cpp:689	Spread of AI turret fire.
 g_turret_suppresstime			code/fgame/gamecvars.cpp:687	Seconds an AI turret keeps up suppressing fire.
 g_turret_suppresswaittime			code/fgame/gamecvars.cpp:688	Seconds an AI turret waits between bursts of suppressing fire.
-g_turretcameras	0	1	code/fgame/weapturret.cpp:1410	Use the turret's own camera view when manning a turret.
+g_turretcameras	0	1	code/fgame/weapturret.cpp:1418	Use the turret's own camera view when manning a turret.
 g_vehicle	0	1	code/fgame/gamecvars.cpp:482	Debug: vehicles think and move. 0 freezes them.
 g_viewkick_dmmult			code/fgame/gamecvars.cpp:607	Multiplier on the view kick when hit. Cheat-protected.
 g_viewkick_pitch			code/fgame/gamecvars.cpp:604	How much being hit kicks the view up or down. Cheat-protected.
@@ -684,8 +684,8 @@ net_socksPort			code/qcommon/net_ip.c:1476	SOCKS5 proxy port.
 net_socksServer			code/qcommon/net_ip.c:1472	SOCKS5 proxy server.
 net_socksUsername			code/qcommon/net_ip.c:1480	SOCKS5 proxy user name.
 nextmap			code/server/sv_init.c:1100	Commands run when the current map or cinematic ends.
-noipx	0	1	code/client/cl_ui.cpp:3109	Disable IPX networking.
-noudp	0	1	code/client/cl_ui.cpp:3102	Disable UDP networking.
+noipx	0	1	code/client/cl_ui.cpp:3110	Disable IPX networking.
+noudp	0	1	code/client/cl_ui.cpp:3103	Disable UDP networking.
 password			code/client/cl_main.cpp:3709	Password sent when joining a passworded server.
 paused	0	1	code/cgame/cg_main.c:151	Whether the game is paused.
 pmove_fixed	0	1	code/cgame/cg_main.c:163	Run player movement in fixed steps of pmove_msec, for consistent jumping at any frame rate. Server setting.
@@ -1025,7 +1025,7 @@ snd_useangles			code/fgame/soundman.cpp:581	Sound manager editor: the selected s
 snd_volume			code/fgame/soundman.cpp:413	Sound manager editor: the selected speaker's volume.
 snd_width			code/fgame/soundman.cpp:527	Sound manager editor: the selected speaker's width.
 snd_yaw			code/fgame/soundman.cpp:576	Sound manager editor: the selected speaker's yaw.
-soundoverlay	0	1	code/client/cl_ui.cpp:5271	Debug: show sound overlay information.
+soundoverlay	0	1	code/client/cl_ui.cpp:5299	Debug: show sound overlay information.
 spam	0	1	code/qcommon/common.c:1903	Print repeated console messages.
 subAlpha	0	1	code/client/cl_uiview3d.cpp:820	Opacity of subtitles.
 sv_allowDownload	0		code/server/sv_init.c:1102	Let clients download missing files. Server setting.
@@ -1133,65 +1133,66 @@ timegraph	0	1	code/client/cl_scrn.cpp:416	Debug: draw the frame time graph. Chea
 timelimit	0		code/server/sv_init.c:1045	Multiplayer: minutes per map. 0 no limit. Server setting.
 timescale			code/qcommon/common.c:1915	Game speed multiplier: 0.5 slow motion, 2 double speed. Cheat-protected.
 tow_allied_obj1			code/fgame/dm_manager.cpp:976	Tug of war scoreboard: objective state.
-ui_Accuracy			code/client/cl_ui.cpp:5292	Mission statistics screen: accuracy. Set by the game.
-ui_compass	0	1	code/client/cl_ui.cpp:5274	Show the compass.
-ui_compass_scale			code/client/cl_ui.cpp:3896	Size of the compass. Latched.
-ui_console	0	1	code/client/cl_ui.cpp:5266	Allow the console key to open the console.
-ui_consoleposition			code/client/cl_ui.cpp:5265	Saved position and size of the console window.
-ui_crosshair	0	1	code/client/cl_ui.cpp:5267	Show the crosshair.
+ui_Accuracy			code/client/cl_ui.cpp:5320	Mission statistics screen: accuracy. Set by the game.
+ui_autoContinue	0	1	code/client/cl_ui.cpp:5298	Skip the CONTINUE button after a map loads and go straight into the game.
+ui_compass	0	1	code/client/cl_ui.cpp:5302	Show the compass.
+ui_compass_scale			code/client/cl_ui.cpp:3897	Size of the compass. Latched.
+ui_console	0	1	code/client/cl_ui.cpp:5293	Allow the console key to open the console.
+ui_consoleposition			code/client/cl_ui.cpp:5292	Saved position and size of the console window.
+ui_crosshair	0	1	code/client/cl_ui.cpp:5294	Show the crosshair.
 ui_cvb_filter			code/client/cl_uicvarbrowser.cpp:989	Cvar browser: the filter text.
 ui_cvb_value			code/client/cl_uicvarbrowser.cpp:990	Cvar browser: the value being edited.
-ui_debugload	0	1	code/client/cl_ui.cpp:5272	Debug: print UI loading.
-ui_drawcoords	0	1	code/client/cl_ui.cpp:5277	Debug: show UI mouse coordinates.
-ui_failed			code/client/cl_ui.cpp:5300	Mission statistics screen: mission failed. Set by the game.
-ui_gmbox	0	1	code/client/cl_ui.cpp:5264	Show the game message box (pickups, objectives).
-ui_gmboxspam	0	1	code/client/cl_ui.cpp:5297	Allow repeated game messages.
-ui_gotmedal			code/client/cl_ui.cpp:5298	Mission statistics screen: medal earned. Set by the game.
-ui_GroinShots			code/client/cl_ui.cpp:5281	Mission statistics screen: groin hits. Set by the game.
-ui_GunneryEvaluation			code/client/cl_ui.cpp:5280	Mission statistics screen: gunnery rating. Set by the game.
-ui_HeadShots			code/client/cl_ui.cpp:5287	Mission statistics screen: head shots. Set by the game.
-ui_health_end			code/client/cl_ui.cpp:5279	Health dial end angle.
-ui_health_start			code/client/cl_ui.cpp:5278	Health dial start angle.
-ui_inventoryfile			code/client/cl_ui.cpp:5276	Inventory definition file.
-ui_itemsbar	0	1	code/client/cl_ui.cpp:5270	Show the items bar.
-ui_LeftArmShots			code/client/cl_ui.cpp:5283	Mission statistics screen: left arm hits. Set by the game.
-ui_LeftLegShots			code/client/cl_ui.cpp:5285	Mission statistics screen: left leg hits. Set by the game.
-ui_legalscreen_fadein			code/client/cl_ui.cpp:5308	Legal screen fade-in seconds.
-ui_legalscreen_fadeout			code/client/cl_ui.cpp:5309	Legal screen fade-out seconds.
-ui_legalscreen_stay			code/client/cl_ui.cpp:5310	Seconds the legal screen stays up.
+ui_debugload	0	1	code/client/cl_ui.cpp:5300	Debug: print UI loading.
+ui_drawcoords	0	1	code/client/cl_ui.cpp:5305	Debug: show UI mouse coordinates.
+ui_failed			code/client/cl_ui.cpp:5328	Mission statistics screen: mission failed. Set by the game.
+ui_gmbox	0	1	code/client/cl_ui.cpp:5291	Show the game message box (pickups, objectives).
+ui_gmboxspam	0	1	code/client/cl_ui.cpp:5325	Allow repeated game messages.
+ui_gotmedal			code/client/cl_ui.cpp:5326	Mission statistics screen: medal earned. Set by the game.
+ui_GroinShots			code/client/cl_ui.cpp:5309	Mission statistics screen: groin hits. Set by the game.
+ui_GunneryEvaluation			code/client/cl_ui.cpp:5308	Mission statistics screen: gunnery rating. Set by the game.
+ui_HeadShots			code/client/cl_ui.cpp:5315	Mission statistics screen: head shots. Set by the game.
+ui_health_end			code/client/cl_ui.cpp:5307	Health dial end angle.
+ui_health_start			code/client/cl_ui.cpp:5306	Health dial start angle.
+ui_inventoryfile			code/client/cl_ui.cpp:5304	Inventory definition file.
+ui_itemsbar	0	1	code/client/cl_ui.cpp:5297	Show the items bar.
+ui_LeftArmShots			code/client/cl_ui.cpp:5311	Mission statistics screen: left arm hits. Set by the game.
+ui_LeftLegShots			code/client/cl_ui.cpp:5313	Mission statistics screen: left leg hits. Set by the game.
+ui_legalscreen_fadein			code/client/cl_ui.cpp:5336	Legal screen fade-in seconds.
+ui_legalscreen_fadeout			code/client/cl_ui.cpp:5337	Legal screen fade-out seconds.
+ui_legalscreen_stay			code/client/cl_ui.cpp:5338	Seconds the legal screen stays up.
 ui_maplist_ffa			code/client/cl_uimaprotationsetup.cpp:76	Map rotation menu: maps chosen for ffa games.
 ui_maplist_lib			code/client/cl_uimaprotationsetup.cpp:70	Map rotation menu: maps chosen for lib games.
 ui_maplist_obj			code/client/cl_uimaprotationsetup.cpp:66	Map rotation menu: maps chosen for obj games.
 ui_maplist_round			code/client/cl_uimaprotationsetup.cpp:74	Map rotation menu: maps chosen for round games.
 ui_maplist_team			code/client/cl_uimaprotationsetup.cpp:72	Map rotation menu: maps chosen for team games.
 ui_maplist_tow			code/client/cl_uimaprotationsetup.cpp:68	Map rotation menu: maps chosen for tow games.
-ui_minicon	0	1	code/client/cl_ui.cpp:5263	Show the mini console (recent messages).
-ui_newvidmode			code/client/cl_ui.cpp:1516	Video mode chosen in the options menu, applied with Apply.
-ui_NumComplete			code/client/cl_ui.cpp:5294	Mission statistics screen: objectives completed. Set by the game.
-ui_NumEnemysKilled			code/client/cl_ui.cpp:5288	Mission statistics screen: enemies killed. Set by the game.
-ui_NumHits			code/client/cl_ui.cpp:5295	Mission statistics screen: hits. Set by the game.
-ui_NumHitsTaken			code/client/cl_ui.cpp:5290	Mission statistics screen: hits taken. Set by the game.
-ui_NumObjectives			code/client/cl_ui.cpp:5293	Mission statistics screen: objectives. Set by the game.
-ui_NumObjectsDestroyed			code/client/cl_ui.cpp:5289	Mission statistics screen: objects destroyed. Set by the game.
-ui_NumShotsFired			code/client/cl_ui.cpp:5296	Mission statistics screen: shots fired. Set by the game.
+ui_minicon	0	1	code/client/cl_ui.cpp:5290	Show the mini console (recent messages).
+ui_newvidmode			code/client/cl_ui.cpp:1517	Video mode chosen in the options menu, applied with Apply.
+ui_NumComplete			code/client/cl_ui.cpp:5322	Mission statistics screen: objectives completed. Set by the game.
+ui_NumEnemysKilled			code/client/cl_ui.cpp:5316	Mission statistics screen: enemies killed. Set by the game.
+ui_NumHits			code/client/cl_ui.cpp:5323	Mission statistics screen: hits. Set by the game.
+ui_NumHitsTaken			code/client/cl_ui.cpp:5318	Mission statistics screen: hits taken. Set by the game.
+ui_NumObjectives			code/client/cl_ui.cpp:5321	Mission statistics screen: objectives. Set by the game.
+ui_NumObjectsDestroyed			code/client/cl_ui.cpp:5317	Mission statistics screen: objects destroyed. Set by the game.
+ui_NumShotsFired			code/client/cl_ui.cpp:5324	Mission statistics screen: shots fired. Set by the game.
 ui_pickedsound			code/fgame/soundman.cpp:441	Sound picked in the sound picker.
-ui_PreferredWeapon			code/client/cl_ui.cpp:5291	Mission statistics screen: preferred weapon. Set by the game.
-ui_returnmenu			code/client/cl_ui.cpp:5301	Menu to return to.
-ui_RightArmShots			code/client/cl_ui.cpp:5282	Mission statistics screen: right arm hits. Set by the game.
-ui_RightLegShots			code/client/cl_ui.cpp:5284	Mission statistics screen: right leg hits. Set by the game.
-ui_signshader			code/client/cl_ui.cpp:5273	Shader of the sign being shown.
-ui_skip_eamovie	0	1	code/client/cl_ui.cpp:5302	Skip the EA intro movie.
-ui_skip_legalscreen	0	1	code/client/cl_ui.cpp:5304	Skip the legal screen.
-ui_skip_titlescreen	0	1	code/client/cl_ui.cpp:5303	Skip the title screen.
-ui_startmap			code/client/cl_ui.cpp:5314	Map to start from the menu.
-ui_success			code/client/cl_ui.cpp:5299	Mission statistics screen: mission succeeded. Set by the game.
+ui_PreferredWeapon			code/client/cl_ui.cpp:5319	Mission statistics screen: preferred weapon. Set by the game.
+ui_returnmenu			code/client/cl_ui.cpp:5329	Menu to return to.
+ui_RightArmShots			code/client/cl_ui.cpp:5310	Mission statistics screen: right arm hits. Set by the game.
+ui_RightLegShots			code/client/cl_ui.cpp:5312	Mission statistics screen: right leg hits. Set by the game.
+ui_signshader			code/client/cl_ui.cpp:5301	Shader of the sign being shown.
+ui_skip_eamovie	0	1	code/client/cl_ui.cpp:5330	Skip the EA intro movie.
+ui_skip_legalscreen	0	1	code/client/cl_ui.cpp:5332	Skip the legal screen.
+ui_skip_titlescreen	0	1	code/client/cl_ui.cpp:5331	Skip the title screen.
+ui_startmap			code/client/cl_ui.cpp:5342	Map to start from the menu.
+ui_success			code/client/cl_ui.cpp:5327	Mission statistics screen: mission succeeded. Set by the game.
 ui_timemessage			code/cgame/cg_main.c:213	Timer message shown on screen.
-ui_titlescreen_fadein			code/client/cl_ui.cpp:5305	Title screen fade-in seconds.
-ui_titlescreen_fadeout			code/client/cl_ui.cpp:5306	Title screen fade-out seconds.
-ui_titlescreen_stay			code/client/cl_ui.cpp:5307	Seconds the title screen stays up.
-ui_TorsoShots			code/client/cl_ui.cpp:5286	Mission statistics screen: torso hits. Set by the game.
-ui_weaponsbar	0	2	code/client/cl_ui.cpp:5268	Weapon selection bar: 0 off, 1 on, 2 briefly when switching.
-ui_weaponsbartime			code/client/cl_ui.cpp:5269	Milliseconds the weapon bar stays up.
+ui_titlescreen_fadein			code/client/cl_ui.cpp:5333	Title screen fade-in seconds.
+ui_titlescreen_fadeout			code/client/cl_ui.cpp:5334	Title screen fade-out seconds.
+ui_titlescreen_stay			code/client/cl_ui.cpp:5335	Seconds the title screen stays up.
+ui_TorsoShots			code/client/cl_ui.cpp:5314	Mission statistics screen: torso hits. Set by the game.
+ui_weaponsbar	0	2	code/client/cl_ui.cpp:5295	Weapon selection bar: 0 off, 1 on, 2 briefly when switching.
+ui_weaponsbartime			code/client/cl_ui.cpp:5296	Milliseconds the weapon bar stays up.
 version			code/qcommon/common.c:1955	Read-only: the game version and build.
 viewlog	0	1	code/qcommon/common.c:1919	Show the console log window. Cheat-protected.
 viewmodelanim			code/cgame/cg_modelanim.c:227	Internal: view model animation being tested (viewthing).

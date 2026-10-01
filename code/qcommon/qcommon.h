@@ -536,6 +536,9 @@ void Cbuf_Execute (int msec);
 
 void Cmd_WriteAliases( fileHandle_t f );
 
+void Cmd_WaitUntil( qboolean (*done)(void) );
+// holds the rest of the command buffer until done() returns true
+
 //===========================================================================
 
 /*

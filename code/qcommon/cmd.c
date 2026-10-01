@@ -42,6 +42,7 @@ typedef struct cmdalias_s {
 } cmdalias_t;
 
 int			cmd_wait;
+static qboolean	(*cmd_waitUntil)(void);
 cmd_t		cmd_text;
 byte		cmd_text_buf[MAX_CMD_BUFFER];
 static		cmdalias_t *cmd_alias;
@@ -67,6 +68,17 @@ void Cmd_Wait_f( void ) {
 	} else {
 		cmd_wait = 1;
 	}
+}
+
+/*
+============
+Cmd_WaitUntil
+
+Holds the remainder of the command buffer until done() returns true.
+============
+*/
+void Cmd_WaitUntil( qboolean (*done)(void) ) {
+	cmd_waitUntil = done;
 }
 
 
@@ -193,6 +205,12 @@ void Cbuf_Execute (int msec)
 	qboolean in_slash_comment = qfalse;
 	while (cmd_text.cursize)
 	{
+		if ( cmd_waitUntil ) {
+			if ( !cmd_waitUntil() )
+				return;
+			cmd_waitUntil = NULL;
+		}
+
 		if ( cmd_wait )	{
 			if( cmd_wait == 1 ) {
 				cmd_wait = 0;

@@ -44,7 +44,6 @@ REPRO_DIR_WIN = GAME_ROOT_WIN + r"\bugrepro"
 BINARIES = ["openmohaa.exe", "cgame.dll", "game.dll", "renderer_opengl1.dll", "renderer_opengl2.dll"]
 RUNTIME = ["SDL2.dll", "OpenAL64.dll", "libcurl.dll"]  # from any install when the build lacks them
 FOCUS = os.path.join(os.path.dirname(HERE), "win-bench", "focus.ps1")
-LOAD_WAIT_MS = 30000
 
 
 def game_running(exclude=REPRO_DIR_WIN):
@@ -145,7 +144,7 @@ def script(report, have_save, tag, extra):
         out += [f"loadgame {g['savegame']}"]
     else:
         out += [g["repro"].split(";")[0].strip()]  # devmap <map>
-    out += [f"wait {LOAD_WAIT_MS}", "finishloadingscreen", "wait 3000"]
+    out += ["waitload", "finishloadingscreen", "wait 3000"]
     if not have_save:
         out += ["thereisnomonkey 1", g["repro"].split(";")[1].strip(), "wait 1000"]
     for cmd in extra:
@@ -166,7 +165,7 @@ def launch(home, report, timeout):
         f.write("@echo off\n")
         f.write(f'cd /d "{REPRO_DIR_WIN}"\n')
         f.write(f'openmohaa.exe +set fs_basepath "{GAME_ROOT_WIN}" +set fs_homepath "{REPRO_DIR_WIN}\\home" '
-                f"+set logfile 2 +set developer 1 +set cheats 1 +set cl_playintro 0 +set ui_skip_eamovie 1 "
+                f"+set logfile 2 +set developer 1 +set cheats 1 +set cl_playintro 0 +set ui_autoContinue 1 +set ui_skip_eamovie 1 "
                 f"+set ui_skip_titlescreen 1 +set ui_skip_legalscreen 1 +set com_target_game {target} "
                 f"+exec repro.cfg\n")
     proc = subprocess.Popen(["cmd.exe", "/c", REPRO_DIR_WIN + r"\run.bat"],
