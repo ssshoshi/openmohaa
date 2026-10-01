@@ -391,7 +391,9 @@ class Sidecar:
                 self.local_command(name)
                 return
 
-        self.game("orch_msg -heard \"" + text.replace('"', "'") + "\"")
+        # One line, no quotes of its own: the game splits command files on newlines.
+        safe = re.sub(r"[\r\n]+", " ", text).replace('"', "'")
+        self.game('orch_msg -heard "' + safe + '"')
         with self.lock:
             self.pending.append({"type": "speech", "t": start, "start": iso(start), "end": iso(end), "text": text})
             self.last_activity = max(self.last_activity, end)
@@ -555,7 +557,11 @@ class Sidecar:
                 if not kokoro or not text:
                     self.set_status(self.idle_status())
                     continue
-                samples, rate = kokoro.create(text, voice=self.args.voice, speed=self.args.speed, lang="en-us")
+                try:
+                    samples, rate = kokoro.create(text, voice=self.args.voice, speed=self.args.speed, lang="en-us")
+                except Exception as e:  # noqa: BLE001
+                    self.emit(f"INFO speech failed: {e}")
+                    continue
                 length = len(samples) / rate
                 if self.in_speech:
                     # They're talking: hold the reply until they let go.
@@ -564,8 +570,11 @@ class Sidecar:
                 self.set_status("speaking")
                 self.speaking = True
                 self.speaking_until = now() + length + 0.3
-                self.sd.play(samples, rate)
-                self.sd.wait()
+                try:
+                    self.sd.play(samples, rate)
+                    self.sd.wait()
+                except Exception as e:  # noqa: BLE001
+                    self.emit(f"INFO playback failed: {e}")
                 self.speaking = False
                 if self.speaking_until:
                     self.speaking_until = now() + 0.3

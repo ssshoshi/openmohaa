@@ -2016,7 +2016,8 @@ void Com_Init( char *commandLine ) {
 	Com_Printf ("Altivec support is %s\n", com_altivec->integer ? "enabled" : "disabled");
 #endif
 
-	com_cmddir = Cvar_Get( "com_cmddir", "", 0 );
+	// Only from the command line: a server must not point it elsewhere.
+	com_cmddir = Cvar_Get( "com_cmddir", "", CVAR_INIT );
 	com_pipefile = Cvar_Get( "com_pipefile", "", CVAR_ARCHIVE|CVAR_LATCH );
 	if( com_pipefile->string[0] )
 	{
@@ -2092,8 +2093,9 @@ Added in OPM
 Lets an external tool drive the game on any platform (com_pipefile is Unix only).
 Every file "<com_cmddir>/<name>.txt" in the home data gamedir is deleted, then
 each command in it runs at once with Cmd_ExecuteString, so a running cfg "wait"
-doesn't hold it back (wait itself is ignored). The console output is written to "<com_cmddir>/<name>.out"
-(through "<name>.tmp", renamed when complete).
+doesn't hold it back (wait itself is ignored). The console output is written
+to "<com_cmddir>/<name>.out" (through "<name>.tmp", renamed when complete).
+It can only be set on the command line (+set com_cmddir orch/cmd).
 
 ===============================================================================
 */
@@ -2188,16 +2190,55 @@ static void Com_CmdDirRun( char *text ) {
 
 /*
 ===============
+Com_CmdDirValid
+
+A folder under the home path's gamedir, nothing that leads out of it.
+===============
+*/
+static qboolean Com_CmdDirValid( const char *dir ) {
+	return dir[0] && dir[0] != '/' && dir[0] != '\\' && !strchr( dir, ':' ) && !strstr( dir, ".." ) ? qtrue : qfalse;
+}
+
+/*
+===============
+Com_CmdDirNext
+
+The first command file in name order, or qfalse when there is none.
+===============
+*/
+static qboolean Com_CmdDirNext( const char *dir, char *name, int size ) {
+	char	**list;
+	int		numFiles;
+	int		i;
+
+	list = Sys_ListFiles( dir, ".txt", NULL, &numFiles, qfalse );
+	if ( !list ) {
+		return qfalse;
+	}
+
+	name[0] = 0;
+	for ( i = 0; i < numFiles; i++ ) {
+		if ( !name[0] || strcmp( list[i], name ) < 0 ) {
+			Q_strncpyz( name, list[i], size );
+		}
+	}
+
+	Sys_FreeFileList( list );
+	return name[0] ? qtrue : qfalse;
+}
+
+/*
+===============
 Com_ReadFromCmdDir
 ===============
 */
 void Com_ReadFromCmdDir( void ) {
 	static int	nextPoll;
+	static char	text[CMDDIR_MAX_FILE + 1];
 	char		dir[MAX_OSPATH];
 	char		path[MAX_OSPATH];
-	char		base[MAX_QPATH];
-	char		**list;
-	int			numFiles;
+	char		name[MAX_OSPATH];
+	char		base[MAX_OSPATH];
 	int			now;
 	int			i;
 
@@ -2216,37 +2257,38 @@ void Com_ReadFromCmdDir( void ) {
 
 	if ( com_cmddir->modified ) {
 		com_cmddir->modified = qfalse;
+		if ( !Com_CmdDirValid( com_cmddir->string ) ) {
+			Com_Printf( "com_cmddir: \"%s\" must be a folder in the home path, without \"..\"\n", com_cmddir->string );
+			Cvar_Set( "com_cmddir", "" );
+			return;
+		}
 		FS_CreatePath( FS_HomeData_OSPath( va( "%s/x", com_cmddir->string ) ) );
 	}
 
 	Q_strncpyz( dir, FS_HomeData_OSPath( com_cmddir->string ), sizeof( dir ) );
-	list = Sys_ListFiles( dir, ".txt", NULL, &numFiles, qfalse );
-	if ( !list ) {
-		return;
-	}
 
-	qsort( list, numFiles, sizeof( char * ), Com_CmdDirCompare );
-
-	for ( i = 0; i < numFiles; i++ ) {
+	// A few files a frame. Nothing is allocated across a command: one can
+	// throw an ERR_DROP and leave the frame.
+	for ( i = 0; i < 8 && Com_CmdDirNext( dir, name, sizeof( name ) ); i++ ) {
 		FILE	*f;
-		char	*text;
 		int		len;
 
-		Com_sprintf( path, sizeof( path ), "%s%c%s", dir, PATH_SEP, list[i] );
+		Com_sprintf( path, sizeof( path ), "%s%c%s", dir, PATH_SEP, name );
 		f = Sys_FOpen( path, "rb" );
 		if ( !f ) {
-			continue;
+			break;
 		}
-
-		text = (char *)Z_Malloc( CMDDIR_MAX_FILE + 1 );
 		len = (int)fread( text, 1, CMDDIR_MAX_FILE, f );
 		text[len < 0 ? 0 : len] = 0;
 		fclose( f );
 
-		// remove it before running, so a command that crashes isn't run again
-		remove( path );
+		// Gone before it runs, so a command that crashes isn't run again. One
+		// that can't be removed (still open elsewhere) waits for a later poll.
+		if ( remove( path ) != 0 ) {
+			break;
+		}
 
-		COM_StripExtension( list[i], base, sizeof( base ) );
+		COM_StripExtension( name, base, sizeof( base ) );
 		Com_sprintf( cmddir_outTemp, sizeof( cmddir_outTemp ), "%s%c%s.tmp", dir, PATH_SEP, base );
 		Com_sprintf( cmddir_outFinal, sizeof( cmddir_outFinal ), "%s%c%s.out", dir, PATH_SEP, base );
 		cmddir_out = Sys_FOpen( cmddir_outTemp, "wb" );
@@ -2254,11 +2296,8 @@ void Com_ReadFromCmdDir( void ) {
 		cmddir_active = qtrue;
 		Com_BeginRedirect( cmddir_rdbuf, sizeof( cmddir_rdbuf ), Com_CmdDirFlush );
 		Com_CmdDirRun( text );
-		Z_Free( text );
 		Com_CmdDirFinish();
 	}
-
-	Sys_FreeFileList( list );
 }
 
 

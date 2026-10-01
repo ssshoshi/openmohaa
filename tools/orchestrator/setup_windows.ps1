@@ -16,9 +16,11 @@ New-Item -ItemType Directory -Force -Path $root | Out-Null
 if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
     Write-Output "creating venv in $venv"
     & $Python $PyVersion -m venv $venv
+    if ($LASTEXITCODE -ne 0) { throw "creating the venv failed (is Python $PyVersion installed?)" }
 }
 $py = Join-Path $venv "Scripts\python.exe"
 & $py -m pip install --upgrade pip --quiet
+if ($LASTEXITCODE -ne 0) { throw "upgrading pip failed" }
 & $py -m pip install -r $req
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 Write-Output "sidecar ready: $py"

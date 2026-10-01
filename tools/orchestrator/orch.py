@@ -81,8 +81,10 @@ def cmd_setup(args):
     for n in RUNTIME:
         src = os.path.join(args.build, n)
         if not os.path.isfile(src):
-            found = sorted(glob.glob(os.path.join(GAME_ROOT, "openmohaa-ragdoll", n))
-                           + glob.glob(os.path.join(GAME_ROOT, "openmohaa-*", n)))
+            # The user's main install first; never the live one itself.
+            found = [p for p in glob.glob(os.path.join(GAME_ROOT, "openmohaa-ragdoll", n))
+                     + sorted(glob.glob(os.path.join(GAME_ROOT, "openmohaa-*", n)))
+                     if os.path.dirname(os.path.abspath(p)) != os.path.abspath(LIVE)]
             src = found[0] if found else None
         if src:
             shutil.copyfile(src, os.path.join(LIVE, n))
