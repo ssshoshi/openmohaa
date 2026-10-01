@@ -46,14 +46,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Jolt first: cg_local.h defines a LERP macro its headers collide with.
 #include "cg_physics_local.h"
 #include "cg_bugreport.h"
+#include "cg_pick.h"
 #include "cg_props.h"
 
 #include <ctime>
 #include <string>
 
-#define BR_RANGE      4096.0f
 #define BR_WAIT_FRAMES 3 // for the menu to go and a screenshot to be taken
-#define BR_MAX_SIZE    2048.0f // bigger is an animation carrier or a volume, not a thing
 
 static cvar_t *br_type;
 static cvar_t *br_category;
@@ -69,31 +68,10 @@ enum {
     BR_FINISH     // waiting for the screenshots to be written
 };
 
-enum {
-    BR_TARGET_NONE,
-    BR_TARGET_WORLD,
-    BR_TARGET_PROP,
-    BR_TARGET_ENTITY
-};
-
 typedef struct {
-    int    kind;
-    int    index; // prop or entity number
-    vec3_t origin, axis[3], mins, maxs;
-    char   model[MAX_QPATH];
-} brTarget_t;
-
-typedef struct {
-    int        state;
-    int        frames; // since the state began
-    brTarget_t target;
-
-    // Where the crosshair met the world, and what with.
-    qboolean hit;
-    vec3_t   hitPos, hitNormal;
-    char     hitShader[MAX_QPATH];
-    int      hitSurfaceFlags, hitContents;
-    char     hitThrough[MAX_QPATH]; // the first invisible surface passed, if any
+    int    state;
+    int    frames; // since the state began
+    pick_t pick;
 
     // Where the report was made from.
     vec3_t viewOrg, viewAngles, playerOrigin;
@@ -141,293 +119,6 @@ static void CG_BugReportSetState(int state)
     br.frames = 0;
 }
 
-static std::string CG_JsonString(const char *s)
-{
-    std::string out = "\"";
-
-    for (; *s; s++) {
-        const unsigned char c = (unsigned char)*s;
-
-        switch (c) {
-        case '"':
-            out += "\\\"";
-            break;
-        case '\\':
-            out += "\\\\";
-            break;
-        case '\n':
-            out += "\\n";
-            break;
-        case '\r':
-            out += "\\r";
-            break;
-        case '\t':
-            out += "\\t";
-            break;
-        default:
-            if (c < 0x20) {
-                out += va("\\u%04x", c);
-            } else {
-                out += (char)c;
-            }
-        }
-    }
-
-    return out + "\"";
-}
-
-static std::string CG_JsonVec(const vec3_t v)
-{
-    return va("[%.2f, %.2f, %.2f]", v[0], v[1], v[2]);
-}
-
-static const char *CG_BugReportETypeName(int eType)
-{
-    static const char *names[] = {
-        "modelanim_skel", "modelanim", "vehicle", "player", "item", "general", "missile", "mover", "beam", "multibeam",
-        "portal", "event_only", "rain", "leaf", "speaker", "push_trigger", "teleport_trigger", "decal", "emitter",
-        "rope", "events"
-    };
-
-    if (eType >= 0 && eType < (int)ARRAY_LEN(names)) {
-        return names[eType];
-    }
-    return "unknown";
-}
-
-// The shaders a TIKI's surfaces are drawn with, for the texture category.
-static std::string CG_BugReportModelShaders(const char *model, qboolean json)
-{
-    std::string out;
-    qhandle_t   h;
-    dtiki_t    *tiki;
-
-    if (!model[0] || model[0] == '*') {
-        return json ? "[]" : "";
-    }
-
-    h    = cgi.R_RegisterModel(model);
-    tiki = h ? cgi.R_Model_GetHandle(h) : NULL;
-    if (!tiki) {
-        return json ? "[]" : "";
-    }
-
-    if (json) {
-        out = "[";
-    }
-    for (int i = 0; i < tiki->num_surfaces; i++) {
-        const dtikisurface_t *s      = &tiki->surfaces[i];
-        const char           *shader = s->shader[0];
-
-        // Only the name it was given in the TIKI, when it was given one.
-        if (!shader[0] && s->hShader[0]) {
-            shader = cgi.R_GetShaderName(s->hShader[0]);
-        }
-
-        if (json) {
-            if (i) {
-                out += ", ";
-            }
-            out += "{\"surface\": " + CG_JsonString(s->name) + ", \"shader\": " + CG_JsonString(shader) + "}";
-        } else {
-            if (i) {
-                out += "  ";
-            }
-            out += va("%s=%s", s->name, shader);
-        }
-    }
-    if (json) {
-        out += "]";
-    }
-    return out;
-}
-
-//=============================================================
-// What is under the crosshair
-//=============================================================
-
-static qboolean CG_BugReportInBox(const vec3_t p, const vec3_t origin, const vec3_t axis[3], const vec3_t mins, const vec3_t maxs);
-
-// Anything whose box the eye is in, or that is bigger than any one object, is
-// left out: nothing can be aimed at from inside it, and the invisible models
-// that carry a scripted animation across the map (m1l1's truck paths, five
-// thousand units wide) would otherwise be picked wherever one looked.
-static qboolean CG_BugReportTooBig(const vec3_t mins, const vec3_t maxs)
-{
-    return maxs[0] - mins[0] > BR_MAX_SIZE || maxs[1] - mins[1] > BR_MAX_SIZE || maxs[2] - mins[2] > BR_MAX_SIZE ? qtrue : qfalse;
-}
-
-static void CG_BugReportPick(void)
-{
-    const float  *start = cg.refdef.vieworg;
-    const float  *dir   = cg.refdef.viewaxis[0];
-    brTarget_t    best;
-    float         bestAt, at;
-    trace_t       tr, first;
-    vec3_t        end;
-    baseshader_t *shader;
-
-    memset(&best, 0, sizeof(best));
-    best.index = -1;
-
-    VectorMA(start, BR_RANGE, dir, end);
-    CG_Trace(&tr, start, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SHOT, qfalse, qfalse, "bugreport");
-
-    // Anything in front of the world: props sit inside the clip brushes that
-    // stand in for them, so a little past it too.
-    bestAt = tr.fraction * BR_RANGE + 24.0f;
-
-    // The surface seen, not the clip brush in front of it: on through the
-    // invisible ones, remembering the first. When nothing visible is found
-    // behind it (a clip volume the terrain lies inside), the invisible one is
-    // what is reported.
-    br.hitThrough[0] = 0;
-    first = tr;
-    for (int i = 0; i < 8 && tr.fraction < 1.0f && !tr.startsolid; i++) {
-        vec3_t from;
-
-        shader = cgi.GetShader(tr.shaderNum);
-        if (!shader || !(shader->surfaceFlags & SURF_NODRAW)) {
-            break;
-        }
-        if (!br.hitThrough[0]) {
-            Q_strncpyz(br.hitThrough, shader->shader, sizeof(br.hitThrough));
-        }
-        // Out the far side of the brush: a trace from inside it starts solid.
-        VectorCopy(tr.endpos, from);
-        for (int step = 0; step < 64; step++) {
-            VectorMA(from, 4.0f, dir, from);
-            CG_Trace(&tr, from, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SHOT, qfalse, qfalse, "bugreport");
-            if (!tr.startsolid) {
-                break;
-            }
-        }
-    }
-
-    if (tr.fraction >= 1.0f || tr.startsolid) {
-        tr               = first;
-        br.hitThrough[0] = 0;
-    }
-
-    br.hit = (tr.fraction < 1.0f && !tr.startsolid) ? qtrue : qfalse;
-    br.hitShader[0] = 0;
-    br.hitSurfaceFlags = br.hitContents = 0;
-    if (br.hit) {
-        VectorCopy(tr.endpos, br.hitPos);
-        VectorCopy(tr.plane.normal, br.hitNormal);
-        shader = cgi.GetShader(tr.shaderNum);
-        if (shader) {
-            Q_strncpyz(br.hitShader, shader->shader, sizeof(br.hitShader));
-            br.hitSurfaceFlags = shader->surfaceFlags;
-            br.hitContents     = shader->contentFlags;
-        }
-        best.kind = BR_TARGET_WORLD;
-    }
-
-    for (int i = 0; i < cg_numProps; i++) {
-        const cgProp_t *p = &cg_props[i];
-
-        if (CG_BugReportTooBig(p->mins, p->maxs) || CG_BugReportInBox(start, p->origin, p->axis, p->mins, p->maxs)) {
-            continue;
-        }
-        if (CG_PhysicsRayHitsBox(start, dir, BR_RANGE, p->origin, p->axis, p->mins, p->maxs, &at) && at < bestAt) {
-            bestAt     = at;
-            best.kind  = BR_TARGET_PROP;
-            best.index = i;
-            VectorCopy(p->origin, best.origin);
-            AxisCopy(p->axis, best.axis);
-            VectorCopy(p->mins, best.mins);
-            VectorCopy(p->maxs, best.maxs);
-            Q_strncpyz(best.model, p->name, sizeof(best.model));
-        }
-    }
-
-    for (int i = 0; i < cg.snap->numEntities; i++) {
-        const entityState_t *es = &cg.snap->entities[i];
-        vec3_t               origin, axis[3], mins, maxs;
-
-        if (es->number == cg.snap->ps.clientNum) {
-            continue;
-        }
-        if (!CG_PhysicsEntityBox(es->number, origin, axis, mins, maxs) || CG_BugReportTooBig(mins, maxs)
-            || CG_BugReportInBox(start, origin, axis, mins, maxs)) {
-            continue;
-        }
-        if (CG_PhysicsRayHitsBox(start, dir, BR_RANGE, origin, axis, mins, maxs, &at) && at < bestAt) {
-            bestAt     = at;
-            best.kind  = BR_TARGET_ENTITY;
-            best.index = es->number;
-            VectorCopy(origin, best.origin);
-            AxisCopy(axis, best.axis);
-            VectorCopy(mins, best.mins);
-            VectorCopy(maxs, best.maxs);
-            if (es->modelindex > 0 && es->modelindex < MAX_MODELS) {
-                Q_strncpyz(best.model, CG_ConfigString(CS_MODELS + es->modelindex), sizeof(best.model));
-            } else {
-                best.model[0] = 0;
-            }
-        }
-    }
-
-    br.target = best;
-}
-
-static void CG_BugReportDrawBox(const brTarget_t *t, float r, float g, float b)
-{
-    vec3_t corners[8];
-
-    for (int i = 0; i < 8; i++) {
-        const vec3_t local = {
-            (i & 1) ? t->maxs[0] : t->mins[0], (i & 2) ? t->maxs[1] : t->mins[1], (i & 4) ? t->maxs[2] : t->mins[2]
-        };
-
-        VectorCopy(t->origin, corners[i]);
-        for (int k = 0; k < 3; k++) {
-            VectorMA(corners[i], local[k], t->axis[k], corners[i]);
-        }
-    }
-
-    for (int i = 0; i < 8; i++) {
-        for (int k = 0; k < 3; k++) {
-            const int j = i | (1 << k);
-
-            if (j != i) {
-                cgi.R_DebugLine(corners[i], corners[j], r, g, b, 1.0f);
-            }
-        }
-    }
-}
-
-// Whether a point is inside a box turned by axis about origin.
-static qboolean CG_BugReportInBox(const vec3_t p, const vec3_t origin, const vec3_t axis[3], const vec3_t mins, const vec3_t maxs)
-{
-    vec3_t rel;
-
-    VectorSubtract(p, origin, rel);
-    for (int k = 0; k < 3; k++) {
-        const float d = DotProduct(rel, axis[k]);
-
-        if (d < mins[k] || d > maxs[k]) {
-            return qfalse;
-        }
-    }
-    return qtrue;
-}
-
-// A small cross where the crosshair meets the world.
-static void CG_BugReportDrawHit(float r, float g, float b)
-{
-    for (int k = 0; k < 3; k++) {
-        vec3_t a, c;
-
-        VectorCopy(br.hitPos, a);
-        VectorCopy(br.hitPos, c);
-        a[k] -= 8.0f;
-        c[k] += 8.0f;
-        cgi.R_DebugLine(a, c, r, g, b, 1.0f);
-    }
-}
-
 // The target's description for the overlay, one line per call, for the
 // chosen category. Returns the number of lines written.
 static int CG_BugReportDescribe(char lines[][256], int max)
@@ -440,17 +131,17 @@ static int CG_BugReportDescribe(char lines[][256], int max)
         Com_sprintf(lines[n++], sizeof(lines[0]), __VA_ARGS__); \
     }
 
-    switch (br.target.kind) {
-    case BR_TARGET_PROP:
-        BR_LINE("static model #%d: %s", br.target.index, br.target.model);
-        BR_LINE("  %s   %s", cg_props[br.target.index].solid ? (cg_props[br.target.index].dynamic ? "moves" : "fixed") : "not solid",
-            cg_props[br.target.index].why ? cg_props[br.target.index].why : "");
+    switch (br.pick.target.kind) {
+    case PICK_TARGET_PROP:
+        BR_LINE("static model #%d: %s", br.pick.target.index, br.pick.target.model);
+        BR_LINE("  %s   %s", cg_props[br.pick.target.index].solid ? (cg_props[br.pick.target.index].dynamic ? "moves" : "fixed") : "not solid",
+            cg_props[br.pick.target.index].why ? cg_props[br.pick.target.index].why : "");
         break;
-    case BR_TARGET_ENTITY:
-        BR_LINE("entity #%d (%s): %s", br.target.index, CG_BugReportETypeName(cg_entities[br.target.index].currentState.eType),
-            br.target.model[0] ? br.target.model : "no model");
+    case PICK_TARGET_ENTITY:
+        BR_LINE("entity #%d (%s): %s", br.pick.target.index, CG_PickETypeName(cg_entities[br.pick.target.index].currentState.eType),
+            br.pick.target.model[0] ? br.pick.target.model : "no model");
         break;
-    case BR_TARGET_WORLD:
+    case PICK_TARGET_WORLD:
         BR_LINE("world");
         break;
     default:
@@ -459,27 +150,27 @@ static int CG_BugReportDescribe(char lines[][256], int max)
     }
 
     if (!Q_stricmp(cat, "texture")) {
-        if (br.hit) {
-            BR_LINE("surface: %s   flags 0x%x contents 0x%x", br.hitShader, br.hitSurfaceFlags, br.hitContents);
+        if (br.pick.hit) {
+            BR_LINE("surface: %s   flags 0x%x contents 0x%x", br.pick.hitShader, br.pick.hitSurfaceFlags, br.pick.hitContents);
         }
-        if (br.hitThrough[0]) {
-            BR_LINE("  behind invisible %s", br.hitThrough);
+        if (br.pick.hitThrough[0]) {
+            BR_LINE("  behind invisible %s", br.pick.hitThrough);
         }
-        if (br.target.kind == BR_TARGET_PROP || br.target.kind == BR_TARGET_ENTITY) {
-            BR_LINE("model shaders: %s", CG_BugReportModelShaders(br.target.model, qfalse).c_str());
+        if (br.pick.target.kind == PICK_TARGET_PROP || br.pick.target.kind == PICK_TARGET_ENTITY) {
+            BR_LINE("model shaders: %s", CG_PickModelShaders(br.pick.target.model, qfalse).c_str());
         }
     } else if (!Q_stricmp(cat, "lighting")) {
         vec3_t light;
 
-        if (br.hit) {
-            cgi.R_GetLightingForDecal(light, br.hitNormal, br.hitPos);
+        if (br.pick.hit) {
+            cgi.R_GetLightingForDecal(light, br.pick.hitNormal, br.pick.hitPos);
             BR_LINE("light at the crosshair: %.0f %.0f %.0f   (%.0f %.0f %.0f)", light[0], light[1], light[2],
-                br.hitPos[0], br.hitPos[1], br.hitPos[2]);
+                br.pick.hitPos[0], br.pick.hitPos[1], br.pick.hitPos[2]);
         }
         cgi.R_GetLightingForSmoke(light, cg.refdef.vieworg);
         BR_LINE("light at the eye: %.0f %.0f %.0f", light[0], light[1], light[2]);
-    } else if (br.hit) {
-        BR_LINE("aim: %.0f %.0f %.0f on %s", br.hitPos[0], br.hitPos[1], br.hitPos[2], br.hitShader);
+    } else if (br.pick.hit) {
+        BR_LINE("aim: %.0f %.0f %.0f on %s", br.pick.hitPos[0], br.pick.hitPos[1], br.pick.hitPos[2], br.pick.hitShader);
     }
 
 #undef BR_LINE
@@ -490,26 +181,13 @@ static int CG_BugReportDescribe(char lines[][256], int max)
 // The bundle
 //=============================================================
 
-// maps/m1l1.bsp -> m1l1, as devmap takes it.
-static const char *CG_BugReportMapName(void)
-{
-    static char map[64];
-
-    Q_strncpyz(map, cgs.mapname, sizeof(map));
-    if (!Q_stricmpn(map, "maps/", 5)) {
-        memmove(map, map + 5, strlen(map + 5) + 1);
-    }
-    COM_StripExtension(map, map, sizeof(map));
-    return map;
-}
-
 static void CG_BugReportMakeId(void)
 {
     const time_t now = time(NULL);
     struct tm   *t   = localtime(&now);
     char         map[64], *p;
 
-    Q_strncpyz(map, CG_BugReportMapName(), sizeof(map));
+    Q_strncpyz(map, CG_PickMapName(), sizeof(map));
     for (p = map; *p; p++) {
         if (!isalnum((unsigned char)*p) && *p != '_' && *p != '-') {
             *p = '_';
@@ -572,7 +250,7 @@ static void CG_BugReportWriteJson(void)
     j += va("    \"health\": %d,\n", cg.snap->ps.stats[STAT_HEALTH]);
     j += va(
         "    \"repro\": \"devmap %s; setviewpos %.0f %.0f %.0f %.0f\"",
-        CG_BugReportMapName(),
+        CG_PickMapName(),
         br.playerOrigin[0],
         br.playerOrigin[1],
         br.playerOrigin[2],
@@ -582,20 +260,7 @@ static void CG_BugReportWriteJson(void)
     j += "  },\n";
 
     j += "  \"aim\": {\n";
-    j += va("    \"hit\": %s", br.hit ? "true" : "false");
-    if (br.hit) {
-        vec3_t light;
-
-        cgi.R_GetLightingForDecal(light, br.hitNormal, br.hitPos);
-        j += ",\n    \"position\": " + CG_JsonVec(br.hitPos) + ",\n";
-        j += "    \"normal\": " + CG_JsonVec(br.hitNormal) + ",\n";
-        j += "    \"shader\": " + CG_JsonString(br.hitShader) + ",\n";
-        j += "    \"through_invisible\": " + CG_JsonString(br.hitThrough) + ",\n";
-        j += va("    \"surface_flags\": %d,\n", br.hitSurfaceFlags);
-        j += va("    \"contents\": %d,\n", br.hitContents);
-        j += "    \"light\": " + CG_JsonVec(light) + ",\n";
-        j += va("    \"distance\": %.0f", Distance(br.viewOrg, br.hitPos));
-    }
+    j += CG_PickAimJson(&br.pick, br.viewOrg, "    ");
     j += "\n  },\n";
 
     {
@@ -606,44 +271,7 @@ static void CG_BugReportWriteJson(void)
     }
 
     j += "  \"target\": {\n";
-    switch (br.target.kind) {
-    case BR_TARGET_PROP:
-        {
-            const cgProp_t *p = &cg_props[br.target.index];
-
-            j += "    \"kind\": \"static_model\",\n";
-            j += va("    \"index\": %d,\n", br.target.index);
-            j += va("    \"static_index\": %d,\n", p->staticIndex);
-            j += va("    \"solid\": %s,\n", p->solid ? "true" : "false");
-            j += va("    \"dynamic\": %s,\n", p->dynamic ? "true" : "false");
-            j += "    \"physics_why\": " + CG_JsonString(p->why ? p->why : "") + ",\n";
-            j += "    \"angles\": " + CG_JsonVec(p->angles) + ",\n";
-        }
-        break;
-    case BR_TARGET_ENTITY:
-        {
-            const centity_t *cent = &cg_entities[br.target.index];
-
-            j += "    \"kind\": \"entity\",\n";
-            j += va("    \"entnum\": %d,\n", br.target.index);
-            j += "    \"etype\": " + CG_JsonString(CG_BugReportETypeName(cent->currentState.eType)) + ",\n";
-            j += "    \"angles\": " + CG_JsonVec(cent->lerpAngles) + ",\n";
-        }
-        break;
-    case BR_TARGET_WORLD:
-        j += "    \"kind\": \"world\",\n";
-        break;
-    default:
-        j += "    \"kind\": \"none\",\n";
-        break;
-    }
-    if (br.target.kind == BR_TARGET_PROP || br.target.kind == BR_TARGET_ENTITY) {
-        j += "    \"model\": " + CG_JsonString(br.target.model) + ",\n";
-        j += "    \"origin\": " + CG_JsonVec(br.target.origin) + ",\n";
-        j += "    \"mins\": " + CG_JsonVec(br.target.mins) + ",\n";
-        j += "    \"maxs\": " + CG_JsonVec(br.target.maxs) + ",\n";
-        j += "    \"model_shaders\": " + CG_BugReportModelShaders(br.target.model, qtrue) + ",\n";
-    }
+    j += CG_PickTargetJson(&br.pick, "    ") + ",\n";
     j += "    \"overlay\": [";
     for (int i = 0; i < numLines; i++) {
         j += (i ? ", " : "") + CG_JsonString(lines[i]);
@@ -726,7 +354,7 @@ void CG_BugReportSubmit_f(void)
         cgi.Cvar_Set("br_title", cgi.Argv(3));
         cgi.Cvar_Set("br_desc", cgi.Argc() > 4 ? cgi.Argv(4) : "");
         if (br.state == BR_IDLE || br.state == BR_PICK) {
-            CG_BugReportPick();
+            CG_Pick(&br.pick);
             VectorCopy(cg.refdef.vieworg, br.viewOrg);
             VectorCopy(cg.refdefViewAngles, br.viewAngles);
             VectorCopy(cg.snap->ps.origin, br.playerOrigin);
@@ -765,7 +393,7 @@ static void CG_BugReportFinish(void)
     cgi.Cmd_Execute(EXEC_NOW, va("s_listactive bugreports/%s/sounds.txt\n", br.id));
     if (sp) {
         cgi.SendClientCommand(
-            va("bugreport_server %s %d", br.id, br.target.kind == BR_TARGET_ENTITY ? br.target.index : -1)
+            va("bugreport_server %s %d", br.id, br.pick.target.kind == PICK_TARGET_ENTITY ? br.pick.target.index : -1)
         );
         cgi.Cmd_Execute(EXEC_NOW, va("savegame br_%s\n", br.id));
     }
@@ -790,15 +418,15 @@ void CG_BugReportFrame(void)
     }
 
     if (br.state == BR_PICK) {
-        CG_BugReportPick();
+        CG_Pick(&br.pick);
     }
 
     if (br.state == BR_PICK || br.state == BR_LOCKED || br.state == BR_SHOT_MARK) {
-        if (br.target.kind == BR_TARGET_PROP || br.target.kind == BR_TARGET_ENTITY) {
-            CG_BugReportDrawBox(&br.target, 1.0f, 1.0f, 0.2f);
+        if (br.pick.target.kind == PICK_TARGET_PROP || br.pick.target.kind == PICK_TARGET_ENTITY) {
+            CG_PickDrawBox(&br.pick.target, 1.0f, 1.0f, 0.2f);
         }
-        if (br.hit) {
-            CG_BugReportDrawHit(0.2f, 1.0f, 1.0f);
+        if (br.pick.hit) {
+            CG_PickDrawHit(&br.pick, 0.2f, 1.0f, 1.0f);
         }
     }
 }

@@ -96,6 +96,7 @@ cvar_t	*com_viewlog;
 cvar_t	*com_logfile;		// 1 = buffer log, 2 = flush after each print
 cvar_t	*com_logfile_timestamps;
 cvar_t	*com_pipefile;
+cvar_t	*com_cmddir;
 cvar_t	*com_showtrace;
 cvar_t	*com_shortversion;
 cvar_t	*com_version;
@@ -2015,6 +2016,7 @@ void Com_Init( char *commandLine ) {
 	Com_Printf ("Altivec support is %s\n", com_altivec->integer ? "enabled" : "disabled");
 #endif
 
+	com_cmddir = Cvar_Get( "com_cmddir", "", 0 );
 	com_pipefile = Cvar_Get( "com_pipefile", "", CVAR_ARCHIVE|CVAR_LATCH );
 	if( com_pipefile->string[0] )
 	{
@@ -2079,6 +2081,184 @@ void Com_ReadFromPipe( void )
 			accu = 0;
 		}
 	}
+}
+
+/*
+===============================================================================
+
+COMMAND DIRECTORY
+
+Added in OPM
+Lets an external tool drive the game on any platform (com_pipefile is Unix only).
+Every file "<com_cmddir>/<name>.txt" in the home data gamedir is deleted, then
+each command in it runs at once with Cmd_ExecuteString, so a running cfg "wait"
+doesn't hold it back (wait itself is ignored). The console output is written to "<com_cmddir>/<name>.out"
+(through "<name>.tmp", renamed when complete).
+
+===============================================================================
+*/
+
+#define CMDDIR_POLL_MSEC	100
+#define CMDDIR_MAX_FILE		16384
+
+static FILE		*cmddir_out;
+static char		cmddir_outTemp[MAX_OSPATH];
+static char		cmddir_outFinal[MAX_OSPATH];
+static char		cmddir_rdbuf[4096];
+static qboolean	cmddir_active;
+
+static void Com_CmdDirFlush( char *text ) {
+	if ( cmddir_out && text[0] ) {
+		fwrite( text, 1, strlen( text ), cmddir_out );
+	}
+}
+
+/*
+===============
+Com_CmdDirFinish
+
+Closes the result of the file being run. Also called on the next frame when
+a command threw an ERR_DROP, which skips the normal end of the file.
+===============
+*/
+static void Com_CmdDirFinish( void ) {
+	if ( !cmddir_active ) {
+		return;
+	}
+
+	cmddir_active = qfalse;
+	Com_EndRedirect();
+
+	if ( cmddir_out ) {
+		fclose( cmddir_out );
+		cmddir_out = NULL;
+		remove( cmddir_outFinal );
+		rename( cmddir_outTemp, cmddir_outFinal );
+	}
+}
+
+static int Com_CmdDirCompare( const void *a, const void *b ) {
+	return strcmp( *(const char **)a, *(const char **)b );
+}
+
+/*
+===============
+Com_CmdDirRun
+
+Runs the commands of one file, split on newlines and on semicolons outside quotes
+===============
+*/
+static void Com_CmdDirRun( char *text ) {
+	char	*start;
+	char	*p;
+	int		quotes;
+
+	start = text;
+	quotes = 0;
+	for ( p = text; ; p++ ) {
+		if ( *p == '"' ) {
+			quotes++;
+		}
+
+		if ( *p && *p != '\n' && *p != '\r' && ( *p != ';' || ( quotes & 1 ) ) ) {
+			continue;
+		}
+
+		if ( p > start ) {
+			char saved = *p;
+			*p = 0;
+			Cmd_TokenizeString( start );
+			// wait would hold the console's command buffer, not this file
+			if ( Q_stricmp( Cmd_Argv( 0 ), "wait" ) ) {
+				Cmd_ExecuteString( start );
+			} else {
+				Com_Printf( "com_cmddir: wait is ignored\n" );
+			}
+			*p = saved;
+		}
+
+		if ( !*p ) {
+			break;
+		}
+
+		start = p + 1;
+		quotes = 0;
+	}
+}
+
+/*
+===============
+Com_ReadFromCmdDir
+===============
+*/
+void Com_ReadFromCmdDir( void ) {
+	static int	nextPoll;
+	char		dir[MAX_OSPATH];
+	char		path[MAX_OSPATH];
+	char		base[MAX_QPATH];
+	char		**list;
+	int			numFiles;
+	int			now;
+	int			i;
+
+	// a command threw an error in an earlier frame
+	Com_CmdDirFinish();
+
+	if ( !com_cmddir || !com_cmddir->string[0] ) {
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	if ( now - nextPoll < 0 ) {
+		return;
+	}
+	nextPoll = now + CMDDIR_POLL_MSEC;
+
+	if ( com_cmddir->modified ) {
+		com_cmddir->modified = qfalse;
+		FS_CreatePath( FS_HomeData_OSPath( va( "%s/x", com_cmddir->string ) ) );
+	}
+
+	Q_strncpyz( dir, FS_HomeData_OSPath( com_cmddir->string ), sizeof( dir ) );
+	list = Sys_ListFiles( dir, ".txt", NULL, &numFiles, qfalse );
+	if ( !list ) {
+		return;
+	}
+
+	qsort( list, numFiles, sizeof( char * ), Com_CmdDirCompare );
+
+	for ( i = 0; i < numFiles; i++ ) {
+		FILE	*f;
+		char	*text;
+		int		len;
+
+		Com_sprintf( path, sizeof( path ), "%s%c%s", dir, PATH_SEP, list[i] );
+		f = Sys_FOpen( path, "rb" );
+		if ( !f ) {
+			continue;
+		}
+
+		text = (char *)Z_Malloc( CMDDIR_MAX_FILE + 1 );
+		len = (int)fread( text, 1, CMDDIR_MAX_FILE, f );
+		text[len < 0 ? 0 : len] = 0;
+		fclose( f );
+
+		// remove it before running, so a command that crashes isn't run again
+		remove( path );
+
+		COM_StripExtension( list[i], base, sizeof( base ) );
+		Com_sprintf( cmddir_outTemp, sizeof( cmddir_outTemp ), "%s%c%s.tmp", dir, PATH_SEP, base );
+		Com_sprintf( cmddir_outFinal, sizeof( cmddir_outFinal ), "%s%c%s.out", dir, PATH_SEP, base );
+		cmddir_out = Sys_FOpen( cmddir_outTemp, "wb" );
+
+		cmddir_active = qtrue;
+		Com_BeginRedirect( cmddir_rdbuf, sizeof( cmddir_rdbuf ), Com_CmdDirFlush );
+		Com_CmdDirRun( text );
+		Z_Free( text );
+		Com_CmdDirFinish();
+	}
+
+	Sys_FreeFileList( list );
 }
 
 
@@ -2321,6 +2501,10 @@ void Com_Frame( void ) {
 	if ( setjmp (abortframe) ) {
 		return;			// an ERR_DROP was thrown
 	}
+
+	// Added in OPM
+	//  Close the command file whose command threw the error
+	Com_CmdDirFinish();
 
 	SV_SetFrameNumber(com_frameNumber);
 
@@ -2594,6 +2778,7 @@ void Com_Frame( void ) {
 	}
 
 	Com_ReadFromPipe();
+	Com_ReadFromCmdDir();
 
     Sys_ProcessBackgroundTasks();
 

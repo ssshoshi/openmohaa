@@ -140,6 +140,11 @@ qboolean G_BugReportServerCmd(gentity_t *ent)
     out += "\n== scripts ==\n";
     out += Director.GetStatus();
 
-    gi.FS_WriteFile(va("bugreports/%s/server.txt", id), out.c_str(), out.length());
+    // bugreport_server <id> <entnum> orch: a shot of the orchestrator (cgame/cg_orch.cpp)
+    if (gi.Argc() > 3 && !Q_stricmp(gi.Argv(3), "orch")) {
+        gi.FS_WriteFile(va("orch/events/%s.server.txt", id), out.c_str(), out.length());
+    } else {
+        gi.FS_WriteFile(va("bugreports/%s/server.txt", id), out.c_str(), out.length());
+    }
     return qtrue;
 }

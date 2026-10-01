@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
 #include "cg_bugreport.h"
+#include "cg_orch.h"
 #include "../fgame/bg_voteoptions.h"
 
 void CG_TargetCommand_f(void);
@@ -513,6 +514,11 @@ static consoleCommand_t commands[] = {
     //  In-game reports
     {"bugreport",              &CG_BugReport_f             },
     {"br_submit",              &CG_BugReportSubmit_f       },
+    {"orch",                   &CG_Orch_f                  },
+    {"orch_shot",              &CG_OrchShot_f              },
+    {"orch_msg",               &CG_OrchMsg_f               },
+    {"orch_status",            &CG_OrchStatus_f            },
+    {"orch_state",             &CG_OrchState_f             },
     {"viewpos",                &CG_Viewpos_f               },
     {"sizeup",                 &CG_SizeUp_f                },
     {"sizedown",               &CG_SizeDown_f              },
