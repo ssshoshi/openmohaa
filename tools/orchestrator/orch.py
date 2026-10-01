@@ -131,6 +131,10 @@ def cmd_launch(args):
         sys.exit("the live game is already running")
     for d in (CMD_DIR, SAY_DIR):
         os.makedirs(d, exist_ok=True)
+    # Left by a game that was killed; it would stop the start at a dialog.
+    pid_file = os.path.join(MAIN, "OpenMoHAA.pid")
+    if os.path.isfile(pid_file):
+        os.remove(pid_file)
     # Commands left over from the last run would fire at start.
     for stale in glob.glob(os.path.join(CMD_DIR, "*")):
         os.remove(stale)
@@ -162,10 +166,11 @@ def cmd_launch(args):
     with open(bat, "w", newline="\r\n") as f:
         f.write("@echo off\n")
         f.write(f'cd /d "{winpath(LIVE)}"\n')
-        f.write("start \"\" " + line + "\n")
-    # No pipes: the game inherits them and the call would wait for it to exit.
-    subprocess.run(["cmd.exe", "/c", winpath(bat)], cwd="/mnt/c",
-                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        f.write(line + "\n")
+    # Interop holds cmd.exe until the game exits, even through "start", so
+    # leave it running on its own.
+    subprocess.Popen(["cmd.exe", "/c", winpath(bat)], cwd="/mnt/c", start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if args.focus and os.path.isfile(FOCUS):
         time.sleep(6)
         subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(FOCUS)],
@@ -174,6 +179,13 @@ def cmd_launch(args):
 
 
 def cmd_stop(args):
+    # A clean quit first: a killed game leaves OpenMoHAA.pid behind, and the
+    # next start then stops at an "Abnormal Exit" dialog.
+    if any(is_live for _, _, is_live in live_processes()):
+        run_commands("quit", timeout=2.0)
+        deadline = time.time() + 10
+        while time.time() < deadline and any(is_live for _, _, is_live in live_processes()):
+            time.sleep(0.5)
     live = [pid for pid, _, is_live in live_processes() if is_live]
     for pid in live:
         subprocess.run(["powershell.exe", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
