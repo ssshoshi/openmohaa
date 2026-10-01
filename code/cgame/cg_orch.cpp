@@ -25,7 +25,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // The live orchestrator: the player talks to an agent while playing, and the
 // agent answers and changes the game as it runs (tools/orchestrator/).
 //
-// The game's half is small. orch (F10) turns orchestrator mode on. orch_shot
+// The game's half is small. orch (F10) turns orchestrator mode on. The player
+// talks while holding a key the sidecar watches (MOUSE4). orch_shot
 // (MOUSE3) then takes a screenshot and writes what is under the crosshair to
 // orch/events/<id>.json in the home path, which the voice sidecar puts on the
 // same timeline as what was said. Replies come back as orch_msg commands,
@@ -79,6 +80,7 @@ typedef struct {
     int       nextMsg;
 
     char status[32];
+    char statusKey[32]; // the push-to-talk key, with status "ready"
 } orchState_t;
 
 static orchState_t orch;
@@ -239,6 +241,7 @@ void CG_OrchMsg_f(void)
 void CG_OrchStatus_f(void)
 {
     Q_strncpyz(orch.status, cgi.Argc() > 1 ? cgi.Argv(1) : "", sizeof(orch.status));
+    Q_strncpyz(orch.statusKey, cgi.Argc() > 2 ? cgi.Argv(2) : "", sizeof(orch.statusKey));
 }
 
 void CG_OrchState_f(void)
@@ -414,6 +417,8 @@ static void CG_OrchDrawPanel(void)
         } else if (!Q_stricmp(orch.status, "speaking")) {
             label = "ORCH  [SPEAKING]";
             CG_OrchColor(color, 0.4f, 0.75f, 1.0f, 1.0f);
+        } else if (!Q_stricmp(orch.status, "ready")) {
+            label = orch.statusKey[0] ? va("ORCH  [hold %s to talk]", orch.statusKey) : "ORCH  [ready]";
         } else if (!Q_stricmp(orch.status, "muted")) {
             label = "ORCH  [MUTED]";
         } else if (!orch.status[0] || !Q_stricmp(orch.status, "off")) {

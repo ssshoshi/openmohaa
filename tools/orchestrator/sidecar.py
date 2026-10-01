@@ -1,6 +1,8 @@
 """The orchestrator's voice sidecar. Runs on Windows, next to the game.
 
-It listens all the time, turns speech into text on the GPU (faster-whisper),
+It records while the push-to-talk key is held (MOUSE4 by default, only while
+the game has the focus; --always-on listens all the time instead), turns
+speech into text on the GPU (faster-whisper),
 watches the game's shots (orch/events), and groups both into turns on one
 clock: a turn ends after a pause in speech. Each turn is written to
 orch/sessions/<date>/turns/<n>.json and announced on stdout with one line,
@@ -8,8 +10,8 @@ orch/sessions/<date>/turns/<n>.json and announced on stdout with one line,
   TURN 12 "make this guy flank left instead" shots=1 errors=0 /mnt/d/.../turns/0012.json
 
 which is what the agent's Monitor turns into a notification. Replies the agent
-writes to orch/say/*.txt are spoken with Kokoro, with the microphone muted
-meanwhile so the sidecar never hears itself.
+writes to orch/say/*.txt are spoken with Kokoro; pressing the talk key cuts a
+reply short.
 
 Started by the agent from WSL (see tools/orchestrator/README.md):
 
@@ -86,6 +88,39 @@ def to_wsl(path):
     return "/mnt/" + m.group(1).lower() + "/" + m.group(2).replace("\\", "/")
 
 
+# Virtual-key codes for --ptt-key.
+KEYS = {"mouse3": 0x04, "mouse4": 0x05, "mouse5": 0x06, "space": 0x20, "tab": 0x09, "capslock": 0x14,
+        "shift": 0x10, "ctrl": 0x11, "alt": 0x12, "backquote": 0xC0, "insert": 0x2D, "home": 0x24}
+KEYS.update({f"f{i}": 0x6F + i for i in range(1, 13)})
+KEYS.update({c: ord(c.upper()) for c in "abcdefghijklmnopqrstuvwxyz0123456789"})
+
+
+def key_code(name):
+    if name.lower() not in KEYS:
+        sys.exit(f"--ptt-key: unknown key {name}; one of {', '.join(sorted(KEYS))}")
+    return KEYS[name.lower()]
+
+
+def foreground_exe():
+    """The file name of the program whose window has the focus (Windows)."""
+    import ctypes
+    from ctypes import wintypes
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return ""
+        return os.path.basename(buf.value).lower()
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 class Sidecar:
     def __init__(self, args):
         self.args = args
@@ -115,6 +150,17 @@ class Sidecar:
         self.status_time = 0.0
         self.stop = threading.Event()
         self.ready = threading.Event()       # Whisper loaded
+        self.sd = None                       # sounddevice, once speaking
+        self.speaking = False
+        self.wav_time = 0.0                  # --wav: seconds played
+        self.ptt_holds = []                  # --ptt-test: when the key is "held"
+        if args.ptt_test:
+            for span in args.ptt_test.split(","):
+                a, b = span.split("-")
+                self.ptt_holds.append((float(a), float(b)))
+        self.ptt_vk = key_code(args.ptt_key) if not args.always_on else 0
+        self.focus_checked = 0.0
+        self.game_focused = False
         self.audio_done = threading.Event()  # --wav played out
 
     # ------------------------------------------------------------ output
@@ -144,7 +190,86 @@ class Sidecar:
             self.status_time = now()
             self.game(f"orch_status {status}")
 
+    def idle_status(self):
+        if self.muted:
+            return "muted"
+        return "listening" if self.args.always_on else "ready " + self.args.ptt_key.upper()
+
     # ------------------------------------------------------------ listening
+
+    def key_down(self):
+        if self.ptt_holds:
+            return any(a <= self.wav_time < b for a, b in self.ptt_holds)
+        import ctypes
+        if not ctypes.windll.user32.GetAsyncKeyState(self.ptt_vk) & 0x8000:
+            return False
+        # Only for the game: the key means something else elsewhere.
+        t = now()
+        if t - self.focus_checked > 0.3:
+            self.focus_checked = t
+            self.game_focused = foreground_exe().startswith("openmohaa") or self.args.any_window
+        return self.game_focused
+
+    def interrupt_speech(self):
+        if self.speaking and self.sd:
+            self.sd.stop()
+        self.speaking_until = 0.0
+
+    def listen(self):
+        if self.args.always_on:
+            self.listen_always()
+        else:
+            self.listen_ptt()
+
+    def listen_ptt(self):
+        """Records while the talk key is held, plus a little before and after."""
+        import webrtcvad
+        self.ready.wait()
+        vad = webrtcvad.Vad(self.args.vad)
+        pre = collections.deque(maxlen=400 // FRAME_MS)   # words started just before the press
+        tail_frames = 300 // FRAME_MS                     # and finished just after the release
+        held = False
+        tail = 0
+        frames = []
+        start = 0.0
+
+        for frame in self.audio_frames():
+            t = now()
+            down = not self.muted and self.key_down()
+            if down and not held:
+                held = True
+                self.in_speech = True
+                start = t - len(pre) * FRAME_MS / 1000
+                frames = list(pre)
+                pre.clear()
+                tail = 0
+                self.interrupt_speech()
+                self.set_status("listening")
+            if not held:
+                pre.append(frame)
+                continue
+
+            frames.append(frame)
+            if down:
+                tail = 0
+                continue
+            tail += 1
+            if tail < tail_frames:
+                continue
+
+            held = False
+            audio = np.concatenate(frames)
+            frames = []
+            voiced = sum(1 for i in range(0, len(audio) - FRAME + 1, FRAME)
+                         if vad.is_speech(audio[i:i + FRAME].tobytes(), RATE))
+            with self.lock:
+                self.last_activity = t
+                self.in_speech = False
+            self.set_status(self.idle_status())
+            # A tap, or a press with nothing said, is not an utterance.
+            if voiced >= 5:
+                self.utterances.put((start, t, audio))
+
 
     def audio_frames(self):
         """30 ms int16 frames from the microphone, or from --wav."""
@@ -155,10 +280,12 @@ class Sidecar:
                     sys.exit("--wav must be 16 kHz mono 16-bit")
                 data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
             for i in range(0, len(data) - FRAME, FRAME):
+                self.wav_time = i / RATE
                 yield data[i:i + FRAME]
                 time.sleep(FRAME_MS / 1000)
             # Silence after it, so the last utterance ends.
-            for _ in range(200):
+            for k in range(200):
+                self.wav_time = len(data) / RATE + k * FRAME_MS / 1000
                 yield np.zeros(FRAME, dtype=np.int16)
                 time.sleep(FRAME_MS / 1000)
             self.audio_done.set()
@@ -178,7 +305,8 @@ class Sidecar:
                 except queue.Empty:
                     continue
 
-    def listen(self):
+    def listen_always(self):
+        """Voice activity detection decides when speech starts and ends."""
         import webrtcvad
         self.ready.wait()
         vad = webrtcvad.Vad(self.args.vad)
@@ -241,8 +369,8 @@ class Sidecar:
     def transcribe(self):
         model = self.load_whisper()
         self.ready.set()
-        self.emit("READY listening")
-        self.set_status("listening")
+        self.emit("READY " + ("listening" if self.args.always_on else f"push to talk: {self.args.ptt_key}"))
+        self.set_status(self.idle_status())
         while not self.stop.is_set():
             try:
                 start, end, audio = self.utterances.get(timeout=0.5)
@@ -275,7 +403,7 @@ class Sidecar:
             self.game('orch_msg -heard "(muted)"')
         elif name == "unmute":
             self.muted = False
-            self.set_status("listening")
+            self.set_status(self.idle_status())
             self.game('orch_msg -heard "(listening)"')
         elif name == "cancel":
             with self.lock:
@@ -345,7 +473,7 @@ class Sidecar:
             self.flush_turn()
             # The agent may answer a turn by doing nothing.
             if self.status == "thinking" and now() - self.status_time > 30:
-                self.set_status("muted" if self.muted else "listening")
+                self.set_status(self.idle_status())
             time.sleep(0.05)
 
     def flush_turn(self):
@@ -407,9 +535,9 @@ class Sidecar:
                 self.emit(f"INFO kokoro voice {self.args.voice}")
             except Exception as e:  # noqa: BLE001
                 self.emit(f"INFO kokoro failed ({e}); replies are text only")
-        sd = None
         if kokoro:
-            import sounddevice as sd
+            import sounddevice
+            self.sd = sounddevice
 
         while not self.stop.is_set():
             items = sorted(glob.glob(os.path.join(self.say_dir, "*.txt")))
@@ -425,17 +553,24 @@ class Sidecar:
                     continue
                 self.log({"type": "reply", "time": iso(now()), "text": text})
                 if not kokoro or not text:
-                    self.set_status("muted" if self.muted else "listening")
+                    self.set_status(self.idle_status())
                     continue
                 samples, rate = kokoro.create(text, voice=self.args.voice, speed=self.args.speed, lang="en-us")
                 length = len(samples) / rate
+                if self.in_speech:
+                    # They're talking: hold the reply until they let go.
+                    while self.in_speech and not self.stop.is_set():
+                        time.sleep(0.05)
                 self.set_status("speaking")
+                self.speaking = True
                 self.speaking_until = now() + length + 0.3
-                sd.play(samples, rate)
-                sd.wait()
-                self.speaking_until = now() + 0.3
-                time.sleep(0.3)
-            self.set_status("muted" if self.muted else "listening")
+                self.sd.play(samples, rate)
+                self.sd.wait()
+                self.speaking = False
+                if self.speaking_until:
+                    self.speaking_until = now() + 0.3
+                    time.sleep(0.3)
+            self.set_status(self.idle_status())
 
     # ------------------------------------------------------------
 
@@ -466,9 +601,14 @@ def main():
     ap.add_argument("--model", default="small.en", help="Whisper model (tiny.en, base.en, small.en, medium.en)")
     ap.add_argument("--cpu", action="store_true", help="transcribe on the CPU")
     ap.add_argument("--device", default=None, help="input device (name or index); see --list-devices")
+    ap.add_argument("--ptt-key", default="mouse4", help="push-to-talk key (mouse4, mouse5, v, f11, capslock...)")
+    ap.add_argument("--always-on", action="store_true", help="no talk key: listen all the time")
+    ap.add_argument("--any-window", action="store_true", help="the talk key works whatever has the focus")
+    ap.add_argument("--ptt-test", help=argparse.SUPPRESS)  # "0.2-4.5,5.0-9.0": --wav seconds the key is held
     ap.add_argument("--vad", type=int, default=2, help="voice detection aggressiveness 0-3")
     ap.add_argument("--end-silence", type=float, default=0.7, help="seconds of quiet that end an utterance")
-    ap.add_argument("--turn-silence", type=float, default=2.0, help="seconds of quiet that end a turn")
+    ap.add_argument("--turn-silence", type=float, default=None,
+                    help="seconds of quiet that end a turn (1.5 with the talk key, 2.0 always on)")
     ap.add_argument("--shot-wait", type=float, default=4.0, help="seconds a shot waits for speech")
     ap.add_argument("--voice", default="am_michael", help="Kokoro voice")
     ap.add_argument("--speed", type=float, default=1.1)
@@ -481,6 +621,8 @@ def main():
         import sounddevice as sd
         print(sd.query_devices())
         return
+    if args.turn_silence is None:
+        args.turn_silence = 2.0 if args.always_on else 1.5
     if args.device is not None and args.device.isdigit():
         args.device = int(args.device)
 

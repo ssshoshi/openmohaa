@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a live in-game orchestrator session - the user plays OpenMoHAA, talks to you by voice (always listening), clicks to take screenshots, and you answer by voice and change the game while it runs. Use when the user says "orchestrate", "start the orchestrator", "live session", or wants to narrate changes in game.
+description: Run a live in-game orchestrator session - the user plays OpenMoHAA, talks to you by voice (push-to-talk), clicks to take screenshots, and you answer by voice and change the game while it runs. Use when the user says "orchestrate", "start the orchestrator", "live session", or wants to narrate changes in game.
 ---
 
 # Live orchestrator session
@@ -81,8 +81,10 @@ Shots also save the game (`orch_<id>`) in single player: "load shot 3" is
 
 ## Keys the user has (rebindable)
 
-F10 orchestrator mode on/off, MOUSE3 screenshot. Voice-only, handled by the
-sidecar: "mute", "unmute", "cancel that".
+F10 orchestrator mode on/off, MOUSE3 screenshot, hold MOUSE4 to talk (the
+sidecar reads it, only while the game has the focus; `--ptt-key` changes it,
+`--always-on` drops it). Pressing it while you speak cuts your reply short.
+Voice-only, handled by the sidecar: "mute", "unmute", "cancel that".
 
 ## End
 

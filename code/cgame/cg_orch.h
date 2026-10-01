@@ -39,7 +39,7 @@ extern "C" {
     void CG_OrchShot_f(void);
     // orch_msg <text>: a reply from the agent, shown in the panel.
     void CG_OrchMsg_f(void);
-    // orch_status <listening|thinking|speaking|muted|off>: the voice sidecar's state.
+    // orch_status <ready [key]|listening|thinking|speaking|muted|off>: the voice sidecar's state.
     void CG_OrchStatus_f(void);
     // orch_state: one line of JSON describing where the player is and looks.
     void CG_OrchState_f(void);

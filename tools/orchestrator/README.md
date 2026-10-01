@@ -23,15 +23,20 @@ All the exchange is files under the live install's home path,
 ## In game
 
 - **F10**: orchestrator mode on/off (the panel top right shows `ORCH` and the
-  voice state: `[REC]`, `[THINKING]`, `[SPEAKING]`, `[MUTED]`).
+  voice state: `[hold MOUSE4 to talk]`, `[REC]`, `[THINKING]`, `[SPEAKING]`, `[MUTED]`).
+- **Hold MOUSE4** (thumb button) to talk. The sidecar reads the key itself and
+  only while the game window has the focus; it keeps the 0.4 s before the
+  press, so a word started early isn't lost. Pressing it while a reply is
+  being spoken cuts the reply short. `--ptt-key v` (or `mouse5`, `f11`, ...)
+  picks another key; `--always-on` listens all the time instead.
 - **MOUSE3** (wheel click): screenshot. It records what is under the crosshair
   and the player's position, takes a clean and an outlined screenshot, and in
   single player saves the game as `orch_<id>`.
 - Say **"mute"** / **"unmute"** to stop and start listening, **"cancel that"**
   to drop what you said since the last turn.
 
-Use headphones: the sidecar mutes the microphone while it speaks, but game
-sound from speakers would be heard.
+With `--always-on`, use headphones: the sidecar mutes the microphone while it
+speaks, but game sound from speakers would be heard.
 
 ## Setup (once)
 
