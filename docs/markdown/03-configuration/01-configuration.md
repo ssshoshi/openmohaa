@@ -54,6 +54,24 @@ Update checking is enabled by default, but can be disabled with:
 
 If disabled, remember to check the project page for new versions. Updates can improve security and provide important fixes against exploits.
 
+### Running console commands from another program
+
+`set com_cmddir <dir>` makes the game watch a folder in the home directory (for example `orch/cmd`, which is `main/orch/cmd` under the home path) for command files, on every platform:
+
+- Each `<name>.txt` file is read, deleted, and run at once, one command per line or separated with `;`. A running `wait` in a config doesn't hold the commands back; `wait` lines in the file itself are ignored.
+- The console output of the commands is written to `<name>.out` next to it.
+- Write the file under another name first and rename it to `.txt` when it's complete, so the game never reads half of it.
+
+The Unix-only `com_pipefile` works the other way: it queues the commands behind anything already waiting.
+
+### Live orchestrator
+
+The orchestrator lets an agent listen to the player while they play and change the game as it runs (see `tools/orchestrator/README.md` in the source). In game:
+
+- `orch [on|off]` (bound to `F10` on the first run): orchestrator mode.
+- `orch_shot` (bound to `MOUSE3`): a screenshot plus a description of what is under the crosshair, written to `orch/events/` in the home directory. In single player it also saves the game as `orch_<id>`; `set orch_shotsave 0` turns that off.
+- `orch_msg [-heard] <text>`, `orch_status <state>`, `orch_state`: used by the tools to show replies and read the player's position.
+
 ## Graphics
 
 ### Choosing a renderer
