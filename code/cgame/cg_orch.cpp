@@ -629,6 +629,10 @@ static void CG_OrchDrawPanel(void)
             CG_OrchColor(color, 0.4f, 0.75f, 1.0f, 1.0f);
         } else if (!Q_stricmp(orch.status, "ready")) {
             label = orch.statusKey[0] ? va("ORCH  [hold %s to talk]", orch.statusKey) : "ORCH  [ready]";
+        } else if (!Q_stricmp(orch.status, "queue")) {
+            // No agent answering: what is said is noted for later.
+            label = orch.statusKey[0] ? va("ORCH  [QUEUE  hold %s to note]", orch.statusKey) : "ORCH  [QUEUE]";
+            CG_OrchColor(color, 0.75f, 0.6f, 1.0f, 1.0f);
         } else if (!Q_stricmp(orch.status, "muted")) {
             label = "ORCH  [MUTED]";
         } else if (!orch.status[0] || !Q_stricmp(orch.status, "off")) {

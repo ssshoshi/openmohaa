@@ -19,6 +19,7 @@ All the exchange is files under the live install's home path,
 | `events/<id>.json`, `<id>.server.txt` | the game, per shot | sidecar |
 | `say/<n>.txt` | orch.py say | sidecar: spoken with Kokoro |
 | `sessions/<stamp>/turns/<n>.json`, `timeline.jsonl` | sidecar | the agent |
+| `backlog/<n>.json` | sidecar (queue mode), `orch.py backlog add` | the agent, later |
 
 ## In game
 
@@ -41,7 +42,35 @@ All the exchange is files under the live install's home path,
   and the player's position, takes a clean and an outlined screenshot, and in
   single player saves the game as `orch_<id>`.
 - Say **"mute"** / **"unmute"** to stop and start listening, **"cancel that"**
-  to drop what you said since the last turn.
+  to drop what you said since the last turn, **"queue mode"** / **"live mode"**
+  to switch between noting things for later and live answers (below).
+
+## Without an agent: queue mode
+
+Live fixes are optional. When the agent can't answer (a daily or weekly usage
+limit reached) or you'd rather just play and note things, run the orchestrator
+yourself in queue mode:
+
+```bash
+tools/orchestrator/orch.py offline --save <name>     # or --map m1l1; Ctrl+C stops the sidecar
+tools/orchestrator/orch.py offline --save <name> -- --ptt-key mouse5   # sidecar options after --
+```
+
+It starts the game if it isn't running and the sidecar with `--queue`. Talk and
+take shots as usual; the panel shows `[QUEUE]`, and each turn is filed in
+`orch/backlog/<n>.json` with your words, the shots (with their savegames), the
+map and where you stood and looked; the sidecar answers "Noted, 4". In a live
+session, saying "queue mode" does the same from then on.
+
+Later (the limit reset), ask the agent to work the backlog: it reads the items,
+plans them with you, fixes them in a worktree and marks them off.
+
+```bash
+tools/orchestrator/orch.py backlog            # what is open
+tools/orchestrator/orch.py backlog show 4
+tools/orchestrator/orch.py backlog add "the MG42 nest on m2l1 should face the road"
+tools/orchestrator/orch.py backlog done 4 --note "fixed in 1a2b3c"   # also doing, drop, reopen
+```
 
 With `--always-on`, use headphones: the sidecar mutes the microphone while it
 speaks, but game sound from speakers would be heard.

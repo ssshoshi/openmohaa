@@ -33,6 +33,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_physics.h"
 
+#include <set>
+#include <vector>
+
 extern JPH::PhysicsSystem *phys_system;
 
 // cg_physics.cpp
@@ -71,12 +74,19 @@ qboolean CG_PhysicsFurnitureInfo(
     int index, int *firstBrush, qboolean *moves, const char **why, const char **shader, vec3_t mins, vec3_t maxs
 );
 void CG_PhysicsForgetDetachedFurniture(void);
+// What the search made of each group of detail brushes at the last load, for
+// phys_furniture to say why a piece is or is not furniture.
+const std::vector<physFurnitureCheck_t>& CG_PhysicsFurnitureChecks(void);
+const std::vector<physFurnitureBrush_t>& CG_PhysicsFurnitureBrushes(void);
 
 // physics.txt (cg_physics_edit.cpp): read with the map, and what it says of the
 // props and the brushwork furniture.
 void     CG_PhysicsRulesLoad(void);
 void     CG_PhysicsApplyPropRules(void);
 qboolean CG_PhysicsFurnitureRule(int firstBrush, const char **why, float *mass);
+// The brushes the map's rules say move, whose groups are furniture whatever
+// their shape.
+void     CG_PhysicsForcedFurniture(std::set<int> *out);
 void     CG_PhysicsEditFrame(void);
 
 // A server entity's box as it is drawn (its brush model, its solid box, or its

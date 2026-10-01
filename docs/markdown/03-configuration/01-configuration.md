@@ -263,6 +263,29 @@ m3l1b entity *185 fixed                the brush entity with model *185
 class func_barrel mass 30              every barrel weighs 30 kg
 ```
 
+### Player
+
+|Name     |Default|Description
+|---------|-------|-----------
+|g_splean |1      |Lean (the lean left and right keys) in single player too, which Allied Assault does not allow; 0 keeps the original game's no lean. Multiplayer and the expansions are unchanged
+
+### Enemy AI
+
+Single-player enemies get behaviour the original game's AI lacks. Each part has its own switch, and `ai_enhanced 0` turns them all off, for the original behaviour.
+
+|Name               |Default|Description
+|-------------------|-------|-----------
+|ai_enhanced        |1      |All the AI improvements below on or off; also, as in Spearhead and Breakthrough, enemies only hit what is roughly where their gun points (`g_aimaxdeviation`), not something well off to the side
+|ai_suppress        |1      |Enemies who lose sight of you fire at where they last saw you for a while (as in Spearhead and Breakthrough), rather than at once going quiet; and they hold fire when a squadmate is in the way
+|ai_suppress_chance |50     |Percent chance an enemy suppresses when it could (takes effect for enemies spawned after it is set)
+|ai_grenades        |1      |Grenade improvements: Germans whose map gives them no grenades carry `ai_grenade_ammo`; a throw can lob or land beside the target when a plain throw cannot reach (up through a window that has been shot out, under a ceiling); they hold the grenade in their hand as they wind up; throws are not perfect; and an actor with squadmates throws at all (the restored code compared a distance with its square, so none ever did)
+|ai_grenade_ammo    |1      |Grenades a German carries when his map gives him none (takes effect for enemies spawned after it is set)
+|ai_grenade_range   |1400   |Farthest an enemy throws
+|ai_grenade_cooldown|6      |Seconds a squad waits after one of them throws before another does
+|ai_grenade_fumble  |8      |Percent of throws that go badly wrong: the grenade slips and lands a few yards ahead, falls short, or goes wide (enemies get hurt by their own grenades)
+|ai_grenade_drop    |1      |An enemy killed while winding up drops the grenade, live
+|ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown
+
 ### Chat
 
 Chat messages are logged to console and in the logfile by default, without requiring to set the `developer` variable.

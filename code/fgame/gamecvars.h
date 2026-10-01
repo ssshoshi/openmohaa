@@ -83,6 +83,7 @@ extern cvar_t *sv_friction;
 // Added in OPM
 extern cvar_t *sv_ragdoll;
 extern cvar_t *g_keepcorpses;
+extern cvar_t *g_splean;
 extern cvar_t *sv_waterfriction;
 extern cvar_t *sv_waterspeed;
 extern cvar_t *sv_traceinfo;
@@ -364,6 +365,17 @@ extern cvar_t *g_teambalance;
 extern cvar_t *g_navigation_legacy;
 
 extern cvar_t *g_door_reopen_blocked;
+
+extern cvar_t *ai_enhanced;
+extern cvar_t *ai_debug;
+extern cvar_t *ai_suppress;
+extern cvar_t *ai_suppress_chance;
+extern cvar_t *ai_grenades;
+extern cvar_t *ai_grenade_cooldown;
+extern cvar_t *ai_grenade_ammo;
+extern cvar_t *ai_grenade_range;
+extern cvar_t *ai_grenade_fumble;
+extern cvar_t *ai_grenade_drop;
 
 void CVAR_Init(void);
 

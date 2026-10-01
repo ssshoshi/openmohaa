@@ -2062,7 +2062,11 @@ static void RawImage_UploadTexture(GLuint texture, byte *data, int x, int y, int
 				qglTextureSubImage2DEXT(texture, target, miplevel, x, y, width, height, dataFormat, dataType, data);
 		}
 
-		if (!lastMip && numMips < 2)
+		// Added in OPM
+		//  Block compressed data is never regenerated: past the levels the
+		//  file supplies, its last level (a single 4x4 block, which is also a
+		//  whole 2x2 or 1x1 level) is sent again.
+		if (!lastMip && numMips < 2 && rgba)
 		{
 			if (glRefConfig.framebufferObject)
 			{
@@ -2696,16 +2700,20 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	}
 
 	// force mipmaps off if image is compressed but doesn't have enough mips
+	//
+	// Fixed in OPM: "enough" was every level down to 1x1, but block
+	// compressed DDS files, like MOH:AA's, stop at 4x4: the smaller levels are
+	// still one block. So every such texture lost its mipmaps altogether and
+	// was drawn from its full size at any distance, glittering; the ammo belts
+	// on m3l1b's grenadiers read as bright brass (#9). A chain that reaches a
+	// single block is enough: the upload repeats that block for the levels
+	// below it.
 	if ((flags & IMGFLAG_MIPMAP) && picFormat != GL_RGBA8 && picFormat != GL_SRGB8_ALPHA8_EXT)
 	{
-		int wh = MAX(width, height);
-		int neededMips = 0;
-		while (wh)
-		{
-			neededMips++;
-			wh >>= 1;
-		}
-		if (neededMips > picNumMips)
+		const int lastWidth  = picNumMips > 0 ? MAX(1, width >> (picNumMips - 1)) : width;
+		const int lastHeight = picNumMips > 0 ? MAX(1, height >> (picNumMips - 1)) : height;
+
+		if (picNumMips < 2 || lastWidth > 4 || lastHeight > 4)
 			flags &= ~IMGFLAG_MIPMAP;
 	}
 

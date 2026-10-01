@@ -180,6 +180,7 @@ def handle(repo, number, mode, title, build, dry, base="fork/main"):
     finally:
         label(repo, number, remove=[LABELS["working"]])
     print(f"  exit {code}: {last}\n  log {log}")
+    limited = code != 0 and re.search(r"(session|usage|rate) limit", last, re.I) is not None
 
     if mode == "triage":
         # It was told to leave the checkout alone; make sure.
@@ -187,12 +188,19 @@ def handle(repo, number, mode, title, build, dry, base="fork/main"):
         git("clean", "-q", "-fd", cwd=path)
         if code == 0:
             label(repo, number, add=[LABELS["triaged"]])
-        return
+        return "limit" if limited else None
 
     prs = gh_json(["pr", "list", "-R", repo, "--head", branch, "--state", "open", "--json", "url"]) or []
     if prs:
         label(repo, number, add=[LABELS["pr"]])
         print(f"  draft PR {prs[0]['url']}")
+        if code != 0 and limited:
+            return "limit"
+    elif code != 0:
+        # The run itself failed (a usage limit, a crash, the timeout), which is
+        # not an attempt at the fix: agent:fix stays, and the next pass retries.
+        print("  the run failed; left queued for the next pass")
+        return "limit" if limited else None
     else:
         # Not asked again until the owner labels it agent:fix afresh.
         label(repo, number, add=[LABELS["tried"]], remove=[LABELS["fix"]])
@@ -203,7 +211,10 @@ def one_pass(repo, build, dry, base):
     if not work:
         print("nothing to do")
     for number, mode, title in work:
-        handle(repo, number, mode, title, build, dry, base)
+        if handle(repo, number, mode, title, build, dry, base) == "limit":
+            # Every run after this one would fail the same way.
+            print("usage limit reached; stopping this pass")
+            break
 
 
 def main():

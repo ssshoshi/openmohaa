@@ -404,6 +404,10 @@ extern "C" {
         //  serverinfo configstring. Servers that predate the setting simply
         //  omit the key, so it defaults to enabled.
         qboolean   ragdollAllowed;
+        // Added in OPM
+        //  Mirrors the server's g_splean: leaning in single player. Servers
+        //  without it omit the key, which keeps the base game's no lean.
+        qboolean   spLeanAllowed;
         int        fraglimit;
         int        timelimit;
         int        maxclients;

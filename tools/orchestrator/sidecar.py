@@ -13,6 +13,11 @@ which is what the agent's Monitor turns into a notification. Replies the agent
 writes to orch/say/*.txt are spoken with Kokoro; pressing the talk key cuts a
 reply short.
 
+In queue mode (--queue, or say "queue mode") no agent is expected to answer:
+each turn becomes an item in orch/backlog/ instead, with where the player was
+and what they looked at, and the sidecar answers "Noted" itself. An agent works
+the backlog later (orch.py backlog). "Live mode" switches back.
+
 Started by the agent from WSL (see tools/orchestrator/README.md):
 
   <venv>\\Scripts\\python.exe sidecar.py --home "D:\\Medal of Honor\\openmohaa-live\\home"
@@ -83,6 +88,8 @@ LOCAL_COMMANDS = {
     "mute": re.compile(r"^\W*(mute|stop listening)\W*$", re.I),
     "unmute": re.compile(r"^\W*(unmute|start listening)\W*$", re.I),
     "cancel": re.compile(r"^\W*(cancel that|never mind|scratch that)\W*$", re.I),
+    "queue": re.compile(r"^\W*(queue|offline|note|notes|backlog) mode\W*$", re.I),
+    "live": re.compile(r"^\W*(live|online) mode\W*$", re.I),
 }
 
 
@@ -115,6 +122,23 @@ def key_code(name):
     return KEYS[name.lower()]
 
 
+def reserve_backlog_id(backlog_dir):
+    """Claims the next backlog number by creating its file exclusively, so
+    the sidecar and orch.py backlog add (WSL, the same folder) never take the
+    same one. Returns (number, path); the file is empty until written."""
+    numbers = [int(m.group(1)) for m in
+               (re.match(r"^(\d+)\.json$", os.path.basename(p))
+                for p in glob.glob(os.path.join(backlog_dir, "*.json"))) if m]
+    n = max(numbers, default=0) + 1
+    while True:
+        path = os.path.join(backlog_dir, f"{n:04d}.json")
+        try:
+            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return n, path
+        except FileExistsError:
+            n += 1
+
+
 def foreground_exe():
     """The file name of the program whose window has the focus (Windows)."""
     import ctypes
@@ -143,7 +167,8 @@ class Sidecar:
         self.cmd_dir = os.path.join(self.orch, "cmd")
         self.say_dir = os.path.join(self.orch, "say")
         self.events_dir = os.path.join(self.orch, "events")
-        for d in (self.cmd_dir, self.say_dir, self.events_dir):
+        self.backlog_dir = os.path.join(self.orch, "backlog")
+        for d in (self.cmd_dir, self.say_dir, self.events_dir, self.backlog_dir):
             os.makedirs(d, exist_ok=True)
 
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -158,6 +183,7 @@ class Sidecar:
         self.last_activity = 0.0          # when speech last ended, or a shot came
         self.in_speech = False
         self.muted = False
+        self.queue_mode = args.queue      # turns go to the backlog, nobody answers live
         self.speaking_until = 0.0         # the mic is deaf until then
         self.turn_number = 0
         self.status = ""
@@ -207,7 +233,50 @@ class Sidecar:
     def idle_status(self):
         if self.muted:
             return "muted"
+        if self.queue_mode:
+            return "queue " + ("" if self.args.always_on else self.args.ptt_key.upper())
         return "listening" if self.args.always_on else "ready " + self.args.ptt_key.upper()
+
+    def ask_game(self, commands, timeout=2.0):
+        """Console commands for the game; their output, or None."""
+        name = f"bk_{time.time_ns()}"
+        tmp = os.path.join(self.cmd_dir, name + ".tmp_w")
+        out = os.path.join(self.cmd_dir, name + ".out")
+        try:
+            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                f.write(commands + "\n")
+            os.replace(tmp, os.path.join(self.cmd_dir, name + ".txt"))
+        except OSError:
+            return None
+        deadline = now() + timeout
+        while now() < deadline:
+            if os.path.isfile(out):
+                time.sleep(0.05)
+                try:
+                    with open(out, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                    os.remove(out)
+                    return text
+                except OSError:
+                    return None
+            time.sleep(0.05)
+        try:
+            os.remove(os.path.join(self.cmd_dir, name + ".txt"))
+        except OSError:
+            pass
+        return None
+
+    def say(self, text):
+        """A reply of the sidecar's own: spoken, and shown in the panel."""
+        name = f"{time.time_ns()}"
+        tmp = os.path.join(self.say_dir, name + ".tmp_w")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, os.path.join(self.say_dir, name + ".txt"))
+        except OSError:
+            pass
+        self.game('orch_msg "' + text.replace('"', "'") + '"')
 
     # ------------------------------------------------------------ listening
 
@@ -383,7 +452,8 @@ class Sidecar:
     def transcribe(self):
         model = self.load_whisper()
         self.ready.set()
-        self.emit("READY " + ("listening" if self.args.always_on else f"push to talk: {self.args.ptt_key}"))
+        self.emit("READY " + ("listening" if self.args.always_on else f"push to talk: {self.args.ptt_key}")
+                  + (" (queue mode)" if self.queue_mode else ""))
         self.set_status(self.idle_status())
         while not self.stop.is_set():
             try:
@@ -428,6 +498,11 @@ class Sidecar:
             with self.lock:
                 self.pending = []
             self.game('orch_msg -heard "(dropped)"')
+        elif name in ("queue", "live"):
+            self.queue_mode = name == "queue"
+            self.set_status(self.idle_status())
+            self.emit(f"MODE {name}")
+            self.say("Queue mode. I'll note what you say for later." if self.queue_mode else "Live mode.")
         self.log({"type": "local", "command": name, "time": iso(now())})
 
     # ------------------------------------------------------------ shots and the console
@@ -524,9 +599,43 @@ class Sidecar:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(turn, f, indent=1)
         self.log({"type": "turn", "turn": self.turn_number, "time": iso(now()), "path": to_wsl(path)})
-        self.set_status("thinking")
         quoted = json.dumps(speech[:160])
+        if self.queue_mode:
+            item = self.add_to_backlog(turn, path)
+            self.emit(f"QUEUED {item} {quoted} shots={len(shots)} errors={len(errors)} {to_wsl(path)}")
+            return
+        self.set_status("thinking")
         self.emit(f"TURN {self.turn_number} {quoted} shots={len(shots)} errors={len(errors)} {to_wsl(path)}")
+
+    def add_to_backlog(self, turn, turn_path):
+        """Files a turn as a backlog item for an agent to work on later; returns its id."""
+        state = None
+        out = self.ask_game("orch_state")
+        for line in (out or "").splitlines():
+            if line.startswith("{"):
+                try:
+                    state = json.loads(line)
+                except ValueError:
+                    pass
+        n, path = reserve_backlog_id(self.backlog_dir)
+        item = {
+            "id": n,
+            "status": "open",
+            "created": iso(now()),
+            "source": "voice",
+            "speech": turn["speech"],
+            "state": state,
+            "session": to_wsl(self.session),
+            "turn": to_wsl(turn_path),
+            "events": turn["events"],
+        }
+        tmp = f"{path}.{os.getpid()}.tmp_w"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(item, f, indent=1)
+        os.replace(tmp, path)
+        self.log({"type": "queued", "item": n, "time": iso(now()), "path": to_wsl(path)})
+        self.say(f"Noted, {n}." if turn["speech"] else f"Shot noted, {n}.")
+        return n
 
     # ------------------------------------------------------------ speaking
 
@@ -639,6 +748,8 @@ def main():
     ap.add_argument("--voice", default="am_michael", help="Kokoro voice")
     ap.add_argument("--speed", type=float, default=1.1)
     ap.add_argument("--no-tts", action="store_true")
+    ap.add_argument("--queue", action="store_true",
+                    help="no agent answers live: file each turn in orch/backlog for later")
     ap.add_argument("--wav", help="16 kHz mono WAV to use instead of the microphone")
     ap.add_argument("--list-devices", action="store_true")
     args = ap.parse_args()

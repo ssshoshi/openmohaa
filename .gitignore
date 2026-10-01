@@ -50,3 +50,7 @@ out
 # Flex and Bison
 ####################
 /code/parser/generated
+
+# Python bytecode (tools/)
+__pycache__/
+*.pyc

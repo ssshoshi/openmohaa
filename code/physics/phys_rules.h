@@ -33,6 +33,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //   m3l1b model static/chair.tik moves       every one of them on m3l1b
 //   m3l1b static 57 moves mass 12            the map's 57th static model
 //   m3l1b furniture 712 fixed                the brush furniture with brush 712
+//   m3l1b furniture 1404 moves               brush 1404's group moves, even if its
+//                                            shape was not taken for furniture
 //   m3l1b entity *185 fixed                  the brush entity with model *185
 //   class func_barrel fixed                  every entity of a class
 //
@@ -83,6 +85,9 @@ public:
     bool Forget(const char *map, const char *kind, const char *key);
     // How many rules there are.
     int Count() const;
+    // The keys of a map's own rules of a kind that set a state (not the rules
+    // for every map): the furniture a map's rules force in, say.
+    std::vector<std::string> Keys(const char *map, const char *kind, int state) const;
 
     // The settings for an object, the most particular rule first: its own on
     // the map (kind and key, may be NULL), its model on the map and anywhere,

@@ -162,6 +162,7 @@ void CG_ParseServerinfo(void)
 
         cgs.ragdollAllowed = (!ragdollValue || !ragdollValue[0] || atoi(ragdollValue)) ? qtrue : qfalse;
     }
+    cgs.spLeanAllowed = atoi(Info_ValueForKey(info, "g_splean")) ? qtrue : qfalse;
     cgi.Cvar_Set("cg_obj_alliedtext1", Info_ValueForKey(info, "g_obj_alliedtext1"));
     cgi.Cvar_Set("cg_obj_alliedtext2", Info_ValueForKey(info, "g_obj_alliedtext2"));
     cgi.Cvar_Set("cg_obj_alliedtext3", Info_ValueForKey(info, "g_obj_alliedtext3"));

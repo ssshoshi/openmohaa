@@ -78,6 +78,7 @@ cvar_t *sv_friction;
 // Added in OPM
 cvar_t *sv_ragdoll;
 cvar_t *g_keepcorpses;
+cvar_t *g_splean;
 cvar_t *sv_waterfriction;
 cvar_t *sv_waterspeed;
 cvar_t *sv_traceinfo;
@@ -331,6 +332,18 @@ cvar_t *g_navigation_legacy;
 // Reopen door if blocked
 cvar_t *g_door_reopen_blocked;
 
+// Enemy AI improvements (see ai_enhance.h)
+cvar_t *ai_enhanced;
+cvar_t *ai_debug;
+cvar_t *ai_suppress;
+cvar_t *ai_suppress_chance;
+cvar_t *ai_grenades;
+cvar_t *ai_grenade_cooldown;
+cvar_t *ai_grenade_ammo;
+cvar_t *ai_grenade_range;
+cvar_t *ai_grenade_fumble;
+cvar_t *ai_grenade_drop;
+
 void CVAR_Init(void)
 {
     int i;
@@ -400,6 +413,10 @@ void CVAR_Init(void)
     //  Single player only: dead actors stay where they fell for the rest of
     //  the level instead of being queued five deep and removed out of sight.
     g_keepcorpses    = gi.Cvar_Get("g_keepcorpses", "1", CVAR_ARCHIVE);
+    // Added in OPM
+    //  Lets the player lean in single player, which the base game does not.
+    //  It rides the serverinfo string so the client predicts the same lean.
+    g_splean         = gi.Cvar_Get("g_splean", "1", CVAR_ARCHIVE | CVAR_SERVERINFO);
     sv_stopspeed     = gi.Cvar_Get("sv_stopspeed", "100", 0);
     sv_waterfriction = gi.Cvar_Get("sv_waterfriction", "1", 0);
     sv_waterspeed    = gi.Cvar_Get("sv_waterspeed", "400", 0);
@@ -760,6 +777,17 @@ void CVAR_Init(void)
     g_navigation_legacy = gi.Cvar_Get("g_navigation_legacy", "0", CVAR_LATCH);
 
     g_door_reopen_blocked = gi.Cvar_Get("g_door_reopen_blocked", "1", 0);
+
+    ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
+    ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);
+    ai_suppress        = gi.Cvar_Get("ai_suppress", "1", CVAR_ARCHIVE);
+    ai_suppress_chance = gi.Cvar_Get("ai_suppress_chance", "50", CVAR_ARCHIVE);
+    ai_grenades         = gi.Cvar_Get("ai_grenades", "1", CVAR_ARCHIVE);
+    ai_grenade_cooldown = gi.Cvar_Get("ai_grenade_cooldown", "6", CVAR_ARCHIVE);
+    ai_grenade_ammo     = gi.Cvar_Get("ai_grenade_ammo", "1", CVAR_ARCHIVE);
+    ai_grenade_range    = gi.Cvar_Get("ai_grenade_range", "1400", CVAR_ARCHIVE);
+    ai_grenade_fumble   = gi.Cvar_Get("ai_grenade_fumble", "8", CVAR_ARCHIVE);
+    ai_grenade_drop     = gi.Cvar_Get("ai_grenade_drop", "1", CVAR_ARCHIVE);
 
     cl_running = gi.Cvar_Get("cl_running", "", 0);
 }

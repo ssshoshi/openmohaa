@@ -51,6 +51,8 @@ typedef struct {
 
 static std::vector<cgFurniture_t> pf_furniture;
 static std::set<int>              pf_brushes;
+static std::vector<physFurnitureCheck_t> pf_checks;
+static std::vector<physFurnitureBrush_t> pf_checkBrushes;
 
 // The pieces the renderer has drawn apart from the world, by their first
 // surface. A piece is taken out of the world once only, so when the physics
@@ -92,9 +94,12 @@ cvar_t *cg_physics_furniture;
 void CG_PhysicsFindFurniture(const void *bsp, long len)
 {
     std::vector<physFurniture_t> found;
+    std::set<int>                forced;
 
     pf_furniture.clear();
     pf_brushes.clear();
+    pf_checks.clear();
+    pf_checkBrushes.clear();
 
     if (!cg_physics_furniture->integer || !cg_physics_props->integer || cgi.apiversion < 5 || !cgi.R_DetachWorldSurfaces) {
         return;
@@ -107,7 +112,8 @@ void CG_PhysicsFindFurniture(const void *bsp, long len)
         return;
     }
 
-    Phys_FindFurniture(bsp, len, &found);
+    CG_PhysicsForcedFurniture(&forced);
+    Phys_FindFurniture(bsp, len, &found, &forced, &pf_checks, &pf_checkBrushes);
 
     for (size_t i = 0; i < found.size(); i++) {
         cgFurniture_t f;
@@ -122,6 +128,10 @@ void CG_PhysicsFindFurniture(const void *bsp, long len)
         f.curPos = f.prevPos = f.centre;
         f.curRot = f.prevRot = JPH::Quat::sIdentity();
         f.moves     = CG_PhysicsFurnitureRule(found[i].brushes.empty() ? -1 : found[i].brushes[0], &f.why, &f.mass);
+        if (found[i].forced && f.moves && !strcmp(f.why, "found in the brushwork")) {
+            // The rule that let it in names another of its brushes.
+            f.why = "let in by a rule";
+        }
 
         // Drawn apart already, before the editor had it made again.
         f.model     = (!found[i].surfaces.empty() && pf_detached.count(found[i].surfaces[0])) ? pf_detached[found[i].surfaces[0]] : 0;
@@ -137,6 +147,16 @@ void CG_PhysicsFindFurniture(const void *bsp, long len)
             pf_brushes.insert(found[i].brushes[b]);
         }
     }
+}
+
+const std::vector<physFurnitureCheck_t>& CG_PhysicsFurnitureChecks(void)
+{
+    return pf_checks;
+}
+
+const std::vector<physFurnitureBrush_t>& CG_PhysicsFurnitureBrushes(void)
+{
+    return pf_checkBrushes;
 }
 
 qboolean CG_PhysicsBrushIsFurniture(int brushNum)

@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // actor_turret.cpp
 
 #include "actor.h"
+#include "ai_enhance.h"
 
 void Actor::InitTurret(GlobalFuncs_t *func)
 {
@@ -134,6 +135,7 @@ void Actor::Turret_SelectState(void)
                 ANIM_MODE_NORMAL,
                 m_eGrenadeMode == AI_GREN_TOSS_ROLL ? STRING_ANIM_GRENADETOSS_SCR : STRING_ANIM_GRENADETHROW_SCR
             );
+            HoldGrenade();
             TransitionState(ACTOR_STATE_TURRET_GRENADE, 0);
             return;
         }
@@ -235,7 +237,9 @@ void Actor::Turret_BeginRetarget(void)
 
     // Replaced in 2.0
     //  Use the Retarget_Suppress state instead of the Retarget_Sniper_Node state
-    if (g_target_game >= target_game_e::TG_MOHTA) {
+    // OPM: also in Allied Assault with ai_suppress: it goes on to the sniper
+    //  node retarget when it does not suppress.
+    if (g_target_game >= target_game_e::TG_MOHTA || AI_Enhanced(ai_suppress)) {
         TransitionState(ACTOR_STATE_TURRET_RETARGET_SUPPRESS, 0);
     } else {
         TransitionState(ACTOR_STATE_TURRET_RETARGET_SNIPER_NODE, 0);
@@ -310,7 +314,8 @@ void Actor::Turret_SideStep(int iStepSize, vec3_t vDir)
 
 void Actor::State_Turret_Shoot(void)
 {
-    assert(g_target_game > target_game_e::TG_MOH);
+    // Allied Assault gets here only with ai_suppress, which may have been
+    //  turned off since; the state carries on regardless.
 
     if (CanSeeEnemy(200) || FriendlyInLineOfFire(m_Enemy)) {
         TransitionState(ACTOR_STATE_TURRET_COMBAT);
@@ -326,28 +331,23 @@ void Actor::State_Turret_Shoot(void)
     }
 }
 
-void Actor::State_Turret_Retarget_Suppress(void)
+// Whether to fire at where the enemy was last seen, now that it cannot be
+// seen: not too long since, nothing friendly in the way, and the line there
+// is not blocked close by or by the ground.
+bool Actor::CanSuppressEnemy(void)
 {
     trace_t trace;
 
-    assert(g_target_game > target_game_e::TG_MOH);
-
     if (rand() % 100 >= m_iSuppressChance) {
-        AimAtEnemyBehavior();
-        Turret_NextRetarget();
-        return;
+        return false;
     }
 
     if (level.inttime >= m_iLastEnemyVisibleTime + 15000) {
-        AimAtEnemyBehavior();
-        Turret_NextRetarget();
-        return;
+        return false;
     }
 
     if (FriendlyInLineOfFire(m_Enemy)) {
-        AimAtEnemyBehavior();
-        Turret_NextRetarget();
-        return;
+        return false;
     }
 
     trace = G_Trace(
@@ -361,17 +361,28 @@ void Actor::State_Turret_Retarget_Suppress(void)
         "Actor::State_Turret_Retarget_Suppress"
     );
     if (trace.fraction <= 0.5f) {
-        AimAtEnemyBehavior();
-        Turret_NextRetarget();
-        return;
+        return false;
     }
 
     if (trace.fraction != 1.f && trace.plane.normal[2] >= 0.7f) {
+        return false;
+    }
+
+    return true;
+}
+
+void Actor::State_Turret_Retarget_Suppress(void)
+{
+    // Allied Assault gets here only with ai_suppress, which may have been
+    //  turned off since; the state carries on regardless.
+
+    if (!CanSuppressEnemy()) {
         AimAtEnemyBehavior();
         Turret_NextRetarget();
         return;
     }
 
+    AI_Debug("%s suppresses its enemy's last known position", TargetName().c_str());
     TransitionState(ACTOR_STATE_TURRET_SHOOT);
     State_Turret_Shoot();
 }
