@@ -20,6 +20,7 @@ Started by the agent from WSL (see tools/orchestrator/README.md):
 """
 
 import argparse
+import warnings
 import collections
 import datetime
 import glob
@@ -46,6 +47,8 @@ def add_cuda_dlls():
 
 
 add_cuda_dlls()
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np  # noqa: E402
 
@@ -54,7 +57,7 @@ FRAME_MS = 30
 FRAME = RATE * FRAME_MS // 1000
 
 # The words the game and this project use, so Whisper spells them right.
-PROMPT = ("Medal of Honor, OpenMoHAA, MOHAA, cvar, ragdoll, AI, actor, patrol, path node, "
+PROMPT = ("Medal of Honor, OpenMoHAA, MOHAA, cvar, ragdoll, AI, AI paths, actor, patrol, path node, "
           "splinepath, trigger, script, thread, noclip, savegame, shader, texture, GL2, m1l1, m3l2.")
 
 # What Whisper makes up from noise.
@@ -111,6 +114,8 @@ class Sidecar:
         self.status = ""
         self.status_time = 0.0
         self.stop = threading.Event()
+        self.ready = threading.Event()       # Whisper loaded
+        self.audio_done = threading.Event()  # --wav played out
 
     # ------------------------------------------------------------ output
 
@@ -156,7 +161,7 @@ class Sidecar:
             for _ in range(200):
                 yield np.zeros(FRAME, dtype=np.int16)
                 time.sleep(FRAME_MS / 1000)
-            self.stop.set()
+            self.audio_done.set()
             return
 
         import sounddevice as sd
@@ -175,6 +180,7 @@ class Sidecar:
 
     def listen(self):
         import webrtcvad
+        self.ready.wait()
         vad = webrtcvad.Vad(self.args.vad)
         ring = collections.deque(maxlen=10)    # the 300 ms before speech starts
         voiced = []
@@ -234,6 +240,7 @@ class Sidecar:
 
     def transcribe(self):
         model = self.load_whisper()
+        self.ready.set()
         self.emit("READY listening")
         self.set_status("listening")
         while not self.stop.is_set():
@@ -439,13 +446,14 @@ class Sidecar:
         for t in threads:
             t.start()
         try:
-            while not self.stop.is_set():
+            while not self.stop.is_set() and not self.audio_done.is_set():
                 time.sleep(0.2)
             # --wav: let the last turn out.
             deadline = now() + 30
             while now() < deadline and (self.pending or not self.utterances.empty()):
                 time.sleep(0.2)
             time.sleep(self.args.turn_silence + 0.5)
+            self.stop.set()
         except KeyboardInterrupt:
             pass
         self.set_status("off")

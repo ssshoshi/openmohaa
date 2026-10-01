@@ -33,7 +33,9 @@ Paths:
    ```
    "<venv>/Scripts/python.exe" "$(wslpath -w tools/orchestrator/sidecar.py)" --home "D:\Medal of Honor\openmohaa-live\home"
    ```
-   Wait for `READY listening`. `INFO` lines are diagnostics.
+   Wait for `READY listening`. `INFO` lines are diagnostics. Don't pipe it
+   through `tr`, `grep` or the like without line buffering (`stdbuf -oL`,
+   `--line-buffered`): a buffered pipe holds the TURN lines back until exit.
 5. **Game:** ask what to load if the user didn't say (a save name or a map), then
    `orch.py launch --save <name>` or `--map <map>`. It turns orchestrator mode on.
 6. `orch.py say "Ready."`
