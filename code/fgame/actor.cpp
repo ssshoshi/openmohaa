@@ -5213,6 +5213,13 @@ void Actor::HandleKilled(Event *ev, bool bPlayDeathAnim)
         ExecuteScript(&event);
     } else {
         SetThink(THINKSTATE_KILLED, THINK_DEAD);
+
+        // Added in OPM
+        //  Dead in place (bedead) never enters the killed think state, where
+        //  Begin_Killed marks the corpse, so the client never started a
+        //  ragdoll for it: the m3l2 cabinet guy stayed frozen in the last
+        //  frame of his scripted fall.
+        edict->s.eFlags |= EF_DEAD;
     }
 
     ClearThinkStates();
