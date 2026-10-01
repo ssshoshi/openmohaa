@@ -195,8 +195,8 @@ void R_GpuTimerMark(int id, qboolean isEnd)
 R_GpuTimerFrameEnd
 
 Advance the ring, then collect the oldest frame in it if the GPU has finished
-with it. Nothing here blocks: a frame whose results are not ready yet is simply
-left for the next attempt, and the reported numbers lag by a few frames.
+with it. Nothing here blocks: while the oldest frame's results are not ready,
+new frames go untimed, and the reported numbers lag by a few frames.
 ================
 */
 void R_GpuTimerFrameEnd(void)
@@ -230,8 +230,15 @@ void R_GpuTimerFrameEnd(void)
 	available = 0;
 	qglGetQueryObjectuiv(frame->marks[frame->numMarks - 1].query, GL_QUERY_RESULT_AVAILABLE, &available);
 
+	// Keep the oldest frame rather than letting the ring overwrite it: skip
+	// timing the next frame, so the ring does not advance, and retry this one.
+	// Dropping it instead lost every frame whenever the driver ran as many
+	// frames behind as the ring is deep, and the report never printed.
 	if (!available)
+	{
+		gpuActive = qfalse;
 		return;
+	}
 
 	for (i = 0; i < GPUTIMER_COUNT; i++)
 	{
