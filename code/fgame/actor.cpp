@@ -2958,7 +2958,7 @@ Actor::Actor()
     m_iSuppressChance      = AI_Enhanced(ai_suppress) ? ai_suppress_chance->integer : 50;
     m_iOPMLastGrenadeTime  = 0;
     m_bOPMGrenadeAmmoSet   = false;
-    m_bOPMDefaultGrenades  = false;
+    m_iOPMDefaultGrenades   = 0;
     m_iOPMNextArcSearchTime = 0;
     m_iOPMHoldGrenadeTime   = 0;
 
@@ -3136,7 +3136,7 @@ void Actor::EventStart(Event *ev)
     if (AI_Enhanced(ai_grenades) && m_Team == TEAM_GERMAN && !m_bOPMGrenadeAmmoSet && ai_grenade_ammo->integer > 0
         && !AmmoCount("grenade")) {
         GiveAmmo("grenade", ai_grenade_ammo->integer);
-        m_bOPMDefaultGrenades = true;
+        m_iOPMDefaultGrenades = ai_grenade_ammo->integer;
     }
 
     if (level.Spawned()) {
@@ -10781,8 +10781,12 @@ void Actor::Grenade_EventFire(Event *ev)
         }
     }
 
-    if (AI_Enhanced(ai_grenades)) {
+    // The one held for show goes even if ai_grenades was turned off since
+    //  it was picked up, or a death after the throw would drop another.
+    if (AI_Enhanced(ai_grenades) || m_iOPMHoldGrenadeTime) {
         ReleaseHeldGrenade();
+    }
+    if (AI_Enhanced(ai_grenades)) {
         GrenadeThrowError(dir, speed);
     }
 
@@ -10842,10 +10846,11 @@ Actor::EventSetAmmoGrenade
 */
 void Actor::EventSetAmmoGrenade(Event *ev)
 {
-    // OPM: a script's grenades replace the ai_grenade_ammo ones.
-    if (m_bOPMDefaultGrenades) {
-        UseAmmo("grenade", AmmoCount("grenade"));
-        m_bOPMDefaultGrenades = false;
+    // OPM: a script's grenades replace the ai_grenade_ammo ones (those not
+    //  thrown yet), and keep any given since.
+    if (m_iOPMDefaultGrenades) {
+        UseAmmo("grenade", Q_min(m_iOPMDefaultGrenades, AmmoCount("grenade")));
+        m_iOPMDefaultGrenades = 0;
     }
     m_bOPMGrenadeAmmoSet = true;
 

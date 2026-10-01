@@ -194,6 +194,8 @@ def handle(repo, number, mode, title, build, dry, base="fork/main"):
     if prs:
         label(repo, number, add=[LABELS["pr"]])
         print(f"  draft PR {prs[0]['url']}")
+        if code != 0 and limited:
+            return "limit"
     elif code != 0:
         # The run itself failed (a usage limit, a crash, the timeout), which is
         # not an attempt at the fix: agent:fix stays, and the next pass retries.

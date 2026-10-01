@@ -122,6 +122,23 @@ def key_code(name):
     return KEYS[name.lower()]
 
 
+def reserve_backlog_id(backlog_dir):
+    """Claims the next backlog number by creating its file exclusively, so
+    the sidecar and orch.py backlog add (WSL, the same folder) never take the
+    same one. Returns (number, path); the file is empty until written."""
+    numbers = [int(m.group(1)) for m in
+               (re.match(r"^(\d+)\.json$", os.path.basename(p))
+                for p in glob.glob(os.path.join(backlog_dir, "*.json"))) if m]
+    n = max(numbers, default=0) + 1
+    while True:
+        path = os.path.join(backlog_dir, f"{n:04d}.json")
+        try:
+            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return n, path
+        except FileExistsError:
+            n += 1
+
+
 def foreground_exe():
     """The file name of the program whose window has the focus (Windows)."""
     import ctypes
@@ -600,10 +617,7 @@ class Sidecar:
                     state = json.loads(line)
                 except ValueError:
                     pass
-        numbers = [int(m.group(1)) for m in
-                   (re.match(r"^(\d+)\.json$", os.path.basename(p))
-                    for p in glob.glob(os.path.join(self.backlog_dir, "*.json"))) if m]
-        n = max(numbers, default=0) + 1
+        n, path = reserve_backlog_id(self.backlog_dir)
         item = {
             "id": n,
             "status": "open",
@@ -615,10 +629,10 @@ class Sidecar:
             "turn": to_wsl(turn_path),
             "events": turn["events"],
         }
-        path = os.path.join(self.backlog_dir, f"{n:04d}.json")
-        with open(path + ".tmp_w", "w", encoding="utf-8") as f:
+        tmp = f"{path}.{os.getpid()}.tmp_w"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(item, f, indent=1)
-        os.replace(path + ".tmp_w", path)
+        os.replace(tmp, path)
         self.log({"type": "queued", "item": n, "time": iso(now()), "path": to_wsl(path)})
         self.say(f"Noted, {n}." if turn["speech"] else f"Shot noted, {n}.")
         return n

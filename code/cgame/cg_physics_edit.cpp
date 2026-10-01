@@ -969,11 +969,15 @@ void CG_PhysicsFurniture_f(void)
             pe_rules.Parse(PhysRules::Header());
         }
         for (int a = 2; a < cgi.Argc(); a++) {
-            const char *brush = cgi.Argv(a);
+            char      *end;
+            const long n = strtol(cgi.Argv(a), &end, 10);
+            char       brush[16];
 
-            if (atoi(brush) <= 0 && strcmp(brush, "0")) {
+            // Whole numbers only, written the one way the rules look them up.
+            if (end == cgi.Argv(a) || *end || n < 0 || n > 0x7fffffff) {
                 continue;
             }
+            Com_sprintf(brush, sizeof(brush), "%ld", n);
             if (force) {
                 pe_rules.SetState(cgs.mapname, "furniture", brush, PHYS_RULE_MOVES);
             } else if (!pe_rules.Forget(cgs.mapname, "furniture", brush)) {

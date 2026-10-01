@@ -798,9 +798,9 @@ public:
     //  lets a squad throw again a little sooner).
     int m_iOPMLastGrenadeTime;
     // OPM: whether the model or a script set this actor's grenades, and
-    //  whether it carries the ai_grenade_ammo ones instead.
+    //  how many of the ai_grenade_ammo ones it was given instead.
     bool m_bOPMGrenadeAmmoSet;
-    bool m_bOPMDefaultGrenades;
+    int  m_iOPMDefaultGrenades;
     // OPM: when this actor may next search for a throw (the search is costly).
     int m_iOPMNextArcSearchTime;
     // OPM: when the grenade he winds up with appears in his hand (0: none).

@@ -314,7 +314,8 @@ void Actor::Turret_SideStep(int iStepSize, vec3_t vDir)
 
 void Actor::State_Turret_Shoot(void)
 {
-    assert(g_target_game > target_game_e::TG_MOH || AI_Enhanced(ai_suppress));
+    // Allied Assault gets here only with ai_suppress, which may have been
+    //  turned off since; the state carries on regardless.
 
     if (CanSeeEnemy(200) || FriendlyInLineOfFire(m_Enemy)) {
         TransitionState(ACTOR_STATE_TURRET_COMBAT);
@@ -372,7 +373,8 @@ bool Actor::CanSuppressEnemy(void)
 
 void Actor::State_Turret_Retarget_Suppress(void)
 {
-    assert(g_target_game > target_game_e::TG_MOH || AI_Enhanced(ai_suppress));
+    // Allied Assault gets here only with ai_suppress, which may have been
+    //  turned off since; the state carries on regardless.
 
     if (!CanSuppressEnemy()) {
         AimAtEnemyBehavior();

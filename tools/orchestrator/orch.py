@@ -249,9 +249,24 @@ def backlog_items():
 def write_item(item):
     os.makedirs(BACKLOG, exist_ok=True)
     path = backlog_path(item["id"])
-    with open(path + ".tmp_w", "w", encoding="utf-8") as f:
+    tmp = f"{path}.{os.getpid()}.tmp_w"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(item, f, indent=1)
-    os.replace(path + ".tmp_w", path)
+    os.replace(tmp, path)
+
+
+def reserve_id():
+    """The next backlog number, claimed by creating its file exclusively so
+    the sidecar (Windows, the same folder) can't take it too."""
+    os.makedirs(BACKLOG, exist_ok=True)
+    n = max((int(os.path.basename(p)[:-5]) for p in glob.glob(os.path.join(BACKLOG, "[0-9]*.json"))
+             if os.path.basename(p)[:-5].isdigit()), default=0) + 1
+    while True:
+        try:
+            os.close(os.open(backlog_path(n), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return n
+        except FileExistsError:
+            n += 1
 
 
 def summary(item):
@@ -276,7 +291,7 @@ def cmd_backlog(args):
         text = " ".join(args.rest)
         if not text:
             sys.exit("backlog add: what to file?")
-        n = max((i["id"] for i in backlog_items()), default=0) + 1
+        n = reserve_id()
         item = {"id": n, "status": "open", "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source": "agent", "speech": text, "state": None, "events": []}
         if args.turn:
