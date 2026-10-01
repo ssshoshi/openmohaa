@@ -63,7 +63,19 @@ PROMPT = ("Medal of Honor, OpenMoHAA, MOHAA, cvar, ragdoll, AI, AI paths, actor,
           "splinepath, trigger, script, thread, noclip, savegame, shader, texture, GL2, m1l1, m3l2.")
 
 # What Whisper makes up from noise.
-HALLUCINATIONS = {"", "you", "thank you.", "thanks for watching!", "thank you for watching.", ".", "bye."}
+HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "thank you for watching", "bye"}
+PROMPT_WORDS = set(re.findall(r"[a-z0-9]+", PROMPT.lower()))
+
+
+def made_up(text, segments):
+    """True for what Whisper invents from noise: stock phrases, its own prompt read back,
+    (a list of mostly its prompt's words), or segments it is sure hold no speech."""
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    if " ".join(words) in HALLUCINATIONS:
+        return True
+    if len(words) >= 3 and sum(w in PROMPT_WORDS for w in words) >= 0.8 * len(words):
+        return True
+    return all(s.no_speech_prob > 0.6 or s.avg_logprob < -1.0 for s in segments)
 
 LOCAL_COMMANDS = {
     "mute": re.compile(r"^\W*(mute|stop listening)\W*$", re.I),
@@ -378,8 +390,11 @@ class Sidecar:
                 continue
             segments, _ = model.transcribe(audio.astype(np.float32) / 32768.0, language="en", beam_size=5,
                                            initial_prompt=PROMPT, condition_on_previous_text=False)
+            segments = list(segments)
             text = " ".join(s.text.strip() for s in segments).strip()
-            if text.lower() in HALLUCINATIONS:
+            if made_up(text, segments):
+                if text:
+                    self.emit(f"INFO dropped {text!r}")
                 continue
             self.heard(start, end, text)
 
