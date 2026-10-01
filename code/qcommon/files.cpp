@@ -819,6 +819,19 @@ qboolean FS_FileExists_HomeData(const char *file)
 
 /*
 ================
+FS_HomeData_OSPath
+
+Added in OPM
+Returns the OS path of a file in the current gamedir of the home data path.
+================
+*/
+char *FS_HomeData_OSPath(const char *qpath)
+{
+	return FS_BuildOSPath(fs_homedatapath->string, fs_gamedir, qpath);
+}
+
+/*
+================
 FS_FileExists_HomeState
 ================
 */

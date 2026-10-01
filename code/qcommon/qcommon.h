@@ -763,6 +763,7 @@ void	FS_FreeFileList( char **list );
 
 qboolean FS_FileExists_HomeConfig( const char *file );
 qboolean FS_FileExists_HomeData( const char *file );
+char *FS_HomeData_OSPath( const char *qpath );
 qboolean FS_FileExists_HomeState( const char *file );
 
 void FS_CorrectCase(char* path);
