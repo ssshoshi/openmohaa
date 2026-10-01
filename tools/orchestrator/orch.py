@@ -16,6 +16,15 @@ what is written to home\\main\\orch\\say.
   orch.py state                      where the player is and what they look at
   orch.py status                     is the game / the sidecar running
   orch.py stop                       close the live game (never any other)
+
+Without an agent (a usage limit reached, or just to note things down):
+
+  orch.py offline [--save X|--map Y] start the game if needed and the sidecar in
+                                     queue mode: what you say is filed for later
+  orch.py backlog [--all]            the items filed so far
+  orch.py backlog show <id>          one item, in full
+  orch.py backlog add "text"         file one by hand (or from a live session)
+  orch.py backlog doing|done|drop|reopen <id> [--note "..."]
 """
 
 import argparse
@@ -36,6 +45,7 @@ ORCH = os.path.join(MAIN, "orch")
 CMD_DIR = os.path.join(ORCH, "cmd")
 SAY_DIR = os.path.join(ORCH, "say")
 SIDECAR_ALIVE = os.path.join(ORCH, "sidecar.alive")
+BACKLOG = os.path.join(ORCH, "backlog")
 
 BINARIES = ["openmohaa.exe", "cgame.dll", "game.dll", "renderer_opengl1.dll", "renderer_opengl2.dll"]
 RUNTIME = ["SDL2.dll", "OpenAL64.dll", "libcurl.dll"]
@@ -195,6 +205,115 @@ def cmd_stop(args):
     print(f"stopped {len(live)} live process(es)")
 
 
+def sidecar_python():
+    found = glob.glob("/mnt/c/Users/*/AppData/Local/openmohaa-orch/venv/Scripts/python.exe")
+    return found[0] if found else None
+
+
+def cmd_offline(args):
+    """The game and the sidecar in queue mode, for when no agent can answer."""
+    python = sidecar_python()
+    if not python:
+        sys.exit("no sidecar venv; run setup_windows.ps1 first (see README.md)")
+    if not any(live for _, _, live in live_processes()):
+        args.extra, args.focus = None, False
+        cmd_launch(args)
+    print("queue mode: hold the talk key and say what you want done; Ctrl+C to stop.\n"
+          "Later, ask the agent to work the orchestrator backlog.", flush=True)
+    sidecar = [python, winpath(os.path.join(HERE, "sidecar.py")), "--home", winpath(HOME), "--queue"]
+    try:
+        subprocess.run(sidecar + [a for a in args.sidecar_args if a != "--"])
+    except KeyboardInterrupt:
+        pass
+    open_items = [i for i in backlog_items() if i["status"] == "open"]
+    print(f"{len(open_items)} open item(s) in the backlog ({BACKLOG})")
+
+
+# ---------------------------------------------------------------- the backlog
+
+def backlog_path(n):
+    return os.path.join(BACKLOG, f"{int(n):04d}.json")
+
+
+def backlog_items():
+    items = []
+    for path in sorted(glob.glob(os.path.join(BACKLOG, "[0-9]*.json"))):
+        try:
+            with open(path, encoding="utf-8") as f:
+                items.append(json.load(f))
+        except (OSError, ValueError):
+            pass
+    return items
+
+
+def write_item(item):
+    os.makedirs(BACKLOG, exist_ok=True)
+    path = backlog_path(item["id"])
+    with open(path + ".tmp_w", "w", encoding="utf-8") as f:
+        json.dump(item, f, indent=1)
+    os.replace(path + ".tmp_w", path)
+
+
+def summary(item):
+    shots = sum(1 for e in item.get("events", []) if e.get("type") == "shot")
+    where = (item.get("state") or {}).get("map") or ""
+    text = item.get("speech") or "(shot only)"
+    if len(text) > 100:
+        text = text[:97] + "..."
+    extra = "  ".join(x for x in (where, f"{shots} shot(s)" if shots else "") if x)
+    return f"{item['id']:>4}  {item['status']:<7} {item.get('created', '')[:16]}  {text}" + (f"  [{extra}]" if extra else "")
+
+
+def cmd_backlog(args):
+    if args.action in (None, "list"):
+        items = [i for i in backlog_items() if args.all or i["status"] in ("open", "doing")]
+        for item in items:
+            print(summary(item))
+        if not items:
+            print("the backlog is empty" if args.all else "nothing open in the backlog")
+        return
+    if args.action == "add":
+        text = " ".join(args.rest)
+        if not text:
+            sys.exit("backlog add: what to file?")
+        n = max((i["id"] for i in backlog_items()), default=0) + 1
+        item = {"id": n, "status": "open", "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "source": "agent", "speech": text, "state": None, "events": []}
+        if args.turn:
+            item["turn"] = args.turn
+            try:
+                with open(args.turn, encoding="utf-8") as f:
+                    item["events"] = json.load(f).get("events", [])
+            except (OSError, ValueError):
+                pass
+        if args.state:
+            out = run_commands("orch_state", timeout=2.0)
+            for line in (out or "").splitlines():
+                if line.startswith("{"):
+                    item["state"] = json.loads(line)
+        write_item(item)
+        print(f"filed {n}")
+        return
+
+    if len(args.rest) != 1 or not args.rest[0].isdigit():
+        sys.exit(f"backlog {args.action} <id>")
+    path = backlog_path(args.rest[0])
+    if not os.path.isfile(path):
+        sys.exit(f"no item {args.rest[0]}")
+    with open(path, encoding="utf-8") as f:
+        item = json.load(f)
+    if args.action == "show":
+        print(json.dumps(item, indent=1))
+        return
+    item["status"] = {"doing": "doing", "done": "done", "drop": "dropped", "reopen": "open"}[args.action]
+    item.setdefault("history", []).append(
+        {"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": item["status"], "note": args.note})
+    if args.note:
+        item["note"] = args.note
+    write_item(item)
+    print(summary(item))
+
+
 # ---------------------------------------------------------------- talking to the game
 
 def run_commands(text, timeout=5.0):
@@ -296,6 +415,24 @@ def main():
     p.add_argument("--extra", action="append", help="console command to run once loaded")
     p.add_argument("--focus", action="store_true", help="foreground the window after start")
     p.set_defaults(fn=cmd_launch)
+
+    p = sub.add_parser("offline", help="game + sidecar in queue mode, no agent needed")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--save")
+    g.add_argument("--map")
+    p.add_argument("sidecar_args", nargs=argparse.REMAINDER,
+                   help="passed on to sidecar.py (after --), e.g. -- --ptt-key mouse5")
+    p.set_defaults(fn=cmd_offline)
+
+    p = sub.add_parser("backlog", help="what was filed in queue mode")
+    p.add_argument("action", nargs="?",
+                   choices=["list", "show", "add", "doing", "done", "drop", "reopen"])
+    p.add_argument("rest", nargs="*", help="the item id, or for add the text")
+    p.add_argument("--all", action="store_true", help="list done and dropped items too")
+    p.add_argument("--note", help="what was done, or why not (doing/done/drop/reopen)")
+    p.add_argument("--turn", help="add: the turn JSON it came from (its shots come along)")
+    p.add_argument("--state", action="store_true", help="add: record where the player is now")
+    p.set_defaults(fn=cmd_backlog)
 
     p = sub.add_parser("stop")
     p.set_defaults(fn=cmd_stop)
