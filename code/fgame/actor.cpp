@@ -1957,6 +1957,17 @@ Event EV_Actor_CalcGrenadeToss2
     " The speed parameter is optional.  Pass a speed if you just want to override and throw no matter what...",
     EV_RETURN
 );
+// Added in OPM
+Event EV_Actor_ThrowGrenadeAt
+(
+    "throwgrenadeat",
+    EV_DEFAULT,
+    "v",
+    "target_position",
+    "While the actor is attacking, has him throw a grenade at the given position the way he throws one of his own\n"
+    "accord (if he has one and can get it there). Returns 1 if he throws, 0 if not.",
+    EV_RETURN
+);
 Event EV_Actor_GetNoSurprise
 (
     "nosurprise",
@@ -2634,6 +2645,7 @@ CLASS_DECLARATION(SimpleActor, Actor, "Actor") {
     //====
     {&EV_Actor_CalcGrenadeToss,               &Actor::EventCalcGrenadeToss              },
     {&EV_Actor_CalcGrenadeToss2,              &Actor::EventCalcGrenadeToss2             },
+    {&EV_Actor_ThrowGrenadeAt,                &Actor::EventThrowGrenadeAt               },
     {&EV_Actor_GetNoSurprise,                 &Actor::EventGetNoSurprise                },
     {&EV_Actor_SetNoSurprise,                 &Actor::EventSetNoSurprise                },
     {&EV_Actor_SetNoSurprise2,                &Actor::EventSetNoSurprise                },
@@ -2961,6 +2973,7 @@ Actor::Actor()
     m_iOPMDefaultGrenades   = 0;
     m_iOPMNextArcSearchTime = 0;
     m_iOPMHoldGrenadeTime   = 0;
+    m_bOPMGrenadeTarget     = false;
 
     m_bBreathSteam = false;
 
@@ -10296,7 +10309,6 @@ blast would reach the thrower, and no farther than ai_grenade_range.
 */
 bool Actor::FindGrenadeArc(const Vector& vTo, Vector *pvVel)
 {
-    static const float fMaxSpeed    = 850;
     static const float fMinDistance = 300; // the blast reaches 256
     float              fGravity     = sv_gravity->value * 0.8f;
     Vector             vTargets[5];
@@ -10332,34 +10344,52 @@ bool Actor::FindGrenadeArc(const Vector& vTo, Vector *pvVel)
         Vector vDelta = vTargets[n] - origin;
         Vector vFrom  = GrenadeThrowPoint(origin, vDelta, STRING_ANIM_GRENADETHROW_SCR);
         Vector vFlat  = vTargets[n] - vFrom;
-        float  fDist;
-        float  fTime;
 
         vFlat.z = 0;
-        fDist   = vFlat.length();
-        if ((vTargets[n] - origin).length() < fMinDistance || fDist > ai_grenade_range->value) {
+        if ((vTargets[n] - origin).length() < fMinDistance || vFlat.length() > ai_grenade_range->value) {
             continue;
         }
 
-        for (fTime = Q_max(0.5f, fDist / 800.0f); fTime <= 3.0f; fTime += 0.2f) {
-            Vector vVel = (vTargets[n] - vFrom) * (1.0f / fTime);
+        if (SolveGrenadeArc(vFrom, vTargets[n], pvVel)) {
+            m_vOPMGrenadeTarget = vTargets[n];
+            m_bOPMGrenadeTarget = true;
+            AI_Debug(
+                "%s finds a throw %.0f away%s", TargetName().c_str(), vFlat.length(), n ? ", beside the target" : ""
+            );
+            return true;
+        }
+    }
 
-            vVel.z += 0.5f * fGravity * fTime;
-            if (vVel.length() > fMaxSpeed) {
-                continue;
-            }
+    return false;
+}
 
-            if (GrenadeArcClear(vFrom, vVel, fTime)) {
-                *pvVel = vVel;
-                AI_Debug(
-                    "%s finds a throw %.0f away, %.1f s in the air%s",
-                    TargetName().c_str(),
-                    fDist,
-                    fTime,
-                    n ? ", beside the target" : ""
-                );
-                return true;
-            }
+/*
+===============
+Actor::SolveGrenadeArc
+
+The flattest throw, out to a steep lob, from vFrom that lands at vTo, clear
+of the way (see GrenadeArcClear).
+===============
+*/
+bool Actor::SolveGrenadeArc(const Vector& vFrom, const Vector& vTo, Vector *pvVel)
+{
+    static const float fMaxSpeed = 850;
+    float              fGravity  = sv_gravity->value * 0.8f;
+    Vector             vFlat     = vTo - vFrom;
+    float              fTime;
+
+    vFlat.z = 0;
+    for (fTime = Q_max(0.5f, vFlat.length() / 800.0f); fTime <= 3.0f; fTime += 0.2f) {
+        Vector vVel = (vTo - vFrom) * (1.0f / fTime);
+
+        vVel.z += 0.5f * fGravity * fTime;
+        if (vVel.length() > fMaxSpeed) {
+            continue;
+        }
+
+        if (GrenadeArcClear(vFrom, vVel, fTime)) {
+            *pvVel = vVel;
+            return true;
         }
     }
 
@@ -10415,6 +10445,11 @@ void Actor::HoldGrenade(void)
     Event *ev;
 
     if (!AI_Enhanced(ai_grenades) || m_Team != TEAM_GERMAN) {
+        return;
+    }
+
+    if (m_iOPMHoldGrenadeTime && level.inttime < m_iOPMHoldGrenadeTime + 3700) {
+        // Already winding up with one.
         return;
     }
 
@@ -10520,8 +10555,9 @@ void Actor::GrenadeThrowError(Vector& dir, float& speed)
     vAngles = dir.toAngles();
 
     if (random() * 100 >= ai_grenade_fumble->value) {
-        vAngles[YAW] += crandom() * 1.5f;
-        speed *= 1.0f + crandom() * 0.02f;
+        // Within a window's width at a good throw's distance, mostly.
+        vAngles[YAW] += crandom() * 0.75f;
+        speed *= 1.0f + crandom() * 0.015f;
     } else {
         switch (rand() % 3) {
         case 0:
@@ -10667,6 +10703,7 @@ bool Actor::DecideToThrowGrenade(const Vector& vTo, Vector *pvVel, eGrenadeTossM
         return false;
     }
 
+    m_bOPMGrenadeTarget = false;
     if (CanGetGrenadeFromAToB(origin, vTo, bDesperate, pvVel, peMode)) {
         return true;
     }
@@ -10707,7 +10744,9 @@ void Actor::GenericGrenadeTossThink(void)
     Vector           vGrenadeVel = vec_zero;
     eGrenadeTossMode eGrenadeMode;
 
-    if (m_Enemy && level.inttime >= m_iStateTime + 200) {
+    // OPM: not a throw with a place of its own (FindGrenadeArc, throwgrenadeat):
+    //  it would turn him to his enemy instead
+    if (m_Enemy && level.inttime >= m_iStateTime + 200 && !m_bOPMGrenadeTarget) {
         if (CanGetGrenadeFromAToB(origin, m_Enemy->origin + m_Enemy->velocity, false, &vGrenadeVel, &eGrenadeMode)) {
             m_vGrenadeVel  = vGrenadeVel;
             m_eGrenadeMode = eGrenadeMode;
@@ -10787,8 +10826,23 @@ void Actor::Grenade_EventFire(Event *ev)
         ReleaseHeldGrenade();
     }
     if (AI_Enhanced(ai_grenades)) {
+        Vector vVel;
+
+        // A throw the search found, aimed again from where it leaves his hand:
+        // he may have moved on a step or two since he decided on it.
+        if (m_bOPMGrenadeTarget) {
+            if (SolveGrenadeArc(pos, m_vOPMGrenadeTarget, &vVel)) {
+                dir   = vVel;
+                speed = dir.normalize();
+                AI_Debug("%s aims it again from his hand", TargetName().c_str());
+            } else {
+                AI_Debug("%s cannot aim it again from his hand", TargetName().c_str());
+            }
+        }
+
         GrenadeThrowError(dir, speed);
     }
+    m_bOPMGrenadeTarget = false;
 
     ProjectileAttack(pos, dir, this, strGrenade, 0, speed);
     UseAmmo("grenade", 1);
@@ -12571,7 +12625,9 @@ Actor::EventCalcGrenadeToss
 */
 void Actor::EventCalcGrenadeToss(Event *ev)
 {
-    bool bSuccess;
+    // Fixed in OPM
+    //  Was left unset when a script passes only the target
+    bool bSuccess = false;
 
     if (ev->NumArgs() > 1) {
         bSuccess = ev->GetBoolean(2);
@@ -12601,6 +12657,57 @@ void Actor::EventCalcGrenadeToss(Event *ev)
     }
 
     SetDesiredYawDir(m_vGrenadeVel);
+
+    // Added in OPM
+    //  The script throws it next (global/try_throw_grenade.scr): in his hand
+    //  as he winds up
+    HoldGrenade();
+}
+
+/*
+===============
+Actor::EventThrowGrenadeAt
+
+Added in OPM
+  A script has an attacking actor throw a grenade at a place of its choosing
+  (in through a window, say), through the same states as a throw he decides
+  on himself, so he turns to it, winds up and goes back to the fight as he
+  always does, and his attack is never interrupted.
+===============
+*/
+void Actor::EventThrowGrenadeAt(Event *ev)
+{
+    Vector vTo   = ev->GetVector(1);
+    int    think = CurrentThink();
+
+    if ((think != THINK_TURRET && think != THINK_COVER) || !m_Enemy) {
+        if (ai_debug && ai_debug->integer >= 2) {
+            AI_Debug("%s: throwgrenadeat while not attacking (think %d, enemy %s)", TargetName().c_str(), think, m_Enemy ? "yes" : "no");
+        }
+        ev->AddInteger(0);
+        return;
+    }
+
+    if (!DecideToThrowGrenade(vTo, &m_vGrenadeVel, &m_eGrenadeMode, false)) {
+        ev->AddInteger(0);
+        return;
+    }
+
+    // The place the script chose, to aim it again from his hand.
+    if (!m_bOPMGrenadeTarget) {
+        m_vOPMGrenadeTarget = vTo;
+        m_bOPMGrenadeTarget = true;
+    }
+
+    SetDesiredYawDir(m_vGrenadeVel);
+    DesiredAnimation(
+        ANIM_MODE_NORMAL,
+        m_eGrenadeMode == AI_GREN_TOSS_ROLL ? STRING_ANIM_GRENADETOSS_SCR : STRING_ANIM_GRENADETHROW_SCR
+    );
+    HoldGrenade();
+    TransitionState(think == THINK_TURRET ? ACTOR_STATE_TURRET_GRENADE : ACTOR_STATE_COVER_GRENADE, 0);
+
+    ev->AddInteger(1);
 }
 
 /*
