@@ -1017,6 +1017,12 @@ void G_ClientBegin(gentity_t *ent, usercmd_t *cmd)
         //  This is so in the scoreboard it shows up properly
         ent->client->pers.enterTime = level.svsFloatTime;
 
+        // Added in OPM
+        //  After a load, the map add-on starts on the next frame
+        if (level.m_iMapAddonState == 1 && ent->s.number == 0) {
+            level.m_iMapAddonState = 2;
+        }
+
         if (level.intermissiontime && ent->entity) {
             G_MoveClientToIntermission(ent->entity);
         } else {

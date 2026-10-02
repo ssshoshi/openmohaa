@@ -1,0 +1,771 @@
+//=============================================================================
+// maps/m3l2_opm.scr - OpenMoHAA add-on for m3l2 (Rjukan / "Defend the front")
+//
+// Runs next to the map's own script (Level::StartMapAddon), which it never
+// edits: works with the stock script and with mods that replace it (HRRTM), and
+// the map script's savegames stay valid.
+//
+// In scene 3, the attack across the field behind the house, two of each group
+// throw smoke ahead of them along their lanes as they set off. (Grenades up
+// through the windows are the game's own AI now: ai_grenades.)
+//
+// Reworks scene 4, the attack on the house front. The map's spawner still
+// spawns every German (24, in threes); this script paces it into waves. Before
+// each wave a gunner across the canal on each side of the bridge opens up on
+// the house with his MP40, smoke grenades come over from where the Germans
+// spawn and screen their lanes, then a volley of grenades lands at the house,
+// then the wave comes running in. Under the smoke, some of them go for cover
+// behind a car left on the west side of the yard, and fight from there. With
+// each wave more come round both flanks, from behind the buildings: on the east
+// to the corner of the house and the crate, on the west to the tree, the
+// corner and the wagon trailer. And with each wave one to three with SMGs
+// charge the MG42 through the smoke. The MG42 traverses far enough to reach
+// the flanks. The gunners keep firing until the wave is in,
+// then fight on from the far bank like the rest; the scene ends only once they
+// and the flankers are dead too.
+//
+// Pacing: the spawner only spawns while level.scene4_spawn1_currentalive <= 1,
+// and the scene only ends when it reaches 0. Between waves this script adds a
+// "hold" of 2 to that count, which stops the spawner without the scene
+// thinking the fight is over; the real number alive is the count minus the
+// hold.
+//
+// Needs the Spearhead smoke grenade (models/projectiles/nebelhandgranate.tik
+// and what it uses), packed next to this script by tools/m3l2-assault/build.py.
+//=============================================================================
+
+	// This runs at level start and again whenever a save is loaded (the engine
+	// kills the add-on's saved threads first), so all state lives in level
+	// variables and is picked up from there.
+
+	level.opm_s4_perwave	= 6		// Germans per wave (the spawner spawns 3 at a time)
+	level.opm_s4_smokes		= 3		// smoke grenades before each wave
+	level.opm_s4_grenades	= 3		// grenades before each wave
+	level.opm_s4_breather	= 4		// seconds between a wave dying and the next barrage
+	level.opm_s4_covertime	= 8		// seconds of covering fire after the wave's last German sets off
+	level.opm_s4_flankers	= 2		// Germans round each flank with each wave
+	level.opm_s4_chargers	= 3		// at most this many charge through the smoke, at least 1
+	level.opm_s4_covering	= 0		// no covering-fire thread survives a load
+	level.opm_s4_firing		= 0
+	if (level.opm_s4_hold == NIL)
+		level.opm_s4_hold	= 0
+
+	level.opm_s3_smokes		= 2		// smoke grenades each scene 3 group throws
+	if (level.opm_s3_seen == NIL)
+		level.opm_s3_seen	= 0
+
+	level.opm_gravity		= int(getcvar "sv_gravity") * 0.8	// the grenades fall at 0.8 gravity
+
+	// The level arrays exist from the start (saves included).
+	if (level.opm_s4_gunner == NIL)
+	{
+		level.opm_s4_gunner[1] = NULL
+		level.opm_s4_gunner[2] = NULL
+	}
+	if (level.opm_s4_cover == NIL)
+		level.opm_s4_cover[1] = NULL
+	if (level.opm_s4_nflank == NIL)
+		level.opm_s4_nflank = 0
+
+	// Germans on their way to cover (or holding it) get their orders again.
+	local.spots = waitthread cover_spots
+	for (local.i = 1; local.i <= local.spots.size; local.i++)
+	{
+		local.o = level.opm_s4_cover[local.i]
+		if (local.o != NIL && local.o != NULL && isalive local.o)
+			local.o thread take_cover local.spots[local.i]
+	}
+	for (local.i = 1; local.i <= level.opm_s4_nflank; local.i++)
+	{
+		local.o = level.opm_s4_flank[local.i]
+		if (local.o != NIL && local.o != NULL && isalive local.o)
+			local.o thread take_cover level.opm_s4_flankspot[local.i]
+	}
+
+	// The map lets its MG42 turn 45 degrees each way; the flanks are up to 70
+	// off to the side.
+	if ($scene4_mg42 != NULL)
+		$scene4_mg42 maxYawOffset 75
+
+	thread scene3_smoke
+	thread scene4_car
+	thread scene4_director
+end
+
+//=============================================================================
+// Scene 3: the map spawns the Germans behind the house four at a time, named
+// scene3_spawn1_ai<1-4>_<count before them>, and German k runs lane k, to
+// scene3_escapepath<k> by the back of the house. Once a group is on its way,
+// two of them throw smoke a good way ahead of themselves along their lanes,
+// one in the west lanes (1 and 2) and one in the east (3 and 4) when they can.
+
+scene3_smoke:
+	while ($player == NULL)
+		waitframe
+
+	while (level.scene3_spawn1_teamvalue == NIL)
+		wait 0.25
+
+		while (level.scene3_spawn1_deactivator != 1 && level.scene4_spawn1_teamvalue == NIL)
+	{
+		if (level.opm_s3_seen < level.scene3_spawn1_teamvalue)
+		{
+			local.group = level.opm_s3_seen
+			level.opm_s3_seen = level.opm_s3_seen + 4
+			thread scene3_group_smoke local.group
+		}
+		wait 0.25
+	}
+end
+
+scene3_group_smoke local.group:
+	// Clear of the spawn, out on the field.
+	wait (2 + (randomfloat 1.5))
+
+	local.west = 1 + (randomint 2)
+	local.east = 3 + (randomint 2)
+	local.order[1] = local.west
+	local.order[2] = local.east
+	local.order[3] = 3 - local.west
+	local.order[4] = 7 - local.east
+
+	local.thrown = 0
+	for (local.i = 1; local.i <= 4 && local.thrown < level.opm_s3_smokes; local.i++)
+	{
+		local.k = local.order[local.i]
+		local.a = $("scene3_spawn1_ai" + local.k + "_" + local.group)
+		if (local.a == NULL || local.a == NIL || !(isalive local.a))
+			continue
+
+		local.to = $("scene3_escapepath" + local.k).origin
+		local.d = local.to - local.a.origin
+		local.d[2] = 0
+		local.len = vector_length local.d
+		local.d = vector_normalize local.d
+		local.side = ( (0 - local.d[1]) local.d[0] 0 )
+
+		// About halfway to the house, but no farther than a German can throw.
+		local.ahead = local.len * (0.4 + (randomfloat 0.15))
+		if (local.ahead > 800)
+			local.ahead = 800
+		local.land = local.a.origin + local.d * local.ahead + local.side * ((randomfloat 200) - 100)
+
+		thread throw models/projectiles/nebelhandgranate.tik (local.a.origin + local.d * 24) local.land 0.5
+		local.thrown++
+		wait (0.5 + (randomfloat 1))
+	}
+	println ("m3l2_opm: t=" + level.time + " scene 3 group " + local.group + ": " + local.thrown + " smoke")
+end
+
+//=============================================================================
+
+scene4_director:
+
+	// Let the player in and the level settle first.
+	while ($player == NULL)
+		waitframe
+	wait 1
+
+	// The fight starts when the jeep blows up and the map's script sets up its
+	// spawner (or it already started, in a save made before this add-on).
+	while (level.scene4_spawn1_teamvalue == NIL)
+		waitframe
+
+	thread cover_watch
+
+	local.limit = level.scene4_spawn1_teamlimitmax
+	if (local.limit == NIL)
+		local.limit = 24
+	local.first = 1
+
+	while (level.scene4_complete != 1 && level.scene4_spawn1_teamvalue < local.limit)
+	{
+		if (local.first != 1)
+		{
+			// Let the last wave die off first, flankers and all.
+			local.n = waitthread flankers_alive
+			while (level.scene4_complete != 1 && (level.scene4_spawn1_currentalive - level.opm_s4_hold + local.n) > 1)
+			{
+				waitframe
+				local.n = waitthread flankers_alive
+			}
+			if (level.scene4_complete == 1)
+				break
+			wait level.opm_s4_breather
+		}
+		local.first = 0
+
+		waitthread hold_on
+
+		// The wave this barrage leads: up to the next multiple of perwave.
+		local.target = level.opm_s4_perwave
+		while (local.target <= level.scene4_spawn1_teamvalue)
+			local.target = local.target + level.opm_s4_perwave
+		if (local.target > local.limit)
+			local.target = local.limit
+
+		println ("m3l2_opm: t=" + level.time + " wave up to " + local.target + " of " + local.limit + ": covering fire, smoke, grenades")
+
+		// The gunners open up, then the smoke, the grenades, and the wave sets
+		// off under the smoke.
+		level.opm_s4_covering = 1
+		level.opm_s4_firing = 0
+		thread covering_fire 1
+		thread covering_fire 2
+		local.t = level.time + 4
+		while (level.opm_s4_firing < 2 && level.time < local.t && level.scene4_complete != 1)
+			waitframe
+		wait 1.5
+
+		waitthread smoke_barrage
+		wait 3.5
+		println ("m3l2_opm: t=" + level.time + " grenades")
+		waitthread grenade_volley
+		wait 1
+		waitthread hold_off
+		thread flankers_send
+		thread chargers_send
+
+		while (level.scene4_complete != 1 && level.scene4_spawn1_teamvalue < local.target)
+			waitframe
+		thread covering_stop
+		if (level.scene4_complete == 1 || level.scene4_spawn1_teamvalue >= local.limit)
+			break
+		waitthread hold_on
+	}
+
+	// The gunners are the scene's Germans too: hold it open until they are
+	// dead. Then never leave a hold behind: scene 5 waits for the count to
+	// reach 0.
+	waitthread hold_on
+	local.n = waitthread gunners_alive
+	local.f = waitthread flankers_alive
+	while (level.scene4_complete != 1 && local.n + local.f > 0)
+	{
+		wait 0.5
+		local.n = waitthread gunners_alive
+		local.f = waitthread flankers_alive
+	}
+	waitthread hold_off
+	println "m3l2_opm: scene 4 waves done"
+end
+
+//-----------------------------------------------------------------------------
+
+hold_on:
+	if (level.opm_s4_hold == 0)
+	{
+		level.opm_s4_hold = 2
+		level.scene4_spawn1_currentalive = level.scene4_spawn1_currentalive + 2
+	}
+end
+
+hold_off:
+	if (level.opm_s4_hold != 0)
+	{
+		level.scene4_spawn1_currentalive = level.scene4_spawn1_currentalive - level.opm_s4_hold
+		level.opm_s4_hold = 0
+	}
+end
+
+// Where the Germans spawn (the map's own spawners): 1 and 2 are east, 3 west.
+spawner local.i:
+end $("scene4_spawndetector1_spawner" + local.i).origin
+
+//=============================================================================
+// Smoke: one grenade per lane the Germans run in on (their rally points), a
+// third of the way from the rally point towards the house, thrown from where
+// they spawn: lanes 1 and 2 from the east spawners, lane 3 from the west.
+
+smoke_barrage:
+	local.house = $scene4_mg42.origin
+	for (local.i = 1; local.i <= level.opm_s4_smokes; local.i++)
+	{
+		local.lane = ((local.i - 1) % 3) + 1
+		local.rally = $("scene4_spawn1_rallypoint" + local.lane).origin
+		local.dir = vector_normalize (local.rally - local.house)
+		local.side = ( (0 - local.dir[1]) local.dir[0] 0 )
+
+		local.land = local.rally - local.dir * (180 + (randomfloat 120)) + local.side * ((randomfloat 160) - 80)
+		local.from = waitthread spawner local.lane
+
+		thread throw models/projectiles/nebelhandgranate.tik local.from local.land 0.5
+		wait (0.4 + (randomfloat 0.6))
+	}
+end
+
+//=============================================================================
+// Grenades: at the house front, from where the Germans spawn, landing between
+// the defenders and the Germans' approach; not all on top of the player.
+
+grenade_volley:
+	local.house = $player.origin
+	for (local.i = 1; local.i <= level.opm_s4_grenades; local.i++)
+	{
+		local.from = waitthread spawner ((randomint 3) + 1)
+		local.dir = local.from - local.house
+		local.dir[2] = 0
+		local.dir = vector_normalize local.dir
+		local.side = ( (0 - local.dir[1]) local.dir[0] 0 )
+
+		local.land = local.house + local.dir * (80 + (randomfloat 220)) + local.side * ((randomfloat 280) - 140)
+
+		thread throw models/projectiles/steilhandgranate.tik local.from local.land (1.2 + (randomfloat 0.8))
+		wait (0.5 + (randomfloat 0.7))
+	}
+end
+
+//=============================================================================
+// Throw a real projectile (it bounces, and explodes as the weapon does) from
+// near the ground at 'from' so it lands on the ground at 'land', then set it
+// off 'fuse' seconds after it lands.
+
+throw local.model local.from local.land local.fuse:
+	local.from = waitthread ground local.from
+	local.from[2] = local.from[2] + 56
+	local.land = waitthread ground local.land
+	local.land[2] = local.land[2] + 4
+
+	// The flattest arc that clears the way, at no more than about 900 units
+	// a second across (from the spawners that is a long lob); else the
+	// highest one tried.
+	local.dist = local.land - local.from
+	local.dist[2] = 0
+	local.t0 = (vector_length local.dist) / 900.0
+	if (local.t0 < 1.4)
+		local.t0 = 1.4
+	for (local.n = 0; local.n <= 4; local.n++)
+	{
+		local.t = local.t0 + 0.5 * local.n
+		local.vel = waitthread arc_velocity local.from local.land local.t
+		local.clear = waitthread arc_clear local.from local.vel local.t
+		if (local.clear == 1)
+			break
+	}
+
+	local.nade = spawn local.model
+	local.nade.origin = local.from
+	local.nade.velocity = local.vel
+
+	wait (local.t + local.fuse)
+	if (local.nade != NIL && local.nade != NULL)
+		local.nade explode
+end
+
+// The launch velocity to go from 'from' to 'to' in 't' seconds.
+arc_velocity local.from local.to local.t:
+	local.vel = (local.to - local.from) * (1.0 / local.t)
+	local.vel[2] = local.vel[2] + 0.5 * level.opm_gravity * local.t
+end local.vel
+
+// Whether nothing solid lies along the arc.
+arc_clear local.from local.vel local.t:
+	local.prev = local.from
+	for (local.n = 1; local.n <= 16; local.n++)
+	{
+		local.s = local.t * local.n / 16.0
+		local.p = local.from + local.vel * local.s
+		local.p[2] = local.p[2] - 0.5 * level.opm_gravity * local.s * local.s
+		if ((sighttrace local.prev local.p 1) == 0)
+			end 0
+		local.prev = local.p
+	}
+end 1
+
+// The ground under (or just over) a point.
+ground local.p:
+	local.hit = trace (local.p + ( 0 0 128 )) (local.p - ( 0 0 1024 )) 1
+end local.hit
+
+//=============================================================================
+// Covering fire: a German with an MP40 on the far bank of the canal, on each
+// side of the bridge, fires bursts at the house front until the wave is in. Stock Allied
+// Assault AI never fires at what it cannot see (and the smoke hides the
+// house), so the bursts are scripted: aimat a point, then global/shoot.scr,
+// as the stock scripts make an actor shoot.
+
+// Behind the canal walls on each side of the bridge: the far bank, which sees
+// the house across the canal. 1 is west of the bridge, 2 is east.
+covering_post local.side:
+	if (local.side == 1)
+	{
+		local.p[1] = ( -3850 1720 0 )
+		local.p[2] = ( -3950 1700 0 )
+		local.p[3] = ( -3800 1660 0 )
+	}
+	else
+	{
+		local.p[1] = ( -3400 1720 0 )
+		local.p[2] = ( -3300 1700 0 )
+		local.p[3] = ( -3450 1660 0 )
+	}
+
+	local.house = $scene4_mg42.origin + ( 0 0 20 )
+	for (local.i = 1; local.i <= local.p.size; local.i++)
+	{
+		local.g = waitthread ground local.p[local.i]
+		if (sighttrace (local.g + ( 0 0 60 )) local.house 1)
+			end local.g
+	}
+end NIL
+
+covering_fire local.side:
+	local.house = $scene4_mg42.origin
+
+	local.g = level.opm_s4_gunner[local.side]
+	if (local.g == NIL || local.g == NULL || !(isalive local.g))
+	{
+		local.post = waitthread covering_post local.side
+		if (local.post == NIL)
+		{
+			println ("m3l2_opm: no covering post on side " + local.side + " sees the house")
+			level.opm_s4_firing++
+			end
+		}
+
+		// He is there already, behind his wall.
+		local.g = spawn models/human/german_waffenss_nco "targetname" ("opm_s4_gunner" + local.side) "type_attack" "turret"
+		local.g.origin = local.post
+		local.face = vector_toangles (local.house - local.post)
+		local.g.angles = ( 0 local.face[1] 0 )
+		local.g gun "mp40"
+		local.g.accuracy = 20
+		local.g.sight = 3000
+		local.g.hearing = 4000
+		local.g resetleash
+		local.g.leash = 96
+		local.g.fixedleash = 1
+		local.g.mindist = 128
+		local.g.maxdist = 3000
+		level.opm_s4_gunner[local.side] = local.g
+
+		println ("m3l2_opm: covering fire from " + local.post)
+		local.g forceactivate
+	}
+
+	// Scripted until the wave is in (stock AI would go after the player).
+	local.g.enableEnemy = 0
+	local.bursts = 0
+	level.opm_s4_firing++
+	while (level.opm_s4_covering == 1 && isalive local.g)
+	{
+		// Along the house front, around the windows.
+		local.pt = local.house + ( ((randomfloat 320) - 160) (0 - (randomfloat 40)) ((randomfloat 70) - 10) )
+		local.g aimat local.pt
+		wait 0.4
+		if !(isalive local.g)
+			break
+		local.g exec global/shoot.scr
+		local.bursts++
+		wait (1.2 + (randomfloat 1.3))
+	}
+
+	println ("m3l2_opm: covering fire stops on side " + local.side + ", " + local.bursts + " bursts")
+	// Back to fighting on his own, from where he is.
+	if (isalive local.g)
+	{
+		local.g aimat NULL
+		local.g.enableEnemy = 1
+	}
+end
+
+covering_stop:
+	wait level.opm_s4_covertime
+	level.opm_s4_covering = 0
+end
+
+// How many gunners are alive. They are not in the map's count of the Germans
+// alive: its spawner only spawns while that is 1 or less.
+gunners_alive:
+	local.n = 0
+	for (local.i = 1; local.i <= 2; local.i++)
+	{
+		local.g = level.opm_s4_gunner[local.i]
+		if (local.g != NIL && local.g != NULL && isalive local.g)
+			local.n++
+	}
+end local.n
+
+//=============================================================================
+// Cover in the yard: a wrecked car off to the west side (the right, from the
+// house), and the cart on the east side. The car turns up once scene 3 is
+// over, where the player cannot see it appear (or when the attack starts, at
+// the latest). A car from an earlier version of this add-on, in a save, is
+// moved to where it goes now.
+
+scene4_car:
+	local.at = waitthread ground ( -3830 2480 32 )
+	local.at[2] = local.at[2] - 3	// a little into the ground, not on it
+
+	local.car = level.opm_s4_car
+	if (local.car != NIL && local.car != NULL)
+	{
+		if (vector_length (local.car.origin - local.at) > 8)
+		{
+			local.car connect_paths
+			local.car.origin = local.at
+			local.car.angles = ( 0 184 0 )
+			local.car anim idle
+			local.car nodamage
+			local.car disconnect_paths
+			println ("m3l2_opm: car moved to " + local.at)
+		}
+		end
+	}
+
+	while (level.scene3_spawn1_deactivator != 1 && level.scene4_spawn1_teamvalue == NIL)
+		wait 1
+	while (level.scene4_spawn1_teamvalue == NIL && $player != NULL && (sighttrace ($player.origin + ( 0 0 64 )) (local.at + ( 0 0 40 )) 1))
+		wait 0.5
+
+	local.car = spawn script_model model "static/vehicle_car_rusted.tik"
+	local.car.origin = local.at
+	local.car.angles = ( 0 184 0 )
+	// Posed on its animation, as a static model is: in its bind pose it
+	// floats.
+	local.car anim idle
+	local.car setsize ( -128 -52 0 ) ( 128 52 80 )
+	local.car solid
+	// Bullets that go through what can be hurt (the MG42's, through a body)
+	// would go through it too: it cannot be.
+	local.car nodamage
+	local.car disconnect_paths
+	level.opm_s4_car = local.car
+	println ("m3l2_opm: car at " + local.at)
+end
+
+// Spots behind the car, on the side away from the house.
+cover_spots:
+	local.s[1] = ( -3914 2384 32 )
+	local.s[2] = ( -3830 2384 32 )
+	local.s[3] = ( -3746 2384 32 )
+end local.s
+
+// Sends new Germans to free cover spots as the map's spawner spawns them.
+cover_watch:
+	local.spots = waitthread cover_spots
+	local.seen = level.scene4_spawn1_teamvalue
+	while (level.scene4_complete != 1)
+	{
+		while (local.seen < level.scene4_spawn1_teamvalue)
+		{
+			// The map names them scene4_spawn1_ai<1-3>_<count when spawned>.
+			for (local.k = 1; local.k <= 3; local.k++)
+			{
+				local.a = $("scene4_spawn1_ai" + local.k + "_" + local.seen)
+				if (local.a != NULL && local.a != NIL && isalive local.a)
+				{
+					for (local.i = 1; local.i <= local.spots.size; local.i++)
+					{
+						local.o = level.opm_s4_cover[local.i]
+						if (local.o == NIL || local.o == NULL || !(isalive local.o))
+						{
+							level.opm_s4_cover[local.i] = local.a
+							local.a thread take_cover local.spots[local.i]
+							break
+						}
+					}
+				}
+			}
+			local.seen++
+		}
+		wait 0.25
+	}
+end
+
+take_cover local.spot:
+	// After the map's own orders to run in.
+	wait 0.3
+	local.spot = waitthread ground local.spot
+	local.mark = spawn script_origin
+	local.mark.origin = local.spot
+
+	self.enableEnemy = 0
+	self.leash = 10000
+	self.fixedleash = 0
+	self exec global/runto.scr local.mark
+	local.t = level.time + 25
+	while (isalive self && level.time < local.t && vector_length (self.origin - local.spot) > 48)
+		waitframe
+	local.mark delete
+	if !(isalive self)
+		end
+
+	// Hold it and fight from there.
+	println ("m3l2_opm: " + self.targetname + " in cover at " + self.origin)
+	self resetleash
+	self.leash = 64
+	self.fixedleash = 1
+	self type_attack "turret"
+	self.enableEnemy = 1
+end
+
+//=============================================================================
+// Flankers: with each wave, Germans come round both sides from behind the
+// buildings and take cover there: on the east (1) at the corner of the house
+// and behind the crate, on the west (2) behind the tree, at the corner and
+// behind the wagon trailer. They are not in the map's count either.
+
+flank_from local.side:
+	if (local.side == 1)
+		end ( -2706 2146 0.125 )
+	// Out from under the overhang by the west end of the canal: an actor under
+	// it is put up on top of it as soon as he tries to go anywhere.
+end ( -4650 2250 0.125 )
+
+flank_spots local.side:
+	// A German can only be sent where the AI's navigation reaches: a little off
+	// a wall, a corner or a tree. These are the nearest such points to the
+	// spots asked for, on the side away from the house where it is cover.
+	if (local.side == 1)
+	{
+		local.s[1] = ( -2892 2538 0 )	// peeking round the corner of the house
+		local.s[2] = ( -3222 2660 0 )	// behind the crate
+	}
+	else
+	{
+		local.s[1] = ( -4560 2683 22 )	// behind the tree, in the garden
+		local.s[2] = ( -4365 2605 15 )	// peeking round the corner, in the garden
+		local.s[3] = ( -4260 2853 0 )	// behind the wagon trailer
+	}
+end local.s
+
+// Whether a flank spot is in the walled garden, which the AI's navigation has
+// no way into: a German there is put there (where the player is not looking)
+// rather than sent.
+flank_walled local.spot:
+	if (local.spot[0] < -4300 && local.spot[1] > 2500)
+		end 1
+end 0
+
+flankers_send:
+	for (local.side = 1; local.side <= 2; local.side++)
+	{
+		local.spots = waitthread flank_spots local.side
+		local.from = waitthread flank_from local.side
+
+		for (local.k = 1; local.k <= level.opm_s4_flankers; local.k++)
+		{
+			// The spot with the fewest on it.
+			local.best = 1
+			local.bestcount = 99
+			for (local.i = 1; local.i <= local.spots.size; local.i++)
+			{
+				local.c = waitthread flankers_at local.spots[local.i]
+				if (local.c < local.bestcount)
+				{
+					local.best = local.i
+					local.bestcount = local.c
+				}
+			}
+			local.spot = local.spots[local.best]
+
+			level.opm_s4_nflank++
+			local.n = level.opm_s4_nflank
+			level.opm_s4_flankspot[local.n] = local.spot
+
+			local.walled = waitthread flank_walled local.spot
+			if (local.walled)
+				thread flank_appear local.n local.spot
+			else
+				waitthread flank_spawn local.n local.from local.spot 0
+			wait (0.6 + (randomfloat 0.8))
+		}
+	}
+	println ("m3l2_opm: t=" + level.time + " flankers sent, " + level.opm_s4_nflank + " so far")
+end
+
+// A flanker, sent from where they come from to his spot (smg: an MP40 for
+// sure).
+flank_spawn local.n local.at local.spot local.smg:
+	if (randomint 2)
+		local.a = spawn models/human/german_waffenss_shutze "targetname" ("opm_s4_flank" + local.n) "type_attack" "cover"
+	else
+		local.a = spawn models/human/german_waffenss_nco "targetname" ("opm_s4_flank" + local.n) "type_attack" "cover"
+	local.a.origin = local.at
+	if (local.smg == 1 || (randomint 2))
+		local.a gun "mp40"
+	local.a.accuracy = 30
+	local.a.sight = 3000
+	local.a.hearing = 4000
+	local.a.mindist = 128
+	local.a.maxdist = 2000
+	level.opm_s4_flank[local.n] = local.a
+
+	local.a forceactivate
+	local.a thread take_cover local.spot
+end
+
+// A flanker put at his spot in the garden once the player is not looking that
+// way (or after 20 seconds), already there, holding it.
+flank_appear local.n local.spot:
+	local.t = level.time + 20
+	while (level.time < local.t && $player != NULL)
+	{
+		local.d = local.spot - $player.origin
+		local.d[2] = 0
+		local.d = vector_normalize local.d
+		local.f = angles_toforward $player.viewangles
+		local.f[2] = 0
+		local.f = vector_normalize local.f
+		local.dot = vector_dot local.d local.f
+		if (local.dot < 0.6)
+			break
+		wait 0.2
+	}
+	waitthread flank_spawn local.n local.spot local.spot 0
+end
+
+// How many living flankers are at (or on their way to) a spot.
+flankers_at local.spot:
+	local.c = 0
+	for (local.i = 1; local.i <= level.opm_s4_nflank; local.i++)
+	{
+		local.o = level.opm_s4_flank[local.i]
+		if (local.o != NIL && local.o != NULL && isalive local.o && vector_length (level.opm_s4_flankspot[local.i] - local.spot) < 8)
+			local.c++
+	}
+end local.c
+
+flankers_alive:
+	local.c = 0
+	for (local.i = 1; local.i <= level.opm_s4_nflank; local.i++)
+	{
+		local.o = level.opm_s4_flank[local.i]
+		if (local.o != NIL && local.o != NULL && isalive local.o)
+			local.c++
+	}
+end local.c
+
+//=============================================================================
+// Chargers: once the grenades have gone off, one to three Germans with MP40s
+// come out of the lanes behind the smoke and run through it at the MG42, to
+// just in front of the house, and fight from there. Counted with the
+// flankers.
+
+chargers_send:
+	wait 3
+	local.house = $scene4_mg42.origin
+	local.count = 1 + (randomint level.opm_s4_chargers)
+	for (local.k = 1; local.k <= local.count; local.k++)
+	{
+		local.lane = (randomint 3) + 1
+		local.from = $("scene4_spawn1_rallypoint" + local.lane).origin
+		local.from = local.from + ( ((randomfloat 48) - 24) ((randomfloat 48) - 24) 0 )
+		if (local.lane == 3)
+			local.to = ( -3872 2976 32 )
+		else if (local.lane == 2)
+			local.to = ( -3504 2976 32 )
+		else
+			local.to = ( -3392 2976 32 )
+
+		level.opm_s4_nflank++
+		local.n = level.opm_s4_nflank
+		level.opm_s4_flankspot[local.n] = local.to
+		waitthread flank_spawn local.n local.from local.to 1
+		level.opm_s4_flank[local.n].accuracy = 35
+		wait (0.3 + (randomfloat 0.7))
+	}
+	println ("m3l2_opm: t=" + level.time + " " + local.count + " charging through the smoke")
+end
+

@@ -286,6 +286,16 @@ Single-player enemies get behaviour the original game's AI lacks. Each part has 
 |ai_grenade_drop    |1      |An enemy killed while winding up drops the grenade, live
 |ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown
 
+### Map add-ons
+
+A map can have an add-on script, `maps/<map>_opm.scr`, that runs next to the map's own script without changing it, so it works with mods that replace the map script and savegames stay valid. It starts with the level and again when a save is loaded (its threads stored in the save are dropped first, since they would point into an older version of it), so it must pick up from its level variables.
+
+|Name        |Default|Description
+|------------|-------|-----------
+|g_mapaddons |1      |Run map add-on scripts
+
+The one so far is for m3l2 (`tools/m3l2-assault`): it reworks the attack on the house front into waves led by covering fire, smoke and grenades, with men going for cover, round the flanks and charging the MG42 through the smoke, and has the Germans in the field behind the house throw smoke as they come. Allied Assault has no smoke grenade, so `tools/m3l2-assault/build.py` builds the pk3 from your own Spearhead install (the game files are never committed).
+
 ### Chat
 
 Chat messages are logged to console and in the logfile by default, without requiring to set the `developer` variable.
