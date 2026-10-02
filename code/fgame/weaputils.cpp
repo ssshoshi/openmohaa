@@ -2402,6 +2402,19 @@ float BulletAttack(
                             gi.MSG_WriteDir(trace.plane.normal);
                             gi.MSG_WriteBits(bulletlarge, bulletbits);
                             gi.MSG_EndCGM();
+                        } else if ((ent->edict->r.contents & CONTENTS_BBOX) && !ent->IsSubclassOfSentient()) {
+                            // Added in OPM
+                            //  A solid model (a script_model's car, a crate): it
+                            //  got no impact at all. It gets a wall's, which the
+                            //  client traces for its effect and decal.
+                            gi.SetBroadcastVisible(vTmpEnd, NULL);
+                            gi.MSG_StartCGM(BG_MapCGMToProtocol(g_protocol, CGM_BULLET_6));
+                            gi.MSG_WriteCoord(vTmpEnd[0]);
+                            gi.MSG_WriteCoord(vTmpEnd[1]);
+                            gi.MSG_WriteCoord(vTmpEnd[2]);
+                            gi.MSG_WriteDir(trace.plane.normal);
+                            gi.MSG_WriteBits(bulletlarge, bulletbits);
+                            gi.MSG_EndCGM();
                         }
                     } else if (ent->edict->solid == SOLID_BSP && !(trace.contents & CONTENTS_CLAYPIDGEON)) {
                         gi.SetBroadcastVisible(vTmpEnd, NULL);

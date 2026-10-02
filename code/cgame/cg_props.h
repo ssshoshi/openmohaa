@@ -67,6 +67,12 @@ extern "C" {
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers
         int      numStandIns;
         int      body;    // the physics body, or -1
+
+        // Added in OPM
+        //  Its model and the map's scale for it, for decals on it
+        //  (cg_marks_models.cpp).
+        qhandle_t hModel;
+        float     scale;
     } cgProp_t;
 
     extern cgProp_t cg_props[CG_MAX_PROPS];

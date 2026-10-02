@@ -458,6 +458,7 @@ extern "C" {
     extern cvar_t *cg_nopredict;
     extern cvar_t *cg_showmiss;
     extern cvar_t *cg_addMarks;
+    extern cvar_t *cg_modelMarks;
     extern cvar_t *cg_maxMarks;
     extern cvar_t *cg_viewsize;
     extern cvar_t *cg_3rd_person;
@@ -835,8 +836,32 @@ extern double cgmOpen[CGM_COUNT];
     qboolean CG_CheckMakeMarkOnEntity(int iEntIndex);
 
     // Added in OPM
+    //  Decals on TIKI models (cg_marks_models.cpp). A fragment's iIndex is the
+    //  negated entity number for an entity, and below -MAX_GENTITIES for one
+    //  of the map's props.
+#define CG_MARK_PROP_INDEX(prop) (-(MAX_GENTITIES + 1 + (prop)))
+#define CG_MARK_INDEX_PROP(index) (-(index) - MAX_GENTITIES - 1)
+    qboolean CG_EntityTakesModelMarks(int entnum);
+    qboolean CG_PropMarkOrientation(int prop, vec3_t origin, vec3_t axis[3]);
+    int      CG_GetModelMarkFragments(
+             int             numPoints,
+             const vec3_t   *points,
+             const vec3_t    projection,
+             const vec3_t    mins,
+             const vec3_t    maxs,
+             int             numOutPoints,
+             int             maxPoints,
+             vec3_t         *pointBuffer,
+             int             maxFragments,
+             markFragment_t *fragmentBuffer
+         );
+    int      CG_GetSolidEntities(centity_t ***list);
+    int      CG_ModelSurfaceType(int entnum);
+
+    // Added in OPM
     //  A hot MG42 barrel's glow (cg_mg42.cpp)
     void CG_MG42BarrelGlow(refEntity_t *model, const entityState_t *s1);
+
     void CG_InitTestTreadMark();
     void CG_AddTreadMarks();
     int  CG_PermanentMark(

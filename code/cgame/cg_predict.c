@@ -84,6 +84,20 @@ void CG_BuildSolidList(void)
     }
 }
 
+/*
+====================
+CG_GetSolidEntities
+
+Added in OPM
+  The solid entities of this frame's snapshot.
+====================
+*/
+int CG_GetSolidEntities(centity_t ***list)
+{
+    *list = cg_solidEntities;
+    return cg_numSolidEntities;
+}
+
 int CG_GetBrushEntitiesInBounds(int iMaxEnts, centity_t** pEntList, const vec3_t vMins, const vec3_t vMaxs)
 {
     int i;

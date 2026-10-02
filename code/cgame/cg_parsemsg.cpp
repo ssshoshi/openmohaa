@@ -136,6 +136,11 @@ void CG_MakeBulletHoleSound(const vec3_t i_vPos, const vec3_t i_vNorm, int iLarg
     }
 
     iSurfType = trace.surfaceFlags & MASK_SURF_TYPE;
+    // Added in OPM
+    //  A solid model's box has no surface: what it is made of, by its name
+    if (!iSurfType && trace.entityNum < ENTITYNUM_WORLD) {
+        iSurfType = CG_ModelSurfaceType(trace.entityNum);
+    }
     if (trace.contents & CONTENTS_WATER) {
         iSurfType = SURF_PUDDLE;
     }
@@ -315,6 +320,11 @@ static void CG_MakeBulletHole(
     }
 
     iSurfType = trace.surfaceFlags & MASK_SURF_TYPE;
+    // Added in OPM
+    //  A solid model's box has no surface: what it is made of, by its name
+    if (!iSurfType && trace.entityNum < ENTITYNUM_WORLD) {
+        iSurfType = CG_ModelSurfaceType(trace.entityNum);
+    }
     if (trace.contents & CONTENTS_WATER) {
         iSurfType = SURF_PUDDLE;
     }
