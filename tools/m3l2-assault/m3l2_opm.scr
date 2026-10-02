@@ -305,6 +305,10 @@ mg_post local.side:
 end ( -2300 5950 0 )
 
 scene3_mg42s:
+	// None once the scene is over (a save made after it).
+	if (level.scene3_spawn1_deactivator == 1 || level.scene4_spawn1_teamvalue != NIL)
+		level.opm_s3_mgdone = 1
+
 	for (local.side = 1; local.side <= 2; local.side++)
 	{
 		waitthread mg_set_up local.side
@@ -401,6 +405,8 @@ mg_fire local.side:
 			println ("m3l2_opm: t=" + level.time + " window 2 is shot out")
 		}
 
+		if (local.mg == NULL)
+			break
 		local.clear = waitthread fire_line_clear local.mg.origin local.aim
 		if (local.clear == 1)
 		{
@@ -408,8 +414,12 @@ mg_fire local.side:
 				println ("m3l2_opm: t=" + level.time + " MG42 crew " + local.side + " opens fire on window " + local.i)
 			local.mg setaimtarget local.target
 			wait 0.6
+			if (local.mg == NULL)
+				break
 			local.mg startfiring
 			wait (1 + (randomfloat 1.5))
+			if (local.mg == NULL)
+				break
 			local.mg stopfiring
 			local.bursts++
 			wait (1 + (randomfloat 1.5))
