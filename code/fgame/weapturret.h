@@ -122,6 +122,16 @@ private:
     bool  Overheats();
     void  CoolBarrel();
 
+    // Added in OPM
+    //  The player's belts (see TurretGun::ShotFired). The rounds he fired are
+    //  kept in the entity's shader_data[1], which savegames keep; the belt
+    //  change in progress is not (a load finishes it).
+    float m_fBeltChangeEnd;
+
+    bool IsMG42();
+    bool PlayerUsing();
+    int  PlayerRoundsFired();
+
 protected:
     void         ThinkIdle();
     void         P_SetTargetAngles(Vector        &vTargAngles);
@@ -132,6 +142,11 @@ public:
     //  An overheated MG42 is not ready to fire; each shot heats its barrel
     qboolean ReadyToFire(firemode_t mode, qboolean playsound = qtrue) override;
     void     ShotFired(firemode_t mode) override;
+
+    // Added in OPM
+    //  The player's ammunition on an MG42, for the HUD: false when it has no
+    //  limit (or is not an MG42).
+    bool BeltAmmo(int *piInBelt, int *piBeltSize, int *piSpare);
 
     CLASS_PROTOTYPE(TurretGun);
 

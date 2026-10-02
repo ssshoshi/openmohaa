@@ -149,6 +149,9 @@ cvar_t *g_mg42_heatmax;
 cvar_t *g_mg42_heatresume;
 cvar_t *g_mg42_cooldown;
 cvar_t *g_mg42_cooldelay;
+cvar_t *g_mg42_belt;
+cvar_t *g_mg42_belts;
+cvar_t *g_mg42_beltchange;
 cvar_t *g_bulletpenetration;
 cvar_t *g_healthdrop;
 cvar_t *g_healrate;
@@ -541,6 +544,13 @@ void CVAR_Init(void)
     g_mg42_heatresume  = gi.Cvar_Get("g_mg42_heatresume", "40", CVAR_ARCHIVE);
     g_mg42_cooldown    = gi.Cvar_Get("g_mg42_cooldown", "20", CVAR_ARCHIVE);
     g_mg42_cooldelay   = gi.Cvar_Get("g_mg42_cooldelay", "0.5", CVAR_ARCHIVE);
+
+    //  The player's MG42 ammunition (TurretGun::ShotFired): belts of
+    //  g_mg42_belt rounds, g_mg42_belts of them on each gun (0: no limit), and
+    //  g_mg42_beltchange seconds to change one. German gunners never run dry.
+    g_mg42_belt       = gi.Cvar_Get("g_mg42_belt", "250", CVAR_ARCHIVE);
+    g_mg42_belts      = gi.Cvar_Get("g_mg42_belts", "4", CVAR_ARCHIVE);
+    g_mg42_beltchange = gi.Cvar_Get("g_mg42_beltchange", "4", CVAR_ARCHIVE);
     // Added in OPM
     //  Allied Assault's weapons with Spearhead's bullet penetration: see
     //  Weapon::GetBulletThrough.

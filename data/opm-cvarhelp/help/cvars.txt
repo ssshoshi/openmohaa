@@ -2,10 +2,18 @@
 # name<TAB>min<TAB>max<TAB>declared at<TAB>description   (\n in a description is a line break)
 # Refresh with tools/cvarhelp/extract.py --write: descriptions and ranges are kept.
 activeAction			code/client/cl_main.cpp:3596	Commands run once when the client first enters the game, then cleared.
-ai_debug_grenades	0	1	code/fgame/gamecvars.cpp:502	Debug: show AI grenade throw decisions. Cheat-protected.
+ai_debug	0	2	code/fgame/gamecvars.cpp:797	Logs each enemy AI decision to the console (1); 2 also says why a grenade is not thrown.
+ai_debug_grenades	0	1	code/fgame/gamecvars.cpp:525	Debug: show AI grenade throw decisions. Cheat-protected.
 ai_debugpath	0	1	code/fgame/navigate.cpp:2288	Debug: draw bot paths.
 ai_editmode	0	1	code/fgame/navigate.cpp:2295	Path node edit mode: keeps node data editable instead of compacting it. Latched.
+ai_enhanced	0	1	code/fgame/gamecvars.cpp:796	All the enemy AI improvements (the other ai_ cvars) on or off at once; 0 is the original game's AI.
 ai_fallheight			code/fgame/navigate.cpp:2287	Highest drop in game units that AI paths may include.
+ai_grenade_ammo	0	10	code/fgame/gamecvars.cpp:802	Grenades a German carries when his map gives him none (for enemies spawned after it is set).
+ai_grenade_cooldown	0	60	code/fgame/gamecvars.cpp:801	Seconds a squad waits after one of them throws a grenade before another does.
+ai_grenade_drop	0	1	code/fgame/gamecvars.cpp:805	An enemy killed while winding up a throw drops the grenade, live.
+ai_grenade_fumble	0	100	code/fgame/gamecvars.cpp:804	Percent of enemy throws that go badly wrong: the grenade slips, falls short or goes wide.
+ai_grenade_range	256	3000	code/fgame/gamecvars.cpp:803	Farthest an enemy throws a grenade.
+ai_grenades	0	1	code/fgame/gamecvars.cpp:800	Grenade improvements: Germans carry grenades, lob them into places a plain throw cannot reach (up through shot-out windows), hold them as they wind up, and do not always throw them well.
 ai_health_kar			code/fgame/sentient.cpp:1986	AI deaths needed before one drops a health item (the 'health pop' counter threshold). Cheat-protected.
 ai_health_mp40points			code/fgame/sentient.cpp:1987	Health-pop points added when an AI with a submachine gun dies. Cheat-protected.
 ai_pathcheckdist			code/fgame/navigate.cpp:2290	Distance over which AI re-check that their path is still valid. Cheat-protected.
@@ -16,14 +24,16 @@ ai_shownodenums	0	1	code/fgame/navigate.cpp:2283	Debug: show path node numbers.
 ai_showpath	0	2	code/fgame/navigate.cpp:2286	Debug: draw AI paths.
 ai_showroutes	0	1	code/fgame/navigate.cpp:2281	Debug: draw the connections between path nodes.
 ai_showroutes_distance			code/fgame/navigate.cpp:2282	Maximum distance for ai_showroutes and ai_shownodenums drawing.
-autopaused	0	1	code/qcommon/common.c:1912	Pause single player automatically when the game window loses focus or a menu opens.
-bosshealth	0	1	code/fgame/gamecvars.cpp:367	Boss health bar value (0 to 1), set by level scripts; 0 hides the bar.
+ai_suppress	0	1	code/fgame/gamecvars.cpp:798	Enemies who lose sight of you fire at where they last saw you for up to 15 seconds, and hold fire when a squadmate is in the way.
+ai_suppress_chance	0	100	code/fgame/gamecvars.cpp:799	Percent chance an enemy suppresses when it could (for enemies spawned after it is set).
+autopaused	0	1	code/qcommon/common.c:1913	Pause single player automatically when the game window loses focus or a menu opens.
+bosshealth	0	1	code/fgame/gamecvars.cpp:386	Boss health bar value (0 to 1), set by level scripts; 0 hides the bar.
 botsession			code/fgame/g_bot.cpp:801	Read-only: internal bot session data carried across map changes.
-br_bound	0	1	code/cgame/cg_bugreport.cpp:908	Internal: whether the report key (F8) has been bound once. Set it to 0 to bind F8 again on the next map.
-br_category			code/cgame/cg_bugreport.cpp:902	In-game report: the area chosen (physics, texture, lighting, sound, model, script, gameplay, performance, other).
-br_desc			code/cgame/cg_bugreport.cpp:904	In-game report: the details typed in the report menu.
-br_title			code/cgame/cg_bugreport.cpp:903	In-game report: the title typed in the report menu.
-br_type			code/cgame/cg_bugreport.cpp:901	In-game report: bug, idea or feedback.
+br_bound	0	1	code/cgame/cg_bugreport.cpp:536	Internal: whether the report key (F8) has been bound once. Set it to 0 to bind F8 again on the next map.
+br_category			code/cgame/cg_bugreport.cpp:530	In-game report: the area chosen (physics, texture, lighting, sound, model, script, gameplay, performance, other).
+br_desc			code/cgame/cg_bugreport.cpp:532	In-game report: the details typed in the report menu.
+br_title			code/cgame/cg_bugreport.cpp:531	In-game report: the title typed in the report menu.
+br_type			code/cgame/cg_bugreport.cpp:529	In-game report: bug, idea or feedback.
 cam_angles_pitch			code/fgame/camera.cpp:2042	Camera path editor: the selected node's pitch.
 cam_angles_roll			code/fgame/camera.cpp:2046	Camera path editor: the selected node's roll.
 cam_angles_yaw			code/fgame/camera.cpp:2038	Camera path editor: the selected node's yaw.
@@ -34,105 +44,105 @@ cam_origin			code/fgame/camera.cpp:2033	Camera path editor: the selected node's 
 cam_speed			code/fgame/camera.cpp:2068	Camera path editor: the selected node's speed.
 cam_target			code/fgame/camera.cpp:2052	Camera path editor: the selected node's target.
 cam_watch			code/fgame/camera.cpp:2056	Camera path editor: the selected node's watch.
-cg_3rd_person	0	1	code/cgame/cg_main.c:153	Third-person camera: the view follows behind the player instead of looking through their eyes. Cheat-protected.
-cg_acidtrip	0		code/cgame/cg_main.c:178	Debug effect: warps the view with a psychedelic wobble. The number is how many passes of the warp are applied. Cheat-protected.
+cg_3rd_person	0	1	code/cgame/cg_main.c:154	Third-person camera: the view follows behind the player instead of looking through their eyes. Cheat-protected.
+cg_acidtrip	0		code/cgame/cg_main.c:179	Debug effect: warps the view with a psychedelic wobble. The number is how many passes of the warp are applied. Cheat-protected.
 cg_allowvote	0	1	code/client/cl_ui.cpp:2492	Whether the server allows votes. The client copies it from the server's g_allowvote so the menu can show or hide the vote options; setting it yourself changes nothing on the server.
-cg_animationviewmodel	0	1	code/cgame/cg_main.c:173	Keep animating the first-person weapon (view model) even while dead or in states that normally freeze it. Set by the server.
-cg_animspeed			code/cgame/cg_main.c:140	Speed multiplier for client-side animation playback, for debugging animations. 1 is normal speed. Cheat-protected.
+cg_animationviewmodel	0	1	code/cgame/cg_main.c:174	Keep animating the first-person weapon (view model) even while dead or in states that normally freeze it. Set by the server.
+cg_animspeed			code/cgame/cg_main.c:141	Speed multiplier for client-side animation playback, for debugging animations. 1 is normal speed. Cheat-protected.
 cg_autoswitch	0	1	code/client/cl_main.cpp:3691	Switch to a weapon automatically when you pick up one that is better than the one in your hands.
-cg_cameradist			code/cgame/cg_main.c:156	Third-person camera: how far behind the player the camera sits, in game units.
-cg_cameraheight			code/cgame/cg_main.c:155	Third-person camera: how high above the player's origin the camera aims, in game units.
-cg_camerascale			code/cgame/cg_main.c:158	Third-person camera: how quickly the camera eases toward its target position (0 to 1; higher follows more tightly).
-cg_cameraverticaldisplacement			code/cgame/cg_main.c:157	Third-person camera: extra vertical offset applied to the camera position, in game units.
-cg_crosshair			code/cgame/cg_main.c:182	Shader used to draw the crosshair.
-cg_crosshair_friend			code/cgame/cg_main.c:186	Shader used for the crosshair when it is over a teammate (multiplayer). Falls back to cg_crosshair where the texture does not exist.
-cg_debuganim	0	2	code/cgame/cg_main.c:141	Print client-side animation changes to the console: 1 for animation starts, 2 for every frame update as well. Cheat-protected.
-cg_debuganimwatch	0		code/cgame/cg_main.c:142	Limit cg_debuganim to one entity: set to that entity's number plus one. 0 shows all entities. Cheat-protected.
-cg_debugfootsteps	0	1	code/cgame/cg_main.c:160	Print footstep surface detection to the console: which surface each step hit and which sound was chosen. Cheat-protected.
-cg_drawsvlag	0	1	code/cgame/cg_main.c:181	Show the server-lag icon when the connection to the server stalls.
-cg_drawviewmodel	0	2	code/cgame/cg_main.c:154	First-person weapon: 0 hides it, 1 shows the weapon only, 2 also shows the hands and arms.
+cg_cameradist			code/cgame/cg_main.c:157	Third-person camera: how far behind the player the camera sits, in game units.
+cg_cameraheight			code/cgame/cg_main.c:156	Third-person camera: how high above the player's origin the camera aims, in game units.
+cg_camerascale			code/cgame/cg_main.c:159	Third-person camera: how quickly the camera eases toward its target position (0 to 1; higher follows more tightly).
+cg_cameraverticaldisplacement			code/cgame/cg_main.c:158	Third-person camera: extra vertical offset applied to the camera position, in game units.
+cg_crosshair			code/cgame/cg_main.c:183	Shader used to draw the crosshair.
+cg_crosshair_friend			code/cgame/cg_main.c:187	Shader used for the crosshair when it is over a teammate (multiplayer). Falls back to cg_crosshair where the texture does not exist.
+cg_debuganim	0	2	code/cgame/cg_main.c:142	Print client-side animation changes to the console: 1 for animation starts, 2 for every frame update as well. Cheat-protected.
+cg_debuganimwatch	0		code/cgame/cg_main.c:143	Limit cg_debuganim to one entity: set to that entity's number plus one. 0 shows all entities. Cheat-protected.
+cg_debugfootsteps	0	1	code/cgame/cg_main.c:161	Print footstep surface detection to the console: which surface each step hit and which sound was chosen. Cheat-protected.
+cg_drawsvlag	0	1	code/cgame/cg_main.c:182	Show the server-lag icon when the connection to the server stalls.
+cg_drawviewmodel	0	2	code/cgame/cg_main.c:155	First-person weapon: 0 hides it, 1 shows the weapon only, 2 also shows the hands and arms.
 cg_effect_physicsrate			code/cgame/cg_tempmodels.cpp:237	How many times per second the physics of effect particles (debris, sparks, smoke) is stepped. Lower is cheaper but coarser.
 cg_effectdetail	0.2	1	code/cgame/cg_tempmodels.cpp:234	Scales how many particles effects spawn: 1 is full detail, lower values thin out smoke, sparks and debris for performance.
-cg_errordecay			code/cgame/cg_main.c:143	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
-cg_firstPersonBody	0	1	code/cgame/cg_main.c:175	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
-cg_firstPersonBodyOffset			code/cgame/cg_main.c:176	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
-cg_firstPersonShadow	0	1	code/cgame/cg_main.c:174	Let your own player model cast a shadow in first person, while the model itself stays hidden.
-cg_forceModel	0	1	code/cgame/cg_main.c:172	Multiplayer: draw every player with your chosen player models (dm_playermodel / dm_playergermanmodel) instead of their own.
-cg_fov	65	120	code/cgame/cg_main.c:223	Field of view in degrees for the normal (unzoomed) view. Clamped to 65-120.
-cg_frameTimers	0		code/cgame/cg_view.c:962	Profiling: print a breakdown of where cgame spends its frame time. The value is how many frames to average over; 0 is off.
+cg_errordecay			code/cgame/cg_main.c:144	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
+cg_firstPersonBody	0	1	code/cgame/cg_main.c:176	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
+cg_firstPersonBodyOffset			code/cgame/cg_main.c:177	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
+cg_firstPersonShadow	0	1	code/cgame/cg_main.c:175	Let your own player model cast a shadow in first person, while the model itself stays hidden.
+cg_forceModel	0	1	code/cgame/cg_main.c:173	Multiplayer: draw every player with your chosen player models (dm_playermodel / dm_playergermanmodel) instead of their own.
+cg_fov	65	120	code/cgame/cg_main.c:224	Field of view in degrees for the normal (unzoomed) view. Clamped to 65-120.
+cg_frameTimers	0		code/cgame/cg_view.c:973	Profiling: print a breakdown of where cgame spends its frame time. The value is how many frames to average over; 0 is off.
 cg_gametype	0		code/tiki/tiki_parse.cpp:329	The current game type as seen by the client (0 single player; 1 free-for-all, 2 team match, 3 round-based, 4 objective, and higher for later modes). Set by the server; latched.
-cg_hidetempmodels	0	1	code/cgame/cg_main.c:147	Debug: stop drawing temporary models (particles, debris, sprites from effects).
-cg_hitmessages	0	1	code/cgame/cg_main.c:177	Show hit feedback messages in multiplayer.
-cg_hud	0	1	code/cgame/cg_main.c:179	Whether the HUD is currently shown. Managed by the UI; use ui_hud to change it.
-cg_huddraw_force	0	1	code/cgame/cg_main.c:180	Draw script HUD elements (huddraw) even when the HUD is hidden. Saved with savegames.
-cg_lagometer	0	1	code/cgame/cg_main.c:150	Show the lag-o-meter graph: frame interpolation on top, snapshot latency and drops underneath.
-cg_marks_add	0	1	code/cgame/cg_main.c:138	Leave decal marks: bullet holes, blood splats, scorch marks. 0 turns them off (shadow blobs still draw).
-cg_marks_max			code/cgame/cg_main.c:139	Maximum number of decal marks kept in the world before the oldest are recycled. Latched: applies on the next map.
+cg_hidetempmodels	0	1	code/cgame/cg_main.c:148	Debug: stop drawing temporary models (particles, debris, sprites from effects).
+cg_hitmessages	0	1	code/cgame/cg_main.c:178	Show hit feedback messages in multiplayer.
+cg_hud	0	1	code/cgame/cg_main.c:180	Whether the HUD is currently shown. Managed by the UI; use ui_hud to change it.
+cg_huddraw_force	0	1	code/cgame/cg_main.c:181	Draw script HUD elements (huddraw) even when the HUD is hidden. Saved with savegames.
+cg_lagometer	0	1	code/cgame/cg_main.c:151	Show the lag-o-meter graph: frame interpolation on top, snapshot latency and drops underneath.
+cg_marks_add	0	1	code/cgame/cg_main.c:139	Leave decal marks: bullet holes, blood splats, scorch marks. 0 turns them off (shadow blobs still draw).
+cg_marks_max			code/cgame/cg_main.c:140	Maximum number of decal marks kept in the world before the oldest are recycled. Latched: applies on the next map.
 cg_max_tempmodels	200		code/cgame/cg_tempmodels.cpp:238	Maximum number of temporary models (particles, debris, sprites) alive at once. Higher allows denser effects at a memory and speed cost.
-cg_nopredict	0	1	code/cgame/cg_main.c:144	Debug: turn off client-side movement prediction, so your movement waits for the server.
+cg_nopredict	0	1	code/cgame/cg_main.c:145	Debug: turn off client-side movement prediction, so your movement waits for the server.
 cg_physics	0	1	code/cgame/cg_physics.cpp:79	Client-side physics (Jolt): props knocked about by shots and explosions, and the world the ragdolls collide with. 0 turns it all off.
 cg_physics_clipped	0	1	code/cgame/cg_physics.cpp:88	Props that the map wraps in invisible clip brushes (most furniture), when playing on someone else's server: 0 keeps them fixed, 1 moves them anyway and leaves the clip brush behind for the server's collision. In local single player the clip brushes are removed instead. Latched.
 cg_physics_debug	0	4	code/cgame/cg_physics.cpp:81	Physics debug drawing: 1 the physics world, 3 and 4 furniture pieces and entity fills. 0 is off.
-cg_physics_edit	0	1	code/cgame/cg_physics_edit.cpp:997	The physics editor overlay: outlines every physics object (green moves, red fixed, grey left out) and describes the one under the crosshair. Toggle with phys_edit.
+cg_physics_edit	0	1	code/cgame/cg_physics_edit.cpp:1164	The physics editor overlay: outlines every physics object (green moves, red fixed, grey left out) and describes the one under the crosshair. Toggle with phys_edit.
 cg_physics_furniture	0	1	code/cgame/cg_physics.cpp:89	Let furniture built from map brushwork (tables, chairs in the brushes) move as physics objects. Latched.
 cg_physics_log	0	2	code/cgame/cg_physics.cpp:80	Physics console logging: 1 a summary every 5 seconds and major events, 2 per-object detail.
 cg_physics_props	0	1	code/cgame/cg_physics.cpp:82	Let the map's static models (crates, bottles, barrels) move as physics objects when hit. Latched.
-cg_pmove_msec			code/cgame/cg_main.c:165	Milliseconds per player movement step when client-side movement is run in fixed steps.
-cg_ragdoll	0	1	code/cgame/cg_ragdoll.cpp:8892	Ragdoll corpses: bodies go limp and fall under physics when killed, instead of only playing a death animation.
-cg_ragdoll_armfree			code/cgame/cg_ragdoll.cpp:8991	How much further than the default joint limits the arms may swing on a ragdoll (0 keeps the base limits).
-cg_ragdoll_blastimpulse	0	10	code/cgame/cg_ragdoll.cpp:8925	Scales how hard explosions throw ragdolls. Kept separate from cg_ragdoll_impulse (bullets) so grenades can throw bodies without every rifle shot doing the same.
-cg_ragdoll_blendtime	0	2000	code/cgame/cg_ragdoll.cpp:8907	Milliseconds over which a body blends from its death animation into the ragdoll, so the switch does not pop.
-cg_ragdoll_bodybounce	0	1	code/cgame/cg_ragdoll.cpp:8939	How much two ragdolls bounce off each other (0 is no bounce). Flesh into flesh hardly bounces.
-cg_ragdoll_bodypush			code/cgame/cg_ragdoll.cpp:9027	How strongly overlapping ragdolls push each other apart per step.
-cg_ragdoll_bounce	0	1	code/cgame/cg_ragdoll.cpp:8937	How much a ragdoll bounces off the world (0 none, 1 fully elastic).
-cg_ragdoll_chestroll			code/cgame/cg_ragdoll.cpp:9020	Strength of the correction that keeps a ragdoll's chest from rolling unnaturally around the spine (0 disables it).
-cg_ragdoll_damping	0	0.5	code/cgame/cg_ragdoll.cpp:8935	Share of a ragdoll's velocity removed each physics step. Higher settles bodies faster and makes them look heavier.
-cg_ragdoll_debug	0	3	code/cgame/cg_ragdoll.cpp:8954	Ragdoll debug drawing and messages: 1 hits and impulses, 2 adds solver detail, 3 adds recent bullet hits. Cheat-protected.
-cg_ragdoll_dump	0		code/cgame/cg_ragdoll.cpp:8962	Write the next N ragdolls' whole life (every step) to ragdoll_dump.txt in the home path, then clear itself. For diagnosing bodies that flip, drift or prop up. Cheat-protected.
-cg_ragdoll_dumplabel	0	1	code/cgame/cg_ragdoll.cpp:8993	Label ragdolls being dumped (cg_ragdoll_dump) with their sequence number on screen.
-cg_ragdoll_duration	0	60000	code/cgame/cg_ragdoll.cpp:8927	Milliseconds a ragdoll keeps simulating before being frozen in place, even if it has not settled. 0 means no limit.
-cg_ragdoll_friction	0	1	code/cgame/cg_ragdoll.cpp:8936	Friction between ragdolls and the ground: higher stops sliding sooner.
-cg_ragdoll_grab	0	1	code/cgame/cg_ragdoll.cpp:9013	Enables the ragdoll/prop grabber (+rdgrab to hold, rdpunt to throw) and binds its keys. The previous bindings are saved in cg_ragdoll_grabsaved and restored when turned off.
-cg_ragdoll_grabrange			code/cgame/cg_ragdoll.cpp:9015	How far the grabber reaches, in game units.
-cg_ragdoll_grabsaved			code/cgame/cg_ragdoll.cpp:9014	Internal: the key bindings the grabber replaced, restored when cg_ragdoll_grab is turned off.
-cg_ragdoll_grabspring			code/cgame/cg_ragdoll.cpp:9018	How stiffly the grabber holds a body. Lower feels heavier: it lags behind swings and hangs lower under the aim.
-cg_ragdoll_impulse	0	10	code/cgame/cg_ragdoll.cpp:8918	Scales the push the killing shot gives a body. 0 disables it (purely animation-driven falls); 1 is roughly what a rifle round does. Higher looks dramatic but costs the pose.
-cg_ragdoll_iterations	1	16	code/cgame/cg_ragdoll.cpp:8934	Constraint solver passes per physics step. More keeps limbs tighter to the skeleton at a CPU cost.
-cg_ragdoll_jointsize	0	3	code/cgame/cg_ragdoll.cpp:9025	Collision size detail for ragdoll joints: 0 plain, higher values give the head and then the limbs more accurate shapes.
-cg_ragdoll_legfree			code/cgame/cg_ragdoll.cpp:8992	How much further than the default joint limits the legs may swing (0 keeps the base limits).
-cg_ragdoll_limbdamp	0	0.5	code/cgame/cg_ragdoll.cpp:8945	Damping of the limbs' motion relative to the rest of the body, which calms flailing on landings and throws without slowing the body itself. 0 is off.
-cg_ragdoll_limbpush	0	1	code/cgame/cg_ragdoll.cpp:8990	How much of the constraint solver's corrections become velocity. 1 is a plain position-based solver (bodies tend to shiver); lower keeps corrections from feeding motion.
-cg_ragdoll_limptime	0	10000	code/cgame/cg_ragdoll.cpp:9049	Milliseconds for a body to go fully limp. Early on, soft constraints hold it near the pose it died in so it does not sprawl flat. 0 keeps that forever.
-cg_ragdoll_log	0	2	code/cgame/cg_ragdoll.cpp:8997	One console line per ragdoll event: started, handed over, lost, recycled, put to sleep, woken. Not saved, so it cannot be left on by accident.
-cg_ragdoll_maxcount	0		code/cgame/cg_ragdoll.cpp:8906	How many ragdolls may simulate at the same time. More looks livelier in big fights but every one costs CPU each frame.
-cg_ragdoll_meshfit			code/cgame/cg_ragdoll.cpp:9005	Size ragdoll collision from the model's own mesh, scaled by this. 0 keeps the hand-tuned sizes.
-cg_ragdoll_meshhits	0	1	code/cgame/cg_ragdoll.cpp:9001	Test bullets against a corpse's drawn mesh rather than only the game's hit spheres, so shots land where they look like they should.
-cg_ragdoll_physicsrate	20	120	code/cgame/cg_ragdoll.cpp:8933	Ragdoll physics steps per second. Higher is smoother and more stable but costs more CPU.
-cg_ragdoll_pinsleep	0	1	code/cgame/cg_ragdoll.cpp:9024	Pin sleeping ragdolls in place so a settled body does not creep.
-cg_ragdoll_props	0	1	code/cgame/cg_ragdoll.cpp:9006	Let ragdolls collide with and push the client-side physics props.
-cg_ragdoll_puntspeed			code/cgame/cg_ragdoll.cpp:9019	How hard rdpunt throws what the grabber holds, in units per second.
-cg_ragdoll_shoulderslack			code/cgame/cg_ragdoll.cpp:9026	Degrees of extra play allowed in a ragdoll's shoulders before the joint limit engages.
-cg_ragdoll_shove			code/cgame/cg_ragdoll.cpp:9029	How strongly walking into a ragdoll shoves it.
-cg_ragdoll_sleeptime			code/cgame/cg_ragdoll.cpp:8953	Milliseconds a ragdoll has to stay still (below cg_ragdoll_sleepvel) before it is put to sleep and stops costing CPU.
-cg_ragdoll_sleepvel			code/cgame/cg_ragdoll.cpp:8952	Movement threshold below which a ragdoll counts as still, for putting it to sleep. 0 disables sleeping.
-cg_ragdoll_solvegain	0	1	code/cgame/cg_ragdoll.cpp:9031	How much of each constraint error the solver corrects per pass. Lower is softer and more stable, higher is stiffer.
-cg_ragdoll_solver	0	1	code/cgame/cg_ragdoll.cpp:9023	Which ragdoll simulation to use: 0 the built-in particle solver, 1 Jolt physics ragdolls.
-cg_ragdoll_spinetwist			code/cgame/cg_ragdoll.cpp:9021	Maximum twist of a ragdoll's spine, in degrees.
-cg_ragdoll_stiffness	0	4	code/cgame/cg_ragdoll.cpp:9056	How firmly bodies hold the shape they died in. Lower is floppier, higher stiffer.
-cg_ragdoll_stuckhold			code/cgame/cg_ragdoll.cpp:9028	How firmly a body part that is wedged in geometry is held there (as a share of its normal mass). 0 turns this off.
+cg_pmove_msec			code/cgame/cg_main.c:166	Milliseconds per player movement step when client-side movement is run in fixed steps.
+cg_ragdoll	0	1	code/cgame/cg_ragdoll.cpp:8893	Ragdoll corpses: bodies go limp and fall under physics when killed, instead of only playing a death animation.
+cg_ragdoll_armfree			code/cgame/cg_ragdoll.cpp:8992	How much further than the default joint limits the arms may swing on a ragdoll (0 keeps the base limits).
+cg_ragdoll_blastimpulse	0	10	code/cgame/cg_ragdoll.cpp:8926	Scales how hard explosions throw ragdolls. Kept separate from cg_ragdoll_impulse (bullets) so grenades can throw bodies without every rifle shot doing the same.
+cg_ragdoll_blendtime	0	2000	code/cgame/cg_ragdoll.cpp:8908	Milliseconds over which a body blends from its death animation into the ragdoll, so the switch does not pop.
+cg_ragdoll_bodybounce	0	1	code/cgame/cg_ragdoll.cpp:8940	How much two ragdolls bounce off each other (0 is no bounce). Flesh into flesh hardly bounces.
+cg_ragdoll_bodypush			code/cgame/cg_ragdoll.cpp:9028	How strongly overlapping ragdolls push each other apart per step.
+cg_ragdoll_bounce	0	1	code/cgame/cg_ragdoll.cpp:8938	How much a ragdoll bounces off the world (0 none, 1 fully elastic).
+cg_ragdoll_chestroll			code/cgame/cg_ragdoll.cpp:9021	Strength of the correction that keeps a ragdoll's chest from rolling unnaturally around the spine (0 disables it).
+cg_ragdoll_damping	0	0.5	code/cgame/cg_ragdoll.cpp:8936	Share of a ragdoll's velocity removed each physics step. Higher settles bodies faster and makes them look heavier.
+cg_ragdoll_debug	0	3	code/cgame/cg_ragdoll.cpp:8955	Ragdoll debug drawing and messages: 1 hits and impulses, 2 adds solver detail, 3 adds recent bullet hits. Cheat-protected.
+cg_ragdoll_dump	0		code/cgame/cg_ragdoll.cpp:8963	Write the next N ragdolls' whole life (every step) to ragdoll_dump.txt in the home path, then clear itself. For diagnosing bodies that flip, drift or prop up. Cheat-protected.
+cg_ragdoll_dumplabel	0	1	code/cgame/cg_ragdoll.cpp:8994	Label ragdolls being dumped (cg_ragdoll_dump) with their sequence number on screen.
+cg_ragdoll_duration	0	60000	code/cgame/cg_ragdoll.cpp:8928	Milliseconds a ragdoll keeps simulating before being frozen in place, even if it has not settled. 0 means no limit.
+cg_ragdoll_friction	0	1	code/cgame/cg_ragdoll.cpp:8937	Friction between ragdolls and the ground: higher stops sliding sooner.
+cg_ragdoll_grab	0	1	code/cgame/cg_ragdoll.cpp:9014	Enables the ragdoll/prop grabber (+rdgrab to hold, rdpunt to throw) and binds its keys. The previous bindings are saved in cg_ragdoll_grabsaved and restored when turned off.
+cg_ragdoll_grabrange			code/cgame/cg_ragdoll.cpp:9016	How far the grabber reaches, in game units.
+cg_ragdoll_grabsaved			code/cgame/cg_ragdoll.cpp:9015	Internal: the key bindings the grabber replaced, restored when cg_ragdoll_grab is turned off.
+cg_ragdoll_grabspring			code/cgame/cg_ragdoll.cpp:9019	How stiffly the grabber holds a body. Lower feels heavier: it lags behind swings and hangs lower under the aim.
+cg_ragdoll_impulse	0	10	code/cgame/cg_ragdoll.cpp:8919	Scales the push the killing shot gives a body. 0 disables it (purely animation-driven falls); 1 is roughly what a rifle round does. Higher looks dramatic but costs the pose.
+cg_ragdoll_iterations	1	16	code/cgame/cg_ragdoll.cpp:8935	Constraint solver passes per physics step. More keeps limbs tighter to the skeleton at a CPU cost.
+cg_ragdoll_jointsize	0	3	code/cgame/cg_ragdoll.cpp:9026	Collision size detail for ragdoll joints: 0 plain, higher values give the head and then the limbs more accurate shapes.
+cg_ragdoll_legfree			code/cgame/cg_ragdoll.cpp:8993	How much further than the default joint limits the legs may swing (0 keeps the base limits).
+cg_ragdoll_limbdamp	0	0.5	code/cgame/cg_ragdoll.cpp:8946	Damping of the limbs' motion relative to the rest of the body, which calms flailing on landings and throws without slowing the body itself. 0 is off.
+cg_ragdoll_limbpush	0	1	code/cgame/cg_ragdoll.cpp:8991	How much of the constraint solver's corrections become velocity. 1 is a plain position-based solver (bodies tend to shiver); lower keeps corrections from feeding motion.
+cg_ragdoll_limptime	0	10000	code/cgame/cg_ragdoll.cpp:9050	Milliseconds for a body to go fully limp. Early on, soft constraints hold it near the pose it died in so it does not sprawl flat. 0 keeps that forever.
+cg_ragdoll_log	0	2	code/cgame/cg_ragdoll.cpp:8998	One console line per ragdoll event: started, handed over, lost, recycled, put to sleep, woken. Not saved, so it cannot be left on by accident.
+cg_ragdoll_maxcount	0		code/cgame/cg_ragdoll.cpp:8907	How many ragdolls may simulate at the same time. More looks livelier in big fights but every one costs CPU each frame.
+cg_ragdoll_meshfit			code/cgame/cg_ragdoll.cpp:9006	Size ragdoll collision from the model's own mesh, scaled by this. 0 keeps the hand-tuned sizes.
+cg_ragdoll_meshhits	0	1	code/cgame/cg_ragdoll.cpp:9002	Test bullets against a corpse's drawn mesh rather than only the game's hit spheres, so shots land where they look like they should.
+cg_ragdoll_physicsrate	20	120	code/cgame/cg_ragdoll.cpp:8934	Ragdoll physics steps per second. Higher is smoother and more stable but costs more CPU.
+cg_ragdoll_pinsleep	0	1	code/cgame/cg_ragdoll.cpp:9025	Pin sleeping ragdolls in place so a settled body does not creep.
+cg_ragdoll_props	0	1	code/cgame/cg_ragdoll.cpp:9007	Let ragdolls collide with and push the client-side physics props.
+cg_ragdoll_puntspeed			code/cgame/cg_ragdoll.cpp:9020	How hard rdpunt throws what the grabber holds, in units per second.
+cg_ragdoll_shoulderslack			code/cgame/cg_ragdoll.cpp:9027	Degrees of extra play allowed in a ragdoll's shoulders before the joint limit engages.
+cg_ragdoll_shove			code/cgame/cg_ragdoll.cpp:9030	How strongly walking into a ragdoll shoves it.
+cg_ragdoll_sleeptime			code/cgame/cg_ragdoll.cpp:8954	Milliseconds a ragdoll has to stay still (below cg_ragdoll_sleepvel) before it is put to sleep and stops costing CPU.
+cg_ragdoll_sleepvel			code/cgame/cg_ragdoll.cpp:8953	Movement threshold below which a ragdoll counts as still, for putting it to sleep. 0 disables sleeping.
+cg_ragdoll_solvegain	0	1	code/cgame/cg_ragdoll.cpp:9032	How much of each constraint error the solver corrects per pass. Lower is softer and more stable, higher is stiffer.
+cg_ragdoll_solver	0	1	code/cgame/cg_ragdoll.cpp:9024	Which ragdoll simulation to use: 0 the built-in particle solver, 1 Jolt physics ragdolls.
+cg_ragdoll_spinetwist			code/cgame/cg_ragdoll.cpp:9022	Maximum twist of a ragdoll's spine, in degrees.
+cg_ragdoll_stiffness	0	4	code/cgame/cg_ragdoll.cpp:9057	How firmly bodies hold the shape they died in. Lower is floppier, higher stiffer.
+cg_ragdoll_stuckhold			code/cgame/cg_ragdoll.cpp:9029	How firmly a body part that is wedged in geometry is held there (as a share of its normal mass). 0 turns this off.
 cg_rain	0	1	code/cgame/cg_nature.cpp:61	Draw rain where a map has it.
 cg_rain_drawcoverage	0	1	code/cgame/cg_nature.cpp:63	Debug: show where rain is allowed to fall on the map. Set by the map; saved with savegames.
 cg_reserve_tempmodels			code/cgame/cg_tempmodels.cpp:241	How many temporary model slots to keep free: when fewer are left, the oldest effects are freed early. Clamped to a fifth of cg_max_tempmodels.
-cg_shadowdebug	0	1	code/cgame/cg_main.c:168	Debug: draw the lights used to cast character shadows.
+cg_shadowdebug	0	1	code/cgame/cg_main.c:169	Debug: draw the lights used to cast character shadows.
 cg_shadows	0	3	code/renderergl1/tr_init.c:1514	Character shadows: 0 none, 1 blob under the feet, 2 projected stencil shadows (GL1), 3 stencil volumes (GL1).
-cg_shadowscount	1	8	code/cgame/cg_main.c:167	How many lights may cast a character's blob shadow at once.
+cg_shadowscount	1	8	code/cgame/cg_main.c:168	How many lights may cast a character's blob shadow at once.
 cg_showemitters	0	1	code/cgame/cg_commands.cpp:5458	Debug: print information about effect emitters as they spawn particles.
-cg_showmiss	0	2	code/cgame/cg_main.c:145	Debug: report prediction misses (when the server's position disagrees with the client's prediction). 2 adds more detail.
+cg_showmiss	0	2	code/cgame/cg_main.c:146	Debug: report prediction misses (when the server's position disagrees with the client's prediction). 2 adds more detail.
 cg_showtempmodels	0	1	code/cgame/cg_tempmodels.cpp:231	Debug: print how many temporary models are alive each frame.
-cg_smoothClients	0	1	code/cgame/cg_main.c:161	Smooth other players' movement by extrapolating between server snapshots.
-cg_smoothClientsTime			code/cgame/cg_main.c:162	How far ahead, in milliseconds, other players may be extrapolated when cg_smoothClients is on.
-cg_stats	0	1	code/cgame/cg_main.c:146	Debug: print the client's current snapshot and frame numbers every frame.
-cg_stereosep			code/cgame/cg_main.c:149	Eye separation for stereoscopic rendering.
+cg_smoothClients	0	1	code/cgame/cg_main.c:162	Smooth other players' movement by extrapolating between server snapshots.
+cg_smoothClientsTime			code/cgame/cg_main.c:163	How far ahead, in milliseconds, other players may be extrapolated when cg_smoothClients is on.
+cg_stats	0	1	code/cgame/cg_main.c:147	Debug: print the client's current snapshot and frame numbers every frame.
+cg_stereosep			code/cgame/cg_main.c:150	Eye separation for stereoscopic rendering.
 cg_te_accel_x			code/cgame/cg_testemitter.cpp:2002	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the X axis.
 cg_te_accel_y			code/cgame/cg_testemitter.cpp:2003	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the Y axis.
 cg_te_accel_z			code/cgame/cg_testemitter.cpp:2004	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the Z axis.
@@ -227,9 +237,9 @@ cg_te_volumetric			code/cgame/cg_testemitter.cpp:2045	Test emitter (the effects 
 cg_te_xangles			code/cgame/cg_testemitter.cpp:2081	Test emitter (the effects editor in cg_testemitter): emitter orientation, pitch.
 cg_te_yangles			code/cgame/cg_testemitter.cpp:2082	Test emitter (the effects editor in cg_testemitter): emitter orientation, yaw.
 cg_te_zangles			code/cgame/cg_testemitter.cpp:2083	Test emitter (the effects editor in cg_testemitter): emitter orientation, roll.
-cg_traceinfo	0	3	code/cgame/cg_main.c:159	Debug: print information about client-side collision traces. 3 prints every trace.
+cg_traceinfo	0	3	code/cgame/cg_main.c:160	Debug: print information about client-side collision traces. 3 prints every trace.
 cg_treadmark_test	0		code/cgame/cg_marks.c:1015	Debug: draw a test tank tread mark under the crosshair. The value is the tread width.
-cg_voicechat	0	1	code/cgame/cg_main.c:211	Play multiplayer voice chat messages (the voice command menu).
+cg_voicechat	0	1	code/cgame/cg_main.c:212	Play multiplayer voice chat messages (the voice command menu).
 cheats	0	1	code/server/sv_init.c:1078	Allow cheat commands and cheat-protected cvars. In single player use thereisnomonkey 1. Latched. Server setting.
 cl_allowDownload	0		code/client/cl_main.cpp:3628	Download missing files from servers (bit flags: 1 enable, 2 no redirect, 4 no UDP).
 cl_altbindings	0	1	code/client/cl_main.cpp:3633	Allow Alt+key bindings as separate binds.
@@ -243,9 +253,10 @@ cl_connect_timeout			code/client/cl_main.cpp:3585	Seconds to wait when connectin
 cl_consoleKeys			code/client/cl_main.cpp:3703	Keys that open the console, as key names or character codes.
 cl_conXOffset			code/client/cl_main.cpp:3636	Horizontal offset of console text.
 cl_cURLLib			code/client/cl_main.cpp:3630	Name of the cURL library used for HTTP downloads.
-cl_debugMove	0	2	code/client/cl_input.cpp:1212	Debug: graph mouse movement (1) or the resulting view angles (2).
+cl_debugMove	0	2	code/client/cl_input.cpp:1249	Debug: graph mouse movement (1) or the resulting view angles (2).
 cl_forceavidemo	0	1	code/client/cl_main.cpp:3603	Record video frames even when not in a game.
 cl_forceModel	0	1	code/client/cl_main.cpp:3694	Legacy: force player models.
+cl_freecam			code/client/cl_input.cpp:1248	Added in OPM: set by cgame/cg_orch.cpp; the view moves while paused
 cl_freelook	0	1	code/client/cl_main.cpp:3617	Mouse look: moving the mouse turns and looks up and down.
 cl_freezeDemo	0	1	code/client/cl_main.cpp:3594	Pause demo playback.
 cl_greenfps	0	1	code/client/cl_ui.cpp:5339	Draw the frame rate counter in green.
@@ -264,9 +275,9 @@ cl_mouseAccelStyle	0	1	code/client/cl_main.cpp:3620	Mouse acceleration curve: 0 
 cl_movieaudio	0	1	code/client/cl_ui.cpp:5341	Play the audio of in-game movies.
 cl_netprofile	0	1	code/client/cl_main.cpp:3590	Collect client network statistics.
 cl_netprofileoverlay	0		code/client/cl_main.cpp:3591	Show client network statistics on screen (value sets the vertical offset).
-cl_nodelta	0	1	code/client/cl_input.cpp:1211	Debug: ask for full snapshots instead of deltas.
+cl_nodelta	0	1	code/client/cl_input.cpp:1246	Debug: ask for full snapshots instead of deltas.
 cl_noprint	0	1	code/client/cl_main.cpp:3580	Do not print server messages in the console.
-cl_packetdelay	0		code/qcommon/common.c:1929	Debug: delay outgoing packets by this many milliseconds, to simulate lag.
+cl_packetdelay	0		code/qcommon/common.c:1930	Debug: delay outgoing packets by this many milliseconds, to simulate lag.
 cl_packetdup	0	5	code/client/cl_main.cpp:3612	Send each movement command this many extra times, to survive packet loss.
 cl_pitchspeed			code/client/cl_main.cpp:3608	Keyboard look up/down speed in degrees per second.
 cl_playintro	0	1	code/client/cl_ui.cpp:5340	Play the intro movies at startup.
@@ -275,7 +286,7 @@ cl_radar_icon_size			code/client/cl_main.cpp:3680	Size of teammate icons on the 
 cl_radar_speak_time			code/client/cl_main.cpp:3681	Seconds a teammate's icon highlights on the radar after they speak.
 cl_renderer			code/client/cl_main.cpp:3207	Renderer to load: opengl1 (the original look) or opengl2 (modern effects: normal maps, sun shadows, post-processing). Latched: needs a video restart.
 cl_run	0	1	code/client/cl_main.cpp:3614	Always run. The run key then walks.
-cl_running			code/fgame/gamecvars.cpp:764	Read-only: whether the client is running.
+cl_running			code/fgame/gamecvars.cpp:807	Read-only: whether the client is running.
 cl_serverStatusResendTime			code/client/cl_main.cpp:3644	Milliseconds between server status requests.
 cl_showmouserate	0	1	code/client/cl_main.cpp:3626	Debug: print mouse movement rates, for tuning acceleration.
 cl_shownet	0	3	code/client/cl_main.cpp:3589	Debug: print network message details.
@@ -292,42 +303,43 @@ cm_noAreas	0	1	code/qcommon/cm_load.c:842	Debug: ignore area connectivity in col
 cm_noCurves	0	1	code/qcommon/cm_load.c:843	Debug: no collision with curved surfaces. Cheat-protected.
 cm_playerCurveClip	0	1	code/qcommon/cm_load.c:844	Players collide with curved surfaces. Cheat-protected.
 cm_ter_usesphere	0	1	code/qcommon/cm_load.c:847	Use bounding spheres to speed up terrain collision. Cheat-protected.
-com_abnormalExit			code/qcommon/common.c:1941	Read-only: set when the last session crashed, so safe settings can be offered.
+com_abnormalExit			code/qcommon/common.c:1942	Read-only: set when the last session crashed, so safe settings can be offered.
 com_altivec	0	1	code/renderergl2/tr_init.c:1506	Use AltiVec instructions on PowerPC.
-com_ansiColor	0	1	code/qcommon/common.c:1935	Colour the dedicated server console with ANSI codes.
-com_basegame			code/qcommon/common.c:1768	Base game directory (main).
-com_blood	0	1	code/fgame/gamecvars.cpp:365	Blood effects.
-com_buildScript	0	1	code/qcommon/common.c:1933	Build script mode for packaging tools.
-com_busyWait	0	1	code/qcommon/common.c:1942	Spin instead of sleeping between frames, for more even frame pacing at the cost of CPU.
-com_dropsim	0	100	code/qcommon/common.c:1918	Debug: drop this percentage of packets. Cheat-protected.
-com_frameTimers	0		code/qcommon/common.c:1926	Print a microsecond breakdown of each frame, averaged over this many frames. 0 is off. Not a cheat, so it works in demos.
-com_gamename			code/qcommon/common.c:1956	Game name used to find servers.
-com_homepath			code/qcommon/common.c:1772	Folder name for user data in the home path.
-com_legacyprotocol			code/qcommon/common.c:1960	Older network protocol also accepted.
-com_maxfps	0		code/qcommon/common.c:1909	Frame rate cap. 0 is unlimited; MOH:AA's physics prefer values like 60, 85, 125.
-com_maxfpsMinimized	0		code/qcommon/common.c:1940	Frame rate cap while minimized. 0 uses com_maxfps.
-com_maxfpsUnfocused	0		code/qcommon/common.c:1938	Frame rate cap while the window is in the background. 0 uses com_maxfps.
-com_minimized			code/qcommon/common.c:1939	Read-only: whether the window is minimized.
-com_pipefile			code/qcommon/common.c:2018	Named pipe that commands can be written to from outside the game.
-com_protocol			code/qcommon/common.c:1958	Network protocol version.
-com_radar_range			code/qcommon/common.c:1934	Range of the compass radar in game units.
-com_showtrace	0	1	code/qcommon/common.c:1917	Debug: print collision trace counts. Cheat-protected.
+com_ansiColor	0	1	code/qcommon/common.c:1936	Colour the dedicated server console with ANSI codes.
+com_basegame			code/qcommon/common.c:1769	Base game directory (main).
+com_blood	0	1	code/fgame/gamecvars.cpp:384	Blood effects.
+com_buildScript	0	1	code/qcommon/common.c:1934	Build script mode for packaging tools.
+com_busyWait	0	1	code/qcommon/common.c:1943	Spin instead of sleeping between frames, for more even frame pacing at the cost of CPU.
+com_cmddir			code/qcommon/common.c:2020	Only from the command line: a server must not point it elsewhere.
+com_dropsim	0	100	code/qcommon/common.c:1919	Debug: drop this percentage of packets. Cheat-protected.
+com_frameTimers	0		code/qcommon/common.c:1927	Print a microsecond breakdown of each frame, averaged over this many frames. 0 is off. Not a cheat, so it works in demos.
+com_gamename			code/qcommon/common.c:1957	Game name used to find servers.
+com_homepath			code/qcommon/common.c:1773	Folder name for user data in the home path.
+com_legacyprotocol			code/qcommon/common.c:1961	Older network protocol also accepted.
+com_maxfps	0		code/qcommon/common.c:1910	Frame rate cap. 0 is unlimited; MOH:AA's physics prefer values like 60, 85, 125.
+com_maxfpsMinimized	0		code/qcommon/common.c:1941	Frame rate cap while minimized. 0 uses com_maxfps.
+com_maxfpsUnfocused	0		code/qcommon/common.c:1939	Frame rate cap while the window is in the background. 0 uses com_maxfps.
+com_minimized			code/qcommon/common.c:1940	Read-only: whether the window is minimized.
+com_pipefile			code/qcommon/common.c:2021	Named pipe that commands can be written to from outside the game.
+com_protocol			code/qcommon/common.c:1959	Network protocol version.
+com_radar_range			code/qcommon/common.c:1935	Range of the compass radar in game units.
+com_showtrace	0	1	code/qcommon/common.c:1918	Debug: print collision trace counts. Cheat-protected.
 com_soundMegs			code/client/snd_mem.c:85	Megabytes of memory for sounds. Latched.
-com_speeds	0	1	code/qcommon/common.c:1922	Debug: print frame time spent in the game, renderer and so on.
-com_standalone			code/qcommon/common.c:1767	Read-only: whether running as a standalone game.
-com_target_demo	0	1	code/qcommon/common.c:3338	Run as the demo version.
-com_target_extension			code/qcommon/common.c:3341	Read-only: the expansion being run.
-com_target_game	0	2	code/fgame/gamecvars.cpp:573	Which game to run: 0 Allied Assault, 1 Spearhead, 2 Breakthrough. Set at startup.
-com_target_shortversion			code/qcommon/common.c:3339	Read-only: short version of the target game.
-com_target_version			code/qcommon/common.c:3340	Read-only: full name and version of the target game.
-com_unfocused			code/qcommon/common.c:1937	Read-only: whether the window is in the background.
+com_speeds	0	1	code/qcommon/common.c:1923	Debug: print frame time spent in the game, renderer and so on.
+com_standalone			code/qcommon/common.c:1768	Read-only: whether running as a standalone game.
+com_target_demo	0	1	code/qcommon/common.c:3562	Run as the demo version.
+com_target_extension			code/qcommon/common.c:3565	Read-only: the expansion being run.
+com_target_game	0	2	code/fgame/gamecvars.cpp:603	Which game to run: 0 Allied Assault, 1 Spearhead, 2 Breakthrough. Set at startup.
+com_target_shortversion			code/qcommon/common.c:3563	Read-only: short version of the target game.
+com_target_version			code/qcommon/common.c:3564	Read-only: full name and version of the target game.
+com_unfocused			code/qcommon/common.c:1938	Read-only: whether the window is in the background.
 com_updatecheck_enabled	0	1	code/sys/sys_update_checker.cpp:63	Check GitHub for new OpenMoHAA versions in the background.
 com_updatecheck_interval	5	240	code/sys/sys_update_checker.cpp:64	Minutes between update checks.
-con_autochat	0	1	code/qcommon/common.c:1970	Dedicated server console: text without a leading / is sent as chat.
-config			code/qcommon/common.c:1802	Name of the config file being used.
-convertAnim	0	1	code/qcommon/common.c:1907	Convert animations at load (tools).
+con_autochat	0	1	code/qcommon/common.c:1971	Dedicated server console: text without a leading / is sent as chat.
+config			code/qcommon/common.c:1803	Name of the config file being used.
+convertAnim	0	1	code/qcommon/common.c:1908	Convert animations at load (tools).
 curSubtitle			code/fgame/entity.cpp:3688	Internal: which subtitle line is next.
-cvb_bound	0	1	code/cgame/cg_bugreport.cpp:912	Internal: whether the cvar browser key (F7) has been bound once.
+cvb_bound	0	1	code/cgame/cg_bugreport.cpp:540	Internal: whether the cvar browser key (F7) has been bound once.
 dcl_alpha			code/renderergl1/tr_marks_permanent.c:1530	Decal editor (permanent marks): opacity.
 dcl_autogetinfo			code/renderergl1/tr_marks_permanent.c:1520	Decal editor (permanent marks): pick up the settings of the decal under the cursor.
 dcl_b			code/renderergl1/tr_marks_permanent.c:1529	Decal editor (permanent marks): colour, blue.
@@ -351,10 +363,10 @@ dcl_shiftstep			code/renderergl1/tr_marks_permanent.c:1521	Decal editor (permane
 dcl_showcurrent			code/renderergl1/tr_marks_permanent.c:1519	Decal editor (permanent marks): highlight the current decal.
 dcl_texturescale			code/renderergl1/tr_marks_permanent.c:1540	Decal editor (permanent marks): tread mark texture scale.
 dcl_widthscale			code/renderergl1/tr_marks_permanent.c:1525	Decal editor (permanent marks): width scale.
-deathmatch	0	1	code/fgame/gamecvars.cpp:343	Multiplayer rules on. Set by the game type. Latched. Server setting.
+deathmatch	0	1	code/fgame/gamecvars.cpp:362	Multiplayer rules on. Set by the game type. Latched. Server setting.
 debuggraph	0	1	code/client/cl_scrn.cpp:417	Debug: draw the debug graph. Cheat-protected.
 debugSound	0	1	code/cgame/cg_commands.cpp:3851	Debug: print sound events handled by cgame.
-dedicated	0	2	code/fgame/gamecvars.cpp:342	Dedicated server: 0 not, 1 LAN, 2 internet. Set at startup.
+dedicated	0	2	code/fgame/gamecvars.cpp:361	Dedicated server: 0 not, 1 LAN, 2 internet. Set at startup.
 detail	0	1	code/cgame/cg_tempmodels.cpp:232	Spawn detail-only effect particles.
 developer	0	2	code/renderergl1/tr_init.c:1587	Developer mode: extra messages, debug commands; skips intros.
 dlg_badsave			code/client/cl_ui.cpp:5343	Text shown for an invalid savegame.
@@ -379,233 +391,238 @@ dm_show_demo_servers	0	1	code/client/cl_uiserverlist.cpp:531	Server browser: sho
 dm_team_match	0	1	code/client/cl_uiserverlist.cpp:1042	Server browser: show team match servers.
 dm_tow_match	0	1	code/client/cl_uiserverlist.cpp:1043	Server browser: show tug-of-war servers.
 dmflags			code/server/sv_init.c:1043	Multiplayer rule flags. Server setting.
-dumploadedanims	0	1	code/qcommon/common.c:1904	Debug: print animations as they load.
-filterban	0	1	code/fgame/gamecvars.cpp:351	IP filter mode: 1 the list bans those addresses, 0 only those addresses may join. Server setting.
-fixedtime	0		code/qcommon/common.c:1916	Debug: every frame advances exactly this many milliseconds. Cheat-protected.
-flood_msgs			code/fgame/gamecvars.cpp:360	Chat flood protection: messages allowed within flood_persecond. Server setting.
-flood_persecond			code/fgame/gamecvars.cpp:361	Chat flood protection: the time window in seconds. Server setting.
-flood_waitdelay			code/fgame/gamecvars.cpp:362	Chat flood protection: seconds a flooder is muted. Server setting.
+dumploadedanims	0	1	code/qcommon/common.c:1905	Debug: print animations as they load.
+filterban	0	1	code/fgame/gamecvars.cpp:370	IP filter mode: 1 the list bans those addresses, 0 only those addresses may join. Server setting.
+fixedtime	0		code/qcommon/common.c:1917	Debug: every frame advances exactly this many milliseconds. Cheat-protected.
+flood_msgs			code/fgame/gamecvars.cpp:379	Chat flood protection: messages allowed within flood_persecond. Server setting.
+flood_persecond			code/fgame/gamecvars.cpp:380	Chat flood protection: the time window in seconds. Server setting.
+flood_waitdelay			code/fgame/gamecvars.cpp:381	Chat flood protection: seconds a flooder is muted. Server setting.
 fps	0	1	code/renderergl1/tr_init.c:1559	Show the frame rate counter.
-fps_location	0	3	code/qcommon/common.c:1914	Where the frame rate counter is drawn (corner).
+fps_location	0	3	code/qcommon/common.c:1915	Where the frame rate counter is drawn (corner).
 fraglimit	0		code/server/sv_init.c:1044	Multiplayer: kills to win the map. 0 no limit. Server setting.
-fs_apppath			code/qcommon/files.cpp:3624	Application bundle path (macOS).
-fs_basegame			code/qcommon/files.cpp:3613	Base game directory override.
-fs_basepath			code/qcommon/files.cpp:3612	Folder the game data (main/Pak*.pk3) is read from.
-fs_debug	0	1	code/qcommon/files.cpp:3611	Debug: print file system lookups.
-fs_filedir			code/qcommon/files.cpp:3676	Folder files are looked up in.
-fs_game			code/qcommon/files.cpp:3617	Mod folder to load on top of main.
-fs_gogpath			code/qcommon/files.cpp:3620	Detected GOG install path.
-fs_homeconfigpath			code/qcommon/files.cpp:3614	Folder configs are saved to.
-fs_homedatapath			code/qcommon/files.cpp:3615	Folder user data (saves, screenshots) is written to.
-fs_homepath			code/qcommon/files.cpp:3596	User data folder. Set on the command line to move saves, configs and screenshots.
-fs_homestatepath			code/qcommon/files.cpp:3616	Folder state files are written to.
-fs_microsoftstorepath			code/qcommon/files.cpp:3621	Detected Microsoft Store install path.
-fs_restrict	0	1	code/qcommon/files.cpp:3618	Restrict file access (demo builds).
-fs_steampath			code/qcommon/files.cpp:3619	Detected Steam install path.
-g_ai	0	1	code/fgame/gamecvars.cpp:481	Artificial intelligence on: 0 freezes every AI actor and AI-manned turret in place (debugging).
-g_ai_noticescale			code/fgame/gamecvars.cpp:500	Scales how long AI takes to notice the player. Higher is slower to notice.
-g_ai_notifyradius			code/fgame/gamecvars.cpp:499	Radius in game units within which AI alert nearby allies.
-g_ai_soundscale			code/fgame/gamecvars.cpp:501	Scales how far AI hear sounds (gunfire, footsteps).
+fs_apppath			code/qcommon/files.cpp:3637	Application bundle path (macOS).
+fs_basegame			code/qcommon/files.cpp:3626	Base game directory override.
+fs_basepath			code/qcommon/files.cpp:3625	Folder the game data (main/Pak*.pk3) is read from.
+fs_debug	0	1	code/qcommon/files.cpp:3624	Debug: print file system lookups.
+fs_filedir			code/qcommon/files.cpp:3689	Folder files are looked up in.
+fs_game			code/qcommon/files.cpp:3630	Mod folder to load on top of main.
+fs_gogpath			code/qcommon/files.cpp:3633	Detected GOG install path.
+fs_homeconfigpath			code/qcommon/files.cpp:3627	Folder configs are saved to.
+fs_homedatapath			code/qcommon/files.cpp:3628	Folder user data (saves, screenshots) is written to.
+fs_homepath			code/qcommon/files.cpp:3609	User data folder. Set on the command line to move saves, configs and screenshots.
+fs_homestatepath			code/qcommon/files.cpp:3629	Folder state files are written to.
+fs_microsoftstorepath			code/qcommon/files.cpp:3634	Detected Microsoft Store install path.
+fs_restrict	0	1	code/qcommon/files.cpp:3631	Restrict file access (demo builds).
+fs_steampath			code/qcommon/files.cpp:3632	Detected Steam install path.
+g_ai	0	1	code/fgame/gamecvars.cpp:504	Artificial intelligence on: 0 freezes every AI actor and AI-manned turret in place (debugging).
+g_ai_noticescale			code/fgame/gamecvars.cpp:523	Scales how long AI takes to notice the player. Higher is slower to notice.
+g_ai_notifyradius			code/fgame/gamecvars.cpp:522	Radius in game units within which AI alert nearby allies.
+g_ai_soundscale			code/fgame/gamecvars.cpp:524	Scales how far AI hear sounds (gunfire, footsteps).
 g_aiDamageMult			code/fgame/sentient.cpp:1385	Multiplier on damage dealt by AI to the player.
-g_ailongrange			code/fgame/actor.cpp:10729	Distance at which AI consider a target at long range, for accuracy.
-g_aimaxdeviation	0	1	code/fgame/actor.cpp:10715	How far off their aim AI may shoot and still count the shot as aimed (a dot product: 1 dead on).
-g_aimcoverfactor	0	1	code/fgame/actor.cpp:10714	How much being in cover reduces AI accuracy against you.
-g_aimediumrange			code/fgame/actor.cpp:10728	Distance at which AI consider a target at medium range, for accuracy.
-g_aiminaccuracy	0	1	code/fgame/actor.cpp:10716	AI accuracy against a target they can barely see (0 to 1).
-g_aimLagTime			code/fgame/player.cpp:4968	Milliseconds of delay in the aim trail that AI track the player with. Higher gives more lag in their aim.
-g_aiScatterHeight			code/fgame/actor.cpp:10718	Vertical scatter of AI shots in game units, before accuracy is applied.
-g_aiScatterWide			code/fgame/actor.cpp:10717	Horizontal scatter of AI shots in game units, before accuracy is applied.
-g_aishortrange			code/fgame/actor.cpp:10727	Distance at which AI consider a target at short range, for accuracy.
-g_aisniperrange			code/fgame/actor.cpp:10730	Distance at which AI snipers engage.
-g_aistats	0	1	code/fgame/gamecvars.cpp:693	Debug: print AI statistics. Cheat-protected.
-g_aiSupressScatter			code/fgame/actor.cpp:10713	Scatter multiplier on AI suppressing fire (shooting to keep you down rather than to hit).
-g_allowjointime	0		code/fgame/gamecvars.cpp:357	Round-based multiplayer: seconds after a round starts that new players may still join and spawn. Server setting.
-g_allowvote	0	1	code/fgame/gamecvars.cpp:537	Allow players to call votes. Server setting.
-g_animdump	0	1	code/fgame/gamecvars.cpp:495	Debug: print every animation change on the server.
-g_bot_attack_burst_min_time			code/fgame/gamecvars.cpp:723	Bots: minimum length of a burst of fire, in seconds.
-g_bot_attack_burst_random_delay			code/fgame/gamecvars.cpp:724	Bots: random extra delay between bursts, in seconds.
-g_bot_attack_continuousfire_min_firetime			code/fgame/gamecvars.cpp:725	Bots: minimum time holding the trigger for automatic weapons, in seconds.
-g_bot_attack_continuousfire_random_firetime			code/fgame/gamecvars.cpp:726	Bots: random extra time holding the trigger, in seconds.
-g_bot_attack_react_min_delay			code/fgame/gamecvars.cpp:727	Bots: minimum reaction time before firing at a new target, in seconds.
-g_bot_attack_react_random_delay			code/fgame/gamecvars.cpp:728	Bots: random extra reaction time, in seconds.
-g_bot_attack_spreadmult			code/fgame/gamecvars.cpp:729	Bots: multiplier on aim spread. Lower is more accurate.
-g_bot_initial_spawn_delay			code/fgame/gamecvars.cpp:754	Bots: seconds after the level starts before bots are added.
-g_bot_instamsg_chance	0		code/fgame/gamecvars.cpp:731	Bots: one in this many chances to send a voice message when they can. 0 never.
-g_bot_instamsg_delay			code/fgame/gamecvars.cpp:732	Bots: minimum time between their voice messages.
-g_bot_manualmove	0	1	code/fgame/gamecvars.cpp:756	Debug: bots stop moving on their own.
-g_bot_turn_speed			code/fgame/gamecvars.cpp:730	Bots: how fast they turn to aim, in degrees per frame.
-g_bulletpenetration	0	1	code/fgame/gamecvars.cpp:527	Give Allied Assault's weapons Spearhead's bullet penetration: rifles, the BAR and the StG 44 shoot through 24 units of wood and 8 of metal, MG42s through 56 and 32, losing damage for the distance. Submachine guns, pistols and the shotgun go through nothing, and rock, brick and plaster stop every bullet, as in Spearhead. Weapons whose own files set throughwood or throughmetal keep their values. Server setting.
-g_chat_expansions	0	1	code/fgame/gamecvars.cpp:691	Expand chat shortcuts such as $h (health) and $a (ammo) in chat messages. Server setting.
-g_cinematics_off	0	1	code/fgame/gamecvars.cpp:694	Skip in-game cinematics.
+g_ailongrange			code/fgame/actor.cpp:11135	Distance at which AI consider a target at long range, for accuracy.
+g_aimaxdeviation	0	1	code/fgame/actor.cpp:11121	How far off their aim AI may shoot and still count the shot as aimed (a dot product: 1 dead on).
+g_aimcoverfactor	0	1	code/fgame/actor.cpp:11120	How much being in cover reduces AI accuracy against you.
+g_aimediumrange			code/fgame/actor.cpp:11134	Distance at which AI consider a target at medium range, for accuracy.
+g_aiminaccuracy	0	1	code/fgame/actor.cpp:11122	AI accuracy against a target they can barely see (0 to 1).
+g_aimLagTime			code/fgame/player.cpp:4969	Milliseconds of delay in the aim trail that AI track the player with. Higher gives more lag in their aim.
+g_aiScatterHeight			code/fgame/actor.cpp:11124	Vertical scatter of AI shots in game units, before accuracy is applied.
+g_aiScatterWide			code/fgame/actor.cpp:11123	Horizontal scatter of AI shots in game units, before accuracy is applied.
+g_aishortrange			code/fgame/actor.cpp:11133	Distance at which AI consider a target at short range, for accuracy.
+g_aisniperrange			code/fgame/actor.cpp:11136	Distance at which AI snipers engage.
+g_aistats	0	1	code/fgame/gamecvars.cpp:723	Debug: print AI statistics. Cheat-protected.
+g_aiSupressScatter			code/fgame/actor.cpp:11119	Scatter multiplier on AI suppressing fire (shooting to keep you down rather than to hit).
+g_allowjointime	0		code/fgame/gamecvars.cpp:376	Round-based multiplayer: seconds after a round starts that new players may still join and spawn. Server setting.
+g_allowvote	0	1	code/fgame/gamecvars.cpp:567	Allow players to call votes. Server setting.
+g_animdump	0	1	code/fgame/gamecvars.cpp:518	Debug: print every animation change on the server.
+g_bot_attack_burst_min_time			code/fgame/gamecvars.cpp:753	Bots: minimum length of a burst of fire, in seconds.
+g_bot_attack_burst_random_delay			code/fgame/gamecvars.cpp:754	Bots: random extra delay between bursts, in seconds.
+g_bot_attack_continuousfire_min_firetime			code/fgame/gamecvars.cpp:755	Bots: minimum time holding the trigger for automatic weapons, in seconds.
+g_bot_attack_continuousfire_random_firetime			code/fgame/gamecvars.cpp:756	Bots: random extra time holding the trigger, in seconds.
+g_bot_attack_react_min_delay			code/fgame/gamecvars.cpp:757	Bots: minimum reaction time before firing at a new target, in seconds.
+g_bot_attack_react_random_delay			code/fgame/gamecvars.cpp:758	Bots: random extra reaction time, in seconds.
+g_bot_attack_spreadmult			code/fgame/gamecvars.cpp:759	Bots: multiplier on aim spread. Lower is more accurate.
+g_bot_initial_spawn_delay			code/fgame/gamecvars.cpp:784	Bots: seconds after the level starts before bots are added.
+g_bot_instamsg_chance	0		code/fgame/gamecvars.cpp:761	Bots: one in this many chances to send a voice message when they can. 0 never.
+g_bot_instamsg_delay			code/fgame/gamecvars.cpp:762	Bots: minimum time between their voice messages.
+g_bot_manualmove	0	1	code/fgame/gamecvars.cpp:786	Debug: bots stop moving on their own.
+g_bot_turn_speed			code/fgame/gamecvars.cpp:760	Bots: how fast they turn to aim, in degrees per frame.
+g_bulletpenetration	0	1	code/fgame/gamecvars.cpp:557	Give Allied Assault's weapons Spearhead's bullet penetration: rifles, the BAR and the StG 44 shoot through 24 units of wood and 8 of metal, MG42s through 56 and 32, losing damage for the distance. Submachine guns, pistols and the shotgun go through nothing, and rock, brick and plaster stop every bullet, as in Spearhead. Weapons whose own files set throughwood or throughmetal keep their values. Server setting.
+g_chat_expansions	0	1	code/fgame/gamecvars.cpp:721	Expand chat shortcuts such as $h (health) and $a (ammo) in chat messages. Server setting.
+g_cinematics_off	0	1	code/fgame/gamecvars.cpp:724	Skip in-game cinematics.
 g_ddayfodderguys			code/server/sv_init.c:1136	Number of extra soldiers (fodder) on the D-Day beach landing.
 g_ddayfog	0	1	code/server/sv_init.c:1138	Use the more distant fog on the D-Day beach.
 g_ddayshingleguys			code/server/sv_init.c:1139	Number of soldiers at the shingle on the D-Day beach.
-g_debugdamage	0	1	code/fgame/gamecvars.cpp:472	Debug: print every damage event with its source and amount.
-g_debugsmoke	0	1	code/fgame/gamecvars.cpp:667	Debug: show smoke sprite volumes. Cheat-protected.
-g_debugtargets	0	1	code/fgame/gamecvars.cpp:471	Debug: print targetname triggers as they fire.
-g_door_reopen_blocked	0	1	code/fgame/gamecvars.cpp:762	Doors reopen when blocked by something while closing, instead of pushing or stopping. Server setting.
-g_doWarmup	0	1	code/fgame/gamecvars.cpp:540	Multiplayer: have a warmup period before the match starts. Server setting.
-g_drawattackertime			code/fgame/gamecvars.cpp:609	Seconds your attacker's name stays on screen after you are hit.
-g_dropclips	0		code/fgame/gamecvars.cpp:493	How many clips of ammo a dead player's weapon drops with. 0 drops it empty. Server setting.
-g_droppeditemlife	0		code/fgame/gamecvars.cpp:492	Seconds a dropped weapon or item stays on the ground before it is removed. Server setting.
-g_entinfo	0	4	code/fgame/gamecvars.cpp:455	Debug: show information above actors (1 names and health, 2 more, 4 all regardless of distance). Cheat-protected.
-g_entinfo_max			code/fgame/actor.cpp:4287	Maximum distance for g_entinfo labels.
-g_eogmedal0	0	1	code/fgame/gamecvars.cpp:629	End-of-game medal earned (campaign progress). Saved.
-g_eogmedal1	0	1	code/fgame/gamecvars.cpp:630	End-of-game medal earned (campaign progress). Saved.
-g_eogmedal2	0	1	code/fgame/gamecvars.cpp:631	End-of-game medal earned (campaign progress). Saved.
-g_failed	0	1	code/fgame/gamecvars.cpp:613	Set by the game when the mission was failed; read by the end-of-mission screen.
-g_forceready	0	1	code/fgame/gamecvars.cpp:542	Multiplayer: players are marked ready automatically. Server setting.
-g_forcerespawn	0		code/fgame/gamecvars.cpp:543	Multiplayer: seconds after death before a player is respawned automatically. 0 waits for them. Server setting.
-g_forceteamspectate	0	1	code/fgame/gamecvars.cpp:657	Team games: dead players may only spectate their own team. Server setting.
+g_debugdamage	0	1	code/fgame/gamecvars.cpp:495	Debug: print every damage event with its source and amount.
+g_debugsmoke	0	1	code/fgame/gamecvars.cpp:697	Debug: show smoke sprite volumes. Cheat-protected.
+g_debugtargets	0	1	code/fgame/gamecvars.cpp:494	Debug: print targetname triggers as they fire.
+g_door_reopen_blocked	0	1	code/fgame/gamecvars.cpp:792	Doors reopen when blocked by something while closing, instead of pushing or stopping. Server setting.
+g_doWarmup	0	1	code/fgame/gamecvars.cpp:570	Multiplayer: have a warmup period before the match starts. Server setting.
+g_drawattackertime			code/fgame/gamecvars.cpp:639	Seconds your attacker's name stays on screen after you are hit.
+g_dropclips	0		code/fgame/gamecvars.cpp:516	How many clips of ammo a dead player's weapon drops with. 0 drops it empty. Server setting.
+g_droppeditemlife	0		code/fgame/gamecvars.cpp:515	Seconds a dropped weapon or item stays on the ground before it is removed. Server setting.
+g_entinfo	0	4	code/fgame/gamecvars.cpp:478	Debug: show information above actors (1 names and health, 2 more, 4 all regardless of distance). Cheat-protected.
+g_entinfo_max			code/fgame/actor.cpp:4301	Maximum distance for g_entinfo labels.
+g_eogmedal0	0	1	code/fgame/gamecvars.cpp:659	End-of-game medal earned (campaign progress). Saved.
+g_eogmedal1	0	1	code/fgame/gamecvars.cpp:660	End-of-game medal earned (campaign progress). Saved.
+g_eogmedal2	0	1	code/fgame/gamecvars.cpp:661	End-of-game medal earned (campaign progress). Saved.
+g_failed	0	1	code/fgame/gamecvars.cpp:643	Set by the game when the mission was failed; read by the end-of-mission screen.
+g_forceready	0	1	code/fgame/gamecvars.cpp:572	Multiplayer: players are marked ready automatically. Server setting.
+g_forcerespawn	0		code/fgame/gamecvars.cpp:573	Multiplayer: seconds after death before a player is respawned automatically. 0 waits for them. Server setting.
+g_forceteamspectate	0	1	code/fgame/gamecvars.cpp:687	Team games: dead players may only spectate their own team. Server setting.
 g_gametype	0	6	code/server/sv_ccmds.c:215	Game type: 0 single player, 1 free-for-all, 2 team match, 3 round-based, 4 objective, 5 tug of war, 6 liberation. Latched: applies on the next map. Server setting.
 g_gametypestring			code/server/sv_init.c:1055	Name of the current game type, shown in server browsers. Server setting.
-g_gotmedal	0	1	code/fgame/gamecvars.cpp:614	Set by the game when a medal was earned on the last mission.
-g_healrate	0		code/fgame/gamecvars.cpp:530	Health packs heal over time at this many points per second instead of all at once. 0 heals instantly. Server setting.
-g_healthdrop	0	1	code/fgame/gamecvars.cpp:528	Dead players drop a health pack. Server setting.
+g_gotmedal	0	1	code/fgame/gamecvars.cpp:644	Set by the game when a medal was earned on the last mission.
+g_healrate	0		code/fgame/gamecvars.cpp:560	Health packs heal over time at this many points per second instead of all at once. 0 heals instantly. Server setting.
+g_healthdrop	0	1	code/fgame/gamecvars.cpp:558	Dead players drop a health pack. Server setting.
 g_immediateswitch	0	1	code/fgame/player_conditionals.cpp:134	Multiplayer: weapons switch instantly, without the holster animation. Server setting.
-g_inactivekick	0		code/fgame/gamecvars.cpp:551	Seconds of inactivity before a player is kicked. 0 never. Server setting.
-g_inactiveSpectate	0		code/fgame/gamecvars.cpp:550	Seconds of inactivity before a player is moved to spectator. 0 never. Server setting.
-g_instamsg_allowed	0	1	code/fgame/gamecvars.cpp:749	Allow voice (instant) messages. Server setting.
-g_instamsg_minDelay			code/fgame/gamecvars.cpp:750	Minimum milliseconds between a player's voice messages. Server setting.
-g_invulnoverride	0	1	code/fgame/level.cpp:1138	Internal: set by a level to override invulnerability; cleared automatically.
-g_keepcorpses	0	1	code/fgame/gamecvars.cpp:402	Single player: dead soldiers stay where they fell for the rest of the level, instead of being removed out of sight when more than a handful lie around.
+g_inactivekick	0		code/fgame/gamecvars.cpp:581	Seconds of inactivity before a player is kicked. 0 never. Server setting.
+g_inactiveSpectate	0		code/fgame/gamecvars.cpp:580	Seconds of inactivity before a player is moved to spectator. 0 never. Server setting.
+g_instamsg_allowed	0	1	code/fgame/gamecvars.cpp:779	Allow voice (instant) messages. Server setting.
+g_instamsg_minDelay			code/fgame/gamecvars.cpp:780	Minimum milliseconds between a player's voice messages. Server setting.
+g_invulnoverride	0	1	code/fgame/level.cpp:1139	Internal: set by a level to override invulnerability; cleared automatically.
+g_keepcorpses	0	1	code/fgame/gamecvars.cpp:421	Single player: dead soldiers stay where they fell for the rest of the level, instead of being removed out of sight when more than a handful lie around.
 g_lastsave			code/server/sv_ccmds.c:1683	Name of the last savegame, for Continue.
-g_logstats	0	1	code/fgame/gamecvars.cpp:473	Log player statistics during play.
-g_m1l1	0	1	code/fgame/gamecvars.cpp:633	Campaign progress: this mission is unlocked. Saved.
-g_m1l2	0	1	code/fgame/gamecvars.cpp:634	Campaign progress: mission 1, level 2 is unlocked. Saved.
-g_m1l3	0	1	code/fgame/gamecvars.cpp:635	Campaign progress: mission 1, level 3 is unlocked. Saved.
-g_m2l1	0	1	code/fgame/gamecvars.cpp:636	Campaign progress: mission 2, level 1 is unlocked. Saved.
-g_m2l2	0	1	code/fgame/gamecvars.cpp:637	Campaign progress: mission 2, level 2 is unlocked. Saved.
-g_m2l3	0	1	code/fgame/gamecvars.cpp:638	Campaign progress: mission 2, level 3 is unlocked. Saved.
-g_m3l1	0	1	code/fgame/gamecvars.cpp:639	Campaign progress: mission 3, level 1 is unlocked. Saved.
-g_m3l2	0	1	code/fgame/gamecvars.cpp:640	Campaign progress: mission 3, level 2 is unlocked. Saved.
-g_m3l3	0	1	code/fgame/gamecvars.cpp:641	Campaign progress: mission 3, level 3 is unlocked. Saved.
-g_m4l1	0	1	code/fgame/gamecvars.cpp:642	Campaign progress: mission 4, level 1 is unlocked. Saved.
-g_m4l2	0	1	code/fgame/gamecvars.cpp:643	Campaign progress: mission 4, level 2 is unlocked. Saved.
-g_m4l3	0	1	code/fgame/gamecvars.cpp:644	Campaign progress: mission 4, level 3 is unlocked. Saved.
-g_m5l1	0	1	code/fgame/gamecvars.cpp:645	Campaign progress: mission 5, level 1 is unlocked. Saved.
-g_m5l2	0	1	code/fgame/gamecvars.cpp:646	Campaign progress: mission 5, level 2 is unlocked. Saved.
-g_m5l3	0	1	code/fgame/gamecvars.cpp:647	Campaign progress: mission 5, level 3 is unlocked. Saved.
-g_m6l1	0	1	code/fgame/gamecvars.cpp:648	Campaign progress: mission 6, level 1 is unlocked. Saved.
-g_m6l2	0	1	code/fgame/gamecvars.cpp:649	Campaign progress: mission 6, level 2 is unlocked. Saved.
-g_m6l3	0	1	code/fgame/gamecvars.cpp:650	Campaign progress: mission 6, level 3 is unlocked. Saved.
+g_logstats	0	1	code/fgame/gamecvars.cpp:496	Log player statistics during play.
+g_m1l1	0	1	code/fgame/gamecvars.cpp:663	Campaign progress: this mission is unlocked. Saved.
+g_m1l2	0	1	code/fgame/gamecvars.cpp:664	Campaign progress: mission 1, level 2 is unlocked. Saved.
+g_m1l3	0	1	code/fgame/gamecvars.cpp:665	Campaign progress: mission 1, level 3 is unlocked. Saved.
+g_m2l1	0	1	code/fgame/gamecvars.cpp:666	Campaign progress: mission 2, level 1 is unlocked. Saved.
+g_m2l2	0	1	code/fgame/gamecvars.cpp:667	Campaign progress: mission 2, level 2 is unlocked. Saved.
+g_m2l3	0	1	code/fgame/gamecvars.cpp:668	Campaign progress: mission 2, level 3 is unlocked. Saved.
+g_m3l1	0	1	code/fgame/gamecvars.cpp:669	Campaign progress: mission 3, level 1 is unlocked. Saved.
+g_m3l2	0	1	code/fgame/gamecvars.cpp:670	Campaign progress: mission 3, level 2 is unlocked. Saved.
+g_m3l3	0	1	code/fgame/gamecvars.cpp:671	Campaign progress: mission 3, level 3 is unlocked. Saved.
+g_m4l1	0	1	code/fgame/gamecvars.cpp:672	Campaign progress: mission 4, level 1 is unlocked. Saved.
+g_m4l2	0	1	code/fgame/gamecvars.cpp:673	Campaign progress: mission 4, level 2 is unlocked. Saved.
+g_m4l3	0	1	code/fgame/gamecvars.cpp:674	Campaign progress: mission 4, level 3 is unlocked. Saved.
+g_m5l1	0	1	code/fgame/gamecvars.cpp:675	Campaign progress: mission 5, level 1 is unlocked. Saved.
+g_m5l2	0	1	code/fgame/gamecvars.cpp:676	Campaign progress: mission 5, level 2 is unlocked. Saved.
+g_m5l3	0	1	code/fgame/gamecvars.cpp:677	Campaign progress: mission 5, level 3 is unlocked. Saved.
+g_m6l1	0	1	code/fgame/gamecvars.cpp:678	Campaign progress: mission 6, level 1 is unlocked. Saved.
+g_m6l2	0	1	code/fgame/gamecvars.cpp:679	Campaign progress: mission 6, level 2 is unlocked. Saved.
+g_m6l3	0	1	code/fgame/gamecvars.cpp:680	Campaign progress: mission 6, level 3 is unlocked. Saved.
+g_mapaddons	0	1	code/fgame/gamecvars.cpp:794	Runs a map's add-on script (maps/<map>_opm.scr) next to the map's own.
 g_maprotation_filter			code/client/cl_uimaprotationsetup.cpp:64	Which game type the map rotation menu lists maps for (ffa, obj, tow...).
-g_maxintermission	0		code/fgame/gamecvars.cpp:544	Multiplayer: seconds the end-of-map scoreboard stays up before the next map. 0 waits. Server setting.
+g_maxintermission	0		code/fgame/gamecvars.cpp:574	Multiplayer: seconds the end-of-map scoreboard stays up before the next map. 0 waits. Server setting.
 g_maxplayerhealth			code/fgame/game.cpp:87	Player maximum health in single player. Set by the difficulty level.
-g_medal0	0	1	code/fgame/gamecvars.cpp:616	Medal earned (campaign progress). Saved.
-g_medal1	0	1	code/fgame/gamecvars.cpp:617	Campaign medal earned. Saved.
-g_medal2	0	1	code/fgame/gamecvars.cpp:618	Campaign medal earned. Saved.
-g_medal3	0	1	code/fgame/gamecvars.cpp:619	Campaign medal earned. Saved.
-g_medal4	0	1	code/fgame/gamecvars.cpp:620	Campaign medal earned. Saved.
-g_medal5	0	1	code/fgame/gamecvars.cpp:621	Campaign medal earned. Saved.
-g_medalbt0	0	1	code/fgame/gamecvars.cpp:622	Breakthrough medal earned (campaign progress). Saved.
-g_medalbt1	0	1	code/fgame/gamecvars.cpp:623	Breakthrough campaign medal earned. Saved.
-g_medalbt2	0	1	code/fgame/gamecvars.cpp:624	Breakthrough campaign medal earned. Saved.
-g_medalbt3	0	1	code/fgame/gamecvars.cpp:625	Breakthrough campaign medal earned. Saved.
-g_medalbt4	0	1	code/fgame/gamecvars.cpp:626	Breakthrough campaign medal earned. Saved.
-g_medalbt5	0	1	code/fgame/gamecvars.cpp:627	Breakthrough campaign medal earned. Saved.
-g_mg42_cooldelay			code/fgame/gamecvars.cpp:523	Seconds after the last shot before an MG42 barrel starts to cool.
-g_mg42_cooldown			code/fgame/gamecvars.cpp:522	Heat an MG42 barrel sheds each second once it has stopped firing.
-g_mg42_heatmax			code/fgame/gamecvars.cpp:520	Barrel heat at which an MG42 overheats and stops firing. At 1 heat a shot and 20 rounds a second, 100 is about five seconds of fire.
-g_mg42_heatpershot			code/fgame/gamecvars.cpp:519	Heat each MG42 shot adds to the barrel.
-g_mg42_heatresume			code/fgame/gamecvars.cpp:521	Barrel heat an overheated MG42 has to cool to before it fires again.
-g_mg42_overheat	0	1	code/fgame/gamecvars.cpp:518	MG42 barrels overheat: every shot heats the barrel, and at g_mg42_heatmax the gun will not fire until it has cooled to g_mg42_heatresume. Mounted and bipod MG42s, the player's and the AI's. Server setting.
-g_mission			code/cgame/cg_view.c:1194	Current campaign mission number, used for the mission screens.
-g_monitor			code/fgame/gamecvars.cpp:484	Debug: trace script execution only for the entity with this targetname.
-g_monitorNum	-1		code/fgame/gamecvars.cpp:485	Debug: trace script execution only for the entity with this number. -1 off.
-g_navigation_legacy	0	1	code/fgame/gamecvars.cpp:760	Use the original path nodes for AI and bots instead of the navigation mesh. Latched. Server setting.
+g_medal0	0	1	code/fgame/gamecvars.cpp:646	Medal earned (campaign progress). Saved.
+g_medal1	0	1	code/fgame/gamecvars.cpp:647	Campaign medal earned. Saved.
+g_medal2	0	1	code/fgame/gamecvars.cpp:648	Campaign medal earned. Saved.
+g_medal3	0	1	code/fgame/gamecvars.cpp:649	Campaign medal earned. Saved.
+g_medal4	0	1	code/fgame/gamecvars.cpp:650	Campaign medal earned. Saved.
+g_medal5	0	1	code/fgame/gamecvars.cpp:651	Campaign medal earned. Saved.
+g_medalbt0	0	1	code/fgame/gamecvars.cpp:652	Breakthrough medal earned (campaign progress). Saved.
+g_medalbt1	0	1	code/fgame/gamecvars.cpp:653	Breakthrough campaign medal earned. Saved.
+g_medalbt2	0	1	code/fgame/gamecvars.cpp:654	Breakthrough campaign medal earned. Saved.
+g_medalbt3	0	1	code/fgame/gamecvars.cpp:655	Breakthrough campaign medal earned. Saved.
+g_medalbt4	0	1	code/fgame/gamecvars.cpp:656	Breakthrough campaign medal earned. Saved.
+g_medalbt5	0	1	code/fgame/gamecvars.cpp:657	Breakthrough campaign medal earned. Saved.
+g_mg42_belt	1	1000	code/fgame/gamecvars.cpp:551	Rounds in each belt of the player's MG42.
+g_mg42_beltchange	0	15	code/fgame/gamecvars.cpp:553	Seconds the player takes to change an MG42 belt.
+g_mg42_belts	0	20	code/fgame/gamecvars.cpp:552	Belts the player has on each MG42; 0 is no limit. German gunners never run out.
+g_mg42_cooldelay			code/fgame/gamecvars.cpp:546	Seconds after the last shot before an MG42 barrel starts to cool.
+g_mg42_cooldown			code/fgame/gamecvars.cpp:545	Heat an MG42 barrel sheds each second once it has stopped firing.
+g_mg42_heatmax			code/fgame/gamecvars.cpp:543	Barrel heat at which an MG42 overheats and stops firing. At 1 heat a shot and 20 rounds a second, 100 is about five seconds of fire.
+g_mg42_heatpershot			code/fgame/gamecvars.cpp:542	Heat each MG42 shot adds to the barrel.
+g_mg42_heatresume			code/fgame/gamecvars.cpp:544	Barrel heat an overheated MG42 has to cool to before it fires again.
+g_mg42_overheat	0	1	code/fgame/gamecvars.cpp:541	MG42 barrels overheat: every shot heats the barrel, and at g_mg42_heatmax the gun will not fire until it has cooled to g_mg42_heatresume. Mounted and bipod MG42s, the player's and the AI's. Server setting.
+g_mission			code/cgame/cg_view.c:1205	Current campaign mission number, used for the mission screens.
+g_monitor			code/fgame/gamecvars.cpp:507	Debug: trace script execution only for the entity with this targetname.
+g_monitorNum	-1		code/fgame/gamecvars.cpp:508	Debug: trace script execution only for the entity with this number. -1 off.
+g_navigation_legacy	0	1	code/fgame/gamecvars.cpp:790	Use the original path nodes for AI and bots instead of the navigation mesh. Latched. Server setting.
 g_netoptimize	0	1	code/server/sv_init.c:1119	Skip sending entities to clients who cannot see them, to save bandwidth. Server setting.
-g_no_seasick	0	1	code/fgame/gamecvars.cpp:696	Turn off the camera roll on boats.
-g_nodecheck	0	1	code/fgame/gamecvars.cpp:477	Debug: check the map's path nodes for problems and report them.
-g_numdebuglinedelays	0		code/fgame/gamecvars.cpp:459	Debug: how many frames debug lines persist.
+g_no_seasick	0	1	code/fgame/gamecvars.cpp:726	Turn off the camera roll on boats.
+g_nodecheck	0	1	code/fgame/gamecvars.cpp:500	Debug: check the map's path nodes for problems and report them.
+g_numdebuglinedelays	0		code/fgame/gamecvars.cpp:482	Debug: how many frames debug lines persist.
 g_numdebuglines			code/renderergl1/tr_init.c:1387	Maximum number of debug lines. Latched.
-g_numdebugstrings			code/fgame/gamecvars.cpp:460	Maximum number of debug text labels. Latched.
-g_obituarylocation	0	1	code/fgame/gamecvars.cpp:711	Include the hit location in kill messages ("killed by a headshot"). Server setting.
-g_patherror	0	2	code/fgame/gamecvars.cpp:490	Report AI pathfinding failures: 1 prints them, 2 also draws them.
+g_numdebugstrings			code/fgame/gamecvars.cpp:483	Maximum number of debug text labels. Latched.
+g_obituarylocation	0	1	code/fgame/gamecvars.cpp:741	Include the hit location in kill messages ("killed by a headshot"). Server setting.
+g_patherror	0	2	code/fgame/gamecvars.cpp:513	Report AI pathfinding failures: 1 prints them, 2 also draws them.
 g_physics	0	1	code/fgame/g_physics.cpp:394	Server-side physics for the map's entity props: crates, barrels and small objects fly when shot or blasted. Latched.
 g_physics_hitscale			code/fgame/g_physics.cpp:396	Scales how hard shots push server-side physics props.
 g_physics_log	0	2	code/fgame/g_physics.cpp:395	Server physics console logging.
-g_playeranim_legs_continous	0	1	code/fgame/gamecvars.cpp:737	Keep the player's leg animation running smoothly across state changes.
-g_playerdeltamethod	0		code/fgame/gamecvars.cpp:610	How player state is delta-compressed for network transmission.
+g_playeranim_legs_continous	0	1	code/fgame/gamecvars.cpp:767	Keep the player's leg animation running smoothly across state changes.
+g_playerdeltamethod	0		code/fgame/gamecvars.cpp:640	How player state is delta-compressed for network transmission.
 g_playerdmhealth	0		code/fgame/player.cpp:2434	Multiplayer: player maximum health. 0 uses the default of 100. Server setting.
-g_playermodel			code/fgame/gamecvars.cpp:467	Player model in single player (under models/player/). Saved with savegames.
-g_playerStacking	0	1	code/fgame/gamecvars.cpp:738	Multiplayer: allow standing on other players' heads. Server setting.
-g_qunits_to_feet	0	1	code/fgame/gamecvars.cpp:692	Show distances in feet rather than game units.
-g_rankedserver	0	1	code/fgame/gamecvars.cpp:734	Mark the server as ranked. Server setting.
-g_realismmode	0	1	code/fgame/gamecvars.cpp:506	Realism mode: tougher damage and no crosshair. Latched. Server setting.
-g_rifles_for_sweepers	0	1	code/fgame/player.cpp:9120	Multiplayer: players with submachine guns may also pick up rifles. Server setting.
-g_scoreboardpic			code/fgame/gamecvars.cpp:674	Image shown on the scoreboard (map-specific). Server setting.
-g_scoreboardpicover			code/fgame/gamecvars.cpp:675	Image shown over the scoreboard at the end of a round (who won). Server setting.
-g_scriptcheck	0	2	code/fgame/gamecvars.cpp:476	Script error checking: 1 stops on script errors, 2 also on animation-related ones.
-g_scriptdebug	0	1	code/fgame/gamecvars.cpp:478	Debug: print detailed script execution information.
-g_scripttrace	0	1	code/fgame/gamecvars.cpp:479	Debug: print every script command as it runs.
+g_playermodel			code/fgame/gamecvars.cpp:490	Player model in single player (under models/player/). Saved with savegames.
+g_playerStacking	0	1	code/fgame/gamecvars.cpp:768	Multiplayer: allow standing on other players' heads. Server setting.
+g_qunits_to_feet	0	1	code/fgame/gamecvars.cpp:722	Show distances in feet rather than game units.
+g_rankedserver	0	1	code/fgame/gamecvars.cpp:764	Mark the server as ranked. Server setting.
+g_realismmode	0	1	code/fgame/gamecvars.cpp:529	Realism mode: tougher damage and no crosshair. Latched. Server setting.
+g_rifles_for_sweepers	0	1	code/fgame/player.cpp:9132	Multiplayer: players with submachine guns may also pick up rifles. Server setting.
+g_scoreboardpic			code/fgame/gamecvars.cpp:704	Image shown on the scoreboard (map-specific). Server setting.
+g_scoreboardpicover			code/fgame/gamecvars.cpp:705	Image shown over the scoreboard at the end of a round (who won). Server setting.
+g_scriptcheck	0	2	code/fgame/gamecvars.cpp:499	Script error checking: 1 stops on script errors, 2 also on animation-related ones.
+g_scriptdebug	0	1	code/fgame/gamecvars.cpp:501	Debug: print detailed script execution information.
+g_scripttrace	0	1	code/fgame/gamecvars.cpp:502	Debug: print every script command as it runs.
 g_servertype			code/tiki/tiki_parse.cpp:328	Which game the server is (1 Allied Assault, 2 Spearhead, 3 Breakthrough).
-g_showautoaim	0	1	code/fgame/gamecvars.cpp:470	Debug: show auto-aim.
-g_showawareness	0	1	code/fgame/gamecvars.cpp:454	Debug: show what each AI is aware of. Cheat-protected.
-g_showaxis	0	1	code/fgame/gamecvars.cpp:450	Debug: draw entities' axes.
-g_showbullettrace	0	1	code/fgame/gamecvars.cpp:453	Debug: draw bullet paths.
-g_showdamage	0	1	code/fgame/gamecvars.cpp:497	Debug: print damage from weapons as it is dealt.
+g_showautoaim	0	1	code/fgame/gamecvars.cpp:493	Debug: show auto-aim.
+g_showawareness	0	1	code/fgame/gamecvars.cpp:477	Debug: show what each AI is aware of. Cheat-protected.
+g_showaxis	0	1	code/fgame/gamecvars.cpp:473	Debug: draw entities' axes.
+g_showbullettrace	0	1	code/fgame/gamecvars.cpp:476	Debug: draw bullet paths.
+g_showdamage	0	1	code/fgame/gamecvars.cpp:520	Debug: print damage from weapons as it is dealt.
 g_showflypath	0	1	code/fgame/scriptslave.cpp:713	Debug: draw scripted fly paths.
-g_showinfo	0	1	code/fgame/actor.cpp:6587	Debug: show AI information.
-g_showlookat	-1		code/fgame/gamecvars.cpp:456	Debug: show where the actor with this entity number looks. -1 shows all actors.
-g_showmem	0	1	code/fgame/gamecvars.cpp:447	Debug: print memory use every frame.
-g_shownpc	0	1	code/fgame/gamecvars.cpp:555	Debug: print the number of actors each frame.
-g_showopcodes	0	1	code/fgame/gamecvars.cpp:475	Debug: print script opcodes as scripts compile.
-g_showplayeranim	0	1	code/fgame/gamecvars.cpp:452	Debug: print the player's animations as they change.
-g_showplayerstate	0	1	code/fgame/gamecvars.cpp:451	Debug: print the player's state machine states as they change.
-g_showtokens	0	1	code/fgame/gamecvars.cpp:474	Debug: print script tokens as they are parsed.
+g_showinfo	0	1	code/fgame/actor.cpp:6612	Debug: show AI information.
+g_showlookat	-1		code/fgame/gamecvars.cpp:479	Debug: show where the actor with this entity number looks. -1 shows all actors.
+g_showmem	0	1	code/fgame/gamecvars.cpp:470	Debug: print memory use every frame.
+g_shownpc	0	1	code/fgame/gamecvars.cpp:585	Debug: print the number of actors each frame.
+g_showopcodes	0	1	code/fgame/gamecvars.cpp:498	Debug: print script opcodes as scripts compile.
+g_showplayeranim	0	1	code/fgame/gamecvars.cpp:475	Debug: print the player's animations as they change.
+g_showplayerstate	0	1	code/fgame/gamecvars.cpp:474	Debug: print the player's state machine states as they change.
+g_showtokens	0	1	code/fgame/gamecvars.cpp:497	Debug: print script tokens as they are parsed.
 g_showvehicleentrypoints	0	1	code/fgame/vehicle.cpp:970	Debug: show where vehicles can be entered.
 g_showvehiclemovedebug	0	1	code/fgame/vehicle.cpp:969	Debug: vehicle movement information.
 g_showvehiclepath	0	1	code/fgame/vehicle.cpp:973	Debug: draw vehicle paths.
 g_showvehicleslotpoints	0	1	code/fgame/vehicle.cpp:971	Debug: show vehicle seat positions.
 g_showvehicletags	0	1	code/fgame/vehicle.cpp:972	Debug: show vehicle model tags.
-g_smoothClients	0	1	code/fgame/gamecvars.cpp:546	Multiplayer: let clients extrapolate other players' movement smoothly. Server setting.
-g_spawnai	0	1	code/fgame/gamecvars.cpp:488	Debug: spawn the map's AI actors. 0 loads the map without them.
-g_spawnentities	0	1	code/fgame/gamecvars.cpp:487	Debug: spawn the map's entities. 0 loads the bare world.
-g_spectate_allow_full_chat	0	1	code/fgame/gamecvars.cpp:662	Spectators may chat to everyone, not just other spectators. Server setting.
-g_spectatefollow_firstperson	0	1	code/fgame/gamecvars.cpp:735	Spectators following a player see through their eyes instead of from behind. Server setting.
-g_spectatefollow_forward			code/fgame/gamecvars.cpp:658	Follow camera: distance behind the followed player (negative is behind). Server setting.
-g_spectatefollow_pitch			code/fgame/gamecvars.cpp:661	Follow camera: extra pitch looking down on the followed player. Server setting.
-g_spectatefollow_right			code/fgame/gamecvars.cpp:659	Follow camera: sideways offset from the followed player. Server setting.
-g_spectatefollow_up			code/fgame/gamecvars.cpp:660	Follow camera: height above the followed player. Server setting.
-g_spiffyplayer	0	1	code/fgame/gamecvars.cpp:462	Debug: test player spawn.
-g_spiffyvelocity_x			code/fgame/gamecvars.cpp:463	Debug: test spawn velocity X.
-g_spiffyvelocity_y			code/fgame/gamecvars.cpp:464	Debug: test spawn velocity Y.
-g_spiffyvelocity_z			code/fgame/gamecvars.cpp:465	Debug: test spawn velocity Z.
-g_statefile			code/fgame/gamecvars.cpp:468	Base name of the player state machine files (_Legs.st and _Torso.st).
+g_smoothClients	0	1	code/fgame/gamecvars.cpp:576	Multiplayer: let clients extrapolate other players' movement smoothly. Server setting.
+g_spawnai	0	1	code/fgame/gamecvars.cpp:511	Debug: spawn the map's AI actors. 0 loads the map without them.
+g_spawnentities	0	1	code/fgame/gamecvars.cpp:510	Debug: spawn the map's entities. 0 loads the bare world.
+g_spectate_allow_full_chat	0	1	code/fgame/gamecvars.cpp:692	Spectators may chat to everyone, not just other spectators. Server setting.
+g_spectatefollow_firstperson	0	1	code/fgame/gamecvars.cpp:765	Spectators following a player see through their eyes instead of from behind. Server setting.
+g_spectatefollow_forward			code/fgame/gamecvars.cpp:688	Follow camera: distance behind the followed player (negative is behind). Server setting.
+g_spectatefollow_pitch			code/fgame/gamecvars.cpp:691	Follow camera: extra pitch looking down on the followed player. Server setting.
+g_spectatefollow_right			code/fgame/gamecvars.cpp:689	Follow camera: sideways offset from the followed player. Server setting.
+g_spectatefollow_up			code/fgame/gamecvars.cpp:690	Follow camera: height above the followed player. Server setting.
+g_spiffyplayer	0	1	code/fgame/gamecvars.cpp:485	Debug: test player spawn.
+g_spiffyvelocity_x			code/fgame/gamecvars.cpp:486	Debug: test spawn velocity X.
+g_spiffyvelocity_y			code/fgame/gamecvars.cpp:487	Debug: test spawn velocity Y.
+g_spiffyvelocity_z			code/fgame/gamecvars.cpp:488	Debug: test spawn velocity Z.
+g_splean			code/fgame/gamecvars.cpp:425	Lets the player lean in single player, which the base game does not. It rides the serverinfo string so the client predicts the same lean.
+g_statefile			code/fgame/gamecvars.cpp:491	Base name of the player state machine files (_Legs.st and _Torso.st).
 g_subtitle	0	2	code/cgame/cg_commands.cpp:3850	Subtitles for dialogue: 1 nearby dialogue, 2 all dialogue regardless of distance.
-g_success	0	1	code/cgame/cg_view.c:1196	Set by the game when the mission succeeded; read by the end-of-mission screen.
-g_synchronousClients	0	1	code/cgame/cg_main.c:148	Run clients in lockstep with the server (for recording demos).
-g_t2l1	0	1	code/fgame/gamecvars.cpp:651	Campaign progress: Breakthrough mission unlocked. Saved.
-g_t3l1	0	1	code/fgame/gamecvars.cpp:652	Campaign progress: Breakthrough mission unlocked. Saved.
-g_teambalance	0	1	code/fgame/gamecvars.cpp:758	Team games: stop players joining the team that already has more players. Server setting.
-g_teamdamage	0	3	code/fgame/gamecvars.cpp:511	Friendly fire: 1 teammates can hurt each other, 2 damage is reflected to the attacker (bit flags). Server setting.
-g_teamkillkick	0		code/fgame/gamecvars.cpp:553	Kick a player after this many team kills. 0 never. Server setting.
-g_teamkillwarn	0		code/fgame/gamecvars.cpp:552	Warn a player after this many team kills. 0 never. Server setting.
-g_teamswitchdelay	0		code/fgame/gamecvars.cpp:358	Seconds a player must wait between switching teams. Server setting.
+g_success	0	1	code/cgame/cg_view.c:1207	Set by the game when the mission succeeded; read by the end-of-mission screen.
+g_synchronousClients	0	1	code/cgame/cg_main.c:149	Run clients in lockstep with the server (for recording demos).
+g_t2l1	0	1	code/fgame/gamecvars.cpp:681	Campaign progress: Breakthrough mission unlocked. Saved.
+g_t3l1	0	1	code/fgame/gamecvars.cpp:682	Campaign progress: Breakthrough mission unlocked. Saved.
+g_teambalance	0	1	code/fgame/gamecvars.cpp:788	Team games: stop players joining the team that already has more players. Server setting.
+g_teamdamage	0	3	code/fgame/gamecvars.cpp:534	Friendly fire: 1 teammates can hurt each other, 2 damage is reflected to the attacker (bit flags). Server setting.
+g_teamkillkick	0		code/fgame/gamecvars.cpp:583	Kick a player after this many team kills. 0 never. Server setting.
+g_teamkillwarn	0		code/fgame/gamecvars.cpp:582	Warn a player after this many team kills. 0 never. Server setting.
+g_teamswitchdelay	0		code/fgame/gamecvars.cpp:377	Seconds a player must wait between switching teams. Server setting.
 g_tempalliesscore			code/fgame/dm_manager.cpp:1150	Internal: Allies score carried over a map restart.
 g_tempallieswinsinrow			code/fgame/dm_manager.cpp:1151	Internal: Allies wins in a row carried over a map restart.
 g_tempaxisscore			code/fgame/dm_manager.cpp:1148	Internal: Axis score carried over a map restart.
 g_tempaxiswinsinrow			code/fgame/dm_manager.cpp:1149	Internal: Axis wins in a row carried over a map restart.
-g_textChatTime			code/fgame/gamecvars.cpp:666	Seconds the talking icon shows above a player after a text message.
-g_textmsg_allowed	0	1	code/fgame/gamecvars.cpp:751	Allow text chat. Server setting.
-g_textmsg_minDelay			code/fgame/gamecvars.cpp:752	Minimum milliseconds between a player's text messages (spam protection). Server setting.
-g_timeents	0	1	code/fgame/gamecvars.cpp:448	Debug: time how long each entity takes to think.
-g_timescripts	0	1	code/fgame/gamecvars.cpp:449	Debug: time how long scripts take.
+g_textChatTime			code/fgame/gamecvars.cpp:696	Seconds the talking icon shows above a player after a text message.
+g_textmsg_allowed	0	1	code/fgame/gamecvars.cpp:781	Allow text chat. Server setting.
+g_textmsg_minDelay			code/fgame/gamecvars.cpp:782	Minimum milliseconds between a player's text messages (spam protection). Server setting.
+g_timeents	0	1	code/fgame/gamecvars.cpp:471	Debug: time how long each entity takes to think.
+g_timescripts	0	1	code/fgame/gamecvars.cpp:472	Debug: time how long scripts take.
 g_TOW_winstate			code/fgame/dm_manager.cpp:1199	Internal: how the last tug-of-war round was won.
-g_turret_convergetime			code/fgame/gamecvars.cpp:686	Seconds an AI turret gunner takes to walk their fire onto a target.
-g_turret_spread			code/fgame/gamecvars.cpp:689	Spread of AI turret fire.
-g_turret_suppresstime			code/fgame/gamecvars.cpp:687	Seconds an AI turret keeps up suppressing fire.
-g_turret_suppresswaittime			code/fgame/gamecvars.cpp:688	Seconds an AI turret waits between bursts of suppressing fire.
-g_turretcameras	0	1	code/fgame/weapturret.cpp:1418	Use the turret's own camera view when manning a turret.
-g_vehicle	0	1	code/fgame/gamecvars.cpp:482	Debug: vehicles think and move. 0 freezes them.
-g_viewkick_dmmult			code/fgame/gamecvars.cpp:607	Multiplier on the view kick when hit. Cheat-protected.
-g_viewkick_pitch			code/fgame/gamecvars.cpp:604	How much being hit kicks the view up or down. Cheat-protected.
-g_viewkick_roll			code/fgame/gamecvars.cpp:606	How much being hit rolls the view. Cheat-protected.
-g_viewkick_yaw			code/fgame/gamecvars.cpp:605	How much being hit kicks the view sideways. Cheat-protected.
-g_voiceChat	0	1	code/fgame/gamecvars.cpp:664	Allow voice chat messages. Server setting.
-g_voiceChatTime			code/fgame/gamecvars.cpp:665	Seconds the talking icon shows above a player after a voice message.
-g_warmup	0		code/fgame/gamecvars.cpp:539	Seconds of warmup before a multiplayer match. Server setting.
+g_turret_convergetime			code/fgame/gamecvars.cpp:716	Seconds an AI turret gunner takes to walk their fire onto a target.
+g_turret_spread			code/fgame/gamecvars.cpp:719	Spread of AI turret fire.
+g_turret_suppresstime			code/fgame/gamecvars.cpp:717	Seconds an AI turret keeps up suppressing fire.
+g_turret_suppresswaittime			code/fgame/gamecvars.cpp:718	Seconds an AI turret waits between bursts of suppressing fire.
+g_turretcameras	0	1	code/fgame/weapturret.cpp:1506	Use the turret's own camera view when manning a turret.
+g_vehicle	0	1	code/fgame/gamecvars.cpp:505	Debug: vehicles think and move. 0 freezes them.
+g_viewkick_dmmult			code/fgame/gamecvars.cpp:637	Multiplier on the view kick when hit. Cheat-protected.
+g_viewkick_pitch			code/fgame/gamecvars.cpp:634	How much being hit kicks the view up or down. Cheat-protected.
+g_viewkick_roll			code/fgame/gamecvars.cpp:636	How much being hit rolls the view. Cheat-protected.
+g_viewkick_yaw			code/fgame/gamecvars.cpp:635	How much being hit kicks the view sideways. Cheat-protected.
+g_voiceChat	0	1	code/fgame/gamecvars.cpp:694	Allow voice chat messages. Server setting.
+g_voiceChatTime			code/fgame/gamecvars.cpp:695	Seconds the talking icon shows above a player after a voice message.
+g_warmup	0		code/fgame/gamecvars.cpp:569	Seconds of warmup before a multiplayer match. Server setting.
 graphheight			code/client/cl_scrn.cpp:418	Height of debug graphs. Cheat-protected.
 graphscale			code/client/cl_scrn.cpp:419	Scale of debug graphs. Cheat-protected.
 graphshift			code/client/cl_scrn.cpp:420	Offset of debug graphs. Cheat-protected.
@@ -626,7 +643,7 @@ j_up			code/client/cl_main.cpp:3663	Joystick sensitivity for up (negative invert
 j_up_axis	0		code/client/cl_main.cpp:3669	Which joystick axis drives up.
 j_yaw			code/client/cl_main.cpp:3660	Joystick sensitivity for yaw (negative inverts).
 j_yaw_axis	0		code/client/cl_main.cpp:3666	Which joystick axis drives yaw.
-journal	0	2	code/qcommon/common.c:1005	Record (1) or play back (2) a journal of all input, for reproducing bugs. Set at startup.
+journal	0	2	code/qcommon/common.c:1006	Record (1) or play back (2) a journal of all input, for reproducing bugs. Set at startup.
 joy_threshold	0	1	code/sdl/sdl_input.c:1316	Joystick dead zone.
 lod_curve_0_slider	0	1	code/renderergl1/tr_init.c:1442	LOD tool: level-of-detail curve point 0, as a slider.
 lod_curve_0_val			code/renderergl1/tr_init.c:1437	LOD tool: level-of-detail curve point 0.
@@ -657,17 +674,17 @@ lod_tikiname			code/renderergl1/tr_init.c:1451	LOD tool (model level-of-detail e
 lod_tool			code/renderergl1/tr_init.c:1456	LOD tool (model level-of-detail editor): enable the LOD tool.
 lod_tris			code/renderergl1/tr_init.c:1453	LOD tool (model level-of-detail editor): triangle count.
 lod_zee_val			code/renderergl1/tr_init.c:1448	LOD tool (model level-of-detail editor): model height.
-logfile	0	3	code/qcommon/common.c:1920	Write the console to qconsole.log: 1 buffered, 2 flushed each line, 3 append.
-logfile_timestamps	0	1	code/qcommon/common.c:1921	Prefix qconsole.log lines with timestamps.
-low_anim_memory	0	1	code/qcommon/common.c:1905	Use less memory for animations.
+logfile	0	3	code/qcommon/common.c:1921	Write the console to qconsole.log: 1 buffered, 2 flushed each line, 3 append.
+logfile_timestamps	0	1	code/qcommon/common.c:1922	Prefix qconsole.log lines with timestamps.
+low_anim_memory	0	1	code/qcommon/common.c:1906	Use less memory for animations.
 m_filter	0	1	code/client/cl_main.cpp:3654	Smooth mouse input by averaging it over two frames.
 m_forward			code/client/cl_main.cpp:3650	Mouse forward movement scale when mouse move is on.
 m_pitch			code/client/cl_main.cpp:3648	Mouse vertical sensitivity scale. Negative inverts the mouse.
 m_side			code/client/cl_main.cpp:3651	Mouse sideways movement scale when strafing with the mouse.
 m_yaw			code/client/cl_main.cpp:3649	Mouse horizontal sensitivity scale.
-mapdir			code/qcommon/files.cpp:3675	Folder prefixed to map names (developer mode).
+mapdir			code/qcommon/files.cpp:3688	Folder prefixed to map names (developer mode).
 mapname			code/server/sv_init.c:1058	Read-only: the current map.
-maxentities			code/fgame/gamecvars.cpp:347	Maximum number of game entities. Latched.
+maxentities			code/fgame/gamecvars.cpp:366	Maximum number of game entities. Latched.
 name			code/client/cl_main.cpp:3706	Your player name.
 net_dropsim	0	100	code/qcommon/net_ip.c:1488	Debug: drop this percentage of incoming packets.
 net_enabled	0	3	code/qcommon/net_ip.c:1430	Networking: 1 IPv4, 2 IPv6, 3 both, 0 off. Latched.
@@ -686,10 +703,13 @@ net_socksUsername			code/qcommon/net_ip.c:1480	SOCKS5 proxy user name.
 nextmap			code/server/sv_init.c:1100	Commands run when the current map or cinematic ends.
 noipx	0	1	code/client/cl_ui.cpp:3110	Disable IPX networking.
 noudp	0	1	code/client/cl_ui.cpp:3103	Disable UDP networking.
+orch_active			code/cgame/cg_orch.cpp:716	
+orch_flyspeed			code/cgame/cg_orch.cpp:718	
+orch_shotsave			code/cgame/cg_orch.cpp:717	
 password			code/client/cl_main.cpp:3709	Password sent when joining a passworded server.
-paused	0	1	code/cgame/cg_main.c:151	Whether the game is paused.
-pmove_fixed	0	1	code/cgame/cg_main.c:163	Run player movement in fixed steps of pmove_msec, for consistent jumping at any frame rate. Server setting.
-pmove_msec	8	33	code/cgame/cg_main.c:164	Milliseconds per fixed player movement step. Server setting.
+paused	0	1	code/cgame/cg_orch.cpp:163	Whether the game is paused.
+pmove_fixed	0	1	code/cgame/cg_main.c:164	Run player movement in fixed steps of pmove_msec, for consistent jumping at any frame rate. Server setting.
+pmove_msec	8	33	code/cgame/cg_main.c:165	Milliseconds per fixed player movement step. Server setting.
 protocol			code/server/sv_init.c:1057	Read-only: network protocol version.
 r_allowExtensions	0	1	code/renderergl1/tr_init.c:1311	Use OpenGL extensions the driver offers. 0 is only for troubleshooting a broken driver.
 r_allowResize	0	1	code/sdl/sdl_glimp.c:1091	Let the game window be resized by dragging its edges when windowed.
@@ -948,7 +968,7 @@ r_zproj			code/renderergl2/tr_init.c:1683	Distance used for projecting the view 
 rate			code/client/cl_uiserverlist.cpp:663	Maximum bytes per second the server sends you. Higher suits faster connections.
 rconAddress			code/client/cl_main.cpp:3605	Server address for rcon commands when not connected.
 rconPassword			code/server/sv_init.c:1095	Password for remote administration (rcon). Server setting.
-roundlimit	0		code/fgame/gamecvars.cpp:356	Round-based modes: rounds per map. 0 no limit. Server setting.
+roundlimit	0		code/fgame/gamecvars.cpp:375	Round-based modes: rounds per map. 0 no limit. Server setting.
 s_alAvailableDevices			code/client/snd_openal.c:2594	Read-only: OpenAL output devices found.
 s_alAvailableInputDevices			code/client/snd_openal.c:2685	Read-only: OpenAL input devices found.
 s_alCapture	0	1	code/client/snd_openal.c:2635	Open an audio capture device (for voice chat). Latched.
@@ -966,7 +986,7 @@ s_alRolloff			code/client/snd_openal.c:2515	How fast sounds get quieter with dis
 s_alSources			code/client/snd_openal.c:2510	Number of OpenAL sources (simultaneous sounds).
 s_ambientvolume	0	1	code/client/snd_dma_new.cpp:105	Volume of ambient sound and soundtrack songs.
 s_backend			code/client/snd_main.c:483	Read-only: sound system in use.
-s_debugmusic	0	1	code/fgame/gamecvars.cpp:564	Debug: print music mood changes.
+s_debugmusic	0	1	code/fgame/gamecvars.cpp:594	Debug: print music mood changes.
 s_dialogscale			code/client/snd_dma_new.cpp:112	Volume multiplier for dialogue.
 s_doppler	0	1	code/client/snd_main.c:482	Doppler effect on moving sounds.
 s_initsound	0	1	code/client/snd_main.c:487	Start the sound system. 0 runs silent.
@@ -1001,11 +1021,11 @@ s_volume	0	1	code/client/snd_main.c:479	Master sound effects volume.
 scoreboard_toggle1			code/fgame/dm_manager.cpp:1000	Internal: scoreboard display state.
 sensitivity			code/client/cl_main.cpp:3615	Mouse sensitivity.
 session			code/fgame/g_session.cpp:110	Internal: game type of the last session, for persistent data across maps.
-shortversion			code/qcommon/common.c:1957	Read-only: short version string.
+shortversion			code/qcommon/common.c:1958	Read-only: short version string.
 showdrop	0	1	code/qcommon/net_chan.c:75	Debug: print dropped packets.
-showLoad	0	1	code/qcommon/common.c:1906	Debug: print load timing.
+showLoad	0	1	code/qcommon/common.c:1907	Debug: print load timing.
 showpackets	0	1	code/qcommon/net_chan.c:74	Debug: print every packet.
-skill	0	3	code/fgame/gamecvars.cpp:344	Single player difficulty: 0 easy, 1 medium, 2 hard. Latched: applies on the next map.
+skill	0	3	code/fgame/gamecvars.cpp:363	Single player difficulty: 0 easy, 1 medium, 2 hard. Latched: applies on the next map.
 snaps			code/client/cl_main.cpp:3708	Snapshots per second requested from the server.
 snd_chance			code/fgame/soundman.cpp:437	Sound manager editor: the selected speaker's chance.
 snd_currentmood			code/fgame/soundman.cpp:556	Sound manager editor: the selected speaker's current mood.
@@ -1026,25 +1046,25 @@ snd_volume			code/fgame/soundman.cpp:413	Sound manager editor: the selected spea
 snd_width			code/fgame/soundman.cpp:527	Sound manager editor: the selected speaker's width.
 snd_yaw			code/fgame/soundman.cpp:576	Sound manager editor: the selected speaker's yaw.
 soundoverlay	0	1	code/client/cl_ui.cpp:5299	Debug: show sound overlay information.
-spam	0	1	code/qcommon/common.c:1903	Print repeated console messages.
+spam	0	1	code/qcommon/common.c:1904	Print repeated console messages.
 subAlpha	0	1	code/client/cl_uiview3d.cpp:820	Opacity of subtitles.
 sv_allowDownload	0		code/server/sv_init.c:1102	Let clients download missing files. Server setting.
 sv_banFile			code/server/sv_init.c:1125	File the server's bans are saved to. Server setting.
 sv_chatter	0	1	code/server/sv_init.c:1120	Debug: print server chatter.
-sv_cinematic			code/fgame/gamecvars.cpp:409	Read-only: whether a cinematic is playing.
-sv_crouchspeedmult			code/fgame/gamecvars.cpp:419	Speed multiplier while crouched. Server setting.
+sv_cinematic			code/fgame/gamecvars.cpp:432	Read-only: whether a cinematic is playing.
+sv_crouchspeedmult			code/fgame/gamecvars.cpp:442	Speed multiplier while crouched. Server setting.
 sv_deeptracedebug	0	1	code/server/sv_init.c:1114	Debug: deep trace checks.
 sv_dlRate			code/server/sv_init.c:1065	Maximum download rate per client in KB/s. Server setting.
 sv_dlURL			code/server/sv_init.c:1103	URL clients download missing files from. Server setting.
-sv_dmspeedmult			code/fgame/gamecvars.cpp:418	Multiplayer movement speed multiplier. Server setting.
+sv_dmspeedmult			code/fgame/gamecvars.cpp:441	Multiplayer movement speed multiplier. Server setting.
 sv_drawentities	0	1	code/server/sv_init.c:1113	Debug: send entities to clients.
-sv_drawtrace	0	2	code/fgame/gamecvars.cpp:375	Debug: draw server traces.
+sv_drawtrace	0	2	code/fgame/gamecvars.cpp:394	Debug: draw server traces.
 sv_floodProtect	0	1	code/server/sv_init.c:1073	Protect against message flooding. Server setting.
 sv_fps	10		code/server/sv_init.c:1097	Server frames per second. Higher is more responsive and uses more bandwidth. Server setting.
-sv_friction			code/fgame/gamecvars.cpp:393	Ground friction. Server setting.
-sv_gravity			code/fgame/gamecvars.cpp:372	Gravity in units per second squared. Server setting.
+sv_friction			code/fgame/gamecvars.cpp:412	Ground friction. Server setting.
+sv_gravity			code/fgame/gamecvars.cpp:391	Gravity in units per second squared. Server setting.
 sv_hostname			code/server/sv_init.c:1060	Server name shown in browsers. Server setting.
-sv_invulnerabletime	0		code/fgame/gamecvars.cpp:440	Seconds of invulnerability after spawning. Server setting.
+sv_invulnerabletime	0		code/fgame/gamecvars.cpp:463	Seconds of invulnerability after spawning. Server setting.
 sv_keywords			code/server/sv_init.c:1046	Search keywords for the server browser. Server setting.
 sv_killserver	0	2	code/server/sv_init.c:1111	Set to shut the server down.
 sv_lanForceRate	0	1	code/server/sv_init.c:1121	Give LAN clients unlimited rate. Server setting.
@@ -1052,68 +1072,68 @@ sv_logContext	0	1	code/server/sv_init.c:1128	Include context in server logs.
 sv_mapChecksum			code/server/sv_init.c:1112	Read-only: checksum of the current map.
 sv_maplist			code/server/sv_init.c:1075	Maps the server rotates through, separated by spaces. Server setting.
 sv_master1			code/server/sv_init.c:1104	Master server the server reports to. Server setting.
-sv_maxbots	0		code/fgame/gamecvars.cpp:718	Maximum bot slots. Latched. Server setting.
+sv_maxbots	0		code/fgame/gamecvars.cpp:748	Maximum bot slots. Latched. Server setting.
 sv_maxclients	1		code/server/sv_ccmds.c:219	Maximum players. Latched. Server setting.
 sv_maxPing	0		code/server/sv_init.c:1067	Clients pinging above this cannot join. 0 no limit. Server setting.
 sv_maxRate	0		code/server/sv_init.c:1064	Maximum bytes per second to any client. 0 no limit. Server setting.
-sv_maxvelocity			code/fgame/gamecvars.cpp:371	Maximum velocity of any object. Server setting.
+sv_maxvelocity			code/fgame/gamecvars.cpp:390	Maximum velocity of any object. Server setting.
 sv_minPing	0		code/server/sv_init.c:1066	Clients pinging below this cannot join (for high-ping servers). Server setting.
-sv_minPlayers	0		code/fgame/gamecvars.cpp:721	Add bots until at least this many players are present. Server setting.
+sv_minPlayers	0		code/fgame/gamecvars.cpp:751	Add bots until at least this many players are present. Server setting.
 sv_minRate	0		code/server/sv_init.c:1063	Minimum bytes per second to each client. Server setting.
 sv_netoptimize	0	2	code/server/sv_init.c:1117	Cull entities clients cannot see from snapshots. Server setting.
 sv_netoptimize_vistime			code/server/sv_init.c:1118	Milliseconds between visibility checks for net optimization. Server setting.
 sv_netprofile	0	1	code/server/sv_init.c:1115	Collect server network statistics.
 sv_netprofileoverlay	0		code/server/sv_init.c:1116	Show server network statistics on screen.
-sv_numbots	0		code/fgame/gamecvars.cpp:720	Number of bots to add. Server setting.
-sv_packetdelay	0		code/qcommon/common.c:1930	Debug: delay server packets by this many milliseconds.
+sv_numbots	0		code/fgame/gamecvars.cpp:750	Number of bots to add. Server setting.
+sv_packetdelay	0		code/qcommon/common.c:1931	Debug: delay server packets by this many milliseconds.
 sv_padPackets	0		code/server/sv_init.c:1110	Debug: pad packets with this many bytes.
 sv_pakNames			code/server/sv_init.c:1090	Read-only: paks the server has loaded.
 sv_paks			code/server/sv_init.c:1089	Read-only: checksums of the server's paks.
-sv_precache	0	1	code/fgame/gamecvars.cpp:340	Precache resources at map start. Server setting.
+sv_precache	0	1	code/fgame/gamecvars.cpp:359	Precache resources at map start. Server setting.
 sv_privateClients	0		code/server/sv_init.c:1059	Slots reserved for players with sv_privatePassword. Server setting.
 sv_privatePassword			code/server/sv_init.c:1096	Password for the reserved slots. Server setting.
 sv_pure	0	1	code/server/sv_init.c:1083	Require clients to have exactly the server's paks. Server setting.
-sv_ragdoll	0	1	code/fgame/gamecvars.cpp:398	Allow client-side ragdolls for players on this server. Vanilla clients ignore it. Server setting.
+sv_ragdoll	0	1	code/fgame/gamecvars.cpp:417	Allow client-side ragdolls for players on this server. Vanilla clients ignore it. Server setting.
 sv_reconnectlimit			code/server/sv_init.c:1108	Seconds a client must wait before reconnecting. Server setting.
 sv_referencedPakNames			code/server/sv_init.c:1092	Read-only: paks the map references.
 sv_referencedPaks			code/server/sv_init.c:1091	Read-only: checksums of paks the map references.
-sv_rollangle			code/fgame/gamecvars.cpp:370	How much the view rolls when strafing. Server setting.
-sv_rollspeed			code/fgame/gamecvars.cpp:369	Strafe speed at which the view roll is full. Server setting.
-sv_running			code/cgame/cg_main.c:216	Read-only: whether a server is running.
-sv_runspeed			code/fgame/gamecvars.cpp:416	Player running speed (287 in OpenMoHAA; 250 in the original 1.11). Server setting.
-sv_scriptfiles			code/fgame/gamecvars.cpp:717	Internal: script files in use.
+sv_rollangle			code/fgame/gamecvars.cpp:389	How much the view rolls when strafing. Server setting.
+sv_rollspeed			code/fgame/gamecvars.cpp:388	Strafe speed at which the view roll is full. Server setting.
+sv_running			code/cgame/cg_main.c:217	Read-only: whether a server is running.
+sv_runspeed			code/fgame/gamecvars.cpp:439	Player running speed (287 in OpenMoHAA; 250 in the original 1.11). Server setting.
+sv_scriptfiles			code/fgame/gamecvars.cpp:747	Internal: script files in use.
 sv_serverid			code/server/sv_init.c:1079	Read-only: unique ID of the current server session.
-sv_sharedbots	0	1	code/fgame/gamecvars.cpp:719	Bots share client slots. Latched. Server setting.
-sv_showbboxes	0		code/fgame/gamecvars.cpp:376	Debug: draw entity bounding boxes (single player or cheats).
-sv_showcameras	0	1	code/fgame/gamecvars.cpp:390	Debug: show cameras and their paths.
-sv_showentnums	0	1	code/fgame/gamecvars.cpp:391	Debug: show entity numbers (single player or cheats).
+sv_sharedbots	0	1	code/fgame/gamecvars.cpp:749	Bots share client slots. Latched. Server setting.
+sv_showbboxes	0		code/fgame/gamecvars.cpp:395	Debug: draw entity bounding boxes (single player or cheats).
+sv_showcameras	0	1	code/fgame/gamecvars.cpp:409	Debug: show cameras and their paths.
+sv_showentnums	0	1	code/fgame/gamecvars.cpp:410	Debug: show entity numbers (single player or cheats).
 sv_showloss	0	1	code/server/sv_init.c:1109	Debug: print packet loss.
-sv_showtags			code/fgame/gamecvars.cpp:377	Debug: show model tags matching this name (* for all).
-sv_sprintmult			code/fgame/gamecvars.cpp:422	Single player sprint speed multiplier. Server setting.
-sv_sprintmult_dm			code/fgame/gamecvars.cpp:424	Multiplayer sprint speed multiplier. Server setting.
-sv_sprinton	0	1	code/fgame/gamecvars.cpp:427	Sprinting after running for a while (not in the original game). Server setting.
-sv_sprinttime			code/fgame/gamecvars.cpp:421	Single player: seconds of running before sprinting starts. Server setting.
-sv_sprinttime_dm			code/fgame/gamecvars.cpp:423	Multiplayer: seconds of running before sprinting starts. Server setting.
-sv_stopspeed			code/fgame/gamecvars.cpp:403	Speed below which friction stops a player fully. Server setting.
+sv_showtags			code/fgame/gamecvars.cpp:396	Debug: show model tags matching this name (* for all).
+sv_sprintmult			code/fgame/gamecvars.cpp:445	Single player sprint speed multiplier. Server setting.
+sv_sprintmult_dm			code/fgame/gamecvars.cpp:447	Multiplayer sprint speed multiplier. Server setting.
+sv_sprinton	0	1	code/fgame/gamecvars.cpp:450	Sprinting after running for a while (not in the original game). Server setting.
+sv_sprinttime			code/fgame/gamecvars.cpp:444	Single player: seconds of running before sprinting starts. Server setting.
+sv_sprinttime_dm			code/fgame/gamecvars.cpp:446	Multiplayer: seconds of running before sprinting starts. Server setting.
+sv_stopspeed			code/fgame/gamecvars.cpp:426	Speed below which friction stops a player fully. Server setting.
 sv_strictAuth	0	1	code/server/sv_init.c:1123	Require CD key authentication. Server setting.
-sv_team_spawn_interval	0		code/fgame/gamecvars.cpp:441	Seconds between team respawn waves. Server setting.
-sv_testloc_num	0		code/fgame/gamecvars.cpp:379	Debug: test hit location number.
-sv_testloc_offset2_x			code/fgame/gamecvars.cpp:386	Debug: secondary test hit location offset X.
-sv_testloc_offset2_y			code/fgame/gamecvars.cpp:387	Debug: secondary test hit location offset Y.
-sv_testloc_offset2_z			code/fgame/gamecvars.cpp:388	Debug: secondary test hit location offset Z.
-sv_testloc_offset_x			code/fgame/gamecvars.cpp:382	Debug: test hit location offset X.
-sv_testloc_offset_y			code/fgame/gamecvars.cpp:383	Debug: test hit location offset Y.
-sv_testloc_offset_z			code/fgame/gamecvars.cpp:384	Debug: test hit location offset Z.
-sv_testloc_radius			code/fgame/gamecvars.cpp:381	Debug: test hit location radius.
-sv_testloc_radius2			code/fgame/gamecvars.cpp:385	Debug: secondary test hit location radius.
-sv_testloc_secondary	0	1	code/fgame/gamecvars.cpp:380	Debug: show the secondary test hit location.
+sv_team_spawn_interval	0		code/fgame/gamecvars.cpp:464	Seconds between team respawn waves. Server setting.
+sv_testloc_num	0		code/fgame/gamecvars.cpp:398	Debug: test hit location number.
+sv_testloc_offset2_x			code/fgame/gamecvars.cpp:405	Debug: secondary test hit location offset X.
+sv_testloc_offset2_y			code/fgame/gamecvars.cpp:406	Debug: secondary test hit location offset Y.
+sv_testloc_offset2_z			code/fgame/gamecvars.cpp:407	Debug: secondary test hit location offset Z.
+sv_testloc_offset_x			code/fgame/gamecvars.cpp:401	Debug: test hit location offset X.
+sv_testloc_offset_y			code/fgame/gamecvars.cpp:402	Debug: test hit location offset Y.
+sv_testloc_offset_z			code/fgame/gamecvars.cpp:403	Debug: test hit location offset Z.
+sv_testloc_radius			code/fgame/gamecvars.cpp:400	Debug: test hit location radius.
+sv_testloc_radius2			code/fgame/gamecvars.cpp:404	Debug: secondary test hit location radius.
+sv_testloc_secondary	0	1	code/fgame/gamecvars.cpp:399	Debug: show the secondary test hit location.
 sv_timeout			code/server/sv_init.c:1098	Seconds without packets before a client is dropped. Server setting.
-sv_traceinfo	0	3	code/fgame/gamecvars.cpp:374	Debug: print server trace information.
+sv_traceinfo	0	3	code/fgame/gamecvars.cpp:393	Debug: print server trace information.
 sv_voip	0	1	code/server/sv_init.c:1085	Allow voice chat. Latched. Server setting.
 sv_voipProtocol			code/server/sv_init.c:1087	Read-only: voice chat codec.
-sv_walkspeedmult			code/fgame/gamecvars.cpp:417	Speed multiplier while walking. Server setting.
-sv_waterfriction			code/fgame/gamecvars.cpp:404	Friction in water. Server setting.
-sv_waterspeed			code/fgame/gamecvars.cpp:405	Movement speed in water. Server setting.
+sv_walkspeedmult			code/fgame/gamecvars.cpp:440	Speed multiplier while walking. Server setting.
+sv_waterfriction			code/fgame/gamecvars.cpp:427	Friction in water. Server setting.
+sv_waterspeed			code/fgame/gamecvars.cpp:428	Movement speed in water. Server setting.
 sv_zombietime			code/server/sv_init.c:1099	Seconds a disconnected client's slot is held. Server setting.
 sys_cpuid			code/renderergl1/tr_init.c:1542	CPU identification.
 sys_cpustring			code/renderergl1/tr_init.c:1141	Read-only: CPU description.
@@ -1131,7 +1151,7 @@ thereisnomonkey	0	1	code/fgame/entity.cpp:5130	Single player cheats: dog (god mo
 timedemo	0	1	code/client/cl_main.cpp:3598	Play demos as fast as possible and report the frame rate. Cheat-protected.
 timegraph	0	1	code/client/cl_scrn.cpp:416	Debug: draw the frame time graph. Cheat-protected.
 timelimit	0		code/server/sv_init.c:1045	Multiplayer: minutes per map. 0 no limit. Server setting.
-timescale			code/qcommon/common.c:1915	Game speed multiplier: 0.5 slow motion, 2 double speed. Cheat-protected.
+timescale			code/qcommon/common.c:1916	Game speed multiplier: 0.5 slow motion, 2 double speed. Cheat-protected.
 tow_allied_obj1			code/fgame/dm_manager.cpp:976	Tug of war scoreboard: objective state.
 ui_Accuracy			code/client/cl_ui.cpp:5320	Mission statistics screen: accuracy. Set by the game.
 ui_autoContinue	0	1	code/client/cl_ui.cpp:5298	Skip the CONTINUE button after a map loads and go straight into the game.
@@ -1186,42 +1206,42 @@ ui_skip_legalscreen	0	1	code/client/cl_ui.cpp:5332	Skip the legal screen.
 ui_skip_titlescreen	0	1	code/client/cl_ui.cpp:5331	Skip the title screen.
 ui_startmap			code/client/cl_ui.cpp:5342	Map to start from the menu.
 ui_success			code/client/cl_ui.cpp:5327	Mission statistics screen: mission succeeded. Set by the game.
-ui_timemessage			code/cgame/cg_main.c:213	Timer message shown on screen.
+ui_timemessage			code/cgame/cg_main.c:214	Timer message shown on screen.
 ui_titlescreen_fadein			code/client/cl_ui.cpp:5333	Title screen fade-in seconds.
 ui_titlescreen_fadeout			code/client/cl_ui.cpp:5334	Title screen fade-out seconds.
 ui_titlescreen_stay			code/client/cl_ui.cpp:5335	Seconds the title screen stays up.
 ui_TorsoShots			code/client/cl_ui.cpp:5314	Mission statistics screen: torso hits. Set by the game.
 ui_weaponsbar	0	2	code/client/cl_ui.cpp:5295	Weapon selection bar: 0 off, 1 on, 2 briefly when switching.
 ui_weaponsbartime			code/client/cl_ui.cpp:5296	Milliseconds the weapon bar stays up.
-version			code/qcommon/common.c:1955	Read-only: the game version and build.
-viewlog	0	1	code/qcommon/common.c:1919	Show the console log window. Cheat-protected.
-viewmodelanim			code/cgame/cg_modelanim.c:227	Internal: view model animation being tested (viewthing).
-viewmodelanimslot			code/cgame/cg_modelanim.c:304	Internal: animation slot being tested (viewthing).
+version			code/qcommon/common.c:1956	Read-only: the game version and build.
+viewlog	0	1	code/qcommon/common.c:1920	Show the console log window. Cheat-protected.
+viewmodelanim			code/cgame/cg_modelanim.c:228	Internal: view model animation being tested (viewthing).
+viewmodelanimslot			code/cgame/cg_modelanim.c:305	Internal: animation slot being tested (viewthing).
 viewmodelentity			code/renderergl1/tr_model.cpp:865	Internal: entity being viewed (viewthing).
-viewsize	30	100	code/cgame/cg_main.c:137	Size of the 3D view as a percentage of the screen.
-vm_lean_lower			code/cgame/cg_main.c:210	How much the first-person weapon lowers while leaning.
-vm_offset_air_front			code/cgame/cg_main.c:193	First-person weapon offset (front) when in the air.
-vm_offset_air_side			code/cgame/cg_main.c:194	First-person weapon offset (side) when in the air.
-vm_offset_air_up			code/cgame/cg_main.c:195	First-person weapon offset (up) when in the air.
-vm_offset_crouch_front			code/cgame/cg_main.c:196	First-person weapon offset (front) when crouching.
-vm_offset_crouch_side			code/cgame/cg_main.c:197	First-person weapon offset (side) when crouching.
-vm_offset_crouch_up			code/cgame/cg_main.c:198	First-person weapon offset (up) when crouching.
-vm_offset_max			code/cgame/cg_main.c:188	Maximum distance the first-person weapon may be offset from its rest position.
-vm_offset_rocketcrouch_front			code/cgame/cg_main.c:199	First-person weapon offset (front) when crouching with a rocket launcher.
-vm_offset_rocketcrouch_side			code/cgame/cg_main.c:200	First-person weapon offset (side) when crouching with a rocket launcher.
-vm_offset_rocketcrouch_up			code/cgame/cg_main.c:201	First-person weapon offset (up) when crouching with a rocket launcher.
-vm_offset_shotguncrouch_front			code/cgame/cg_main.c:202	First-person weapon offset (front) when crouching with a shotgun.
-vm_offset_shotguncrouch_side			code/cgame/cg_main.c:203	First-person weapon offset (side) when crouching with a shotgun.
-vm_offset_shotguncrouch_up			code/cgame/cg_main.c:204	First-person weapon offset (up) when crouching with a shotgun.
-vm_offset_speed			code/cgame/cg_main.c:189	How fast the first-person weapon moves to its target offset.
-vm_offset_upvel			code/cgame/cg_main.c:209	How much vertical speed lowers the first-person weapon.
-vm_offset_vel_base			code/cgame/cg_main.c:205	Speed at which the moving weapon offset starts.
-vm_offset_vel_front			code/cgame/cg_main.c:206	First-person weapon offset (front) when moving.
-vm_offset_vel_side			code/cgame/cg_main.c:207	First-person weapon offset (side) when moving.
-vm_offset_vel_up			code/cgame/cg_main.c:208	First-person weapon offset (up) when moving.
-vm_sway_front			code/cgame/cg_main.c:190	First-person weapon sway (front) while moving.
-vm_sway_side			code/cgame/cg_main.c:191	First-person weapon sway (side) while moving.
-vm_sway_up			code/cgame/cg_main.c:192	First-person weapon sway (up) while moving.
+viewsize	30	100	code/cgame/cg_main.c:138	Size of the 3D view as a percentage of the screen.
+vm_lean_lower			code/cgame/cg_main.c:211	How much the first-person weapon lowers while leaning.
+vm_offset_air_front			code/cgame/cg_main.c:194	First-person weapon offset (front) when in the air.
+vm_offset_air_side			code/cgame/cg_main.c:195	First-person weapon offset (side) when in the air.
+vm_offset_air_up			code/cgame/cg_main.c:196	First-person weapon offset (up) when in the air.
+vm_offset_crouch_front			code/cgame/cg_main.c:197	First-person weapon offset (front) when crouching.
+vm_offset_crouch_side			code/cgame/cg_main.c:198	First-person weapon offset (side) when crouching.
+vm_offset_crouch_up			code/cgame/cg_main.c:199	First-person weapon offset (up) when crouching.
+vm_offset_max			code/cgame/cg_main.c:189	Maximum distance the first-person weapon may be offset from its rest position.
+vm_offset_rocketcrouch_front			code/cgame/cg_main.c:200	First-person weapon offset (front) when crouching with a rocket launcher.
+vm_offset_rocketcrouch_side			code/cgame/cg_main.c:201	First-person weapon offset (side) when crouching with a rocket launcher.
+vm_offset_rocketcrouch_up			code/cgame/cg_main.c:202	First-person weapon offset (up) when crouching with a rocket launcher.
+vm_offset_shotguncrouch_front			code/cgame/cg_main.c:203	First-person weapon offset (front) when crouching with a shotgun.
+vm_offset_shotguncrouch_side			code/cgame/cg_main.c:204	First-person weapon offset (side) when crouching with a shotgun.
+vm_offset_shotguncrouch_up			code/cgame/cg_main.c:205	First-person weapon offset (up) when crouching with a shotgun.
+vm_offset_speed			code/cgame/cg_main.c:190	How fast the first-person weapon moves to its target offset.
+vm_offset_upvel			code/cgame/cg_main.c:210	How much vertical speed lowers the first-person weapon.
+vm_offset_vel_base			code/cgame/cg_main.c:206	Speed at which the moving weapon offset starts.
+vm_offset_vel_front			code/cgame/cg_main.c:207	First-person weapon offset (front) when moving.
+vm_offset_vel_side			code/cgame/cg_main.c:208	First-person weapon offset (side) when moving.
+vm_offset_vel_up			code/cgame/cg_main.c:209	First-person weapon offset (up) when moving.
+vm_sway_front			code/cgame/cg_main.c:191	First-person weapon sway (front) while moving.
+vm_sway_side			code/cgame/cg_main.c:192	First-person weapon sway (side) while moving.
+vm_sway_up			code/cgame/cg_main.c:193	First-person weapon sway (up) while moving.
 vss_color			code/cgame/cg_volumetricsmoke.cpp:266	Volumetric smoke: colour volumetric smoke.
 vss_default_b			code/cgame/cg_volumetricsmoke.cpp:277	Volumetric smoke: default smoke colour, blue.
 vss_default_g			code/cgame/cg_volumetricsmoke.cpp:276	Volumetric smoke: default smoke colour, green.
@@ -1240,5 +1260,5 @@ vss_wind_strength			code/cgame/cg_volumetricsmoke.cpp:271	Volumetric smoke: wind
 vss_wind_x			code/cgame/cg_volumetricsmoke.cpp:268	Volumetric smoke: wind on the X axis (also slants rain).
 vss_wind_y			code/cgame/cg_volumetricsmoke.cpp:269	Volumetric smoke: wind on the Y axis (also slants rain).
 vss_wind_z			code/cgame/cg_volumetricsmoke.cpp:270	Volumetric smoke: wind on the Z axis.
-whereami	0	1	code/fgame/gamecvars.cpp:366	Print your position whenever it changes.
+whereami	0	1	code/fgame/gamecvars.cpp:385	Print your position whenever it changes.
 wombat	0	1	code/client/cl_main.cpp:3579	Developer debug switch.
