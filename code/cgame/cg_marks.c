@@ -161,9 +161,6 @@ int CG_GetMarkFragments(
     }
 
     iNumEnts = CG_GetBrushEntitiesInBounds(ARRAY_LEN(pEntList), pEntList, vMins, vMaxs);
-    if (!iNumEnts) {
-        return iNewFragments;
-    }
 
     for (i = 0; i < iNumEnts; i++) {
         pEnt = &pEntList[i]->currentState;
@@ -209,6 +206,23 @@ int CG_GetMarkFragments(
         pCurrFragment += iNewFragments;
     }
 
+    // Added in OPM
+    //  And TIKI models: the map's props and solid entities with a rigid model.
+    if (iCurrFragments < MAX_MARK_FRAGMENTS && iCurrPoints < MAX_MARK_POINTS) {
+        iCurrFragments += CG_GetModelMarkFragments(
+            numVerts,
+            pVerts,
+            vProjection,
+            vMins,
+            vMaxs,
+            iCurrPoints,
+            MAX_MARK_POINTS,
+            (vec3_t *)pPointBuffer,
+            MAX_MARK_FRAGMENTS - iCurrFragments,
+            &pFragmentBuffer[iCurrFragments]
+        );
+    }
+
     return iCurrFragments;
 }
 
@@ -220,8 +234,28 @@ static qboolean CG_GetMarkInlineModelOrientation(int iIndex)
         return cg_bLastEntValid;
     }
 
+    // Added in OPM
+    //  A fragment on one of the map's props: where the prop is now.
+    if (-iIndex > MAX_GENTITIES) {
+        if (CG_PropMarkOrientation(CG_MARK_INDEX_PROP(iIndex), cg_vEntOrigin, cg_fEntAxis)) {
+            cg_bEntAnglesSet = qtrue;
+            cg_bLastEntValid = qtrue;
+            cg_iLastEntIndex = iIndex;
+            cg_iLastEntTime  = cg.time;
+            return qtrue;
+        }
+
+        cg_bLastEntValid = qfalse;
+        VectorClear(cg_vEntOrigin);
+        AxisClear(cg_fEntAxis);
+        cg_bEntAnglesSet = qfalse;
+        return qfalse;
+    }
+
     pCEnt = &cg_entities[-iIndex];
-    if (pCEnt->currentValid && pCEnt->currentState.modelindex < cgs.numInlineModels) {
+    // Added in OPM: or a TIKI model that takes decals
+    if (pCEnt->currentValid
+        && (pCEnt->currentState.modelindex < cgs.numInlineModels || CG_EntityTakesModelMarks(-iIndex))) {
         VectorCopy(pCEnt->lerpAngles, cg_vEntAngles);
         VectorCopy(pCEnt->lerpOrigin, cg_vEntOrigin);
         cg_bLastEntValid = qtrue;
@@ -798,21 +832,15 @@ void CG_AssembleFinalMarks(
         mf             = &markFragments[iFirstNewGroup];
         iFirstNewGroup = 0;
 
-        if (mf->iIndex < 0) {
-            centity_t *cent;
+        if (mf->iIndex < 0 && CG_GetMarkInlineModelOrientation(mf->iIndex)) {
             vec3_t pos;
 
-            cent = &cg_entities[-mf->iIndex];
+            // Fixed in OPM
+            //  Make the position completely local to the entity (or prop)
+            VectorSubtract(pMark->pos, cg_vEntOrigin, pos);
 
-            VectorSubtract(pMark->pos, cent->lerpOrigin, pos);
-
-            if (cent->lerpAngles[0] || cent->lerpAngles[1] || cent->lerpAngles[2]) {
-                vec3_t axis[3];
-
-                // Fixed in OPM
-                //  Make the position completely local to the entity
-                AngleVectorsLeft(cent->lerpAngles, axis[0], axis[1], axis[2]);
-                MatrixTransformVectorRight(axis, pos, pMark->pos);
+            if (cg_bEntAnglesSet) {
+                MatrixTransformVectorRight(cg_fEntAxis, pos, pMark->pos);
             } else {
                 VectorCopy(pos, pMark->pos);
             }
@@ -999,7 +1027,9 @@ qboolean CG_CheckMakeMarkOnEntity(int iEntIndex)
     }
 
     if (cg_entities[iEntIndex].currentState.solid != SOLID_BMODEL) {
-        return qfalse;
+        // Added in OPM
+        //  A solid entity with a rigid TIKI model takes them too
+        return CG_EntityTakesModelMarks(iEntIndex);
     }
 
     if (cg_entities[iEntIndex].currentState.modelindex < 0

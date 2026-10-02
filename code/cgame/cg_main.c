@@ -54,6 +54,7 @@ cvar_t *cg_errorDecay;
 cvar_t *cg_nopredict;
 cvar_t *cg_showmiss;
 cvar_t *cg_addMarks;
+cvar_t *cg_modelMarks;
 cvar_t *cg_maxMarks;
 cvar_t *cg_viewsize;
 cvar_t *cg_3rd_person;
@@ -137,6 +138,9 @@ void CG_RegisterCvars(void)
     cgi.Cvar_Get("g_subtitle", "0", CVAR_ARCHIVE);
     cg_viewsize                   = cgi.Cvar_Get("viewsize", "100", CVAR_ARCHIVE);
     cg_addMarks                   = cgi.Cvar_Get("cg_marks_add", "1", CVAR_ARCHIVE);
+    // Added in OPM
+    //  Decals on TIKI models too: props, and solid entities with a rigid model
+    cg_modelMarks = cgi.Cvar_Get("cg_marks_models", "1", CVAR_ARCHIVE);
     cg_maxMarks                   = cgi.Cvar_Get("cg_marks_max", "256", CVAR_ARCHIVE | CVAR_LATCH);
     cg_animSpeed                  = cgi.Cvar_Get("cg_animspeed", "1", CVAR_CHEAT);
     cg_debugAnim                  = cgi.Cvar_Get("cg_debuganim", "0", CVAR_CHEAT);
