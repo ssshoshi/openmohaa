@@ -44,42 +44,43 @@ cam_origin			code/fgame/camera.cpp:2033	Camera path editor: the selected node's 
 cam_speed			code/fgame/camera.cpp:2068	Camera path editor: the selected node's speed.
 cam_target			code/fgame/camera.cpp:2052	Camera path editor: the selected node's target.
 cam_watch			code/fgame/camera.cpp:2056	Camera path editor: the selected node's watch.
-cg_3rd_person	0	1	code/cgame/cg_main.c:154	Third-person camera: the view follows behind the player instead of looking through their eyes. Cheat-protected.
-cg_acidtrip	0		code/cgame/cg_main.c:179	Debug effect: warps the view with a psychedelic wobble. The number is how many passes of the warp are applied. Cheat-protected.
+cg_3rd_person	0	1	code/cgame/cg_main.c:158	Third-person camera: the view follows behind the player instead of looking through their eyes. Cheat-protected.
+cg_acidtrip	0		code/cgame/cg_main.c:183	Debug effect: warps the view with a psychedelic wobble. The number is how many passes of the warp are applied. Cheat-protected.
 cg_allowvote	0	1	code/client/cl_ui.cpp:2492	Whether the server allows votes. The client copies it from the server's g_allowvote so the menu can show or hide the vote options; setting it yourself changes nothing on the server.
-cg_animationviewmodel	0	1	code/cgame/cg_main.c:174	Keep animating the first-person weapon (view model) even while dead or in states that normally freeze it. Set by the server.
-cg_animspeed			code/cgame/cg_main.c:141	Speed multiplier for client-side animation playback, for debugging animations. 1 is normal speed. Cheat-protected.
+cg_animationviewmodel	0	1	code/cgame/cg_main.c:178	Keep animating the first-person weapon (view model) even while dead or in states that normally freeze it. Set by the server.
+cg_animspeed			code/cgame/cg_main.c:145	Speed multiplier for client-side animation playback, for debugging animations. 1 is normal speed. Cheat-protected.
 cg_autoswitch	0	1	code/client/cl_main.cpp:3691	Switch to a weapon automatically when you pick up one that is better than the one in your hands.
-cg_cameradist			code/cgame/cg_main.c:157	Third-person camera: how far behind the player the camera sits, in game units.
-cg_cameraheight			code/cgame/cg_main.c:156	Third-person camera: how high above the player's origin the camera aims, in game units.
-cg_camerascale			code/cgame/cg_main.c:159	Third-person camera: how quickly the camera eases toward its target position (0 to 1; higher follows more tightly).
-cg_cameraverticaldisplacement			code/cgame/cg_main.c:158	Third-person camera: extra vertical offset applied to the camera position, in game units.
-cg_crosshair			code/cgame/cg_main.c:183	Shader used to draw the crosshair.
-cg_crosshair_friend			code/cgame/cg_main.c:187	Shader used for the crosshair when it is over a teammate (multiplayer). Falls back to cg_crosshair where the texture does not exist.
-cg_debuganim	0	2	code/cgame/cg_main.c:142	Print client-side animation changes to the console: 1 for animation starts, 2 for every frame update as well. Cheat-protected.
-cg_debuganimwatch	0		code/cgame/cg_main.c:143	Limit cg_debuganim to one entity: set to that entity's number plus one. 0 shows all entities. Cheat-protected.
-cg_debugfootsteps	0	1	code/cgame/cg_main.c:161	Print footstep surface detection to the console: which surface each step hit and which sound was chosen. Cheat-protected.
-cg_drawsvlag	0	1	code/cgame/cg_main.c:182	Show the server-lag icon when the connection to the server stalls.
-cg_drawviewmodel	0	2	code/cgame/cg_main.c:155	First-person weapon: 0 hides it, 1 shows the weapon only, 2 also shows the hands and arms.
+cg_cameradist			code/cgame/cg_main.c:161	Third-person camera: how far behind the player the camera sits, in game units.
+cg_cameraheight			code/cgame/cg_main.c:160	Third-person camera: how high above the player's origin the camera aims, in game units.
+cg_camerascale			code/cgame/cg_main.c:163	Third-person camera: how quickly the camera eases toward its target position (0 to 1; higher follows more tightly).
+cg_cameraverticaldisplacement			code/cgame/cg_main.c:162	Third-person camera: extra vertical offset applied to the camera position, in game units.
+cg_crosshair			code/cgame/cg_main.c:187	Shader used to draw the crosshair.
+cg_crosshair_friend			code/cgame/cg_main.c:191	Shader used for the crosshair when it is over a teammate (multiplayer). Falls back to cg_crosshair where the texture does not exist.
+cg_debuganim	0	2	code/cgame/cg_main.c:146	Print client-side animation changes to the console: 1 for animation starts, 2 for every frame update as well. Cheat-protected.
+cg_debuganimwatch	0		code/cgame/cg_main.c:147	Limit cg_debuganim to one entity: set to that entity's number plus one. 0 shows all entities. Cheat-protected.
+cg_debugfootsteps	0	1	code/cgame/cg_main.c:165	Print footstep surface detection to the console: which surface each step hit and which sound was chosen. Cheat-protected.
+cg_drawsvlag	0	1	code/cgame/cg_main.c:186	Show the server-lag icon when the connection to the server stalls.
+cg_drawviewmodel	0	2	code/cgame/cg_main.c:159	First-person weapon: 0 hides it, 1 shows the weapon only, 2 also shows the hands and arms.
 cg_effect_physicsrate			code/cgame/cg_tempmodels.cpp:237	How many times per second the physics of effect particles (debris, sparks, smoke) is stepped. Lower is cheaper but coarser.
 cg_effectdetail	0.2	1	code/cgame/cg_tempmodels.cpp:234	Scales how many particles effects spawn: 1 is full detail, lower values thin out smoke, sparks and debris for performance.
-cg_errordecay			code/cgame/cg_main.c:144	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
-cg_firstPersonBody	0	1	code/cgame/cg_main.c:176	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
-cg_firstPersonBodyOffset			code/cgame/cg_main.c:177	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
-cg_firstPersonShadow	0	1	code/cgame/cg_main.c:175	Let your own player model cast a shadow in first person, while the model itself stays hidden.
-cg_forceModel	0	1	code/cgame/cg_main.c:173	Multiplayer: draw every player with your chosen player models (dm_playermodel / dm_playergermanmodel) instead of their own.
-cg_fov	65	120	code/cgame/cg_main.c:224	Field of view in degrees for the normal (unzoomed) view. Clamped to 65-120.
+cg_errordecay			code/cgame/cg_main.c:148	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
+cg_firstPersonBody	0	1	code/cgame/cg_main.c:180	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
+cg_firstPersonBodyOffset			code/cgame/cg_main.c:181	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
+cg_firstPersonShadow	0	1	code/cgame/cg_main.c:179	Let your own player model cast a shadow in first person, while the model itself stays hidden.
+cg_forceModel	0	1	code/cgame/cg_main.c:177	Multiplayer: draw every player with your chosen player models (dm_playermodel / dm_playergermanmodel) instead of their own.
+cg_fov	65	120	code/cgame/cg_main.c:228	Field of view in degrees for the normal (unzoomed) view. Clamped to 65-120.
 cg_frameTimers	0		code/cgame/cg_view.c:973	Profiling: print a breakdown of where cgame spends its frame time. The value is how many frames to average over; 0 is off.
 cg_gametype	0		code/tiki/tiki_parse.cpp:329	The current game type as seen by the client (0 single player; 1 free-for-all, 2 team match, 3 round-based, 4 objective, and higher for later modes). Set by the server; latched.
-cg_hidetempmodels	0	1	code/cgame/cg_main.c:148	Debug: stop drawing temporary models (particles, debris, sprites from effects).
-cg_hitmessages	0	1	code/cgame/cg_main.c:178	Show hit feedback messages in multiplayer.
-cg_hud	0	1	code/cgame/cg_main.c:180	Whether the HUD is currently shown. Managed by the UI; use ui_hud to change it.
-cg_huddraw_force	0	1	code/cgame/cg_main.c:181	Draw script HUD elements (huddraw) even when the HUD is hidden. Saved with savegames.
-cg_lagometer	0	1	code/cgame/cg_main.c:151	Show the lag-o-meter graph: frame interpolation on top, snapshot latency and drops underneath.
-cg_marks_add	0	1	code/cgame/cg_main.c:139	Leave decal marks: bullet holes, blood splats, scorch marks. 0 turns them off (shadow blobs still draw).
-cg_marks_max			code/cgame/cg_main.c:140	Maximum number of decal marks kept in the world before the oldest are recycled. Latched: applies on the next map.
+cg_hidetempmodels	0	1	code/cgame/cg_main.c:152	Debug: stop drawing temporary models (particles, debris, sprites from effects).
+cg_hitmessages	0	1	code/cgame/cg_main.c:182	Show hit feedback messages in multiplayer.
+cg_hud	0	1	code/cgame/cg_main.c:184	Whether the HUD is currently shown. Managed by the UI; use ui_hud to change it.
+cg_huddraw_force	0	1	code/cgame/cg_main.c:185	Draw script HUD elements (huddraw) even when the HUD is hidden. Saved with savegames.
+cg_lagometer	0	1	code/cgame/cg_main.c:155	Show the lag-o-meter graph: frame interpolation on top, snapshot latency and drops underneath.
+cg_marks_add	0	1	code/cgame/cg_main.c:140	Leave decal marks: bullet holes, blood splats, scorch marks. 0 turns them off (shadow blobs still draw).
+cg_marks_max			code/cgame/cg_main.c:144	Maximum number of decal marks kept in the world before the oldest are recycled. Latched: applies on the next map.
+cg_marks_models	0	1	code/cgame/cg_main.c:143	Bullet holes and blast marks on models too: the map's props and solid models such as a car or a crate.
 cg_max_tempmodels	200		code/cgame/cg_tempmodels.cpp:238	Maximum number of temporary models (particles, debris, sprites) alive at once. Higher allows denser effects at a memory and speed cost.
-cg_nopredict	0	1	code/cgame/cg_main.c:145	Debug: turn off client-side movement prediction, so your movement waits for the server.
+cg_nopredict	0	1	code/cgame/cg_main.c:149	Debug: turn off client-side movement prediction, so your movement waits for the server.
 cg_physics	0	1	code/cgame/cg_physics.cpp:79	Client-side physics (Jolt): props knocked about by shots and explosions, and the world the ragdolls collide with. 0 turns it all off.
 cg_physics_clipped	0	1	code/cgame/cg_physics.cpp:88	Props that the map wraps in invisible clip brushes (most furniture), when playing on someone else's server: 0 keeps them fixed, 1 moves them anyway and leaves the clip brush behind for the server's collision. In local single player the clip brushes are removed instead. Latched.
 cg_physics_debug	0	4	code/cgame/cg_physics.cpp:81	Physics debug drawing: 1 the physics world, 3 and 4 furniture pieces and entity fills. 0 is off.
@@ -87,7 +88,7 @@ cg_physics_edit	0	1	code/cgame/cg_physics_edit.cpp:1164	The physics editor overl
 cg_physics_furniture	0	1	code/cgame/cg_physics.cpp:89	Let furniture built from map brushwork (tables, chairs in the brushes) move as physics objects. Latched.
 cg_physics_log	0	2	code/cgame/cg_physics.cpp:80	Physics console logging: 1 a summary every 5 seconds and major events, 2 per-object detail.
 cg_physics_props	0	1	code/cgame/cg_physics.cpp:82	Let the map's static models (crates, bottles, barrels) move as physics objects when hit. Latched.
-cg_pmove_msec			code/cgame/cg_main.c:166	Milliseconds per player movement step when client-side movement is run in fixed steps.
+cg_pmove_msec			code/cgame/cg_main.c:170	Milliseconds per player movement step when client-side movement is run in fixed steps.
 cg_ragdoll	0	1	code/cgame/cg_ragdoll.cpp:8893	Ragdoll corpses: bodies go limp and fall under physics when killed, instead of only playing a death animation.
 cg_ragdoll_armfree			code/cgame/cg_ragdoll.cpp:8992	How much further than the default joint limits the arms may swing on a ragdoll (0 keeps the base limits).
 cg_ragdoll_blastimpulse	0	10	code/cgame/cg_ragdoll.cpp:8926	Scales how hard explosions throw ragdolls. Kept separate from cg_ragdoll_impulse (bullets) so grenades can throw bodies without every rifle shot doing the same.
@@ -133,16 +134,16 @@ cg_ragdoll_stuckhold			code/cgame/cg_ragdoll.cpp:9029	How firmly a body part tha
 cg_rain	0	1	code/cgame/cg_nature.cpp:61	Draw rain where a map has it.
 cg_rain_drawcoverage	0	1	code/cgame/cg_nature.cpp:63	Debug: show where rain is allowed to fall on the map. Set by the map; saved with savegames.
 cg_reserve_tempmodels			code/cgame/cg_tempmodels.cpp:241	How many temporary model slots to keep free: when fewer are left, the oldest effects are freed early. Clamped to a fifth of cg_max_tempmodels.
-cg_shadowdebug	0	1	code/cgame/cg_main.c:169	Debug: draw the lights used to cast character shadows.
+cg_shadowdebug	0	1	code/cgame/cg_main.c:173	Debug: draw the lights used to cast character shadows.
 cg_shadows	0	3	code/renderergl1/tr_init.c:1514	Character shadows: 0 none, 1 blob under the feet, 2 projected stencil shadows (GL1), 3 stencil volumes (GL1).
-cg_shadowscount	1	8	code/cgame/cg_main.c:168	How many lights may cast a character's blob shadow at once.
+cg_shadowscount	1	8	code/cgame/cg_main.c:172	How many lights may cast a character's blob shadow at once.
 cg_showemitters	0	1	code/cgame/cg_commands.cpp:5458	Debug: print information about effect emitters as they spawn particles.
-cg_showmiss	0	2	code/cgame/cg_main.c:146	Debug: report prediction misses (when the server's position disagrees with the client's prediction). 2 adds more detail.
+cg_showmiss	0	2	code/cgame/cg_main.c:150	Debug: report prediction misses (when the server's position disagrees with the client's prediction). 2 adds more detail.
 cg_showtempmodels	0	1	code/cgame/cg_tempmodels.cpp:231	Debug: print how many temporary models are alive each frame.
-cg_smoothClients	0	1	code/cgame/cg_main.c:162	Smooth other players' movement by extrapolating between server snapshots.
-cg_smoothClientsTime			code/cgame/cg_main.c:163	How far ahead, in milliseconds, other players may be extrapolated when cg_smoothClients is on.
-cg_stats	0	1	code/cgame/cg_main.c:147	Debug: print the client's current snapshot and frame numbers every frame.
-cg_stereosep			code/cgame/cg_main.c:150	Eye separation for stereoscopic rendering.
+cg_smoothClients	0	1	code/cgame/cg_main.c:166	Smooth other players' movement by extrapolating between server snapshots.
+cg_smoothClientsTime			code/cgame/cg_main.c:167	How far ahead, in milliseconds, other players may be extrapolated when cg_smoothClients is on.
+cg_stats	0	1	code/cgame/cg_main.c:151	Debug: print the client's current snapshot and frame numbers every frame.
+cg_stereosep			code/cgame/cg_main.c:154	Eye separation for stereoscopic rendering.
 cg_te_accel_x			code/cgame/cg_testemitter.cpp:2002	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the X axis.
 cg_te_accel_y			code/cgame/cg_testemitter.cpp:2003	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the Y axis.
 cg_te_accel_z			code/cgame/cg_testemitter.cpp:2004	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the Z axis.
@@ -237,9 +238,9 @@ cg_te_volumetric			code/cgame/cg_testemitter.cpp:2045	Test emitter (the effects 
 cg_te_xangles			code/cgame/cg_testemitter.cpp:2081	Test emitter (the effects editor in cg_testemitter): emitter orientation, pitch.
 cg_te_yangles			code/cgame/cg_testemitter.cpp:2082	Test emitter (the effects editor in cg_testemitter): emitter orientation, yaw.
 cg_te_zangles			code/cgame/cg_testemitter.cpp:2083	Test emitter (the effects editor in cg_testemitter): emitter orientation, roll.
-cg_traceinfo	0	3	code/cgame/cg_main.c:160	Debug: print information about client-side collision traces. 3 prints every trace.
-cg_treadmark_test	0		code/cgame/cg_marks.c:1015	Debug: draw a test tank tread mark under the crosshair. The value is the tread width.
-cg_voicechat	0	1	code/cgame/cg_main.c:212	Play multiplayer voice chat messages (the voice command menu).
+cg_traceinfo	0	3	code/cgame/cg_main.c:164	Debug: print information about client-side collision traces. 3 prints every trace.
+cg_treadmark_test	0		code/cgame/cg_marks.c:1045	Debug: draw a test tank tread mark under the crosshair. The value is the tread width.
+cg_voicechat	0	1	code/cgame/cg_main.c:216	Play multiplayer voice chat messages (the voice command menu).
 cheats	0	1	code/server/sv_init.c:1078	Allow cheat commands and cheat-protected cvars. In single player use thereisnomonkey 1. Latched. Server setting.
 cl_allowDownload	0		code/client/cl_main.cpp:3628	Download missing files from servers (bit flags: 1 enable, 2 no redirect, 4 no UDP).
 cl_altbindings	0	1	code/client/cl_main.cpp:3633	Allow Alt+key bindings as separate binds.
@@ -419,18 +420,18 @@ g_ai_noticescale			code/fgame/gamecvars.cpp:523	Scales how long AI takes to noti
 g_ai_notifyradius			code/fgame/gamecvars.cpp:522	Radius in game units within which AI alert nearby allies.
 g_ai_soundscale			code/fgame/gamecvars.cpp:524	Scales how far AI hear sounds (gunfire, footsteps).
 g_aiDamageMult			code/fgame/sentient.cpp:1385	Multiplier on damage dealt by AI to the player.
-g_ailongrange			code/fgame/actor.cpp:11135	Distance at which AI consider a target at long range, for accuracy.
-g_aimaxdeviation	0	1	code/fgame/actor.cpp:11121	How far off their aim AI may shoot and still count the shot as aimed (a dot product: 1 dead on).
-g_aimcoverfactor	0	1	code/fgame/actor.cpp:11120	How much being in cover reduces AI accuracy against you.
-g_aimediumrange			code/fgame/actor.cpp:11134	Distance at which AI consider a target at medium range, for accuracy.
-g_aiminaccuracy	0	1	code/fgame/actor.cpp:11122	AI accuracy against a target they can barely see (0 to 1).
+g_ailongrange			code/fgame/actor.cpp:11189	Distance at which AI consider a target at long range, for accuracy.
+g_aimaxdeviation	0	1	code/fgame/actor.cpp:11175	How far off their aim AI may shoot and still count the shot as aimed (a dot product: 1 dead on).
+g_aimcoverfactor	0	1	code/fgame/actor.cpp:11174	How much being in cover reduces AI accuracy against you.
+g_aimediumrange			code/fgame/actor.cpp:11188	Distance at which AI consider a target at medium range, for accuracy.
+g_aiminaccuracy	0	1	code/fgame/actor.cpp:11176	AI accuracy against a target they can barely see (0 to 1).
 g_aimLagTime			code/fgame/player.cpp:4969	Milliseconds of delay in the aim trail that AI track the player with. Higher gives more lag in their aim.
-g_aiScatterHeight			code/fgame/actor.cpp:11124	Vertical scatter of AI shots in game units, before accuracy is applied.
-g_aiScatterWide			code/fgame/actor.cpp:11123	Horizontal scatter of AI shots in game units, before accuracy is applied.
-g_aishortrange			code/fgame/actor.cpp:11133	Distance at which AI consider a target at short range, for accuracy.
-g_aisniperrange			code/fgame/actor.cpp:11136	Distance at which AI snipers engage.
+g_aiScatterHeight			code/fgame/actor.cpp:11178	Vertical scatter of AI shots in game units, before accuracy is applied.
+g_aiScatterWide			code/fgame/actor.cpp:11177	Horizontal scatter of AI shots in game units, before accuracy is applied.
+g_aishortrange			code/fgame/actor.cpp:11187	Distance at which AI consider a target at short range, for accuracy.
+g_aisniperrange			code/fgame/actor.cpp:11190	Distance at which AI snipers engage.
 g_aistats	0	1	code/fgame/gamecvars.cpp:723	Debug: print AI statistics. Cheat-protected.
-g_aiSupressScatter			code/fgame/actor.cpp:11119	Scatter multiplier on AI suppressing fire (shooting to keep you down rather than to hit).
+g_aiSupressScatter			code/fgame/actor.cpp:11173	Scatter multiplier on AI suppressing fire (shooting to keep you down rather than to hit).
 g_allowjointime	0		code/fgame/gamecvars.cpp:376	Round-based multiplayer: seconds after a round starts that new players may still join and spawn. Server setting.
 g_allowvote	0	1	code/fgame/gamecvars.cpp:567	Allow players to call votes. Server setting.
 g_animdump	0	1	code/fgame/gamecvars.cpp:518	Debug: print every animation change on the server.
@@ -461,7 +462,7 @@ g_drawattackertime			code/fgame/gamecvars.cpp:639	Seconds your attacker's name s
 g_dropclips	0		code/fgame/gamecvars.cpp:516	How many clips of ammo a dead player's weapon drops with. 0 drops it empty. Server setting.
 g_droppeditemlife	0		code/fgame/gamecvars.cpp:515	Seconds a dropped weapon or item stays on the ground before it is removed. Server setting.
 g_entinfo	0	4	code/fgame/gamecvars.cpp:478	Debug: show information above actors (1 names and health, 2 more, 4 all regardless of distance). Cheat-protected.
-g_entinfo_max			code/fgame/actor.cpp:4301	Maximum distance for g_entinfo labels.
+g_entinfo_max			code/fgame/actor.cpp:4314	Maximum distance for g_entinfo labels.
 g_eogmedal0	0	1	code/fgame/gamecvars.cpp:659	End-of-game medal earned (campaign progress). Saved.
 g_eogmedal1	0	1	code/fgame/gamecvars.cpp:660	End-of-game medal earned (campaign progress). Saved.
 g_eogmedal2	0	1	code/fgame/gamecvars.cpp:661	End-of-game medal earned (campaign progress). Saved.
@@ -562,7 +563,7 @@ g_showaxis	0	1	code/fgame/gamecvars.cpp:473	Debug: draw entities' axes.
 g_showbullettrace	0	1	code/fgame/gamecvars.cpp:476	Debug: draw bullet paths.
 g_showdamage	0	1	code/fgame/gamecvars.cpp:520	Debug: print damage from weapons as it is dealt.
 g_showflypath	0	1	code/fgame/scriptslave.cpp:713	Debug: draw scripted fly paths.
-g_showinfo	0	1	code/fgame/actor.cpp:6612	Debug: show AI information.
+g_showinfo	0	1	code/fgame/actor.cpp:6625	Debug: show AI information.
 g_showlookat	-1		code/fgame/gamecvars.cpp:479	Debug: show where the actor with this entity number looks. -1 shows all actors.
 g_showmem	0	1	code/fgame/gamecvars.cpp:470	Debug: print memory use every frame.
 g_shownpc	0	1	code/fgame/gamecvars.cpp:585	Debug: print the number of actors each frame.
@@ -592,7 +593,7 @@ g_splean			code/fgame/gamecvars.cpp:425	Lets the player lean in single player, w
 g_statefile			code/fgame/gamecvars.cpp:491	Base name of the player state machine files (_Legs.st and _Torso.st).
 g_subtitle	0	2	code/cgame/cg_commands.cpp:3850	Subtitles for dialogue: 1 nearby dialogue, 2 all dialogue regardless of distance.
 g_success	0	1	code/cgame/cg_view.c:1207	Set by the game when the mission succeeded; read by the end-of-mission screen.
-g_synchronousClients	0	1	code/cgame/cg_main.c:149	Run clients in lockstep with the server (for recording demos).
+g_synchronousClients	0	1	code/cgame/cg_main.c:153	Run clients in lockstep with the server (for recording demos).
 g_t2l1	0	1	code/fgame/gamecvars.cpp:681	Campaign progress: Breakthrough mission unlocked. Saved.
 g_t3l1	0	1	code/fgame/gamecvars.cpp:682	Campaign progress: Breakthrough mission unlocked. Saved.
 g_teambalance	0	1	code/fgame/gamecvars.cpp:788	Team games: stop players joining the team that already has more players. Server setting.
@@ -708,8 +709,8 @@ orch_flyspeed			code/cgame/cg_orch.cpp:718
 orch_shotsave			code/cgame/cg_orch.cpp:717	
 password			code/client/cl_main.cpp:3709	Password sent when joining a passworded server.
 paused	0	1	code/cgame/cg_orch.cpp:163	Whether the game is paused.
-pmove_fixed	0	1	code/cgame/cg_main.c:164	Run player movement in fixed steps of pmove_msec, for consistent jumping at any frame rate. Server setting.
-pmove_msec	8	33	code/cgame/cg_main.c:165	Milliseconds per fixed player movement step. Server setting.
+pmove_fixed	0	1	code/cgame/cg_main.c:168	Run player movement in fixed steps of pmove_msec, for consistent jumping at any frame rate. Server setting.
+pmove_msec	8	33	code/cgame/cg_main.c:169	Milliseconds per fixed player movement step. Server setting.
 protocol			code/server/sv_init.c:1057	Read-only: network protocol version.
 r_allowExtensions	0	1	code/renderergl1/tr_init.c:1311	Use OpenGL extensions the driver offers. 0 is only for troubleshooting a broken driver.
 r_allowResize	0	1	code/sdl/sdl_glimp.c:1091	Let the game window be resized by dragging its edges when windowed.
@@ -1099,7 +1100,7 @@ sv_referencedPakNames			code/server/sv_init.c:1092	Read-only: paks the map refer
 sv_referencedPaks			code/server/sv_init.c:1091	Read-only: checksums of paks the map references.
 sv_rollangle			code/fgame/gamecvars.cpp:389	How much the view rolls when strafing. Server setting.
 sv_rollspeed			code/fgame/gamecvars.cpp:388	Strafe speed at which the view roll is full. Server setting.
-sv_running			code/cgame/cg_main.c:217	Read-only: whether a server is running.
+sv_running			code/cgame/cg_main.c:221	Read-only: whether a server is running.
 sv_runspeed			code/fgame/gamecvars.cpp:439	Player running speed (287 in OpenMoHAA; 250 in the original 1.11). Server setting.
 sv_scriptfiles			code/fgame/gamecvars.cpp:747	Internal: script files in use.
 sv_serverid			code/server/sv_init.c:1079	Read-only: unique ID of the current server session.
@@ -1206,7 +1207,7 @@ ui_skip_legalscreen	0	1	code/client/cl_ui.cpp:5332	Skip the legal screen.
 ui_skip_titlescreen	0	1	code/client/cl_ui.cpp:5331	Skip the title screen.
 ui_startmap			code/client/cl_ui.cpp:5342	Map to start from the menu.
 ui_success			code/client/cl_ui.cpp:5327	Mission statistics screen: mission succeeded. Set by the game.
-ui_timemessage			code/cgame/cg_main.c:214	Timer message shown on screen.
+ui_timemessage			code/cgame/cg_main.c:218	Timer message shown on screen.
 ui_titlescreen_fadein			code/client/cl_ui.cpp:5333	Title screen fade-in seconds.
 ui_titlescreen_fadeout			code/client/cl_ui.cpp:5334	Title screen fade-out seconds.
 ui_titlescreen_stay			code/client/cl_ui.cpp:5335	Seconds the title screen stays up.
@@ -1218,30 +1219,30 @@ viewlog	0	1	code/qcommon/common.c:1920	Show the console log window. Cheat-protec
 viewmodelanim			code/cgame/cg_modelanim.c:228	Internal: view model animation being tested (viewthing).
 viewmodelanimslot			code/cgame/cg_modelanim.c:305	Internal: animation slot being tested (viewthing).
 viewmodelentity			code/renderergl1/tr_model.cpp:865	Internal: entity being viewed (viewthing).
-viewsize	30	100	code/cgame/cg_main.c:138	Size of the 3D view as a percentage of the screen.
-vm_lean_lower			code/cgame/cg_main.c:211	How much the first-person weapon lowers while leaning.
-vm_offset_air_front			code/cgame/cg_main.c:194	First-person weapon offset (front) when in the air.
-vm_offset_air_side			code/cgame/cg_main.c:195	First-person weapon offset (side) when in the air.
-vm_offset_air_up			code/cgame/cg_main.c:196	First-person weapon offset (up) when in the air.
-vm_offset_crouch_front			code/cgame/cg_main.c:197	First-person weapon offset (front) when crouching.
-vm_offset_crouch_side			code/cgame/cg_main.c:198	First-person weapon offset (side) when crouching.
-vm_offset_crouch_up			code/cgame/cg_main.c:199	First-person weapon offset (up) when crouching.
-vm_offset_max			code/cgame/cg_main.c:189	Maximum distance the first-person weapon may be offset from its rest position.
-vm_offset_rocketcrouch_front			code/cgame/cg_main.c:200	First-person weapon offset (front) when crouching with a rocket launcher.
-vm_offset_rocketcrouch_side			code/cgame/cg_main.c:201	First-person weapon offset (side) when crouching with a rocket launcher.
-vm_offset_rocketcrouch_up			code/cgame/cg_main.c:202	First-person weapon offset (up) when crouching with a rocket launcher.
-vm_offset_shotguncrouch_front			code/cgame/cg_main.c:203	First-person weapon offset (front) when crouching with a shotgun.
-vm_offset_shotguncrouch_side			code/cgame/cg_main.c:204	First-person weapon offset (side) when crouching with a shotgun.
-vm_offset_shotguncrouch_up			code/cgame/cg_main.c:205	First-person weapon offset (up) when crouching with a shotgun.
-vm_offset_speed			code/cgame/cg_main.c:190	How fast the first-person weapon moves to its target offset.
-vm_offset_upvel			code/cgame/cg_main.c:210	How much vertical speed lowers the first-person weapon.
-vm_offset_vel_base			code/cgame/cg_main.c:206	Speed at which the moving weapon offset starts.
-vm_offset_vel_front			code/cgame/cg_main.c:207	First-person weapon offset (front) when moving.
-vm_offset_vel_side			code/cgame/cg_main.c:208	First-person weapon offset (side) when moving.
-vm_offset_vel_up			code/cgame/cg_main.c:209	First-person weapon offset (up) when moving.
-vm_sway_front			code/cgame/cg_main.c:191	First-person weapon sway (front) while moving.
-vm_sway_side			code/cgame/cg_main.c:192	First-person weapon sway (side) while moving.
-vm_sway_up			code/cgame/cg_main.c:193	First-person weapon sway (up) while moving.
+viewsize	30	100	code/cgame/cg_main.c:139	Size of the 3D view as a percentage of the screen.
+vm_lean_lower			code/cgame/cg_main.c:215	How much the first-person weapon lowers while leaning.
+vm_offset_air_front			code/cgame/cg_main.c:198	First-person weapon offset (front) when in the air.
+vm_offset_air_side			code/cgame/cg_main.c:199	First-person weapon offset (side) when in the air.
+vm_offset_air_up			code/cgame/cg_main.c:200	First-person weapon offset (up) when in the air.
+vm_offset_crouch_front			code/cgame/cg_main.c:201	First-person weapon offset (front) when crouching.
+vm_offset_crouch_side			code/cgame/cg_main.c:202	First-person weapon offset (side) when crouching.
+vm_offset_crouch_up			code/cgame/cg_main.c:203	First-person weapon offset (up) when crouching.
+vm_offset_max			code/cgame/cg_main.c:193	Maximum distance the first-person weapon may be offset from its rest position.
+vm_offset_rocketcrouch_front			code/cgame/cg_main.c:204	First-person weapon offset (front) when crouching with a rocket launcher.
+vm_offset_rocketcrouch_side			code/cgame/cg_main.c:205	First-person weapon offset (side) when crouching with a rocket launcher.
+vm_offset_rocketcrouch_up			code/cgame/cg_main.c:206	First-person weapon offset (up) when crouching with a rocket launcher.
+vm_offset_shotguncrouch_front			code/cgame/cg_main.c:207	First-person weapon offset (front) when crouching with a shotgun.
+vm_offset_shotguncrouch_side			code/cgame/cg_main.c:208	First-person weapon offset (side) when crouching with a shotgun.
+vm_offset_shotguncrouch_up			code/cgame/cg_main.c:209	First-person weapon offset (up) when crouching with a shotgun.
+vm_offset_speed			code/cgame/cg_main.c:194	How fast the first-person weapon moves to its target offset.
+vm_offset_upvel			code/cgame/cg_main.c:214	How much vertical speed lowers the first-person weapon.
+vm_offset_vel_base			code/cgame/cg_main.c:210	Speed at which the moving weapon offset starts.
+vm_offset_vel_front			code/cgame/cg_main.c:211	First-person weapon offset (front) when moving.
+vm_offset_vel_side			code/cgame/cg_main.c:212	First-person weapon offset (side) when moving.
+vm_offset_vel_up			code/cgame/cg_main.c:213	First-person weapon offset (up) when moving.
+vm_sway_front			code/cgame/cg_main.c:195	First-person weapon sway (front) while moving.
+vm_sway_side			code/cgame/cg_main.c:196	First-person weapon sway (side) while moving.
+vm_sway_up			code/cgame/cg_main.c:197	First-person weapon sway (up) while moving.
 vss_color			code/cgame/cg_volumetricsmoke.cpp:266	Volumetric smoke: colour volumetric smoke.
 vss_default_b			code/cgame/cg_volumetricsmoke.cpp:277	Volumetric smoke: default smoke colour, blue.
 vss_default_g			code/cgame/cg_volumetricsmoke.cpp:276	Volumetric smoke: default smoke colour, green.
