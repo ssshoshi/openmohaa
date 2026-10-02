@@ -1709,6 +1709,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
 
         // add to refresh list
         CGM_BEGIN(CGM_ADDREF);
+        // Added in OPM
+        //  A hot MG42 barrel glows: a pass over the model
+        CG_MG42BarrelGlow(&model, s1);
         cgi.R_AddRefEntityToScene(&model, s1->parent);
 
         if (bShadowAttach) {

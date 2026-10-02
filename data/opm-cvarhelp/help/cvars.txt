@@ -80,6 +80,7 @@ cg_marks_add	0	1	code/cgame/cg_main.c:140	Leave decal marks: bullet holes, blood
 cg_marks_max			code/cgame/cg_main.c:144	Maximum number of decal marks kept in the world before the oldest are recycled. Latched: applies on the next map.
 cg_marks_models	0	1	code/cgame/cg_main.c:143	Bullet holes and blast marks on models too: the map's props and solid models such as a car or a crate.
 cg_max_tempmodels	200		code/cgame/cg_tempmodels.cpp:238	Maximum number of temporary models (particles, debris, sprites) alive at once. Higher allows denser effects at a memory and speed cost.
+cg_mg42glow	0	2	code/cgame/cg_mg42.cpp:63	A hot MG42 barrel glows, dull red to yellow-white as it nears overheating (2: full glow on every MG42, for checking).
 cg_nopredict	0	1	code/cgame/cg_main.c:149	Debug: turn off client-side movement prediction, so your movement waits for the server.
 cg_physics	0	1	code/cgame/cg_physics.cpp:79	Client-side physics (Jolt): props knocked about by shots and explosions, and the world the ragdolls collide with. 0 turns it all off.
 cg_physics_clipped	0	1	code/cgame/cg_physics.cpp:88	Props that the map wraps in invisible clip brushes (most furniture), when playing on someone else's server: 0 keeps them fixed, 1 moves them anyway and leaves the clip brush behind for the server's collision. In local single player the clip brushes are removed instead. Latched.
@@ -615,7 +616,7 @@ g_turret_convergetime			code/fgame/gamecvars.cpp:716	Seconds an AI turret gunner
 g_turret_spread			code/fgame/gamecvars.cpp:719	Spread of AI turret fire.
 g_turret_suppresstime			code/fgame/gamecvars.cpp:717	Seconds an AI turret keeps up suppressing fire.
 g_turret_suppresswaittime			code/fgame/gamecvars.cpp:718	Seconds an AI turret waits between bursts of suppressing fire.
-g_turretcameras	0	1	code/fgame/weapturret.cpp:1506	Use the turret's own camera view when manning a turret.
+g_turretcameras	0	1	code/fgame/weapturret.cpp:1615	Use the turret's own camera view when manning a turret.
 g_vehicle	0	1	code/fgame/gamecvars.cpp:505	Debug: vehicles think and move. 0 freezes them.
 g_viewkick_dmmult			code/fgame/gamecvars.cpp:637	Multiplier on the view kick when hit. Cheat-protected.
 g_viewkick_pitch			code/fgame/gamecvars.cpp:634	How much being hit kicks the view up or down. Cheat-protected.

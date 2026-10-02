@@ -1,0 +1,74 @@
+menu "hud_ammo_MG42" 261 279 NONE 1
+bgcolor 0 0 0 0
+fgcolor 1 1 1 1
+align right bottom
+
+// The player's MG42 ammunition (Player::UpdateStats): the rounds left in the
+// belt as the clip ammo, and the rounds in the belts still to go as the ammo.
+
+resource
+Label
+{
+name "mg42rounds"
+rect 60 245 96 18
+fgcolor 0.70 0.60 0.05 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+playerstat 6 // clip ammo
+textalign right
+font facfont-20
+}
+
+resource
+Label
+{
+name "mg42roundslabel"
+title "rounds"
+rect 162 245 90 18
+fgcolor 0.70 0.60 0.05 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+textalign left
+font facfont-20
+}
+
+resource
+Label
+{
+name "mg42spare"
+rect 60 263 96 16
+fgcolor 0.70 0.60 0.05 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+playerstat 4 // ammo: the rounds in the belts still to go
+textalign right
+font facfont-20
+}
+
+resource
+Label
+{
+name "mg42sparelabel"
+title "in spare belts"
+rect 162 263 120 16
+fgcolor 0.70 0.60 0.05 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+textalign left
+font facfont-20
+}
+
+resource
+Label
+{
+name "weaponname"
+rect 0 223 200 22
+fgcolor 0.70 0.60 0.05 1.00
+bgcolor 0.50 0.50 0.50 0.00
+borderstyle "NONE"
+itemstat 1 // equipped weapon
+textalign right
+font facfont-20
+}
+
+end.

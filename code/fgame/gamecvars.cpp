@@ -548,7 +548,7 @@ void CVAR_Init(void)
     //  The player's MG42 ammunition (TurretGun::ShotFired): belts of
     //  g_mg42_belt rounds, g_mg42_belts of them on each gun (0: no limit), and
     //  g_mg42_beltchange seconds to change one. German gunners never run dry.
-    g_mg42_belt       = gi.Cvar_Get("g_mg42_belt", "250", CVAR_ARCHIVE);
+    g_mg42_belt       = gi.Cvar_Get("g_mg42_belt", "50", CVAR_ARCHIVE);
     g_mg42_belts      = gi.Cvar_Get("g_mg42_belts", "4", CVAR_ARCHIVE);
     g_mg42_beltchange = gi.Cvar_Get("g_mg42_beltchange", "4", CVAR_ARCHIVE);
     // Added in OPM

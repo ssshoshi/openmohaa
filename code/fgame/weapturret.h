@@ -128,6 +128,16 @@ private:
     //  change in progress is not (a load finishes it).
     float m_fBeltChangeEnd;
 
+    // Added in OPM
+    //  What the client draws of the heat (see TurretGun::SaveHeat): the glow
+    //  from the shader data, and smoke off the barrel as it cools.
+    SafePtr<Animate> m_pBarrelSmoke;
+    int              m_iBarrelSmoke;
+    bool             m_bHeatRestored;
+
+    void SaveHeat();
+    void BarrelSmoke(int iLevel);
+
     bool IsMG42();
     bool PlayerUsing();
     int  PlayerRoundsFired();
