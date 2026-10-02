@@ -113,6 +113,10 @@ public:
 
     // Map name stuff
     str m_mapscript;
+    // Added in OPM
+    //  after a load, the map add-on waits for the player (1), then for the
+    //  next frame (2)
+    int m_iMapAddonState = 0;
     str m_precachescript;
     str m_pathfile;
     str m_mapfile;
@@ -307,6 +311,9 @@ public:
     str  GetDMLocation(const Vector& origin);
     //====
     void     PreSpawnSentient(Event *ev);
+    const char *MapAddonName();
+    void        StartMapAddon();
+    void        MapAddonLoaded();
     void     ServerSpawned();
     qboolean inhibitEntity(int spawnflags);
 

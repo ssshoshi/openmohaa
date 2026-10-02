@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "navigation_recast_load.h"
 
 #include "scriptmaster.h"
+#include "scriptclass.h"
 #include "scriptthread.h"
 #include "scriptvariable.h"
 #include "scriptexception.h"
@@ -1504,7 +1505,101 @@ void Level::PreSpawnSentient(Event *ev)
         m_LoopProtection = true;
     }
 
+    StartMapAddon();
+
     PathManager.CreatePaths();
+}
+
+/*
+===============
+Level::MapAddonName
+
+Added in OPM
+  maps/<map>_opm.scr: an add-on to a level (new scenes, pacing) that runs
+  next to the map's own script and leaves it, and so the savegames made with
+  it, untouched. NULL when the map has none or add-ons are off.
+===============
+*/
+const char *Level::MapAddonName()
+{
+    static char addon[MAX_QPATH];
+
+    if (!g_mapaddons->integer || !m_mapscript.length()) {
+        return NULL;
+    }
+
+    // maps/<map>.scr -> maps/<map>_opm.scr
+    COM_StripExtension(m_mapscript.c_str(), addon, sizeof(addon));
+    Q_strcat(addon, sizeof(addon), "_opm.scr");
+    if (gi.FS_ReadFile(addon, NULL, qtrue) < 0) {
+        return NULL;
+    }
+
+    return addon;
+}
+
+/*
+===============
+Level::StartMapAddon
+
+Added in OPM
+  Runs the map's add-on. It runs at level start, and again when the player
+  enters a loaded savegame, so it also reaches saves made before the add-on
+  existed; it must pick up from its level variables whenever it starts.
+===============
+*/
+void Level::StartMapAddon()
+{
+    const char *addon = MapAddonName();
+
+    m_iMapAddonState = 0;
+    if (!addon) {
+        return;
+    }
+
+    gi.DPrintf("Adding map add-on script: '%s'\n", addon);
+
+    try {
+        Director.ExecuteThread(addon);
+    } catch (const ScriptException& exc) {
+        gi.DPrintf("map add-on '%s' failed: %s\n", addon, exc.string.c_str());
+    }
+}
+
+/*
+===============
+Level::MapAddonLoaded
+
+Added in OPM
+  A savegame was just read. Its threads of the add-on are killed: a save
+  keeps a thread's place in its script as an offset into the compiled script,
+  which is meaningless once the add-on has changed. The add-on starts afresh
+  on the first frame after the player enters: before that the level time is
+  not the save's yet, and anything the add-on waits for would all come due
+  at once.
+===============
+*/
+void Level::MapAddonLoaded()
+{
+    MEM_BlockAlloc_enum<ScriptClass> en = ScriptClass_allocator;
+    Container<ScriptClass *>         saved;
+    ScriptClass                     *c;
+    const char                      *addon = MapAddonName();
+
+    if (!addon) {
+        return;
+    }
+
+    for (c = en.NextElement(); c != NULL; c = en.NextElement()) {
+        if (c->GetScript() && !Q_stricmp(c->GetScript()->Filename().c_str(), addon)) {
+            saved.AddObject(c);
+        }
+    }
+    for (int i = 1; i <= saved.NumObjects(); i++) {
+        saved.ObjectAt(i)->KillThreads();
+    }
+
+    m_iMapAddonState = 1;
 }
 
 bool Level::RoundStarted()

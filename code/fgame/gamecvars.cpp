@@ -332,6 +332,9 @@ cvar_t *g_navigation_legacy;
 // Reopen door if blocked
 cvar_t *g_door_reopen_blocked;
 
+// Whether to run a map's add-on script (maps/<map>_opm.scr) next to its own
+cvar_t *g_mapaddons;
+
 // Enemy AI improvements (see ai_enhance.h)
 cvar_t *ai_enhanced;
 cvar_t *ai_debug;
@@ -777,6 +780,8 @@ void CVAR_Init(void)
     g_navigation_legacy = gi.Cvar_Get("g_navigation_legacy", "0", CVAR_LATCH);
 
     g_door_reopen_blocked = gi.Cvar_Get("g_door_reopen_blocked", "1", 0);
+
+    g_mapaddons = gi.Cvar_Get("g_mapaddons", "1", CVAR_ARCHIVE);
 
     ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);

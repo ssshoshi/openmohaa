@@ -366,6 +366,8 @@ extern cvar_t *g_navigation_legacy;
 
 extern cvar_t *g_door_reopen_blocked;
 
+extern cvar_t *g_mapaddons;
+
 extern cvar_t *ai_enhanced;
 extern cvar_t *ai_debug;
 extern cvar_t *ai_suppress;

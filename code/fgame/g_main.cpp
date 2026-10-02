@@ -507,6 +507,13 @@ void G_RunFrame(int levelTime, int frameTime)
         level.setFrametime(frameTime);
         level.setTime(levelTime);
 
+        // Added in OPM
+        //  The map add-on of a loaded savegame starts once the player is in
+        //  and the level time is the save's again
+        if (level.m_iMapAddonState == 2) {
+            level.StartMapAddon();
+        }
+
         if (level.intermissiontime || level.died_already) {
             L_ProcessPendingEvents();
             G_ClientDoBlends();
@@ -1635,6 +1642,9 @@ qboolean G_ReadLevel(const char *filename, byte **savedCgameState, size_t *saved
     if (!status) {
         LoadingSavegame = false;
         LoadingServer   = false;
+    } else {
+        // Added in OPM
+        level.MapAddonLoaded();
     }
     return status;
 }
