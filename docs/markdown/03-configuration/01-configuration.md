@@ -294,7 +294,7 @@ A map can have an add-on script, `maps/<map>_opm.scr`, that runs next to the map
 |------------|-------|-----------
 |g_mapaddons |1      |Run map add-on scripts
 
-The one so far is for m3l2 (`tools/m3l2-assault`): it reworks the attack on the house front into waves led by covering fire, smoke and grenades, with men going for cover, round the flanks and charging the MG42 through the smoke, and has the Germans in the field behind the house throw smoke as they come. Allied Assault has no smoke grenade, so `tools/m3l2-assault/build.py` builds the pk3 from your own Spearhead install (the game files are never committed).
+The one so far is for m3l2 (`tools/m3l2-assault`): it reworks the attack on the house front into waves led by covering fire, smoke and grenades, with men going for cover, round the flanks and charging the MG42 through the smoke, and in the attack across the field behind the house has the Germans throw smoke as they come, two MG42 crews near where they come from shoot out the house's upstairs back windows and keep firing on them, and one or two of each group throw a grenade up through them. Scripts can have an attacking enemy throw a grenade at a place they choose with `throwgrenadeat`. Allied Assault has no smoke grenade, so `tools/m3l2-assault/build.py` builds the pk3 from your own Spearhead install (the game files are never committed).
 
 ### Chat
 

@@ -5,9 +5,13 @@
 // edits: works with the stock script and with mods that replace it (HRRTM), and
 // the map script's savegames stay valid.
 //
-// In scene 3, the attack across the field behind the house, two of each group
-// throw smoke ahead of them along their lanes as they set off. (Grenades up
-// through the windows are the game's own AI now: ai_grenades.)
+// In scene 3, the attack across the field behind the house, each group throws
+// smoke ahead of it along its lanes as it sets off, and more once it is out in
+// the field. An MG42 crew near each of the places they come from fires on the
+// house's upstairs back windows, shooting the glass out and then keeping heads
+// down there while they come on through the smoke. One or two of each group,
+// once they get to the house, throw a grenade up through a window that has
+// been shot out (the game's own throw: calcgrenadetoss, with ai_grenades).
 //
 // Reworks scene 4, the attack on the house front. The map's spawner still
 // spawns every German (24, in threes); this script paces it into waves. Before
@@ -50,7 +54,16 @@
 	if (level.opm_s4_hold == NIL)
 		level.opm_s4_hold	= 0
 
-	level.opm_s3_smokes		= 2		// smoke grenades each scene 3 group throws
+	level.opm_s3_smokes		= 3		// smoke grenades each scene 3 group throws as it sets off
+	level.opm_s3_smokes2	= 2		// and once it is out in the field
+	level.opm_s3_throwers	= 2		// at most this many of each group throw a grenade up through a window, at least 1
+	if (level.opm_s3_mg == NIL)
+	{
+		level.opm_s3_mg[1] = NULL
+		level.opm_s3_mg[2] = NULL
+		level.opm_s3_gunner[1] = NULL
+		level.opm_s3_gunner[2] = NULL
+	}
 	if (level.opm_s3_seen == NIL)
 		level.opm_s3_seen	= 0
 
@@ -106,6 +119,8 @@ scene3_smoke:
 	while (level.scene3_spawn1_teamvalue == NIL)
 		wait 0.25
 
+	thread scene3_mg42s
+
 		while (level.scene3_spawn1_deactivator != 1 && level.scene4_spawn1_teamvalue == NIL)
 	{
 		if (level.opm_s3_seen < level.scene3_spawn1_teamvalue)
@@ -113,6 +128,7 @@ scene3_smoke:
 			local.group = level.opm_s3_seen
 			level.opm_s3_seen = level.opm_s3_seen + 4
 			thread scene3_group_smoke local.group
+			thread scene3_group_nades local.group
 		}
 		wait 0.25
 	}
@@ -121,7 +137,19 @@ end
 scene3_group_smoke local.group:
 	// Clear of the spawn, out on the field.
 	wait (2 + (randomfloat 1.5))
+	local.n = waitthread smoke_volley local.group level.opm_s3_smokes 0.35
+	println ("m3l2_opm: t=" + level.time + " scene 3 group " + local.group + ": " + local.n + " smoke")
 
+	// Out in the field: more, farther on.
+	wait (6 + (randomfloat 2))
+	local.n = waitthread smoke_volley local.group level.opm_s3_smokes2 0.5
+	println ("m3l2_opm: t=" + level.time + " scene 3 group " + local.group + ": " + local.n + " more smoke")
+end
+
+// Up to 'count' of a group's Germans throw smoke along their lanes, about
+// 'frac' of the way from where each is to the end of his lane, one in the west
+// lanes (1 and 2) and one in the east (3 and 4) first. Returns how many did.
+smoke_volley local.group local.count local.frac:
 	local.west = 1 + (randomint 2)
 	local.east = 3 + (randomint 2)
 	local.order[1] = local.west
@@ -130,7 +158,7 @@ scene3_group_smoke local.group:
 	local.order[4] = 7 - local.east
 
 	local.thrown = 0
-	for (local.i = 1; local.i <= 4 && local.thrown < level.opm_s3_smokes; local.i++)
+	for (local.i = 1; local.i <= 4 && local.thrown < local.count; local.i++)
 	{
 		local.k = local.order[local.i]
 		local.a = $("scene3_spawn1_ai" + local.k + "_" + local.group)
@@ -141,20 +169,324 @@ scene3_group_smoke local.group:
 		local.d = local.to - local.a.origin
 		local.d[2] = 0
 		local.len = vector_length local.d
+		if (local.len < 300)
+			continue
 		local.d = vector_normalize local.d
 		local.side = ( (0 - local.d[1]) local.d[0] 0 )
 
-		// About halfway to the house, but no farther than a German can throw.
-		local.ahead = local.len * (0.4 + (randomfloat 0.15))
+		// No farther than a German can throw.
+		local.ahead = local.len * (local.frac + (randomfloat 0.15))
 		if (local.ahead > 800)
 			local.ahead = 800
-		local.land = local.a.origin + local.d * local.ahead + local.side * ((randomfloat 200) - 100)
+		local.land = local.a.origin + local.d * local.ahead + local.side * ((randomfloat 240) - 120)
 
 		thread throw models/projectiles/nebelhandgranate.tik (local.a.origin + local.d * 24) local.land 0.5
 		local.thrown++
-		wait (0.5 + (randomfloat 1))
+		wait (0.4 + (randomfloat 0.8))
 	}
-	println ("m3l2_opm: t=" + level.time + " scene 3 group " + local.group + ": " + local.thrown + " smoke")
+end local.thrown
+
+//-----------------------------------------------------------------------------
+// Grenades through the windows. On the field the map runs its Germans with
+// their AI off, and at the end of their lanes they go straight for the house,
+// so on their own they never throw from outside. One or two of each group,
+// picked at random, throw one up through a window that has been shot out as
+// they come up to the house (throwgrenadeat: the way they throw one of their
+// own accord).
+
+scene3_group_nades local.group:
+	local.order[1] = 1
+	local.order[2] = 2
+	local.order[3] = 3
+	local.order[4] = 4
+	for (local.i = 4; local.i > 1; local.i--)
+	{
+		local.j = (randomint local.i) + 1
+		local.x = local.order[local.i]
+		local.order[local.i] = local.order[local.j]
+		local.order[local.j] = local.x
+	}
+	local.count = 1 + (randomint level.opm_s3_throwers)
+	for (local.i = 1; local.i <= local.count; local.i++)
+	{
+		local.k = local.order[local.i]
+		local.a = $("scene3_spawn1_ai" + local.k + "_" + local.group)
+		if (local.a != NULL && local.a != NIL && isalive local.a)
+			local.a thread window_grenade local.k
+	}
+end
+
+window_grenade local.k:
+	// On the last leg of his run (once past the middle of the field), within
+	// a throw of the windows and still outside, with a window shot out.
+	local.wins = waitthread upper_windows
+	local.best = NIL
+	while (isalive self && level.scene3_spawn1_deactivator != 1 && local.best == NIL)
+	{
+		wait 0.25
+		local.o = self.origin
+		if (local.o[1] < 4200)
+			end
+		if (local.o[1] < 4800)
+		{
+			// The shot-out window nearer the player.
+			local.bestd = 99999
+			for (local.i = 1; local.i <= 2; local.i++)
+			{
+				local.b = waitthread window_broken local.wins[local.i]
+				local.reach = local.wins[local.i] - local.o
+				local.reach[2] = 0
+				// In reach, and not too much from the side (a window is narrow
+				// from an angle).
+				if (local.b == 1 && vector_length local.reach < 1000 && (abs local.reach[0]) < (abs local.reach[1]))
+				{
+					local.dd = local.wins[local.i] - $player.origin
+					local.dd[2] = 0
+					if (vector_length local.dd < local.bestd)
+					{
+						local.best = local.wins[local.i]
+						local.bestd = vector_length local.dd
+					}
+				}
+			}
+		}
+	}
+	if (!(isalive self) || local.best == NIL)
+		end
+
+	// What the map does at the end of his run (his AI on, at the player),
+	// a little sooner: then he throws the way he does of his own accord.
+	self exec global/enable_ai.scr
+	self attackplayer
+	local.t = level.time + 1.5
+	while (isalive self && level.time < local.t && self.thinkstate != "attack")
+		waitframe
+
+	// On the floor just inside the window.
+	local.target = local.best + ( 0 -80 -70 )
+	for (local.n = 0; local.n < 3 && isalive self; local.n++)
+	{
+		local.ok = self throwgrenadeat local.target
+		if (local.ok == 1)
+		{
+			println ("m3l2_opm: t=" + level.time + " " + self.targetname + " throws a grenade up through the window at " + local.best)
+			end
+		}
+		wait 1
+	}
+end
+
+//-----------------------------------------------------------------------------
+// MG42 crews: one near each of the places the Germans come from, behind a
+// ring of sandbags, firing bursts at the house's upstairs back windows until
+// the glass is out and then around them, to keep heads down there while the
+// Germans come on through the smoke. A burst waits while a German is under its
+// line of fire (they get hurt by it as anyone does). When the scene is over
+// they go, where the player does not see it.
+
+// The upstairs back windows: the middle of each opening.
+upper_windows:
+	local.w[1] = ( -3580 3990 251 )
+	local.w[2] = ( -3396 3990 251 )
+end local.w
+
+// Whether a window's glass is out: the glass (a func_window) is a trigger to
+// traces, and what is left of it once it is shot out (the frame) is only clip.
+window_broken local.w:
+	local.tr = traced (local.w + ( 0 56 0 )) (local.w - ( 0 56 0 )) 0 ( 0 0 0 ) ( 0 0 0 ) 1073741825	// CONTENTS_SOLID | CONTENTS_TRIGGER
+	if (local.tr["fraction"] == 1)
+		end 1
+end 0
+
+// Where each crew sets up: places near the spawns that see both windows.
+mg_post local.side:
+	if (local.side == 1)
+		end ( -4300 6050 0 )
+end ( -2300 5950 0 )
+
+scene3_mg42s:
+	for (local.side = 1; local.side <= 2; local.side++)
+	{
+		waitthread mg_set_up local.side
+		thread mg_fire local.side
+	}
+
+	while (level.scene3_spawn1_deactivator != 1 && level.scene4_spawn1_teamvalue == NIL)
+		wait 1
+
+	level.opm_s3_mgdone = 1
+	for (local.side = 1; local.side <= 2; local.side++)
+		thread mg_take_down local.side
+end
+
+mg_set_up local.side:
+	local.mg = level.opm_s3_mg[local.side]
+	if (local.mg != NULL && local.mg != NIL)
+		end
+	if (level.opm_s3_mgdone == 1)
+		end
+
+	local.wins = waitthread upper_windows
+	local.at = waitthread mg_post local.side
+	local.g = waitthread ground local.at
+	local.d = (local.wins[1] + local.wins[2]) * 0.5 - local.g
+	local.yaw = vector_toangles local.d
+	local.fwd = local.d
+	local.fwd[2] = 0
+	local.fwd = vector_normalize local.fwd
+
+	local.sb = spawn script_model model "static/sandbag_small_semicircle.tik"
+	local.sb.origin = local.g + local.fwd * 24
+	local.sb.angles = ( 0 local.yaw[1] 0 )
+	// For looks: the gun fires over it, and nothing should stop on it.
+	local.sb notsolid
+	level.opm_s3_sandbags[local.side] = local.sb
+
+	// Facing the house as it is set up: the turret takes the way it faces
+	// then as the middle of its traverse.
+	local.mg = spawn models/statweapons/mg42_gun.tik "angle" local.yaw[1]
+	local.mg.origin = local.g + ( 0 0 36 )
+	local.mg.angles = ( 0 local.yaw[1] 0 )
+	local.mg setplayerusable 0
+	local.mg pitchcaps ( -20 20 0 )
+	local.mg turnspeed 60
+	level.opm_s3_mg[local.side] = local.mg
+
+	local.gn = spawn models/human/german_waffenss_shutze "targetname" ("opm_s3_gunner" + local.side) gun "mg42"
+	local.gn.origin = local.g - local.fwd * 56
+	local.gn.angles = ( 0 local.yaw[1] 0 )
+	// The gun first: he takes it up as he becomes a machine gunner.
+	local.gn turret local.mg
+	local.gn type_idle machinegunner
+	local.gn type_attack machinegunner
+	local.gn type_grenade machinegunner
+	local.gn.sight = 3500
+	level.opm_s3_gunner[local.side] = local.gn
+
+	println ("m3l2_opm: MG42 crew " + local.side + " at " + local.g)
+end
+
+mg_fire local.side:
+	local.mg = level.opm_s3_mg[local.side]
+	local.gn = level.opm_s3_gunner[local.side]
+	if (local.mg == NULL || local.mg == NIL)
+		end
+
+	local.wins = waitthread upper_windows
+	local.target = spawn script_origin
+	local.bursts = 0
+	while (level.opm_s3_mgdone != 1 && local.gn != NULL && local.gn != NIL && isalive local.gn)
+	{
+		// The glass first; once it is all out, about the openings.
+		local.i = 1 + (randomint 2)
+		local.b1 = waitthread window_broken local.wins[1]
+		local.b2 = waitthread window_broken local.wins[2]
+		if (local.b1 == 0 && local.b2 == 1)
+			local.i = 1
+		else if (local.b1 == 1 && local.b2 == 0)
+			local.i = 2
+		local.aim = local.wins[local.i]
+		if (local.b1 == 1 && local.b2 == 1)
+			local.aim = local.aim + ( ((randomfloat 120) - 60) 0 ((randomfloat 100) - 40) )
+		local.target.origin = local.aim
+
+		if (local.b1 == 1 && level.opm_s3_out1 != 1)
+		{
+			level.opm_s3_out1 = 1
+			println ("m3l2_opm: t=" + level.time + " window 1 is shot out")
+		}
+		if (local.b2 == 1 && level.opm_s3_out2 != 1)
+		{
+			level.opm_s3_out2 = 1
+			println ("m3l2_opm: t=" + level.time + " window 2 is shot out")
+		}
+
+		local.clear = waitthread fire_line_clear local.mg.origin local.aim
+		if (local.clear == 1)
+		{
+			if (local.bursts == 0)
+				println ("m3l2_opm: t=" + level.time + " MG42 crew " + local.side + " opens fire on window " + local.i)
+			local.mg setaimtarget local.target
+			wait 0.6
+			local.mg startfiring
+			wait (1 + (randomfloat 1.5))
+			local.mg stopfiring
+			local.bursts++
+			wait (1 + (randomfloat 1.5))
+		}
+		else
+			wait 0.5
+	}
+
+	if (local.mg != NULL)
+	{
+		local.mg stopfiring
+		local.mg setaimtarget NULL
+	}
+	local.target delete
+	println ("m3l2_opm: MG42 crew " + local.side + " stops after " + local.bursts + " bursts")
+end
+
+// Whether no German is under the line of fire from 'from' to 'to'.
+fire_line_clear local.from local.to:
+	local.d = local.to - local.from
+	local.d2 = local.d
+	local.d2[2] = 0
+	local.len2 = vector_dot local.d2 local.d2
+	if (local.len2 < 1)
+		end 1
+	for (local.g = 0; local.g <= level.scene3_spawn1_teamvalue; local.g = local.g + 4)
+	{
+		for (local.k = 1; local.k <= 4; local.k++)
+		{
+			local.a = $("scene3_spawn1_ai" + local.k + "_" + local.g)
+			if (local.a == NULL || local.a == NIL || !(isalive local.a))
+				continue
+			local.p = local.a.origin - local.from
+			local.p[2] = 0
+			local.s = (vector_dot local.p local.d2) / local.len2
+			if (local.s < 0 || local.s > 1)
+				continue
+			local.c = local.from + local.d * local.s
+			local.o = local.a.origin
+			local.off = local.o - local.c
+			local.off[2] = 0
+			if (vector_length local.off < 80 && local.c[2] < local.o[2] + 90)
+				end 0
+		}
+	}
+end 1
+
+// The crew goes once the player is not looking that way (or after 30 s).
+mg_take_down local.side:
+	local.mg = level.opm_s3_mg[local.side]
+	if (local.mg == NULL || local.mg == NIL)
+		end
+
+	local.t = level.time + 30
+	while (level.time < local.t && $player != NULL)
+	{
+		local.d = local.mg.origin - $player.origin
+		local.d[2] = 0
+		local.d = vector_normalize local.d
+		local.f = angles_toforward $player.viewangles
+		local.f[2] = 0
+		local.f = vector_normalize local.f
+		local.dot = vector_dot local.d local.f
+		if (local.dot < 0.3)
+			break
+		wait 0.5
+	}
+
+	local.gn = level.opm_s3_gunner[local.side]
+	if (local.gn != NULL && local.gn != NIL)
+		local.gn delete
+	local.sb = level.opm_s3_sandbags[local.side]
+	if (local.sb != NULL && local.sb != NIL)
+		local.sb delete
+	local.mg delete
+	level.opm_s3_mg[local.side] = NULL
+	println ("m3l2_opm: MG42 crew " + local.side + " gone")
 end
 
 //=============================================================================

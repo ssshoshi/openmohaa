@@ -805,6 +805,10 @@ public:
     int m_iOPMNextArcSearchTime;
     // OPM: when the grenade he winds up with appears in his hand (0: none).
     int m_iOPMHoldGrenadeTime;
+    // OPM: where the throw the search found (FindGrenadeArc) is meant to
+    //  land, to aim it again from where it actually leaves his hand.
+    Vector m_vOPMGrenadeTarget;
+    bool   m_bOPMGrenadeTarget;
     /* used for turret actot to run back to home Turret_SelectState() */
     int m_iRunHomeTime;
     /* no cover path for initial turret state */
@@ -1104,6 +1108,7 @@ public:
     bool          SquadThrewGrenadeRecently(void);
     bool          GrenadeArcClear(const Vector &vFrom, const Vector &vVel, float fTime);
     bool          FindGrenadeArc(const Vector &vTo, Vector *pvVel);
+    bool          SolveGrenadeArc(const Vector &vFrom, const Vector &vTo, Vector *pvVel);
     void          HoldGrenade(void);
     void          ReleaseHeldGrenade(void);
     void          DropHeldGrenade(void);
@@ -1564,6 +1569,7 @@ public:
     void             EventSetBreathSteam(Event *ev);
     void             EventSetNextBreathTime(Event *ev);
     void             EventCalcGrenadeToss2(Event *ev);
+    void             EventThrowGrenadeAt(Event *ev);
     void             EventCalcGrenadeToss(Event *ev);
     void             EventGetNoSurprise(Event *ev);
     void             EventSetNoSurprise(Event *ev);
