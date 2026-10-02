@@ -1788,6 +1788,17 @@ static qboolean ParseStage(shaderStage_t* stage, char** text, qboolean picmip)
 	}
 
 	//
+	// Added in OPM
+	//  A blended stage that writes depth writes it for its fully transparent
+	//  texels too: the empty panes of a broken window's frame then hide every
+	//  translucent surface drawn behind them afterwards, like smoke. Write
+	//  depth only where the stage shows (it adds nothing where alpha is 0).
+	//
+	if ( depthMaskExplicit && depthMaskBits && !atestBits && blendSrcBits == GLS_SRCBLEND_SRC_ALPHA ) {
+		atestBits = GLS_ATEST_GT_0;
+	}
+
+	//
 	// compute state bits
 	//
 	stage->stateBits = depthMaskBits | 

@@ -216,6 +216,8 @@ static qboolean CG_PropFit(const cStaticModel_t *in, const char *path, cgProp_t 
         out->angles[k] = LittleFloat(in->angles[k]);
     }
     scale = LittleFloat(in->scale);
+    out->hModel = h;
+    out->scale  = scale;
     AnglesToAxis(out->angles, axis);
     AxisCopy(axis, out->axis);
 
