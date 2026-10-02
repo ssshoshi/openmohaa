@@ -833,6 +833,10 @@ extern double cgmOpen[CGM_COUNT];
         qboolean         alphaFade
     );
     qboolean CG_CheckMakeMarkOnEntity(int iEntIndex);
+
+    // Added in OPM
+    //  A hot MG42 barrel's glow (cg_mg42.cpp)
+    void CG_MG42BarrelGlow(refEntity_t *model, const entityState_t *s1);
     void CG_InitTestTreadMark();
     void CG_AddTreadMarks();
     int  CG_PermanentMark(

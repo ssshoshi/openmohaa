@@ -79,6 +79,7 @@ cg_lagometer	0	1	code/cgame/cg_main.c:151	Show the lag-o-meter graph: frame inte
 cg_marks_add	0	1	code/cgame/cg_main.c:139	Leave decal marks: bullet holes, blood splats, scorch marks. 0 turns them off (shadow blobs still draw).
 cg_marks_max			code/cgame/cg_main.c:140	Maximum number of decal marks kept in the world before the oldest are recycled. Latched: applies on the next map.
 cg_max_tempmodels	200		code/cgame/cg_tempmodels.cpp:238	Maximum number of temporary models (particles, debris, sprites) alive at once. Higher allows denser effects at a memory and speed cost.
+cg_mg42glow	0	2	code/cgame/cg_mg42.cpp:63	A hot MG42 barrel glows, dull red to yellow-white as it nears overheating (2: full glow on every MG42, for checking).
 cg_nopredict	0	1	code/cgame/cg_main.c:145	Debug: turn off client-side movement prediction, so your movement waits for the server.
 cg_physics	0	1	code/cgame/cg_physics.cpp:79	Client-side physics (Jolt): props knocked about by shots and explosions, and the world the ragdolls collide with. 0 turns it all off.
 cg_physics_clipped	0	1	code/cgame/cg_physics.cpp:88	Props that the map wraps in invisible clip brushes (most furniture), when playing on someone else's server: 0 keeps them fixed, 1 moves them anyway and leaves the clip brush behind for the server's collision. In local single player the clip brushes are removed instead. Latched.
@@ -419,18 +420,18 @@ g_ai_noticescale			code/fgame/gamecvars.cpp:523	Scales how long AI takes to noti
 g_ai_notifyradius			code/fgame/gamecvars.cpp:522	Radius in game units within which AI alert nearby allies.
 g_ai_soundscale			code/fgame/gamecvars.cpp:524	Scales how far AI hear sounds (gunfire, footsteps).
 g_aiDamageMult			code/fgame/sentient.cpp:1385	Multiplier on damage dealt by AI to the player.
-g_ailongrange			code/fgame/actor.cpp:11135	Distance at which AI consider a target at long range, for accuracy.
-g_aimaxdeviation	0	1	code/fgame/actor.cpp:11121	How far off their aim AI may shoot and still count the shot as aimed (a dot product: 1 dead on).
-g_aimcoverfactor	0	1	code/fgame/actor.cpp:11120	How much being in cover reduces AI accuracy against you.
-g_aimediumrange			code/fgame/actor.cpp:11134	Distance at which AI consider a target at medium range, for accuracy.
-g_aiminaccuracy	0	1	code/fgame/actor.cpp:11122	AI accuracy against a target they can barely see (0 to 1).
+g_ailongrange			code/fgame/actor.cpp:11189	Distance at which AI consider a target at long range, for accuracy.
+g_aimaxdeviation	0	1	code/fgame/actor.cpp:11175	How far off their aim AI may shoot and still count the shot as aimed (a dot product: 1 dead on).
+g_aimcoverfactor	0	1	code/fgame/actor.cpp:11174	How much being in cover reduces AI accuracy against you.
+g_aimediumrange			code/fgame/actor.cpp:11188	Distance at which AI consider a target at medium range, for accuracy.
+g_aiminaccuracy	0	1	code/fgame/actor.cpp:11176	AI accuracy against a target they can barely see (0 to 1).
 g_aimLagTime			code/fgame/player.cpp:4969	Milliseconds of delay in the aim trail that AI track the player with. Higher gives more lag in their aim.
-g_aiScatterHeight			code/fgame/actor.cpp:11124	Vertical scatter of AI shots in game units, before accuracy is applied.
-g_aiScatterWide			code/fgame/actor.cpp:11123	Horizontal scatter of AI shots in game units, before accuracy is applied.
-g_aishortrange			code/fgame/actor.cpp:11133	Distance at which AI consider a target at short range, for accuracy.
-g_aisniperrange			code/fgame/actor.cpp:11136	Distance at which AI snipers engage.
+g_aiScatterHeight			code/fgame/actor.cpp:11178	Vertical scatter of AI shots in game units, before accuracy is applied.
+g_aiScatterWide			code/fgame/actor.cpp:11177	Horizontal scatter of AI shots in game units, before accuracy is applied.
+g_aishortrange			code/fgame/actor.cpp:11187	Distance at which AI consider a target at short range, for accuracy.
+g_aisniperrange			code/fgame/actor.cpp:11190	Distance at which AI snipers engage.
 g_aistats	0	1	code/fgame/gamecvars.cpp:723	Debug: print AI statistics. Cheat-protected.
-g_aiSupressScatter			code/fgame/actor.cpp:11119	Scatter multiplier on AI suppressing fire (shooting to keep you down rather than to hit).
+g_aiSupressScatter			code/fgame/actor.cpp:11173	Scatter multiplier on AI suppressing fire (shooting to keep you down rather than to hit).
 g_allowjointime	0		code/fgame/gamecvars.cpp:376	Round-based multiplayer: seconds after a round starts that new players may still join and spawn. Server setting.
 g_allowvote	0	1	code/fgame/gamecvars.cpp:567	Allow players to call votes. Server setting.
 g_animdump	0	1	code/fgame/gamecvars.cpp:518	Debug: print every animation change on the server.
@@ -461,7 +462,7 @@ g_drawattackertime			code/fgame/gamecvars.cpp:639	Seconds your attacker's name s
 g_dropclips	0		code/fgame/gamecvars.cpp:516	How many clips of ammo a dead player's weapon drops with. 0 drops it empty. Server setting.
 g_droppeditemlife	0		code/fgame/gamecvars.cpp:515	Seconds a dropped weapon or item stays on the ground before it is removed. Server setting.
 g_entinfo	0	4	code/fgame/gamecvars.cpp:478	Debug: show information above actors (1 names and health, 2 more, 4 all regardless of distance). Cheat-protected.
-g_entinfo_max			code/fgame/actor.cpp:4301	Maximum distance for g_entinfo labels.
+g_entinfo_max			code/fgame/actor.cpp:4314	Maximum distance for g_entinfo labels.
 g_eogmedal0	0	1	code/fgame/gamecvars.cpp:659	End-of-game medal earned (campaign progress). Saved.
 g_eogmedal1	0	1	code/fgame/gamecvars.cpp:660	End-of-game medal earned (campaign progress). Saved.
 g_eogmedal2	0	1	code/fgame/gamecvars.cpp:661	End-of-game medal earned (campaign progress). Saved.
@@ -562,7 +563,7 @@ g_showaxis	0	1	code/fgame/gamecvars.cpp:473	Debug: draw entities' axes.
 g_showbullettrace	0	1	code/fgame/gamecvars.cpp:476	Debug: draw bullet paths.
 g_showdamage	0	1	code/fgame/gamecvars.cpp:520	Debug: print damage from weapons as it is dealt.
 g_showflypath	0	1	code/fgame/scriptslave.cpp:713	Debug: draw scripted fly paths.
-g_showinfo	0	1	code/fgame/actor.cpp:6612	Debug: show AI information.
+g_showinfo	0	1	code/fgame/actor.cpp:6625	Debug: show AI information.
 g_showlookat	-1		code/fgame/gamecvars.cpp:479	Debug: show where the actor with this entity number looks. -1 shows all actors.
 g_showmem	0	1	code/fgame/gamecvars.cpp:470	Debug: print memory use every frame.
 g_shownpc	0	1	code/fgame/gamecvars.cpp:585	Debug: print the number of actors each frame.
@@ -614,7 +615,7 @@ g_turret_convergetime			code/fgame/gamecvars.cpp:716	Seconds an AI turret gunner
 g_turret_spread			code/fgame/gamecvars.cpp:719	Spread of AI turret fire.
 g_turret_suppresstime			code/fgame/gamecvars.cpp:717	Seconds an AI turret keeps up suppressing fire.
 g_turret_suppresswaittime			code/fgame/gamecvars.cpp:718	Seconds an AI turret waits between bursts of suppressing fire.
-g_turretcameras	0	1	code/fgame/weapturret.cpp:1506	Use the turret's own camera view when manning a turret.
+g_turretcameras	0	1	code/fgame/weapturret.cpp:1615	Use the turret's own camera view when manning a turret.
 g_vehicle	0	1	code/fgame/gamecvars.cpp:505	Debug: vehicles think and move. 0 freezes them.
 g_viewkick_dmmult			code/fgame/gamecvars.cpp:637	Multiplier on the view kick when hit. Cheat-protected.
 g_viewkick_pitch			code/fgame/gamecvars.cpp:634	How much being hit kicks the view up or down. Cheat-protected.

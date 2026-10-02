@@ -1,0 +1,83 @@
+TIKI
+// Smoke rising off a hot MG42 barrel while it cools (TurretGun::BarrelSmoke):
+// wisps while it is warm, thicker while it is still near ruin.
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy3.skd
+}
+
+init
+{
+	server
+	{
+		classname effectentity
+		notsolid
+		rendereffects +dontdraw
+	}
+	client
+	{
+		originemitter barrelsmoke_light
+		(
+			spawnrate 10.00
+			model vsssource.spr
+			alpha 0.25
+			color 0.90 0.90 0.90
+			scale 0.08
+			life 2.00
+			scalerate 0.90
+			velocity 10.00
+			randvel crandom 4 crandom 4 range 10 20
+			accel 0.00 0.00 14.00
+			friction 1.50
+			randomroll
+			fade
+		)
+		originemitter barrelsmoke_heavy
+		(
+			spawnrate 26.00
+			model vsssource.spr
+			alpha 0.40
+			color 0.85 0.85 0.85
+			scale 0.10
+			life 2.60
+			scalerate 1.10
+			velocity 14.00
+			randvel crandom 5 crandom 5 range 14 26
+			accel 0.00 0.00 18.00
+			friction 1.50
+			randomroll
+			fade
+		)
+	}
+}
+
+animations
+{
+	idle dummy3.skc
+	light dummy3.skc
+	{
+		client
+		{
+			enter emitteron barrelsmoke_light
+			enter emitteroff barrelsmoke_heavy
+		}
+	}
+	heavy dummy3.skc
+	{
+		client
+		{
+			enter emitteron barrelsmoke_light
+			enter emitteron barrelsmoke_heavy
+		}
+	}
+	stop dummy3.skc
+	{
+		client
+		{
+			enter emitteroff barrelsmoke_light
+			enter emitteroff barrelsmoke_heavy
+		}
+	}
+}

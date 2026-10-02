@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110EV_DEFAULT301  U
 
 #include "g_phys.h"
 #include "weapturret.h"
+#include "g_spawn.h"
 #include "vehicleturret.h"
 #include "player.h"
 #include "../script/scriptexception.h"
@@ -400,6 +401,8 @@ TurretGun::TurretGun()
     m_fLastHeatShot = -1000;
     m_bOverheated   = false;
     m_fBeltChangeEnd = 0;
+    m_iBarrelSmoke   = 0;
+    m_bHeatRestored  = false;
 
     entflags |= ECF_TURRET;
 
@@ -502,6 +505,11 @@ TurretGun::TurretGun()
 TurretGun::~TurretGun()
 {
     Unregister(STRING_ONTARGET);
+
+    // Added in OPM
+    if (m_pBarrelSmoke) {
+        m_pBarrelSmoke->PostEvent(EV_Remove, 0);
+    }
 
     //
     // Added in OPM:
@@ -1384,6 +1392,7 @@ void TurretGun::ShotFired(firemode_t mode)
 
     m_fLastHeatShot = level.time;
     m_fBarrelHeat += g_mg42_heatpershot->value;
+    SaveHeat();
 
     if (!m_bOverheated && m_fBarrelHeat >= g_mg42_heatmax->value) {
         m_bOverheated = true;
@@ -1398,14 +1407,41 @@ void TurretGun::ShotFired(firemode_t mode)
 // g_mg42_cooldelay seconds after the last shot.
 void TurretGun::CoolBarrel()
 {
+    bool  cooling;
+    float fMax;
+
     if (!Overheats()) {
-        m_fBarrelHeat = 0;
+        if (m_fBarrelHeat > 0 || edict->s.shader_data[0] > 0) {
+            m_fBarrelHeat = 0;
+            SaveHeat();
+        }
         m_bOverheated = false;
+        BarrelSmoke(0);
         return;
     }
 
-    if (m_fBarrelHeat > 0 && level.time - m_fLastHeatShot >= g_mg42_cooldelay->value) {
+    fMax = Q_max(1.0f, g_mg42_heatmax->value);
+
+    // Added in OPM
+    //  Loaded from a save: the heat was kept in the shader data.
+    if (!m_bHeatRestored) {
+        m_bHeatRestored = true;
+        m_fBarrelHeat   = Q_max(0.0f, edict->s.shader_data[0]) * fMax;
+        m_bOverheated   = m_fBarrelHeat >= fMax;
+    }
+
+    cooling = level.time - m_fLastHeatShot >= g_mg42_cooldelay->value;
+    if (m_fBarrelHeat > 0 && cooling) {
         m_fBarrelHeat = Q_max(0.0f, m_fBarrelHeat - g_mg42_cooldown->value * level.frametime);
+        SaveHeat();
+    }
+
+    // Added in OPM
+    //  Smoke rises off it as it cools: wisps, thicker while it is still hot.
+    if (!cooling || m_fBarrelHeat <= 0.25f * fMax) {
+        BarrelSmoke(0);
+    } else {
+        BarrelSmoke(m_fBarrelHeat > 0.6f * fMax ? 2 : 1);
     }
 
     if (m_bOverheated && m_fBarrelHeat <= g_mg42_heatresume->value) {
@@ -1414,6 +1450,79 @@ void TurretGun::CoolBarrel()
         if (owner && owner->IsSubclassOfPlayer()) {
             gi.centerprintf(owner->edict, "The barrel has cooled down.");
         }
+    }
+}
+
+/*
+====================
+TurretGun::SaveHeat
+
+Added in OPM
+  The heat goes in the entity's shader_data[0], as a fraction of the heat at
+  which the gun overheats: the client draws the barrel's glow from it
+  (cg_mg42.cpp), and savegames keep it. Its gunner sees the view model
+  instead, which glows as well.
+====================
+*/
+void TurretGun::SaveHeat()
+{
+    edict->s.shader_data[0] = m_fBarrelHeat / Q_max(1.0f, g_mg42_heatmax->value);
+
+    if (m_pViewModel) {
+        m_pViewModel->edict->s.shader_data[0] = edict->s.shader_data[0];
+    }
+}
+
+/*
+====================
+TurretGun::BarrelSmoke
+
+Added in OPM
+  Smoke rising off a hot barrel while it cools: 0 none, 1 wisps, 2 thick
+  (models/emitters/opm_mg42_barrelsmoke.tik, in the opm-mg42 data). The
+  emitter is kept at the middle of the jacket rather than attached to the gun,
+  which its gunner is not sent (he sees the view model), so he sees it too.
+====================
+*/
+void TurretGun::BarrelSmoke(int iLevel)
+{
+    Vector muzzle, forward;
+    int    tag = edict->tiki ? gi.Tag_NumForName(edict->tiki, "tag_barrel") : -1;
+
+    if (tag < 0) {
+        iLevel = 0;
+    } else if (iLevel) {
+        GetTag(tag, &muzzle, &forward);
+        muzzle -= forward * 10;
+    }
+
+    if (iLevel && !m_pBarrelSmoke) {
+        SpawnArgs sp;
+        Listener *l;
+
+        sp.setArg("model", "models/emitters/opm_mg42_barrelsmoke.tik");
+        l = sp.Spawn();
+        if (!l || !l->isSubclassOf(Animate)) {
+            return;
+        }
+
+        m_pBarrelSmoke = static_cast<Animate *>(l);
+        m_pBarrelSmoke->flags |= FL_DONTSAVE;
+        m_iBarrelSmoke = 0;
+    }
+
+    if (iLevel) {
+        m_pBarrelSmoke->setOrigin(muzzle);
+        if (iLevel != m_iBarrelSmoke) {
+            m_pBarrelSmoke->NewAnim(iLevel == 2 ? "heavy" : "light");
+            m_iBarrelSmoke = iLevel;
+        }
+    } else if (m_pBarrelSmoke) {
+        // Let the last of it rise before it goes.
+        m_pBarrelSmoke->NewAnim("stop");
+        m_pBarrelSmoke->PostEvent(EV_Remove, 4.0f);
+        m_pBarrelSmoke = NULL;
+        m_iBarrelSmoke = 0;
     }
 }
 
