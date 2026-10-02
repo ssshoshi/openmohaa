@@ -399,6 +399,7 @@ TurretGun::TurretGun()
     m_fBarrelHeat   = 0;
     m_fLastHeatShot = -1000;
     m_bOverheated   = false;
+    m_fBeltChangeEnd = 0;
 
     entflags |= ECF_TURRET;
 
@@ -1283,12 +1284,65 @@ bool TurretGun::Overheats()
     return g_mg42_overheat && g_mg42_overheat->integer && model.length() && Q_stristr(model.c_str(), "mg42") != NULL;
 }
 
+// Whether this turret is an MG42 (as above, without the overheat switch).
+bool TurretGun::IsMG42()
+{
+    return model.length() && Q_stristr(model.c_str(), "mg42") != NULL;
+}
+
+// Whether the player is on it: only the player's MG42 runs out of belts.
+bool TurretGun::PlayerUsing()
+{
+    return owner && owner->IsSubclassOfPlayer();
+}
+
+int TurretGun::PlayerRoundsFired()
+{
+    // (an earlier test build kept a negative count there in its saves)
+    return Q_max(0, (int)edict->s.shader_data[1]);
+}
+
+// The player's ammunition on this MG42: rounds left in the belt, the belt's
+// size and the rounds in the belts still to go.
+bool TurretGun::BeltAmmo(int *piInBelt, int *piBeltSize, int *piSpare)
+{
+    int iBelt, iTotal, iFired, iLeft;
+
+    if (!IsMG42() || !g_mg42_belts || g_mg42_belts->integer <= 0 || g_mg42_belt->integer <= 0) {
+        return false;
+    }
+
+    iBelt  = g_mg42_belt->integer;
+    iTotal = iBelt * g_mg42_belts->integer;
+    iFired = Q_min(PlayerRoundsFired(), iTotal);
+    iLeft  = iTotal - iFired;
+
+    if (level.time < m_fBeltChangeEnd || !iLeft) {
+        *piInBelt = 0;
+    } else {
+        // The belt in the gun: what is left of it (a full one once changed).
+        *piInBelt = iLeft % iBelt ? iLeft % iBelt : iBelt;
+    }
+    *piBeltSize = iBelt;
+    *piSpare    = iLeft - *piInBelt;
+    return true;
+}
+
 // Every firing path asks this (the mounted and the bipod MG42, player and
 // AI): an overheated barrel will not fire until CoolBarrel has taken its heat
 // down to g_mg42_heatresume.
 qboolean TurretGun::ReadyToFire(firemode_t mode, qboolean playsound)
 {
+    int iInBelt, iBeltSize, iSpare;
+
     if (m_bOverheated) {
+        return qfalse;
+    }
+
+    // Added in OPM
+    //  The player's MG42: not while he changes the belt, nor once he has
+    //  fired them all
+    if (PlayerUsing() && BeltAmmo(&iInBelt, &iBeltSize, &iSpare) && !iInBelt) {
         return qfalse;
     }
     return Weapon::ReadyToFire(mode, playsound);
@@ -1298,6 +1352,32 @@ qboolean TurretGun::ReadyToFire(firemode_t mode, qboolean playsound)
 // overheated, and the player is told.
 void TurretGun::ShotFired(firemode_t mode)
 {
+    int iInBelt, iBeltSize, iSpare;
+
+    // Added in OPM
+    //  The player's rounds count against his belts; when one is spent he
+    //  changes it, and when the last is spent the gun is empty
+    if (PlayerUsing() && BeltAmmo(&iInBelt, &iBeltSize, &iSpare)) {
+        edict->s.shader_data[1] = PlayerRoundsFired() + 1;
+        BeltAmmo(&iInBelt, &iBeltSize, &iSpare);
+
+        if (iInBelt == iBeltSize && iSpare + iInBelt > 0 && PlayerRoundsFired() % iBeltSize == 0) {
+            // That was the last round of the belt: the next one goes in
+            m_fBeltChangeEnd = level.time + g_mg42_beltchange->value;
+            gi.DPrintf("%s (entity %d) belt change at %.2f\n", model.c_str(), entnum, level.time);
+            if (iSpare) {
+                gi.centerprintf(
+                    owner->edict, va("Changing the belt... (%d more after this one)", iSpare / iBeltSize)
+                );
+            } else {
+                gi.centerprintf(owner->edict, "Changing the belt... (the last one)");
+            }
+        } else if (!iInBelt && !iSpare) {
+            gi.DPrintf("%s (entity %d) out of ammunition at %.2f\n", model.c_str(), entnum, level.time);
+            gi.centerprintf(owner->edict, "The MG42 is out of ammunition.");
+        }
+    }
+
     if (!Overheats()) {
         return;
     }
@@ -1341,6 +1421,14 @@ void TurretGun::Think(void)
 {
     // Added in OPM
     CoolBarrel();
+
+    // Added in OPM
+    if (m_fBeltChangeEnd && level.time >= m_fBeltChangeEnd) {
+        m_fBeltChangeEnd = 0;
+        if (PlayerUsing()) {
+            gi.centerprintf(owner->edict, "Belt loaded.");
+        }
+    }
 
     if (!owner && (m_bHadOwner || !aim_target)) {
         ThinkIdle();

@@ -7536,9 +7536,20 @@ void Player::UpdateStats(void)
     if (m_pTurret) {
         client->ps.activeItems[ITEM_WEAPON] = m_pTurret->getIndex();
         if (getMoveType() == MOVETYPE_PORTABLE_TURRET || getMoveType() == MOVETYPE_TURRET) {
+            int iInBelt, iBeltSize, iSpare;
+
             // Use the turret's ammo
             client->ps.stats[STAT_CLIPAMMO]    = m_pTurret->ammo_in_clip[FIRE_PRIMARY];
             client->ps.stats[STAT_MAXCLIPAMMO] = m_pTurret->ammo_clip_size[FIRE_PRIMARY];
+
+            // Added in OPM
+            //  An MG42's belts: the rounds in the belt and in the rest
+            if (m_pTurret->BeltAmmo(&iInBelt, &iBeltSize, &iSpare)) {
+                client->ps.stats[STAT_CLIPAMMO]    = iInBelt;
+                client->ps.stats[STAT_MAXCLIPAMMO] = iBeltSize;
+                client->ps.stats[STAT_AMMO]        = iSpare;
+                client->ps.stats[STAT_MAXAMMO]     = iBeltSize * g_mg42_belts->integer;
+            }
         }
     } else if (activeweap) {
         if (activeweap->m_bSecondaryAmmoInHud) {
