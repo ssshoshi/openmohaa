@@ -770,6 +770,45 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
 
 /*
 ======================
+CG_LeanViewModelArms
+
+PmoveAdjustAngleSettings_Client turns the arms by (pitch + 8, 0, lean * 0.7),
+which rolls them about the model's forward axis before the pitch raises them.
+The view model's line of sight points 8 degrees down before that pitch, so the
+roll swings it sideways and the sights drift off the crosshair while leaning,
+plainly so with ironsight mods. The view model is instead rolled about its line
+of sight, by as much as the camera rolls, so the sights stay on the crosshair and
+the weapon stays still on screen. The world model keeps the body's lean.
+======================
+*/
+#define VIEWMODEL_ARMS_TAG 2 // ARMS_TAG in bg_local.h
+
+static void CG_LeanViewModelArms(refEntity_t *model, const entityState_t *s1)
+{
+    static quat_t armsQuat[NUM_BONE_CONTROLLERS];
+    vec3_t        angles;
+    float         pitchRoll[3][3], restPitch[3][3], axis[3][3];
+    float         cameraRoll;
+
+    // what CG_CalcViewValues and CG_OffsetFirstPersonView add to the view roll
+    cameraRoll = cg_target_game >= TG_MOHTA ? 0.3f : 0.4f;
+
+    VectorSet(
+        angles, s1->bone_angles[VIEWMODEL_ARMS_TAG][0] - 8, 0, cg.predicted_player_state.fLeanAngle * cameraRoll
+    );
+    AnglesToAxis(angles, pitchRoll);
+    VectorSet(angles, 8, 0, 0);
+    AnglesToAxis(angles, restPitch);
+    // the 8 degrees first, then the roll about the pitched line of sight
+    MatrixMultiply(restPitch, pitchRoll, axis);
+
+    memcpy(armsQuat, model->bone_quat, sizeof(armsQuat));
+    MatToQuat(axis, armsQuat[VIEWMODEL_ARMS_TAG]);
+    model->bone_quat = armsQuat;
+}
+
+/*
+======================
 CG_AttachEntity
 
 Modifies the entities position and axis by the given
@@ -1582,6 +1621,15 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
             model.tiki   = cg.pPlayerFPSModel;
             model.hModel = cg.hPlayerFPSModelHandle;
             memset(model.surfaces, 0, sizeof(model.surfaces));
+
+            // Added in OPM
+            //  Keep the sights on the crosshair while leaning
+            if (cg.predicted_player_state.fLeanAngle && cg.predicted_player_state.pm_type != PM_DEAD
+                && cg.predicted_player_state.pm_type != PM_CLIMBWALL
+                && !(cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW) && cg.snap->ps.stats[STAT_HEALTH] > 0
+                && !cg_animationviewmodel->integer) {
+                CG_LeanViewModelArms(&model, s1);
+            }
 
             CG_ViewModelAnimation(&model);
             model.renderfx |= RF_FRAMELERP;
