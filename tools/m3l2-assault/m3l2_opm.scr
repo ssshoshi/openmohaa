@@ -101,6 +101,7 @@
 		$scene4_mg42 maxYawOffset 75
 
 	thread scene2_sniper_blood
+	thread scene11_mg_crews
 	thread scene3_smoke
 	thread scene4_car
 	thread scene4_director
@@ -121,6 +122,12 @@ scene2_sniper_blood:
 
 	while (level.paulsen == NIL || level.paulsen == NULL)
 		wait 0.5
+	// a save from after he died: not seen to die, no blood
+	if (!(isalive level.paulsen))
+	{
+		level.opm_s2_blood = 1
+		end
+	}
 	while (level.paulsen != NULL && isalive level.paulsen)
 		waitframe
 
@@ -1152,3 +1159,132 @@ chargers_send:
 	println ("m3l2_opm: t=" + level.time + " " + local.count + " charging through the smoke")
 end
 
+//=============================================================================
+// Scene 11, the 20mm flak's MG42 nests. The map sends a gunner to each MG one
+// at a time, four in all, a new one three seconds after the last died, for as
+// long as the player is in its detector, which reaches back to the edge of the
+// field: from there the player shot each one as he ran out (backlog #17).
+// Instead each MG is manned from the start, its first gunner put on it as soon
+// as the map starts the spawner, and the replacements only come while the
+// player is out on the field, among the craters (level.opm_s11_xmin..ymax), going
+// from one to the next. From the edge, sniping, nobody runs out. The hold is a
+// 1 added to the spawner's count of gunners alive (as scene 4's), so the map's
+// own spawner waits.
+
+scene11_mg_crews:
+	// the craters across the field, and some room round them
+	level.opm_s11_xmin = 2265
+	level.opm_s11_xmax = 4300
+	level.opm_s11_ymin = -3800
+	level.opm_s11_ymax = -1450
+	if (level.opm_s11_hold == NIL)
+	{
+		level.opm_s11_hold[1] = 0
+		level.opm_s11_hold[2] = 0
+		level.opm_s11_manned[1] = 0
+		level.opm_s11_manned[2] = 0
+	}
+
+	while (1)
+	{
+		for (local.k = 1; local.k <= 2; local.k++)
+			waitthread scene11_mg_crew local.k
+		wait 0.5
+	}
+end
+
+scene11_mg_crew local.k:
+	if (local.k == 1)
+	{
+		local.mg = $scene11_mg1
+		local.path = $scene11_mg1_gunner_path
+		local.spawned = level.scene11_mgspawn1_teamvalue
+	}
+	else
+	{
+		local.mg = $scene11_mg2
+		local.path = $scene11_mg2_gunner_path
+		local.spawned = level.scene11_mgspawn2_teamvalue
+	}
+	if (local.mg == NULL || local.path == NULL || local.spawned == NIL || $player == NULL)
+		end
+
+	// The first gunner, on the gun before the player gets there.
+	if (level.opm_s11_manned[local.k] == 0)
+	{
+		level.opm_s11_manned[local.k] = 1
+		if (local.spawned == 0)
+			waitthread scene11_mg_man local.k local.path
+		end
+	}
+
+	local.o = $player.origin
+	local.onfield = (local.o[0] >= level.opm_s11_xmin && local.o[0] <= level.opm_s11_xmax && local.o[1] >= level.opm_s11_ymin && local.o[1] <= level.opm_s11_ymax)
+	local.change = 0
+
+	if (level.opm_s11_hold[local.k] == 0 && !local.onfield)
+	{
+		level.opm_s11_hold[local.k] = 1
+		local.change = 1
+	}
+	else if (level.opm_s11_hold[local.k] == 1 && local.onfield)
+	{
+		level.opm_s11_hold[local.k] = 0
+		local.change = -1
+	}
+
+	if (local.change == 0)
+		end
+	if (local.k == 1)
+		level.scene11_mgspawn1_currentalive += local.change
+	else
+		level.scene11_mgspawn2_currentalive += local.change
+	println ("m3l2_opm: t=" + level.time + " MG " + local.k + " replacements held " + level.opm_s11_hold[local.k])
+end
+
+// Spawns MG k's first gunner where its gunners stand, counted by the map's
+// spawner as one of its own and counted dead by its thread, and puts him on the
+// gun as the map's navigate thread does (that one runs him to where he already
+// stands, and waits for a move that is over before it starts).
+scene11_mg_man local.k local.path:
+	if (local.k == 1)
+		local.name = "scene11_mgspawn1_ai1_" + level.scene11_mgspawn1_teamvalue
+	else
+		local.name = "scene11_mgspawn2_ai1_" + level.scene11_mgspawn2_teamvalue
+
+	spawn models/human/german_wehrmact_grenadier "targetname" local.name "type_attack" "cover"
+	local.g = $(local.name)
+	if (local.g == NULL)
+		end
+	local.g.origin = local.path.origin
+
+	if (local.k == 1)
+	{
+		level.scene11_mgspawn1_currentalive++
+		level.scene11_mgspawn1_teamvalue++
+		local.g thread maps/m3l2.scr::scene11_mgspawn1_detect_death
+		local.mg = $scene11_mg1
+	}
+	else
+	{
+		level.scene11_mgspawn2_currentalive++
+		level.scene11_mgspawn2_teamvalue++
+		local.g thread maps/m3l2.scr::scene11_mgspawn2_detect_death
+		local.mg = $scene11_mg2
+	}
+
+	waitframe
+	if (local.g == NULL || !(isalive local.g))
+		end
+	local.g type_idle machinegunner
+	local.g type_attack machinegunner
+	local.g type_disguise machinegunner
+	local.g type_grenade machinegunner
+	local.g gun "mp40"
+	local.g holster
+	local.g health 100
+	local.g sight 4000
+	local.g turret local.mg
+	local.g thread maps/m3l2.scr::scene11_mgspawn_targeting local.mg
+	println ("m3l2_opm: t=" + level.time + " MG " + local.k + " manned by " + local.name)
+end
