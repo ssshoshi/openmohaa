@@ -198,6 +198,47 @@ void CG_ClipMoveToEntities(
     }
 }
 
+/*
+====================
+CG_ClipMoveToBrushEntities
+
+Added in OPM
+  CG_ClipMoveToEntities for the brush entities alone (doors, movers), at their
+  angles as drawn: for effects that stick to what they hit, like a blood
+  drop's decal, which start inside the body they came out of.
+====================
+*/
+void CG_ClipMoveToBrushEntities(
+    const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int mask, trace_t *tr
+)
+{
+    int          i;
+    trace_t      trace;
+    clipHandle_t cmodel;
+    centity_t   *cent;
+
+    for (i = 0; i < cg_numSolidEntities; i++) {
+        cent = cg_solidEntities[i];
+        if (cent->currentState.solid != SOLID_BMODEL) {
+            continue;
+        }
+
+        cmodel = cgi.CM_InlineModel(cent->currentState.modelindex);
+        if (!cmodel) {
+            continue;
+        }
+
+        cgi.CM_TransformedBoxTrace(
+            &trace, start, end, mins, maxs, cmodel, mask, cent->lerpOrigin, cent->lerpAngles, qfalse
+        );
+
+        if (trace.fraction < tr->fraction && !trace.startsolid) {
+            trace.entityNum = cent->currentState.number;
+            *tr             = trace;
+        }
+    }
+}
+
 void CG_ShowTrace(trace_t *trace, int passent, const char *reason)
 {
     char text[1024];

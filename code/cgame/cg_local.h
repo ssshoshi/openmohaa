@@ -687,6 +687,9 @@ extern "C" {
         trace_t     *tr,
         qboolean     cylinder
     );
+    void CG_ClipMoveToBrushEntities(
+        const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int mask, trace_t *tr
+    );
     void CG_Trace(
         trace_t     *result,
         const vec3_t start,
