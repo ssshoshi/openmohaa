@@ -1356,7 +1356,8 @@ qboolean TurretGun::ReadyToFire(firemode_t mode, qboolean playsound)
     return Weapon::ReadyToFire(mode, playsound);
 }
 
-// Each shot that leaves the barrel heats it; at g_mg42_heatmax the gun is
+// Each shot that leaves the barrel heats it, by the time it takes to fire; at
+// g_mg42_heatmax (g_mg42_overheattime seconds of continuous fire) the gun is
 // overheated, and the player is told.
 void TurretGun::ShotFired(firemode_t mode)
 {
@@ -1390,8 +1391,15 @@ void TurretGun::ShotFired(firemode_t mode)
         return;
     }
 
+    // The time since the last shot while it fires on (or one shot's time for
+    //  the first of a burst), as a share of g_mg42_overheattime: it overheats
+    //  after that long of continuous fire, at whatever rate it really fires.
+    float fShotTime = level.time - m_fLastHeatShot;
+    if (fShotTime > 0.25f || fShotTime <= 0) {
+        fShotTime = FireDelay(mode);
+    }
     m_fLastHeatShot = level.time;
-    m_fBarrelHeat += g_mg42_heatpershot->value;
+    m_fBarrelHeat += Q_max(1.0f, g_mg42_heatmax->value) * fShotTime / Q_max(0.1f, g_mg42_overheattime->value);
     SaveHeat();
 
     if (!m_bOverheated && m_fBarrelHeat >= g_mg42_heatmax->value) {
