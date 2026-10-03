@@ -86,6 +86,9 @@ extern "C" {
     extern cvar_t *cg_ragdoll_debug;
     extern cvar_t *cg_ragdoll_stiffness;
 
+    // What a key the ragdoll grabber takes over is bound to now (Added in OPM)
+    qboolean CG_RagdollKeyBinding(const char *key, char *out, int size);
+
 #ifdef __cplusplus
 }
 #endif

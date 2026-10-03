@@ -802,6 +802,7 @@ void CG_Shutdown(void)
     CG_ShutdownPhysics();
     CG_ShutdownRagdoll();
     CG_BlastShutdown();
+    CG_OrchShutdown();
     // Shutdown radar
     cgi.CL_InitRadar(NULL, NULL, -1);
 

@@ -58,7 +58,11 @@ typedef struct {
 } pick_t;
 
 // Traces from the view along its forward axis.
+// The most CG_PickAll reports in front of the world.
+#define PICK_MAX_ALL 8
+
 void CG_Pick(pick_t *pick);
+int  CG_PickAll(pick_t *out, int max);
 
 // Outlines: the target's box and a cross where the crosshair meets the world.
 // Debug lines, so they must be added before the scene is drawn.
