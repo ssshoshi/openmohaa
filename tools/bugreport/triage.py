@@ -41,7 +41,7 @@ import upload  # noqa: E402
 
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 OWNER = "ssshoshi"
-DEFAULT_BUILD = "/mnt/d/Medal of Honor/openmohaa-ragdoll"  # the deployed build, for "before"
+DEFAULT_BUILD = "/mnt/d/Medal of Honor/openmohaa-play"  # the deployed build, for "before"
 AGENT_DIR = os.path.expanduser("~/projects/openmohaa-agent")
 LOG_DIR = os.path.join(upload.CACHE_DIR, "logs")
 TIMEOUT = {"triage": 45 * 60, "fix": 120 * 60}

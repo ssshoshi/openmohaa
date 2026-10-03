@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Build main and put it into the game installs, in one go.
 
-    tools/deploy.py                 # main into ragdoll, physics-test and live, and the paks
-    tools/deploy.py --rtlight       # also openmohaa-rtlight (main + the rtlight worktree's work)
+    tools/deploy.py                 # main into openmohaa-play and openmohaa-live, and the paks
     tools/deploy.py --dry-run       # say what would change
     tools/deploy.py --only paks     # or --only binaries
 
@@ -13,11 +12,6 @@ kept clean on main), fast-forwarded first. The paks are the data/ folders
 copy they replace kept in pk3-backups/ (never in main/: a backup there would be
 loaded as a pak). Each install's replaced binaries are kept beside them as
 *.bak-prev. Nothing is copied into an install whose game is running.
-
-The rtlight install is main plus the realtime lighting work: its branch
-(feat/realtime-lighting) merged onto main, plus whatever is uncommitted in its
-worktree, built in ~/projects/openmohaa-rtlight-deploy. Commit that work to
-its branch and this stops depending on the worktree.
 """
 
 import argparse
@@ -32,10 +26,9 @@ GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 GAME_MAIN = os.path.join(GAME, "main")
 PAK_BACKUPS = os.path.join(GAME, "pk3-backups")
 SRC = os.path.expanduser("~/projects/openmohaa-main")
-RTLIGHT = os.path.expanduser("~/projects/openmohaa-rtlight")
-RTLIGHT_BUILD = os.path.expanduser("~/projects/openmohaa-rtlight-deploy")
 REMOTE = "fork"
-INSTALLS = ["openmohaa-ragdoll", "openmohaa-physics-test", "openmohaa-live"]
+# The player's install (the player's own home path) and the orchestrator's (its own).
+INSTALLS = ["openmohaa-play", "openmohaa-live"]
 BINARIES = ["openmohaa.exe", "cgame.dll", "game.dll", "renderer_opengl1.dll", "renderer_opengl2.dll", "omohaaded.exe"]
 JOBS = "4"  # WSL has 7 GB; a wider build has crashed it
 
@@ -80,29 +73,6 @@ def update_main(dry):
         run(["git", "checkout", "-q", "main"], cwd=SRC)
         run(["git", "merge", "--ff-only", "-q", f"{REMOTE}/main"], cwd=SRC)
     return run(["git", "log", "-1", "--format=%h %s", f"{REMOTE}/main"], cwd=SRC)
-
-
-def rtlight_tree(dry):
-    """A worktree at main with the rtlight branch merged and the rtlight
-    worktree's uncommitted work applied on top."""
-    if dry:
-        return RTLIGHT_BUILD
-    if not os.path.isdir(RTLIGHT_BUILD):
-        run(["git", "worktree", "add", "-q", "--detach", RTLIGHT_BUILD, f"{REMOTE}/main"], cwd=SRC)
-    run(["git", "reset", "-q", "--hard", f"{REMOTE}/main"], cwd=RTLIGHT_BUILD)
-    run(["git", "clean", "-qfd", "-e", "build"], cwd=RTLIGHT_BUILD)
-    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=RTLIGHT)
-    if branch != "HEAD":
-        run(["git", "merge", "-q", "--no-edit", branch], cwd=RTLIGHT_BUILD)
-    diff = subprocess.run(["git", "diff", "HEAD", "--binary"], cwd=RTLIGHT, capture_output=True).stdout
-    if diff:
-        r = subprocess.run(["git", "apply", "--3way"], cwd=RTLIGHT_BUILD, input=diff, capture_output=True)
-        if r.returncode:
-            sys.exit("the rtlight worktree's uncommitted work does not apply on main:\n" + r.stderr.decode()[-2000:])
-    for f in run(["git", "ls-files", "--others", "--exclude-standard"], cwd=RTLIGHT).splitlines():
-        os.makedirs(os.path.dirname(os.path.join(RTLIGHT_BUILD, f)) or ".", exist_ok=True)
-        shutil.copy2(os.path.join(RTLIGHT, f), os.path.join(RTLIGHT_BUILD, f))
-    return RTLIGHT_BUILD
 
 
 def install_binaries(release, install, dry):
@@ -158,14 +128,13 @@ def install_paks(folder, dry):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--rtlight", action="store_true", help="also build and install openmohaa-rtlight")
     ap.add_argument("--only", choices=["binaries", "paks"])
     ap.add_argument("--installs", nargs="+", default=INSTALLS)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     dry = args.dry_run
 
-    targets = list(args.installs) + (["openmohaa-rtlight"] if args.rtlight else [])
+    targets = list(args.installs)
     busy = running_installs() & set(targets)
     if busy and args.only != "paks":
         sys.exit(f"the game is running from {', '.join(sorted(busy))}; close it first")
@@ -183,13 +152,6 @@ def main():
             if inst == "openmohaa-live" and changed and not dry:
                 # Records the interfaces orch.py swap checks against.
                 run([sys.executable, "tools/orchestrator/orch.py", "setup", "--build", release], cwd=SRC)
-        if args.rtlight and dry:
-            print(f"{'openmohaa-rtlight':24} would rebuild from main + {RTLIGHT}'s work")
-        elif args.rtlight:
-            tree = rtlight_tree(dry)
-            rt_release = os.path.join(tree, "build", "win64", "Release") if dry else build(tree)
-            changed = install_binaries(rt_release, "openmohaa-rtlight", dry)
-            print(f"{'openmohaa-rtlight':24} {', '.join(changed) if changed else 'up to date'}")
 
     if args.only != "binaries":
         folder = build_paks(dry)

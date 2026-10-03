@@ -113,7 +113,7 @@ def cmd_setup(args):
         src = os.path.join(args.build, n)
         if not os.path.isfile(src):
             # The user's main install first; never the live one itself.
-            found = [p for p in glob.glob(os.path.join(GAME_ROOT, "openmohaa-ragdoll", n))
+            found = [p for p in glob.glob(os.path.join(GAME_ROOT, "openmohaa-play", n))
                      + sorted(glob.glob(os.path.join(GAME_ROOT, "openmohaa-*", n)))
                      if os.path.dirname(os.path.abspath(p)) != os.path.abspath(LIVE)]
             src = found[0] if found else None
@@ -338,7 +338,65 @@ def summary(item):
     return f"{item['id']:>4}  {item['status']:<7} {item.get('created', '')[:16]}  {text}" + (f"  [{extra}]" if extra else "")
 
 
+SHOT_ID = r"\d{8}-\d{6}-\d{3}"
+
+
+def backlog_prune(args):
+    """The orchestrator's own leftovers (shots, their savegames and records,
+    session folders) that no open backlog item points at and that are older
+    than --keep-days. Files of the player's own are never matched: only the
+    orch_<shot id> names and orch/ folders."""
+    import re
+
+    keep_ids, keep_sessions = set(), set()
+    for item in backlog_items():
+        if item.get("status") in ("done", "dropped"):
+            continue
+        text = json.dumps(item)
+        keep_ids |= set(re.findall(SHOT_ID, text))
+        for key in ("turn", "session"):
+            if item.get(key):
+                keep_sessions.add(os.path.basename(os.path.dirname(item["turn"])) if key == "turn"
+                                  else os.path.basename(item["session"]))
+        turn = item.get("turn")
+        if turn and os.path.isfile(turn):
+            keep_ids |= set(re.findall(SHOT_ID, open(turn, encoding="utf-8", errors="replace").read()))
+    cutoff = time.time() - args.keep_days * 86400
+
+    victims = []
+    pat = re.compile(r"orch_(" + SHOT_ID + r")")
+    places = [os.path.join(MAIN, "screenshots"), os.path.join(ORCH, "events")] + \
+        glob.glob(os.path.join(MAIN, "save", "*"))
+    for folder in places:
+        for path in glob.glob(os.path.join(folder, "*")):
+            name = os.path.basename(path)
+            m = pat.search(name) or (re.match(SHOT_ID, name) if folder.endswith("events") else None)
+            if not m:
+                continue
+            shot = m.group(1) if m.re is pat else m.group(0)
+            if shot not in keep_ids and os.path.getmtime(path) < cutoff:
+                victims.append(path)
+    for path in glob.glob(os.path.join(ORCH, "sessions", "*")):
+        if os.path.basename(path) not in keep_sessions and os.path.getmtime(path) < cutoff:
+            victims.append(path)
+
+    size = sum(os.path.getsize(p) if os.path.isfile(p) else
+               sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(p) for f in fs) for p in victims)
+    print(f"{len(victims)} files and folders, {size / 1e6:.0f} MB, not referenced by an open item "
+          f"and older than {args.keep_days} days (kept: {len(keep_ids)} shots, {len(keep_sessions)} sessions)")
+    if not args.apply:
+        for p in victims[:10]:
+            print("  " + os.path.relpath(p, MAIN))
+        print("(dry run: --apply removes them)")
+        return
+    for p in victims:
+        shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+    print("removed")
+
+
 def cmd_backlog(args):
+    if args.action == "prune":
+        return backlog_prune(args)
     if args.action in (None, "list"):
         items = [i for i in backlog_items() if args.all or i["status"] in ("open", "doing")]
         for item in items:
@@ -780,12 +838,14 @@ def main():
 
     p = sub.add_parser("backlog", help="what was filed in queue mode")
     p.add_argument("action", nargs="?",
-                   choices=["list", "show", "add", "doing", "done", "drop", "reopen"])
+                   choices=["list", "show", "add", "doing", "done", "drop", "reopen", "prune"])
     p.add_argument("rest", nargs="*", help="the item id, or for add the text")
     p.add_argument("--all", action="store_true", help="list done and dropped items too")
     p.add_argument("--note", help="what was done, or why not (doing/done/drop/reopen)")
     p.add_argument("--turn", help="add: the turn JSON it came from (its shots come along)")
     p.add_argument("--state", action="store_true", help="add: record where the player is now")
+    p.add_argument("--keep-days", type=float, default=2, help="prune: keep what is newer than this")
+    p.add_argument("--apply", action="store_true", help="prune: remove (otherwise a dry run)")
     p.set_defaults(fn=cmd_backlog)
 
     p = sub.add_parser("stop")
