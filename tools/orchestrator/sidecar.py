@@ -63,6 +63,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np  # noqa: E402
 
+import noise  # noqa: E402 (beside this file)
+
 RATE = 16000
 FRAME_MS = 30
 FRAME = RATE * FRAME_MS // 1000
@@ -559,7 +561,8 @@ class Sidecar:
                         chunk = f.read()
                         log_pos = f.tell()
                     for line in chunk.splitlines():
-                        if re.search(r"\^~\^~\^|Script Error|ERROR:|WARNING: .*script|Couldn't (find|load)", line, re.I):
+                        if re.search(r"\^~\^~\^|Script Error|ERROR:|WARNING: .*script|Couldn't (find|load)", line, re.I) \
+                                and not noise.dropped(line):
                             event = {"type": "console", "t": now(), "time": iso(now()), "line": line.strip()}
                             self.log(event)
                             with self.lock:
@@ -703,7 +706,8 @@ class Sidecar:
             if not has_speech and all(e["type"] == "console" for e in self.pending):
                 # Errors on their own wait for the next real turn.
                 return
-            events = sorted(self.pending, key=lambda e: e["t"])
+            # Repeats of one console line kept once, counted (noise.py).
+            events = noise.collapse(sorted(self.pending, key=lambda e: e["t"]))
             self.pending = []
 
         self.turn_number += 1
@@ -744,6 +748,13 @@ class Sidecar:
                 except ValueError:
                     pass
         n, path = reserve_backlog_id(self.backlog_dir)
+        # Somewhere to start from when it is worked on: a shot saves the game
+        # itself; a turn without one gets its own save.
+        savegame = None
+        if state and state.get("in_game") and state.get("single_player") and \
+                not any(e.get("savegame") for e in turn["events"] if e["type"] == "shot"):
+            savegame = f"orch_item{n}"
+            self.ask_game(f"savegame {savegame}", timeout=5.0)
         item = {
             "id": n,
             "status": "open",
@@ -751,6 +762,7 @@ class Sidecar:
             "source": "voice",
             "speech": turn["speech"],
             "state": state,
+            "savegame": savegame,
             "session": to_wsl(self.session),
             "turn": to_wsl(turn_path),
             "events": turn["events"],

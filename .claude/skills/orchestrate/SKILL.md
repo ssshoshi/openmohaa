@@ -36,37 +36,28 @@ Paths:
 1. **Worktree.** `git -C ~/projects/openmohaa fetch fork`, then
    `git worktree add -b feat/live-<YYYYMMDD> ~/projects/openmohaa-live-<YYYYMMDD> fork/main`
    (reuse it if it exists). All code changes of the session go there.
-2. **Build and install** if the live install is older than the worktree's HEAD
-   (check `git log -1 --format=%ct` against the exe's mtime):
-   `cmake --build build/win64 -j4` (configure first per the windows-build-deploy skill;
-   **never more than -j4**: WSL has 7 GB and a wider build has crashed the VM),
-   then `orch.py setup --build build/win64/Release`.
-3. **Seed** the user's config and saves: `orch.py seed` (not `--windowed`; that is for tests).
-4. **Sidecar** under Monitor (persistent, so each TURN line wakes you):
-   ```
-   "<venv>/Scripts/python.exe" "$(wslpath -w tools/orchestrator/sidecar.py)" --home "D:\Medal of Honor\openmohaa-live\home"
-   ```
-   Add `--queue` if the user only wants to note things down this time.
-   Wait for `READY listening`. `INFO` lines are diagnostics; `QUEUED <id> ...`
-   lines (queue mode) need nothing from you; `MODE queue` / `MODE live` say the
-   user switched. Don't pipe it
-   through `tr`, `grep` or the like without line buffering (`stdbuf -oL`,
-   `--line-buffered`): a buffered pipe holds the TURN lines back until exit.
-5. **Game:** ask what to load if the user didn't say (a save name or a map), then
-   `orch.py launch --save <name>` or `--map <map>`. It turns orchestrator mode on.
-6. `orch.py say "Ready."`. If `orch.py backlog` lists open items, mention how
-   many in that line and offer to go through them.
+2. **Everything else in one command**, from the worktree: ask what to load if the user
+   didn't say (a save name or a map), then `orch.py start --save <name>` (or `--map <map>`,
+   `--queue` if the user only wants to note things down). It rebuilds and reinstalls when the
+   live install is older than the worktree (**never more than -j4**: WSL has 7 GB), seeds the
+   user's config and saves, starts the sidecar detached, launches the game, waits for it, and
+   says "Ready." (with how many backlog items are open: offer to go through them).
+3. **Watch the sidecar** with Monitor on the command it prints
+   (`tail -F .../orch/sidecar.log | grep --line-buffered -E '^(TURN|QUEUED|MODE|READY|ERROR)'`),
+   persistent, re-armed when it expires, so each TURN line wakes you. `QUEUED <id> ...`
+   lines (queue mode) need nothing from you; `MODE queue` / `MODE live` say the user switched.
+   Any pipe needs line buffering, or the TURN lines wait until exit.
 
 ## Each TURN
 
 A Monitor line `TURN <n> "<speech>" shots=<k> errors=<e> context=<c> <path>` means the user
 finished talking (or clicked a shot). Then:
 
-1. Read the turn JSON. Its `events` are speech, shots and console errors in time
-   order. For each shot, read its `json` (aim, target, player position) and look
-   at `files.screenshot_marked` (the target outlined) with Read. `server.txt`
-   (beside the shot JSON) has the game's view of the target: class, targetname,
-   AI think state, script threads. Its `context` is what the game logged from
+1. `orch.py look <turn json>` gives the turn in brief: what was said, each shot's
+   target from the game's side (class, targetname, model, animation, think state),
+   the console with the retail spam dropped and repeats counted, and a small copy
+   of each marked screenshot (the target outlined) to Read. The turn JSON, each
+   shot's `json` and `server.txt` (script threads) have the rest. Its `context` is what the game logged from
    10 s before until the turn ended (`dt`: seconds from the first words or
    shot): where they stood and looked (`trail`, `gaze`), long frames
    (`hitch`), `damage` and kills, `trigger`s, AI `think` changes and move
@@ -126,10 +117,11 @@ Shots also save the game (`orch_<id>`) in single player: "load shot 3" is
 
 When the user asks you to work it (or a limit has reset and they say "check"):
 
-1. `orch.py backlog` lists the open items; `orch.py backlog show <id>` gives one
-   in full. Read each item's shots like a live turn's (shot `json`,
-   `files.screenshot_marked`, `server.txt`); `state` has the map, the player's
-   position and what they looked at when there was no shot.
+1. `orch.py backlog` lists the open items; `orch.py look <id>` gives one in brief
+   (`backlog show <id> [--full]` the whole JSON); `orch.py backlog repro <id>` loads
+   it in the orch-test install where it was filed, the player placed and facing as in
+   its shot. An item without a shot has its own savegame and `state` (the map, where
+   the player stood and looked).
 2. Group them, and say back in the terminal what you understood and plan for
    each, in one or two lines apiece. Ask about the unclear ones; the user is
    usually at the terminal now, not in game.
@@ -140,10 +132,12 @@ When the user asks you to work it (or a limit has reset and they say "check"):
    the live install as in a live session; record them in the note.
    `orch.py backlog drop <id> --note "<why>"` for one that turns out moot or
    not wanted.
-4. Check each change in game when you can: `orch.py launch --save <savegame>`
-   from the item's shot puts you where the user was. Without the game you
-   can still build and reason from the shots; say which items weren't
-   checked in game.
+4. Check each change in game when you can: `orch.py backlog repro <id>` puts you
+   where the user was, in the orch-test install (`ORCH_LIVE` set to it for the
+   commands that follow; `frames` for a contact sheet of what happens). Without the
+   game you can still build and reason from the shots; say which items weren't
+   checked in game. Close with `orch.py backlog prune --apply`: shots and saves no
+   open item needs.
 5. Open the PR as at the end of a live session, its body built from the items
    (id, what they asked, what changed). Leave items you didn't finish open.
 
@@ -160,7 +154,9 @@ mode", "live mode".
 ## End
 
 When the user says they're done: `orch.py say` a one-line summary, stop the
-Monitor and `orch.py stop` if asked, then push the worktree branch and open a
+Monitor and `orch.py stop --sidecar` if asked. Loose files the session left in the
+install (`orch.py promote` lists them) become repo files with
+`orch.py promote --pak <pak> --apply`; commit them. Then push the worktree branch and open a
 PR to ssshoshi/openmohaa main (see the dev workflow: conventional title, three
 required checks, never merge without the user). Build the PR body from the
 session's turns and actions; screenshots can be posted with
