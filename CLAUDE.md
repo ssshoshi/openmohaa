@@ -27,6 +27,8 @@
   `frames N --every s --script '…'` (one contact sheet to look at), `script`, `cmd`, `reset` (loose
   overrides left in the install's home shadow the paks), `backlog prune` (shots and saves no open
   item needs).
+- Reproducing a backlog item: `orch.py backlog repro <id>`; reading one: `orch.py look <id>` (or a
+  turn JSON). Loose files a session leaves in an install: `orch.py promote --pak <pak> --apply`.
 - `god 1` and `notarget 1`; bare `god` toggles, so a second call turns it off.
 - `tele x y z` ignores angles (use `orch.py view`). `ai_off` actors never die.
 - Script output after a `wait` is not in `orch.py script`'s reply. Loading a save in a running game
