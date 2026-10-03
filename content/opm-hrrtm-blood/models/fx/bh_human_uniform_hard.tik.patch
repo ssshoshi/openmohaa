@@ -31,7 +31,7 @@
 -            scalemax 2.5
 -            scalerate 1.5
 -			velocity -320
-+		// splat on the wall behind (OPM: fast and short-lived, so it lands at once and only on near walls)
++		// splat on the wall behind (OPM: fast and short-lived, so it lands at once and only on near walls; positive: the effect faces into the body)
 +		sfx originspawn
 +		(
 +			model models/fx/blood_long.tik
@@ -42,7 +42,7 @@
 +            scalemin 2.0
 +            scalemax 2.5
 +            scalerate 1.5
-+			velocity -1200
++			velocity 1200
 +			randvelaxis 0 crandom 60 crandom 60
  			accel 0 0 -800
  			collision

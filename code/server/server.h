@@ -618,6 +618,12 @@ qboolean SV_SightTrace( const vec3_t start, const vec3_t mins, const vec3_t maxs
 qboolean SV_HitEntity(gentity_t* pEnt, gentity_t* pOther);
 void SV_Trace( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentmask, qboolean cylinder, qboolean traceDeep );
 void SV_TraceDeep( trace_t *results, const vec3_t vStart, const vec3_t vEnd, int iBrushMask, gentity_t *touch );
+
+//
+// sv_meshtrace.cpp (Added in OPM): bullets against a model's real triangles, in single player
+//
+qboolean SV_MeshTraceWanted( const gentity_t *touch, const vec3_t mins, const vec3_t maxs, qboolean traceDeep );
+void SV_MeshTrace( trace_t *trace, const vec3_t start, const vec3_t end, gentity_t *touch );
 // mins and maxs are relative
 
 // if the entire move stays in a solid volume, trace.allsolid will be set,

@@ -597,6 +597,13 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			CM_TransformedBoxTrace( &trace, clip->start, clip->end,
 				clip->mins, clip->maxs, clipHandle, clip->contentmask,
 				touch->s.origin, touch->r.currentAngles, clip->cylinder );
+
+			// Added in OPM
+			//  A bullet that hit a model's box, against the model itself (sv_meshtrace.cpp)
+			if ( ( trace.fraction < 1.0f || trace.startsolid )
+				&& SV_MeshTraceWanted( touch, clip->mins, clip->maxs, clip->traceDeep ) ) {
+				SV_MeshTrace( &trace, clip->start, clip->end, touch );
+			}
 		}
 
 		if ( trace.allsolid ) {
