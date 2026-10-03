@@ -51,6 +51,8 @@ extern "C" {
     // stands where it was, still a target. Again to come back to it, "here" to
     // bring the body to the camera. From frozen, lets the world run.
     void CG_OrchGhost_f(void);
+    // orch_debug [preset...|off]: debug views by name; no argument lists them.
+    void CG_OrchDebug_f(void);
     // orch_fly: walk or fly while frozen; noclip otherwise.
     void CG_OrchFly_f(void);
     // orch_return: back to where the player last froze.

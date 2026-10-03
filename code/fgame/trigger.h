@@ -103,6 +103,9 @@ public:
     str& Noise(void);
 
     void     SetTriggerDir(float angle);
+    // Added in OPM: for g_showtriggers (g_orch.cpp)
+    bool     IsTriggerable(void) const { return triggerable ? true : false; }
+    int      TriggerCount(void) const { return count; }
     Vector   GetTriggerDir(void);
     qboolean UsingTriggerDir(void);
 

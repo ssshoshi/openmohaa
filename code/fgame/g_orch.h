@@ -46,3 +46,19 @@ void G_OrchLogTrigger(Trigger *trigger, Entity *activator);
 void G_OrchLogThink(Actor *actor, int oldState, int oldThink);
 // A move order from a script: runto, walkto, moveto, patrolpath...
 void G_OrchLogOrder(Actor *actor, const char *order, const char *anim, ScriptVariable *dest);
+
+// Debug overlays (single player; the lines need the server in the process):
+//   ai_showpaths     each actor's path, script goal, patrol chain, leash,
+//                    cover/aim/look targets and a label with its think
+//   ai_showsenses    each actor's line to its enemy (green seen, red not),
+//                    the enemy's last known position, hearing and field of view
+//   g_showtriggers   trigger boxes, arrows to what they target, labels
+//   g_showdamage     a floating number where each hit landed, and its direction
+// with ai_showpaths_dist / g_showtriggers_dist the reach from the player.
+void G_OrchDebugInit(void);
+void G_OrchDebugFrame(void);
+// Whether Entity::Damage should report hits (the log or g_showdamage).
+bool G_OrchWantsDamage(void);
+void G_OrchShowDamage(const Vector& position, const Vector& direction, float damage, bool killed);
+// scriptinfo [threadnum]: the script threads, or one in detail.
+qboolean G_OrchScriptInfoCmd(struct gentity_s *ent);

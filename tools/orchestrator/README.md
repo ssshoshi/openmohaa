@@ -106,6 +106,24 @@ model files (about 340 MB) download to `%LOCALAPPDATA%\openmohaa-orch\kokoro`.
   `orch_status <state>`, `orch_state`; the panel.
 - `cgame/cg_pick.cpp`: what is under the crosshair, shared with the F8 reports.
 - `bugreport_server <id> <entnum> orch` (fgame) writes the shot's `server.txt`.
+- `orch_debug <preset...>` (cgame) toggles debug views by name; `orch_debug off`
+  clears them and `orch_debug` lists them. The panel shows which are on.
+  | Preset | Shows |
+  |---|---|
+  | `ai` | each actor's path (coloured by think: blue idle/patrol, cyan running, yellow curious, red attack), script goal, patrol chain (dashed), leash, cover/aim/look targets and a label; its line to its enemy (green seen, red not), the enemy's last known position, hearing and field of view (`ai_showpaths`, `ai_showsenses`) |
+  | `entinfo` | number, name and health over every entity, think and enemy over actors (`g_entinfo 4`) |
+  | `nodes` | path nodes and routes |
+  | `triggers` | trigger boxes (dim when off), arrows to their targets, labels (`g_showtriggers`) |
+  | `cameras` | script cameras |
+  | `combat` | a rising number where each hit lands, and its direction (`g_showdamage`); grenade decisions |
+  | `look` | a card in the panel on what the crosshair is on, and the game's label over it |
+  | `perf` | fps, frame time, worst frame and entity count in the panel; `r_gpuTimers` |
+  | `tris`, `normals`, `bbox`, `entnums` | the renderer's and server's own debug views |
+
+  The game-drawn ones (paths, senses, triggers, damage, entinfo) are single
+  player only, and reach `ai_showpaths_dist` / `g_showtriggers_dist` (3000)
+  from the player. `scriptinfo [threadnum]` (fgame) prints the script threads,
+  or one in detail, through `orch.py cmd`.
 - The log, while orchestrator mode is on (single player for the game's side).
   Every line has `t`, Unix seconds, so the sidecar lines it up with speech.
   - cgame (`cg_orch.cpp`): `trail` (position, view, health, weapon, camera;

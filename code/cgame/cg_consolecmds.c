@@ -524,6 +524,7 @@ static consoleCommand_t commands[] = {
     {"orch_fly",               &CG_OrchFly_f               },
     {"orch_return",            &CG_OrchReturn_f            },
     {"orch_ghost",             &CG_OrchGhost_f             },
+    {"orch_debug",             &CG_OrchDebug_f             },
     {"viewpos",                &CG_Viewpos_f               },
     {"sizeup",                 &CG_SizeUp_f                },
     {"sizedown",               &CG_SizeDown_f              },
