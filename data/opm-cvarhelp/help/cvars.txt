@@ -525,7 +525,6 @@ g_mg42_belts	0	20	code/fgame/gamecvars.cpp:553	Belts the player has on each MG42
 g_mg42_cooldelay			code/fgame/gamecvars.cpp:547	Seconds after the last shot before an MG42 barrel starts to cool.
 g_mg42_cooldown			code/fgame/gamecvars.cpp:546	Heat an MG42 barrel sheds each second once it has stopped firing.
 g_mg42_heatmax			code/fgame/gamecvars.cpp:544	Barrel heat at which an MG42 overheats and stops firing. At 1 heat a shot and 20 rounds a second, 100 is about five seconds of fire.
-g_mg42_heatpershot			code/fgame/gamecvars.cpp:542	Heat each MG42 shot adds to the barrel.
 g_mg42_heatresume			code/fgame/gamecvars.cpp:545	Barrel heat an overheated MG42 has to cool to before it fires again.
 g_mg42_overheat	0	1	code/fgame/gamecvars.cpp:542	MG42 barrels overheat: every shot heats the barrel, and at g_mg42_heatmax the gun will not fire until it has cooled to g_mg42_heatresume. Mounted and bipod MG42s, the player's and the AI's. Server setting.
 g_mg42_overheattime	0.5	30	code/fgame/gamecvars.cpp:543	Seconds of continuous fire after which an MG42 overheats, at whatever rate it fires.
