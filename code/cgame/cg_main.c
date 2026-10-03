@@ -745,6 +745,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
 
     CG_RegisterCvars();
     CG_InitRagdoll();
+    CG_BlastInit();
     CG_InitPhysics();
     CG_BugReportInit();
     CG_OrchInit();
@@ -800,6 +801,7 @@ void CG_Shutdown(void)
     L_ShutdownEvents();
     CG_ShutdownPhysics();
     CG_ShutdownRagdoll();
+    CG_BlastShutdown();
     // Shutdown radar
     cgi.CL_InitRadar(NULL, NULL, -1);
 

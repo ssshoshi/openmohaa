@@ -1182,6 +1182,27 @@ Event EV_Client_ViewKick
     "pitchmin pitchmax yawmin yawmax recenterspeed patters pitchmax yawmax scatterpitchmax",
     "Adds kick to the view of the owner when fired."
 );
+// Added in OPM
+Event EV_Client_Blast
+(
+    "opm_blast",
+    EV_DEFAULT,
+    "f",
+    "size",
+    "An explosion of this size (1 a grenade, 3 an airstrike) here: shakes the view of a player\n"
+    "near enough, and rings his ears close up (cg_blast.cpp)."
+);
+// Added in OPM
+Event EV_Client_Explode
+(
+    "opm_explode",
+    EV_DEFAULT,
+    "s",
+    "size",
+    "Plays one of the opm-explosions effects here: small, medium or large\n"
+    "(models/fx/opm_explosion_<size>.tik), with the timing an effect model's\n"
+    "own commands can't have."
+);
 Event EV_Client_EyeLimits
 (
     "eyelimits",
@@ -1358,6 +1379,8 @@ CLASS_DECLARATION(Listener, ClientGameCommandManager, NULL) {
     {&EV_Client_Treads,                     &ClientGameCommandManager::SpawnTreads               },
     {&EV_Client_Treads_Off,                 &ClientGameCommandManager::TreadsOff                 },
     {&EV_Client_ViewKick,                   &ClientGameCommandManager::EventViewKick             },
+    {&EV_Client_Blast,                      &ClientGameCommandManager::EventBlast                },
+    {&EV_Client_Explode,                    &ClientGameCommandManager::EventExplode              },
     {NULL,                                  NULL                                                 }
 };
 
@@ -5858,6 +5881,46 @@ void ClientGameCommandManager::SetCurrentTiki(Event *ev)
     } else {
         current_tiki = NULL;
     }
+}
+
+//===============
+// EventBlast
+//
+// Added in OPM
+//===============
+void ClientGameCommandManager::EventBlast(Event *ev)
+{
+    if (!current_entity) {
+        return;
+    }
+
+    CG_BlastFeel(current_entity->origin, ev->NumArgs() > 0 ? ev->GetFloat(1) : 1.0f);
+}
+
+//===============
+// EventExplode
+//
+// Added in OPM
+//===============
+void ClientGameCommandManager::EventExplode(Event *ev)
+{
+    str size;
+    int effect;
+
+    if (!current_entity || ev->NumArgs() < 1) {
+        return;
+    }
+
+    size = ev->GetString(1);
+    if (!size.icmp("small")) {
+        effect = SFX_OPM_EXPLOSION_SMALL;
+    } else if (!size.icmp("medium")) {
+        effect = SFX_OPM_EXPLOSION_MEDIUM;
+    } else {
+        effect = SFX_OPM_EXPLOSION_LARGE;
+    }
+
+    sfxManager.MakeEffect_Normal(effect, Vector(current_entity->origin), Vector(0, 0, 1));
 }
 
 void ClientGameCommandManager::EventViewKick(Event *ev)

@@ -3034,6 +3034,57 @@ static int radiusdamage_compare(const void *elem1, const void *elem2)
     }
 }
 
+/*
+====================
+BlastPushPlayer
+
+Added in OPM
+  An explosion throws the player back, harder the closer and bigger it is,
+  and a little up, so the ground does not take it all at once (g_blastpush).
+  The view shake and the ringing ears are the client's (cg_blast.cpp). The
+  maps' own explosions are "radiusdamage" with no knockback at all.
+====================
+*/
+static void BlastPushPlayer(Player *player, const Vector& origin, float damage, float radius, int mod)
+{
+    Vector push;
+    float  closeness, speed;
+
+    if (!g_blastpush || g_blastpush->value <= 0 || radius <= 0) {
+        return;
+    }
+
+    switch (mod) {
+    case MOD_EXPLOSION:
+    case MOD_EXPLODEWALL:
+    case MOD_GRENADE:
+    case MOD_ROCKET:
+    case MOD_AAGUN:
+    case MOD_LANDMINE:
+        break;
+    default:
+        return;
+    }
+
+    if (player->movetype == MOVETYPE_NONE || player->IsDead()) {
+        return;
+    }
+
+    push      = player->centroid - origin;
+    closeness = 1.0f - push.length() / radius;
+    if (closeness <= 0) {
+        return;
+    }
+
+    push.z = 0;
+    if (push.normalize() == 0) {
+        push = Vector(0, 0, 0);
+    }
+
+    speed = g_blastpush->value * 520.0f * closeness * Q_min(1.5f, damage / 150.0f);
+    player->velocity += push * speed + Vector(0, 0, speed * 0.35f + 60.0f * closeness);
+}
+
 void RadiusDamage(
     Vector   origin,
     Entity  *inflictor,
@@ -3055,6 +3106,7 @@ void RadiusDamage(
     float               dist;
     int                 i;
     Container<Entity *> ents;
+    float               entKnockback;
 
     if (g_showdamage->integer) {
         Com_Printf("radiusdamage");
@@ -3126,6 +3178,13 @@ void RadiusDamage(
             || G_SightTrace(
                 origin, vec_zero, vec_zero, ent->centroid, inflictor, ent, MASK_EXPLOSION, false, "RadiusDamage"
             )) {
+            // Fixed in OPM
+            //  Each entity's own knockback: it was taken off the one passed in,
+            //  so each further entity got less than its distance said.
+            entKnockback = knockback;
+            org          = ent->centroid;
+            dir          = org - origin;
+
             if (constant_damage) {
                 points = damage;
             } else {
@@ -3141,9 +3200,6 @@ void RadiusDamage(
                     ent_rad = fabs(ent->maxs[2] - ent->mins[2]);
                 }
 
-                org = ent->centroid;
-                dir = org - origin;
-
                 dist = dir.length() - ent_rad;
                 if (dist < 0.0f) {
                     dist = 0.0f;
@@ -3151,14 +3207,14 @@ void RadiusDamage(
 
                 points = damage - damage * (dist / radius);
 
-                knockback -= knockback * (dist / radius);
+                entKnockback -= entKnockback * (dist / radius);
 
                 if (points < 0) {
                     points = 0;
                 }
 
-                if (knockback < 0) {
-                    knockback = 0;
+                if (entKnockback < 0) {
+                    entKnockback = 0;
                 }
             }
 
@@ -3170,7 +3226,12 @@ void RadiusDamage(
             if (points > 0 && !ent->takedamage) {
                 G_PhysicsDamaged(ent, points, org, dir);
             } else if (points > 0) {
-                ent->Damage(inflictor, attacker, points, org, dir, vec_zero, knockback, DAMAGE_RADIUS, mod);
+                ent->Damage(inflictor, attacker, points, org, dir, vec_zero, entKnockback, DAMAGE_RADIUS, mod);
+
+                // Added in OPM
+                if (ent->IsSubclassOfPlayer()) {
+                    BlastPushPlayer(static_cast<Player *>(ent), origin, damage, radius, mod);
+                }
 
                 if (g_gametype->integer == GT_SINGLE_PLAYER && weap) {
                     if (ent->IsSubclassOfPlayer() || ent->IsSubclassOfVehicle() || ent->IsSubclassOfVehicleTank()

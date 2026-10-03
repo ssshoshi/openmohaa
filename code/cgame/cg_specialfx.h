@@ -142,6 +142,12 @@ typedef enum {
     SFX_FOOT_SAND,
     SFX_FOOT_SNOW,
     SFX_FENCE_WOOD,
+    // Added in OPM
+    //  The maps' scripted explosions, played by their effect models through
+    //  "opm_explode" (opm-explosions data). Client only, so they can go here.
+    SFX_OPM_EXPLOSION_SMALL,
+    SFX_OPM_EXPLOSION_MEDIUM,
+    SFX_OPM_EXPLOSION_LARGE,
     SFX_TEST_EFFECT,
     SFX_COUNT
 } SpecialEffects;

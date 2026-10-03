@@ -402,6 +402,16 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_FENCE_WOOD:
             szEffectModel = "models/fx/fx_fence_wood.tik";
             break;
+        // Added in OPM
+        case SFX_OPM_EXPLOSION_SMALL:
+            szEffectModel = "models/fx/opm_explosion_small.tik";
+            break;
+        case SFX_OPM_EXPLOSION_MEDIUM:
+            szEffectModel = "models/fx/opm_explosion_medium.tik";
+            break;
+        case SFX_OPM_EXPLOSION_LARGE:
+            szEffectModel = "models/fx/opm_explosion_large.tik";
+            break;
         default:
             szEffectModel = "models/fx/bh_stone_hard.tik";
             break;

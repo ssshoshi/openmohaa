@@ -338,6 +338,9 @@ cvar_t *g_door_reopen_blocked;
 // Whether to run a map's add-on script (maps/<map>_opm.scr) next to its own
 cvar_t *g_mapaddons;
 
+// How hard an explosion pushes the player (RadiusDamage); 0 for not at all
+cvar_t *g_blastpush;
+
 // Enemy AI improvements (see ai_enhance.h)
 cvar_t *ai_enhanced;
 cvar_t *ai_debug;
@@ -797,6 +800,8 @@ void CVAR_Init(void)
     g_door_reopen_blocked = gi.Cvar_Get("g_door_reopen_blocked", "1", 0);
 
     g_mapaddons = gi.Cvar_Get("g_mapaddons", "1", CVAR_ARCHIVE);
+
+    g_blastpush = gi.Cvar_Get("g_blastpush", "1", CVAR_ARCHIVE);
 
     ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);

@@ -865,6 +865,12 @@ extern double cgmOpen[CGM_COUNT];
     //  A hot MG42 barrel's glow (cg_mg42.cpp)
     void CG_MG42BarrelGlow(refEntity_t *model, const entityState_t *s1);
 
+    // cg_blast.cpp
+    void CG_BlastInit(void);
+    void CG_BlastShutdown(void);
+    void CG_BlastFeel(const vec3_t origin, float size);
+    void CG_BlastUpdate(vec3_t angles);
+
     void CG_InitTestTreadMark();
     void CG_AddTreadMarks();
     int  CG_PermanentMark(
