@@ -38,21 +38,6 @@ init
 		)
 		sfx originspawn
 		(
-			model gren_explosion.spr
-			count 1
-			color 1.0 0.62 0.34
-			scalemin 0.78
-			scalemax 1.31
-			scalerate 0.7
-			life 0.6
-			offset crandom 21 crandom 21 random 27
-			randvel crandom 75 crandom 75 range 60 135
-			accel 0 0 140
-			friction 1.5
-			randomroll
-		)
-		sfx originspawn
-		(
 			model mortar_dirthit.spr
 			count 1
 			scale 0.27

@@ -35,7 +35,8 @@ OUT = os.path.join(HERE, "..", "..", "data", "opm-explosions")
 #   name: (size, sound, fire, dirt)
 EXPLOSIONS = {
     "grenexp_base":         (1.0, "grenade_explode", 0.6, True),
-    "bazookaexp_base":      (1.5, "bazooka_exp", 0.3, True),
+    # also the Flak 88's rounds (scriptbazookaexplosion): earth, no fire
+    "bazookaexp_base":      (1.5, "bazooka_exp", 0.0, True),
     "opm_explosion_small":  (1.8, None, 0.6, False),
     "opm_explosion_medium": (2.4, None, 0.6, True),
     "opm_explosion_large":  (3.0, None, 0.7, True),
@@ -89,7 +90,8 @@ def emitters(s, fire=1.0, dirt=False):
 )""" % f(2.6 * s))
 
     # the fireball: several blooms that rise
-    c.append("""originspawn
+    if fire > 0:
+        c.append("""originspawn
 (
 	model gren_explosion.spr
 	count %d
