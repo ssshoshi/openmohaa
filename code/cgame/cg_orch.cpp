@@ -54,6 +54,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // orch/log/client.<n>.jsonl, since cgame can't append to a file; each batch
 // starts with a line naming its writer and number. The game logs its own side
 // to orch/log/game.jsonl (fgame/g_orch.cpp).
+//
+// orch_debug <preset...> turns debug views on and off by name: the AI's paths
+// and senses, triggers, nodes, damage, a card describing what is looked at, a
+// frame time corner, and the renderer's own views. The panel lists what's on.
 
 // Jolt first: cg_local.h defines a LERP macro its headers collide with.
 #include "cg_physics_local.h"
@@ -143,6 +147,55 @@ typedef struct {
 } orchLog_t;
 
 static orchLog_t orchLog;
+
+// orch_debug's presets: the cvars each sets while on. "look" and "perf" are
+// also drawn here, in the panel.
+typedef struct {
+    const char *name;
+    const char *help;
+    const char *cvars[4][2];
+} orchPreset_t;
+
+static const orchPreset_t orchPresets[] = {
+    {"ai",       "AI paths, goals, patrols, leashes; their senses and enemies",
+     {{"ai_showpaths", "1"}, {"ai_showsenses", "1"}}},
+    {"entinfo",  "every entity's number, name and health; actors' think and enemy",
+     {{"g_entinfo", "4"}}},
+    {"nodes",    "path nodes and routes",
+     {{"ai_shownode", "30"}, {"ai_showroutes", "1"}}},
+    {"triggers", "trigger boxes and what they target",
+     {{"g_showtriggers", "1"}}},
+    {"cameras",  "script cameras",
+     {{"sv_showcameras", "1"}}},
+    {"combat",   "damage where it lands, grenade decisions",
+     {{"g_showdamage", "1"}, {"ai_debug_grenades", "1"}}},
+    {"look",     "a card on what the crosshair is on",
+     {{"g_entinfo", "1"}}},
+    {"perf",     "frame time and entity count; GPU timers",
+     {{"r_gpuTimers", "1"}}},
+    {"tris",     "triangle outlines",
+     {{"r_showtris", "1"}}},
+    {"normals",  "surface normals",
+     {{"r_shownormals", "1"}}},
+    {"bbox",     "entity bounding boxes",
+     {{"sv_showbboxes", "4"}}},
+    {"entnums",  "entity numbers",
+     {{"sv_showentnums", "1"}}},
+};
+
+#define ORCH_NUM_PRESETS (int)(sizeof(orchPresets) / sizeof(orchPresets[0]))
+
+typedef struct {
+    qboolean on[ORCH_NUM_PRESETS];
+    char     saved[ORCH_NUM_PRESETS][4][32]; // the cvars' values before
+
+    pick_t look;
+    int    lookAt; // when look was picked
+    int    frameMs[32];
+    int    nextFrame;
+} orchDebug_t;
+
+static orchDebug_t orchDebug;
 
 static void CG_OrchFreecamEnd(qboolean here);
 
@@ -297,6 +350,7 @@ static void CG_OrchLogFrame(void)
     const int frame = orchLog.frameAt ? now - orchLog.frameAt : 0;
 
     orchLog.frameAt = now;
+    orchDebug.frameMs[orchDebug.nextFrame++ % 32] = frame;
     if (!orch_active->integer) {
         orchLog.buf.clear();
         return;
@@ -748,6 +802,190 @@ qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles)
 // Every frame
 //=============================================================
 
+//=============================================================
+// Debug views
+//=============================================================
+
+static void CG_OrchPresetSet(int p, qboolean on)
+{
+    const orchPreset_t *preset = &orchPresets[p];
+
+    if (orchDebug.on[p] == on) {
+        return;
+    }
+    for (int i = 0; i < 4 && preset->cvars[i][0]; i++) {
+        if (on) {
+            Q_strncpyz(orchDebug.saved[p][i], cgi.Cvar_Get(preset->cvars[i][0], "0", 0)->string, sizeof(orchDebug.saved[p][i]));
+            cgi.Cvar_Set(preset->cvars[i][0], preset->cvars[i][1]);
+        } else {
+            // Unless another preset still wants it.
+            qboolean shared = qfalse;
+
+            for (int q = 0; q < ORCH_NUM_PRESETS; q++) {
+                for (int k = 0; q != p && orchDebug.on[q] && k < 4 && orchPresets[q].cvars[k][0]; k++) {
+                    shared |= !Q_stricmp(orchPresets[q].cvars[k][0], preset->cvars[i][0]);
+                }
+            }
+            if (!shared) {
+                cgi.Cvar_Set(preset->cvars[i][0], orchDebug.saved[p][i][0] ? orchDebug.saved[p][i] : "0");
+            }
+        }
+    }
+    orchDebug.on[p] = on;
+}
+
+static std::string CG_OrchPresetsOn(void)
+{
+    std::string list;
+
+    for (int p = 0; p < ORCH_NUM_PRESETS; p++) {
+        if (orchDebug.on[p]) {
+            list += list.empty() ? "" : " ";
+            list += orchPresets[p].name;
+        }
+    }
+    return list;
+}
+
+void CG_OrchDebug_f(void)
+{
+    const int argc = cgi.Argc();
+
+    if (argc < 2) {
+        cgi.Printf("orch_debug <preset...> toggles each; orch_debug off; on now: %s\n", CG_OrchPresetsOn().c_str());
+        for (int p = 0; p < ORCH_NUM_PRESETS; p++) {
+            cgi.Printf("  %-9s %s\n", orchPresets[p].name, orchPresets[p].help);
+        }
+        return;
+    }
+
+    for (int a = 1; a < argc; a++) {
+        const char *name = cgi.Argv(a);
+        int         p;
+
+        if (!Q_stricmp(name, "off")) {
+            for (p = 0; p < ORCH_NUM_PRESETS; p++) {
+                CG_OrchPresetSet(p, qfalse);
+            }
+            continue;
+        }
+        for (p = 0; p < ORCH_NUM_PRESETS; p++) {
+            if (!Q_stricmp(name, orchPresets[p].name)) {
+                break;
+            }
+        }
+        if (p == ORCH_NUM_PRESETS) {
+            cgi.Printf("orch_debug: no preset '%s' (orch_debug lists them)\n", name);
+            continue;
+        }
+        CG_OrchPresetSet(p, (qboolean)!orchDebug.on[p]);
+    }
+
+    // For the next cgame (vid_restart, loads), which would not know.
+    cgi.Cvar_Set("orch_debugon", CG_OrchPresetsOn().c_str());
+    cgi.Printf("orch_debug: %s\n", CG_OrchPresetsOn().empty() ? "off" : CG_OrchPresetsOn().c_str());
+    CG_OrchLog("debug", "\"on\": " + CG_JsonString(CG_OrchPresetsOn().c_str()));
+}
+
+static qboolean CG_OrchPresetOn(const char *name)
+{
+    for (int p = 0; p < ORCH_NUM_PRESETS; p++) {
+        if (!Q_stricmp(orchPresets[p].name, name)) {
+            return orchDebug.on[p];
+        }
+    }
+    return qfalse;
+}
+
+// Lines for the panel: the presets on, the look card, the frame times.
+// Returns the y below them.
+static float CG_OrchDrawDebug(float x, float y, float line, fontheader_t *font)
+{
+    const std::string on = CG_OrchPresetsOn();
+    vec4_t            color;
+    char              text[256];
+
+    if (on.empty()) {
+        return y;
+    }
+
+    CG_OrchColor(color, 0.6f, 1.0f, 0.6f, 1.0f);
+    cgi.R_SetColor(color);
+    Com_sprintf(text, sizeof(text), "DEBUG  %s", on.c_str());
+    cgi.R_DrawString(font, text, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+    y += line;
+
+    CG_OrchColor(color, 0.85f, 0.85f, 0.85f, 1.0f);
+    cgi.R_SetColor(color);
+
+    if (CG_OrchPresetOn("perf")) {
+        int total = 0, worst = 0, n = 0;
+
+        for (int i = 0; i < 32; i++) {
+            if (orchDebug.frameMs[i] > 0) {
+                total += orchDebug.frameMs[i];
+                worst = Q_max(worst, orchDebug.frameMs[i]);
+                n++;
+            }
+        }
+        Com_sprintf(
+            text,
+            sizeof(text),
+            "%.0f fps  %.1f ms  worst %d ms  %d entities",
+            n && total ? 1000.0f * n / total : 0.0f,
+            n ? (float)total / n : 0.0f,
+            worst,
+            cg.snap->numEntities
+        );
+        cgi.R_DrawString(font, text, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+        y += line;
+    }
+
+    if (CG_OrchPresetOn("look")) {
+        const pick_t *pick = &orchDebug.look;
+
+        if (cgi.Milliseconds() - orchDebug.lookAt > ORCH_LOG_SAMPLE) {
+            CG_Pick(&orchDebug.look);
+            orchDebug.lookAt = cgi.Milliseconds();
+        }
+
+        Q_strncpyz(text, CG_PickSummary(pick).c_str(), 72);
+        cgi.R_DrawString(font, text, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+        y += line;
+        if (pick->hit) {
+            if (pick->target.kind == PICK_TARGET_ENTITY) {
+                const centity_t *cent = &cg_entities[pick->target.index];
+
+                Com_sprintf(
+                    text,
+                    sizeof(text),
+                    "#%d %s  %.0f away  at %.0f %.0f %.0f",
+                    pick->target.index,
+                    CG_PickETypeName(cent->currentState.eType),
+                    Distance(cg.refdef.vieworg, pick->hitPos),
+                    cent->lerpOrigin[0],
+                    cent->lerpOrigin[1],
+                    cent->lerpOrigin[2]
+                );
+            } else {
+                Com_sprintf(
+                    text,
+                    sizeof(text),
+                    "%s  %.0f away  flags 0x%x  contents 0x%x",
+                    pick->hitShader,
+                    Distance(cg.refdef.vieworg, pick->hitPos),
+                    pick->hitSurfaceFlags,
+                    pick->hitContents
+                );
+            }
+            cgi.R_DrawString(font, text, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+            y += line;
+        }
+    }
+
+    return y;
+}
+
 // Before the scene is drawn, so the outline is in the frame the marked
 // screenshot is taken from.
 void CG_OrchFrame(void)
@@ -930,6 +1168,7 @@ static void CG_OrchDrawPanel(void)
             );
             y += line;
         }
+        y = CG_OrchDrawDebug(x, y, line, font);
         y += line * 0.4f;
     }
 
@@ -1010,6 +1249,22 @@ void CG_OrchInit(void)
 
     memset(&orch, 0, sizeof(orch));
     memset(&fc, 0, sizeof(fc));
+    // The presets the last cgame left on; their cvars are still set. What
+    // they were before is lost, so off sets 0.
+    memset(&orchDebug, 0, sizeof(orchDebug));
+    {
+        char list[256];
+        char *p = list;
+
+        Q_strncpyz(list, cgi.Cvar_Get("orch_debugon", "", 0)->string, sizeof(list));
+        for (const char *tok = COM_Parse(&p); p && tok && *tok; tok = COM_Parse(&p)) {
+            for (int k = 0; k < ORCH_NUM_PRESETS; k++) {
+                if (!Q_stricmp(tok, orchPresets[k].name)) {
+                    orchDebug.on[k] = qtrue;
+                }
+            }
+        }
+    }
     orchLog           = orchLog_t();
     orchLog.writer    = (long long)(CG_OrchNow() * 1000.0);
     orchLog.startedAt = cgi.Milliseconds();

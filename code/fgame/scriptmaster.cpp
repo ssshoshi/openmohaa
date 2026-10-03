@@ -1247,6 +1247,9 @@ void ScriptMaster::PrintThread(int iThreadNum)
 
     if (!bFoundThread) {
         gi.Printf("Can't find thread id %i.\n", iThreadNum);
+        // Fixed in OPM
+        //  vm is NULL then
+        return;
     }
 
     status = "-------------------------\n";
@@ -1268,7 +1271,7 @@ void ScriptMaster::PrintThread(int iThreadNum)
     status += "label: '" + vm->Label() + "'\n";
     status += "waittill: ";
 
-    if (!vm->m_Thread->m_WaitForList) {
+    if (!vm->m_Thread || !vm->m_Thread->m_WaitForList) {
         status += "(none)\n";
     } else {
         con_set_enum<const_str, ConList>    en = *vm->m_Thread->m_WaitForList;

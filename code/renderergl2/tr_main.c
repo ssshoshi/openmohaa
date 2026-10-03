@@ -2145,6 +2145,21 @@ void R_RenderView (viewParms_t *parms) {
 	//=========================
 	// the portal sky surfaces are gathered again for each view
 	R_Sky_Reset();
+
+	// Added in OPM
+	//  The game's 3D text (G_DebugString: g_entinfo, ai_showpaths, print3d,
+	//  sv_showtags...), which GL2 never drew. Once a scene, in the main view
+	//  only: not in shadow maps, cubemaps or portals, which are views too.
+	if (!(tr.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC)) && !tr.viewParms.isPortal
+		&& !(glRefConfig.framebufferObject && tr.renderCubeFbo && tr.viewParms.targetFbo == tr.renderCubeFbo)) {
+		static int lastFrame = -1, lastScene = -1;
+
+		if (lastFrame != tr.frameCount || lastScene != tr.frameSceneNum) {
+			lastFrame = tr.frameCount;
+			lastScene = tr.frameSceneNum;
+			R_DrawDebugStrings();
+		}
+	}
 	//=========================
 
 	R_GenerateDrawSurfs();

@@ -2664,16 +2664,21 @@ void Entity::Damage(
     ev->AddInteger(location);
 
     // Added in OPM
-    //  The orchestrator's log (g_orch.cpp)
-    if (G_OrchLogging()) {
+    //  The orchestrator's log and g_showdamage (g_orch.cpp)
+    if (G_OrchWantsDamage()) {
         const float     healthBefore = health;
         const EntityPtr This         = this;
         const EntityPtr by           = attacker;
         const EntityPtr with         = inflictor;
 
         ProcessEvent(ev);
-        if (This) {
-            G_OrchLogDamage(this, by, with, damage, meansofdeath, location, healthBefore);
+        if (This && takedamage != DAMAGE_NO && this != world) {
+            const float taken = healthBefore - health;
+
+            if (G_OrchLogging()) {
+                G_OrchLogDamage(this, by, with, damage, meansofdeath, location, healthBefore);
+            }
+            G_OrchShowDamage(position, direction, taken > 0 ? taken : damage, healthBefore > 0 && health <= 0);
         }
         return;
     }
@@ -5592,7 +5597,9 @@ void Entity::ShowInfo(float fDot, float fDist)
     if (fDot > 0.94999999 && fDist < 1024.0 && fDist > 64.0) {
         i = Com_sprintf(szText, sizeof(szText), "%i:%i", entnum, radnum);
         if (targetname.length()) {
-            i = Com_sprintf(szText + i, sizeof(szText) - i, ":%s", targetname.c_str());
+            // Fixed in OPM
+            //  Appended to, not written over by the health
+            i += Com_sprintf(szText + i, sizeof(szText) - i, ":%s", targetname.c_str());
         }
 
         if (health != 0) {

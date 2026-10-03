@@ -276,6 +276,8 @@ void G_InitGame(int levelTime, int randomSeed)
     level.svsStartTime = levelTime;
 
     G_InitConsoleCommands();
+    // Added in OPM
+    G_OrchDebugInit();
 
     Director.Reset();
     Actor::Init();
@@ -460,11 +462,16 @@ void G_AddGEntity(gentity_t *edict, qboolean showentnums)
 
     if (g_entinfo->integer
         && (g_pPlayer && (edict->r.lastNetTime >= level.inttime - 200 || ent->IsSubclassOfPlayer()))) {
-        float fDist = (g_pPlayer->centroid - g_pPlayer->EyePosition()).length();
+        // Fixed in OPM
+        //  From the eye to the entity, not to the player's own centre, and
+        //  with how squarely it is looked at: ShowInfo shows what is in front
+        //  and near (or everything, with g_entinfo 4)
+        Vector delta = ent->centroid - g_pPlayer->EyePosition();
+        float  fDist = delta.length();
 
         if (fDist != 0.0f) {
-            float fDot = _DotProduct(g_vEyeDir, (g_pPlayer->centroid - g_pPlayer->EyePosition()));
-            ent->ShowInfo(0, fDist);
+            float fDot = _DotProduct(g_vEyeDir, delta) / fDist;
+            ent->ShowInfo(fDot, fDist);
         }
     }
 }
@@ -684,6 +691,10 @@ void G_RunFrame(int levelTime, int frameTime)
             G_ClientDrawBoundingBoxes();
             G_ClientDrawTags();
         }
+
+        // Added in OPM
+        //  ai_showpaths, g_showtriggers and the like
+        G_OrchDebugFrame();
 
         G_UpdateMatchEndTime();
         G_CheckExitRules();
