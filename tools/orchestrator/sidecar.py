@@ -567,6 +567,10 @@ class Sidecar:
 
             # Keep the command directory tidy: the game answers every file.
             tick += 1
+            # The game forgets it on every load and vid_restart, and misses
+            # what was sent before it was up: say it again now and then.
+            if tick % 60 == 0 and self.status and self.status != "off":
+                self.game(f"orch_status {self.status}")
             if tick % 20 == 0:
                 for out in glob.glob(os.path.join(self.cmd_dir, "sc_*.out")):
                     try:

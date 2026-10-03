@@ -73,6 +73,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define ORCH_MSG_FADE    2000
 #define ORCH_OUTLINE     1500 // ms the shot's target stays outlined
 #define ORCH_MSG_LEN     512
+#define ORCH_VOICE_STALE 10000 // ms without a status from the sidecar before "no voice"
 
 #define ORCH_LOG_SLOTS   64   // client.<n>.jsonl files in the ring
 #define ORCH_LOG_EVERY   500  // ms between batches
@@ -109,6 +110,7 @@ typedef struct {
 
     char status[32];
     char statusKey[32]; // the push-to-talk key, with status "ready"
+    int  statusAt;      // cgi.Milliseconds() it last came; the sidecar repeats it every 3 s
 } orchState_t;
 
 static orchState_t orch;
@@ -522,6 +524,9 @@ void CG_OrchStatus_f(void)
 {
     Q_strncpyz(orch.status, cgi.Argc() > 1 ? cgi.Argv(1) : "", sizeof(orch.status));
     Q_strncpyz(orch.statusKey, cgi.Argc() > 2 ? cgi.Argv(2) : "", sizeof(orch.statusKey));
+    orch.statusAt = cgi.Milliseconds();
+    // For the next cgame (a load, vid_restart), which starts without it.
+    cgi.Cvar_Set("orch_voice", va("%s %s", orch.status, orch.statusKey));
 }
 
 void CG_OrchState_f(void)
@@ -1154,6 +1159,13 @@ static void CG_OrchDrawPanel(void)
         const char *label = "ORCH";
 
         CG_OrchColor(color, 0.7f, 0.7f, 0.7f, 1.0f);
+        // Nothing from the sidecar for a while: it has stopped.
+        if (orch.statusAt == -1) {
+            orch.statusAt = cgi.Milliseconds();
+        } else if (cgi.Milliseconds() - orch.statusAt > ORCH_VOICE_STALE) {
+            orch.status[0] = 0;
+        }
+
         if (!Q_stricmp(orch.status, "listening")) {
             label = "ORCH  [REC]";
             CG_OrchColor(color, 1.0f, 0.35f, 0.3f, 1.0f);
@@ -1303,6 +1315,18 @@ void CG_OrchInit(void)
     orchLog.startedAt = cgi.Milliseconds();
     // Loads, vid_restart and map changes all start a new cgame.
     CG_OrchLog("cgame_start", "");
+    // The voice status the last cgame had, as fresh as when it came.
+    {
+        char  voice[64];
+        char *p = voice;
+
+        Q_strncpyz(voice, cgi.Cvar_Get("orch_voice", "", 0)->string, sizeof(voice));
+        Q_strncpyz(orch.status, COM_Parse(&p), sizeof(orch.status));
+        Q_strncpyz(orch.statusKey, p ? COM_Parse(&p) : "", sizeof(orch.statusKey));
+        // Timed from the first frame: loading takes longer than it stays fresh.
+        orch.statusAt = -1;
+    }
+
     // A camera left on by the last cgame (vid_restart while frozen).
     cgi.Cvar_Set("cl_freecam", "0");
 }
