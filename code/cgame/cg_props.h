@@ -86,6 +86,7 @@ extern "C" {
     void CG_PropSetPose(int index, const vec3_t origin, const vec3_t axis[3]);
     // Whether a static model gets no collision at all, by its name.
     qboolean CG_PropSkipped(const char *name);
+    int      CG_PropsFoliageNear(const vec3_t pos, float radius, vec3_t *points, float *near, int max);
 
 #ifdef __cplusplus
 }

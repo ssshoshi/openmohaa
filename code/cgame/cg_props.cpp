@@ -190,6 +190,76 @@ qboolean CG_PropSkipped(const char *name)
     return qfalse;
 }
 
+// Added in OPM
+//  Whether a static model is foliage, by its name.
+static qboolean CG_PropFoliage(const char *name)
+{
+    static const char *words[] = {"tree", "bush", "plant", "foliage", "palm", "vine", "ivy", "fern",
+                                  "hedge", "leaf", "leaves", "branch", "shrub"};
+    char   lower[128];
+    size_t i;
+
+    Q_strncpyz(lower, name, sizeof(lower));
+    Q_strlwr(lower);
+    for (i = 0; i < ARRAY_LEN(words); i++) {
+        if (strstr(lower, words[i])) {
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
+/*
+====================
+CG_PropsFoliageNear
+
+Added in OPM
+  The map's foliage within radius of pos: a point in the upper part of each
+  one's box, in the world, and how near it is (1 at pos, 0 at radius). For an
+  explosion's falling leaves (cg_blast.cpp).
+====================
+*/
+int CG_PropsFoliageNear(const vec3_t pos, float radius, vec3_t *points, float *near, int max)
+{
+    int i, k, n = 0;
+
+    CG_PropsLoad();
+
+    for (i = 0; i < cg_numProps && n < max; i++) {
+        const cgProp_t *p = &cg_props[i];
+        vec3_t          local, world;
+        float           size, dist;
+
+        if (pos[0] < p->absmin[0] - radius || pos[0] > p->absmax[0] + radius || pos[1] < p->absmin[1] - radius
+            || pos[1] > p->absmax[1] + radius || pos[2] < p->absmin[2] - radius || pos[2] > p->absmax[2] + radius) {
+            continue;
+        }
+        if (!CG_PropFoliage(p->name)) {
+            continue;
+        }
+
+        for (k = 0; k < 3; k++) {
+            local[k] = p->mins[k] + (p->maxs[k] - p->mins[k]) * (k == 2 ? 0.55f + 0.4f * random() : random());
+        }
+        VectorCopy(p->origin, world);
+        for (k = 0; k < 3; k++) {
+            VectorMA(world, local[k], p->axis[k], world);
+        }
+
+        size = 0.5f * Distance(p->absmin, p->absmax);
+        dist = Distance(world, pos) - size * 0.5f;
+        if (dist >= radius) {
+            continue;
+        }
+
+        VectorCopy(world, points[n]);
+        near[n] = 1.0f - Q_max(0.0f, dist) / radius;
+        n++;
+    }
+
+    return n;
+}
+
 // The box round a static model, in its own frame: from its skinned mesh, or
 // from the model's own bounds if the renderer cannot skin it.
 static qboolean CG_PropFit(const cStaticModel_t *in, const char *path, cgProp_t *out)

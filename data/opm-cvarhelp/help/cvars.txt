@@ -57,9 +57,10 @@ cg_allowvote	0	1	code/client/cl_ui.cpp:2492	Whether the server allows votes. The
 cg_animationviewmodel	0	1	code/cgame/cg_main.c:178	Keep animating the first-person weapon (view model) even while dead or in states that normally freeze it. Set by the server.
 cg_animspeed			code/cgame/cg_main.c:145	Speed multiplier for client-side animation playback, for debugging animations. 1 is normal speed. Cheat-protected.
 cg_autoswitch	0	1	code/client/cl_main.cpp:3691	Switch to a weapon automatically when you pick up one that is better than the one in your hands.
-cg_blastring	0	1	code/cgame/cg_blast.cpp:59	Close to an explosion your ears ring and the other sounds are muffled for a few seconds.
-cg_blastshake	0	3	code/cgame/cg_blast.cpp:58	How much a nearby explosion shakes the view (0 none).
-cg_blastvolume			code/cgame/cg_blast.cpp:60	Internal: your s_volume, kept while the ears ring from an explosion and put back after.
+cg_blastleaves	0	2	code/cgame/cg_blast.cpp:75	An explosion near trees, bushes and hedges brings their leaves down, as a bullet does but many times over (2 also prints how many).
+cg_blastring	0	1	code/cgame/cg_blast.cpp:73	Close to an explosion your ears ring and the other sounds are muffled for a few seconds.
+cg_blastshake	0	3	code/cgame/cg_blast.cpp:72	How much a nearby explosion shakes the view (0 none).
+cg_blastvolume			code/cgame/cg_blast.cpp:74	Internal: your s_volume, kept while the ears ring from an explosion and put back after.
 cg_cameradist			code/cgame/cg_main.c:161	Third-person camera: how far behind the player the camera sits, in game units.
 cg_cameraheight			code/cgame/cg_main.c:160	Third-person camera: how high above the player's origin the camera aims, in game units.
 cg_camerascale			code/cgame/cg_main.c:163	Third-person camera: how quickly the camera eases toward its target position (0 to 1; higher follows more tightly).
