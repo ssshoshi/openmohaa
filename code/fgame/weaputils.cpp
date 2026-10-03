@@ -2385,12 +2385,18 @@ float BulletAttack(
                             gi.MSG_WriteBits(bulletlarge, bulletbits);
                             gi.MSG_EndCGM();
                         } else if (trace.location >= 0 && ent->IsSubclassOfSentient()) {
+                            // Added in OPM
+                            //  Back along the bullet, not the hit box face's normal: a
+                            //  hit on the side of a box sent the blood (and the wall
+                            //  splat behind) off sideways. cgame flips it into the body.
+                            Vector vBack = vDir * -1;
+
                             gi.SetBroadcastVisible(vTmpEnd, NULL);
                             gi.MSG_StartCGM(BG_MapCGMToProtocol(g_protocol, CGM_BULLET_8));
                             gi.MSG_WriteCoord(vTmpEnd[0]);
                             gi.MSG_WriteCoord(vTmpEnd[1]);
                             gi.MSG_WriteCoord(vTmpEnd[2]);
-                            gi.MSG_WriteDir(trace.plane.normal);
+                            gi.MSG_WriteDir(vBack);
                             gi.MSG_WriteBits(bulletlarge, bulletbits);
                             gi.MSG_EndCGM();
                         } else if (ent->edict->r.contents & CONTENTS_SOLID) {
