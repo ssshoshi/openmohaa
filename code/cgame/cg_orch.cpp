@@ -29,7 +29,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // talks while holding a key the sidecar watches (MOUSE4). orch_shot
 // (MOUSE3) then takes a screenshot and writes what is under the crosshair to
 // orch/events/<id>.json in the home path, which the voice sidecar puts on the
-// same timeline as what was said. Replies come back as orch_msg commands,
+// same timeline as what was said. orch_mark (MOUSE5) writes the same without
+// a screenshot or a save: several things pointed at in one breath. Replies come back as orch_msg commands,
 // through the command directory (com_cmddir), and are shown in a panel.
 //
 // orch_freeze (F11) pauses the world and lets the player walk, or fly with
@@ -63,6 +64,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_physics_local.h"
 #include "cg_orch.h"
 #include "cg_pick.h"
+#include "cg_ragdoll.h"
 
 #include <chrono>
 #include <ctime>
@@ -97,6 +99,12 @@ typedef struct {
     qboolean heard; // the player's words, as the sidecar understood them
 } orchMsg_t;
 
+// Marks (orch_mark, MOUSE5): what is under the crosshair, written like a shot
+// but with no screenshot or save. Those of the last minute are outlined on
+// the next shot too, so one picture shows every thing pointed at.
+#define ORCH_MAX_MARKS 8
+#define ORCH_MARK_KEEP 60000
+
 typedef struct {
     int    shotState;
     int    shotFrames;
@@ -104,6 +112,21 @@ typedef struct {
     char   shotId[64];
     pick_t pick;
     int    outlineUntil;
+
+    pick_t marks[ORCH_MAX_MARKS];
+    int    markTime[ORCH_MAX_MARKS]; // cgi.Milliseconds() it was made, 0 for none
+    int    nextMark;
+    int    markFlashUntil; // the newest mark outlined on its own for a moment
+
+    // Holding the mark key (+orch_mark): what it would mark, chosen with the
+    // wheel from everything on the crosshair's line, nearest first; index
+    // numCands is "nothing". Marked on release.
+    qboolean selecting;
+    pick_t   cands[PICK_MAX_ALL + 1];
+    int      numCands;
+    int      selIndex;
+    char     wheelUp[MAX_STRING_CHARS]; // what the wheel did, given back on release
+    char     wheelDown[MAX_STRING_CHARS];
 
     orchMsg_t msgs[ORCH_MAX_MSGS];
     int       nextMsg;
@@ -207,6 +230,7 @@ typedef struct {
 static orchDebug_t orchDebug;
 
 static void CG_OrchFreecamEnd(qboolean here);
+static void CG_OrchSelectEnd(void);
 
 //=============================================================
 // Helpers
@@ -427,20 +451,27 @@ static std::string CG_OrchPlayerJson(const char *indent)
     return j;
 }
 
-static void CG_OrchWriteShot(void)
+static void CG_OrchWriteShot(qboolean mark)
 {
     const qboolean sp   = CG_OrchSinglePlayer();
-    const qboolean save = sp && orch_shotsave->integer ? qtrue : qfalse;
+    const qboolean save = sp && orch_shotsave->integer && !mark ? qtrue : qfalse;
     std::string    j;
 
     j += "{\n";
     j += "  \"schema\": 1,\n";
+    j += va("  \"kind\": \"%s\",\n", mark ? "mark" : "shot");
     j += "  \"id\": " + CG_JsonString(orch.shotId) + ",\n";
     j += va("  \"real_ms\": %d,\n", cgi.Milliseconds());
     j += CG_OrchPlayerJson("  ") + ",\n";
     j += "  \"summary\": " + CG_JsonString(CG_PickSummary(&orch.pick).c_str()) + ",\n";
     j += "  \"aim\": {\n" + CG_PickAimJson(&orch.pick, cg.refdef.vieworg, "    ") + "\n  },\n";
     j += "  \"target\": {\n" + CG_PickTargetJson(&orch.pick, "    ") + "\n  },\n";
+    if (mark) {
+        j += "  \"files\": {}\n";
+        j += "}\n";
+        cgi.FS_WriteFile(va("orch/events/%s.json", orch.shotId), j.c_str(), (int)j.length());
+        return;
+    }
     j += "  \"files\": {\n";
     j += va("    \"screenshot\": \"screenshots/orch_%s.jpg\",\n", orch.shotId);
     j += va("    \"screenshot_marked\": \"screenshots/orch_%s_marked.jpg\"", orch.shotId);
@@ -472,6 +503,9 @@ void CG_Orch_f(void)
     if (!on && fc.active) {
         CG_OrchFreecamEnd(qfalse);
     }
+    if (!on) {
+        CG_OrchSelectEnd();
+    }
     cgi.Cvar_Set("orch_active", on ? "1" : "0");
     CG_OrchAddMsg(on ? "Orchestrator on" : "Orchestrator off", qfalse);
     cgi.Printf("orch: %s\n", on ? "on" : "off");
@@ -489,12 +523,127 @@ void CG_OrchShot_f(void)
 
     CG_Pick(&orch.pick);
     CG_OrchMakeId();
-    CG_OrchWriteShot();
+    CG_OrchWriteShot(qfalse);
 
     orch.shotState  = ORCH_SHOT_CLEAN;
     orch.shotFrames = 0;
     cgi.Printf("orch: shot %s %s\n", orch.shotId, CG_PickSummary(&orch.pick).c_str());
     CG_OrchLog("shot", "\"id\": " + CG_JsonString(orch.shotId) + ", \"what\": " + CG_JsonString(CG_PickSummary(&orch.pick).c_str()));
+}
+
+static void CG_OrchMarkPick(const pick_t *chosen)
+{
+    pick_t *p;
+
+    if (orch.shotState != ORCH_SHOT_IDLE) {
+        // A shot is being taken under the same id.
+        return;
+    }
+
+    p  = &orch.marks[orch.nextMark];
+    *p = *chosen;
+    orch.pick = *p;
+    CG_OrchMakeId();
+    CG_OrchWriteShot(qtrue);
+
+    orch.markTime[orch.nextMark] = cgi.Milliseconds();
+    orch.nextMark                = (orch.nextMark + 1) % ORCH_MAX_MARKS;
+    orch.markFlashUntil          = cgi.Milliseconds() + ORCH_OUTLINE;
+
+    CG_OrchAddMsg(va("Marked: %s", CG_PickSummary(p).c_str()), qfalse);
+    cgi.Printf("orch: mark %s %s\n", orch.shotId, CG_PickSummary(p).c_str());
+    CG_OrchLog("mark", "\"id\": " + CG_JsonString(orch.shotId) + ", \"what\": " + CG_JsonString(CG_PickSummary(p).c_str()));
+}
+
+// The wheel given back if cgame goes while the mark key is held.
+void CG_OrchShutdown(void)
+{
+    CG_OrchSelectEnd();
+}
+
+// orch_mark: marks what is under the crosshair at once (scripts, tests).
+void CG_OrchMark_f(void)
+{
+    pick_t p;
+
+    if (!cg.snap || !orch_active->integer) {
+        return;
+    }
+    CG_Pick(&p);
+    CG_OrchMarkPick(&p);
+}
+
+static void CG_OrchSetBind(const char *key, const char *command)
+{
+    if (command[0]) {
+        cgi.Cmd_Execute(EXEC_APPEND, va("bind %s \"%s\"\n", key, command));
+    } else {
+        cgi.Cmd_Execute(EXEC_APPEND, va("unbind %s\n", key));
+    }
+}
+
+static void CG_OrchSelectEnd(void)
+{
+    if (!orch.selecting) {
+        return;
+    }
+    orch.selecting = qfalse;
+    CG_OrchSetBind("MWHEELUP", orch.wheelUp);
+    CG_OrchSetBind("MWHEELDOWN", orch.wheelDown);
+}
+
+// +orch_mark (MOUSE5 held): choose what to mark; the wheel goes through what
+// is on the crosshair's line while it is held.
+void CG_OrchMarkDown_f(void)
+{
+    if (!cg.snap || !orch_active->integer || orch.selecting) {
+        return;
+    }
+    orch.selecting = qtrue;
+    orch.selIndex  = 0;
+    orch.numCands  = CG_PickAll(orch.cands, PICK_MAX_ALL + 1);
+
+    // What the wheel does now, to give back: the ragdoll grabber's commands
+    // while cg_ragdoll_grab is on, the player's own while it is off.
+    CG_RagdollKeyBinding("MWHEELUP", orch.wheelUp, sizeof(orch.wheelUp));
+    CG_RagdollKeyBinding("MWHEELDOWN", orch.wheelDown, sizeof(orch.wheelDown));
+    CG_OrchSetBind("MWHEELUP", "orch_markcycle -1");
+    CG_OrchSetBind("MWHEELDOWN", "orch_markcycle 1");
+}
+
+// -orch_mark (MOUSE5 let go): marks the choice, or nothing.
+void CG_OrchMarkUp_f(void)
+{
+    if (!orch.selecting) {
+        return;
+    }
+    if (orch.selIndex < orch.numCands) {
+        CG_OrchMarkPick(&orch.cands[orch.selIndex]);
+    } else {
+        CG_OrchAddMsg("Mark cancelled", qfalse);
+    }
+    CG_OrchSelectEnd();
+}
+
+void CG_OrchMarkCycle_f(void)
+{
+    const int step = cgi.Argc() > 1 ? atoi(cgi.Argv(1)) : 1;
+
+    if (!orch.selecting) {
+        return;
+    }
+    // numCands + 1 choices: each thing on the line, then nothing.
+    orch.selIndex = (orch.selIndex + step + orch.numCands + 1) % (orch.numCands + 1);
+}
+
+static void CG_OrchOutline(const pick_t *p)
+{
+    if (p->target.kind == PICK_TARGET_PROP || p->target.kind == PICK_TARGET_ENTITY) {
+        CG_PickDrawBox(&p->target, 0.2f, 1.0f, 0.4f);
+    }
+    if (p->hit) {
+        CG_PickDrawHit(p, 1.0f, 0.4f, 0.2f);
+    }
 }
 
 void CG_OrchMsg_f(void)
@@ -1035,12 +1184,27 @@ void CG_OrchFrame(void)
     CG_OrchLogFrame();
 
     if (orch.outlineUntil - cgi.Milliseconds() > 0) {
-        if (orch.pick.target.kind == PICK_TARGET_PROP || orch.pick.target.kind == PICK_TARGET_ENTITY) {
-            CG_PickDrawBox(&orch.pick.target, 0.2f, 1.0f, 0.4f);
+        int i;
+
+        CG_OrchOutline(&orch.pick);
+        // and what was marked in the last minute
+        for (i = 0; i < ORCH_MAX_MARKS; i++) {
+            if (orch.markTime[i] && cgi.Milliseconds() - orch.markTime[i] < ORCH_MARK_KEEP) {
+                CG_OrchOutline(&orch.marks[i]);
+            }
         }
-        if (orch.pick.hit) {
-            CG_PickDrawHit(&orch.pick, 1.0f, 0.4f, 0.2f);
+    } else if (orch.selecting) {
+        // The line moves with the view: what is on it now, the choice kept
+        // by its place in the list.
+        orch.numCands = CG_PickAll(orch.cands, PICK_MAX_ALL + 1);
+        if (orch.selIndex > orch.numCands) {
+            orch.selIndex = orch.numCands;
         }
+        if (orch.selIndex < orch.numCands) {
+            CG_OrchOutline(&orch.cands[orch.selIndex]);
+        }
+    } else if (orch.markFlashUntil - cgi.Milliseconds() > 0) {
+        CG_OrchOutline(&orch.marks[(orch.nextMark + ORCH_MAX_MARKS - 1) % ORCH_MAX_MARKS]);
     }
 }
 
@@ -1267,6 +1431,27 @@ void CG_OrchDraw2D(void)
     }
 
     CG_OrchDrawPanel();
+
+    if (orch.selecting) {
+        fontheader_t *font = cgs.media.attackerFont;
+        const char   *what = orch.selIndex < orch.numCands
+                               ? va("Mark: %s  (%d of %d)", CG_PickSummary(&orch.cands[orch.selIndex]).c_str(),
+                                    orch.selIndex + 1, orch.numCands)
+                               : "Mark: nothing (let go to cancel)";
+        const char   *help = "wheel: what is behind / in front   let go: mark";
+        const float   y    = cgs.glconfig.vidHeight * 0.56f;
+        vec4_t        color;
+
+        CG_OrchColor(color, 0.4f, 1.0f, 0.5f, 1.0f);
+        cgi.R_SetColor(color);
+        cgi.R_DrawString(font, what, cgs.glconfig.vidWidth * 0.5f / cgs.uiHiResScale[0] - 160.0f,
+                         y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+        CG_OrchColor(color, 0.8f, 0.8f, 0.8f, 0.8f);
+        cgi.R_SetColor(color);
+        cgi.R_DrawString(font, help, cgs.glconfig.vidWidth * 0.5f / cgs.uiHiResScale[0] - 160.0f,
+                         (y + 18.0f * cgs.uiHiResScale[1]) / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+        cgi.R_SetColor(NULL);
+    }
 }
 
 void CG_OrchInit(void)
@@ -1289,6 +1474,9 @@ void CG_OrchInit(void)
         }
         if (bound < 3) {
             cgi.Cmd_Execute(EXEC_APPEND, "bind b orch_ghost\nseta orch_bound 3\n");
+        }
+        if (bound < 4) {
+            cgi.Cmd_Execute(EXEC_APPEND, "bind MOUSE5 +orch_mark\nseta orch_bound 4\n");
         }
     }
 

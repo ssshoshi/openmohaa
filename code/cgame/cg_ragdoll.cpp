@@ -8308,6 +8308,52 @@ static void CG_RagdollReadBinds(char *saved, int size)
     }
 }
 
+/*
+====================
+CG_RagdollKeyBinding
+
+Added in OPM
+  What one of the keys the grabber takes over (MOUSE2, MOUSE3, the wheel)
+  is bound to now: the grabber's command while cg_ragdoll_grab is on, the
+  player's own (from the config, or stock) while it is off. For other code
+  that borrows such a key for a moment and must give it back (orch_mark's
+  wheel); the engine gives cgame no way to read a binding.
+====================
+*/
+qboolean CG_RagdollKeyBinding(const char *key, char *out, int size)
+{
+    char        saved[MAX_STRING_CHARS];
+    const char *p;
+    int         i;
+
+    out[0] = 0;
+    for (i = 0; i < RD_NUM_GRAB_BINDS; i++) {
+        if (!Q_stricmp(rd_grabBinds[i].key, key)) {
+            break;
+        }
+    }
+    if (i == RD_NUM_GRAB_BINDS) {
+        return qfalse;
+    }
+    if (cg_ragdoll_grab && cg_ragdoll_grab->integer) {
+        Q_strncpyz(out, rd_grabBinds[i].command, size);
+        return qtrue;
+    }
+
+    CG_RagdollReadBinds(saved, sizeof(saved));
+    p = Q_stristr(saved, va("%s=", key));
+    if (p) {
+        int n = 0;
+
+        p += strlen(key) + 1;
+        while (*p && *p != '|' && n < size - 1) {
+            out[n++] = *p++;
+        }
+        out[n] = 0;
+    }
+    return qtrue;
+}
+
 // Puts back the bindings in saved, or the stock ones if there are none.
 static void CG_RagdollRestoreBinds(const char *saved)
 {

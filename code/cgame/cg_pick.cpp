@@ -179,16 +179,26 @@ static qboolean CG_PickTooBig(const vec3_t mins, const vec3_t maxs)
              : qfalse;
 }
 
-void CG_Pick(pick_t *pick)
+// Everything the crosshair's line passes through, nearest first: each prop and
+// entity it meets before the world, then the world surface it ends on. Out
+// holds max; returns how many. Added in OPM, for picking what to mark from
+// what is in front of it (cg_orch.cpp).
+int CG_PickAll(pick_t *out, int max)
 {
+    pick_t        base;
+    pick_t       *pick = &base;
+    float         dist[PICK_MAX_ALL];
+    int           n = 0;
     const float  *start = cg.refdef.vieworg;
     const float  *dir   = cg.refdef.viewaxis[0];
     pickTarget_t  best;
     float         bestAt, at;
+    pickTarget_t  found[PICK_MAX_ALL];
     trace_t       tr, first;
     vec3_t        end;
     baseshader_t *shader;
 
+    memset(&base, 0, sizeof(base));
     memset(&best, 0, sizeof(best));
     best.index = -1;
 
@@ -252,8 +262,9 @@ void CG_Pick(pick_t *pick)
         if (CG_PickTooBig(p->mins, p->maxs) || CG_PickInBox(start, p->origin, p->axis, p->mins, p->maxs)) {
             continue;
         }
-        if (CG_PhysicsRayHitsBox(start, dir, PICK_RANGE, p->origin, p->axis, p->mins, p->maxs, &at) && at < bestAt) {
-            bestAt     = at;
+        if (CG_PhysicsRayHitsBox(start, dir, PICK_RANGE, p->origin, p->axis, p->mins, p->maxs, &at) && at < bestAt
+            && n < PICK_MAX_ALL) {
+            memset(&best, 0, sizeof(best));
             best.kind  = PICK_TARGET_PROP;
             best.index = i;
             VectorCopy(p->origin, best.origin);
@@ -261,6 +272,8 @@ void CG_Pick(pick_t *pick)
             VectorCopy(p->mins, best.mins);
             VectorCopy(p->maxs, best.maxs);
             Q_strncpyz(best.model, p->name, sizeof(best.model));
+            found[n] = best;
+            dist[n++] = at;
         }
     }
 
@@ -275,8 +288,9 @@ void CG_Pick(pick_t *pick)
             || CG_PickInBox(start, origin, axis, mins, maxs)) {
             continue;
         }
-        if (CG_PhysicsRayHitsBox(start, dir, PICK_RANGE, origin, axis, mins, maxs, &at) && at < bestAt) {
-            bestAt     = at;
+        if (CG_PhysicsRayHitsBox(start, dir, PICK_RANGE, origin, axis, mins, maxs, &at) && at < bestAt
+            && n < PICK_MAX_ALL) {
+            memset(&best, 0, sizeof(best));
             best.kind  = PICK_TARGET_ENTITY;
             best.index = es->number;
             VectorCopy(origin, best.origin);
@@ -288,10 +302,50 @@ void CG_Pick(pick_t *pick)
             } else {
                 best.model[0] = 0;
             }
+            found[n] = best;
+            dist[n++] = at;
         }
     }
 
-    pick->target = best;
+    // Nearest first, then the world surface the line ends on.
+    for (int i = 1; i < n; i++) {
+        for (int j = i; j > 0 && dist[j] < dist[j - 1]; j--) {
+            pickTarget_t t = found[j];
+            float        d = dist[j];
+            found[j]       = found[j - 1];
+            dist[j]        = dist[j - 1];
+            found[j - 1]   = t;
+            dist[j - 1]    = d;
+        }
+    }
+
+    int count = 0;
+    for (int i = 0; i < n && count < max; i++) {
+        out[count]        = base;
+        out[count].target = found[i];
+        count++;
+    }
+    if (base.hit && count < max) {
+        out[count]              = base;
+        out[count].target.kind  = PICK_TARGET_WORLD;
+        out[count].target.index = -1;
+        count++;
+    }
+    return count;
+}
+
+void CG_Pick(pick_t *pick)
+{
+    pick_t all[PICK_MAX_ALL + 1];
+    int    n = CG_PickAll(all, PICK_MAX_ALL + 1);
+
+    if (n) {
+        *pick = all[0];
+        return;
+    }
+    memset(pick, 0, sizeof(*pick));
+    pick->target.kind  = PICK_TARGET_NONE;
+    pick->target.index = -1;
 }
 
 void CG_PickDrawBox(const pickTarget_t *t, float r, float g, float b)

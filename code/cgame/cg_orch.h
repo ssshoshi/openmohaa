@@ -37,6 +37,11 @@ extern "C" {
     void CG_Orch_f(void);
     // orch_shot: a screenshot with what is under the crosshair.
     void CG_OrchShot_f(void);
+    void CG_OrchMark_f(void);
+    void CG_OrchShutdown(void);
+    void CG_OrchMarkDown_f(void);
+    void CG_OrchMarkUp_f(void);
+    void CG_OrchMarkCycle_f(void);
     // orch_msg <text>: a reply from the agent, shown in the panel.
     void CG_OrchMsg_f(void);
     // orch_status <ready [key]|listening|thinking|speaking|muted|off>: the voice sidecar's state.
