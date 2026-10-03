@@ -615,6 +615,13 @@ void CL_ParseGamestate( msg_t *msg ) {
 		FS_ConditionalRestart(clc.checksumFeed, qfalse);
 	}
 
+	// Added in OPM: single player paks are left out of a multiplayer game,
+	// another's server's as well as this one's.
+	FS_SetMultiplayer(
+		atoi(Info_ValueForKey(cl.gameState.stringData + cl.gameState.stringOffsets[CS_SERVERINFO], "g_gametype"))
+		!= GT_SINGLE_PLAYER
+	);
+
 	clc.state = CA_LOADING;
     if (!com_sv_running->integer)
     {

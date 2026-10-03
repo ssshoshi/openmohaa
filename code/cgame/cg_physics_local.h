@@ -40,6 +40,7 @@ extern JPH::PhysicsSystem *phys_system;
 
 // cg_physics.cpp
 qboolean CG_PhysicsCanRemoveStandIns(void);
+qboolean CG_PhysicsPropsMove(void);
 qboolean CG_PhysicsClippedPropsMove(void);
 
 // cg_physics_world.cpp: a brush out of the collision model (a prop's stand-in

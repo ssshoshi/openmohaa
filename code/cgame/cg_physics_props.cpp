@@ -240,7 +240,7 @@ void CG_PhysicsLoadProps(void)
     for (int i = 0; i < cg_numProps; i++) {
         cgProp_t             *p        = &cg_props[i];
         const physMaterial_t *material = CG_PhysicsMaterial(p->name);
-        const qboolean        moves    = (p->dynamic && canMove && cg_physics_props->integer
+        const qboolean        moves    = (p->dynamic && canMove && CG_PhysicsPropsMove() && cg_physics_props->integer
                                   && (!p->clipped || CG_PhysicsClippedPropsMove()))
                                          ? qtrue
                                          : qfalse;
@@ -326,7 +326,9 @@ void CG_PhysicsLoadProps(void)
             CG_PhysicsCanRemoveStandIns() ? "the clip brushes go when they move"
             : cg_physics_clipped->integer ? "moving anyway, the clip brushes stay"
                                           : "kept fixed",
-            canMove ? "" : " (this engine cannot move static models, so none move)"
+            !CG_PhysicsPropsMove() ? " (multiplayer, so none move)"
+            : canMove              ? ""
+                                   : " (this engine cannot move static models, so none move)"
         );
     }
 }

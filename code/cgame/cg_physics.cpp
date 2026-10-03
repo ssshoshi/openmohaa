@@ -121,10 +121,18 @@ qboolean CG_PhysicsCanRemoveStandIns(void)
              : qfalse;
 }
 
+// Whether the map's props and furniture move at all: in single player only. In
+// multiplayer each client would knock them about its own way, and the ragdolls
+// are the only physics there; the props stay, fixed, for them to lie on.
+qboolean CG_PhysicsPropsMove(void)
+{
+    return cgs.gametype == GT_SINGLE_PLAYER ? qtrue : qfalse;
+}
+
 // Whether props wrapped in clip brushes move at all.
 qboolean CG_PhysicsClippedPropsMove(void)
 {
-    return (CG_PhysicsCanRemoveStandIns() || cg_physics_clipped->integer) ? qtrue : qfalse;
+    return (CG_PhysicsPropsMove() && (CG_PhysicsCanRemoveStandIns() || cg_physics_clipped->integer)) ? qtrue : qfalse;
 }
 
 void CG_ShutdownPhysics(void)

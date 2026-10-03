@@ -649,6 +649,10 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 	sv.restarting = ( keep_scripts || !differentmap );
 	strncpy( last_mapname, mapname, sizeof( last_mapname ) );
 
+	// Added in OPM: single player paks are left out of a multiplayer game,
+	// before anything of the map's is loaded.
+	FS_SetMultiplayer( g_gametype->integer != GT_SINGLE_PLAYER );
+
 	// if not running a dedicated server CL_MapLoading will connect the client to the server
 	// also print some status stuff
 	CL_MapLoading( differentmap, mapname );

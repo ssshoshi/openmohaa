@@ -881,6 +881,10 @@ void FS_ClearPakReferences( int flags );
 
 void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames );
 void FS_PureServerSetLoadedPaks( const char *pakSums, const char *pakNames );
+
+// Added in OPM: hides the paks fs_singlePlayerPaks names while the game in
+// progress is a multiplayer one.
+void FS_SetMultiplayer( qboolean multiplayer );
 // If the string is empty, all data sources will be allowed.
 // If not empty, only pk3 files that match one of the space
 // separated checksums will be checked for files, with the

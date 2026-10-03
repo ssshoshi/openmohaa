@@ -20,6 +20,14 @@ OpenMoHAA uses a dedicated home directory by default for user data and mods. Thi
 - Linux: `~/.openmohaa`
 - macOS: `~/Library/Application Support/openmohaa`
 
+### Single player mods
+
+Some mods are for single player only. The MOHAIM iron sights mod, for one, also changes how every player in a multiplayer game aims, sways and sees a crosshair. The pk3 files that `fs_singlePlayerPaks` names are not used while the game in progress is a multiplayer one, whether this game hosts it or another server does. They are used again in single player.
+
+|Name                 |Default    |Description
+|---------------------|-----------|-----------
+|fs_singlePlayerPaks  |`*MOHAIM*` |pk3 files, by name without `.pk3`, used in single player only. Each word is a pattern, and `*` matches anything. Takes effect on the next map. `path` marks those left out
+
 ### Configure the network components
 
 Network settings can be adjusted to use either IPv4, IPv6, or both. By default, IPv6 is disabled on dedicated servers.
@@ -216,8 +224,9 @@ To calculate IP subnets, search for `IP subnet calculator` on Internet.
 
 Props are rigid bodies (Jolt Physics) that bullets, explosions and falling bodies knock about.
 
-- Entity props (crates, barrels and cans, magazines, helmets shot off) are simulated by the server, so every client sees them move. In single player so are the weapons, ammunition and health lying about, placed or dropped; in multiplayer those stay where the game puts them.
-- The map's static-model clutter and furniture, and furniture built from world brushes (tables, benches, crates), are simulated by the client. Sides a prop was built without (nodraw or caulk, never meant to be seen) are covered with its own texture once it moves. That is cosmetic, except in single player: there the clip brushes that stood in for a prop are removed from collision once it moves.
+- Physics is single player only. In multiplayer the ragdolls are the only physics: props and furniture stay where the map puts them (the ragdolls still lie on them), and crates, barrels and helmets behave as in the original game.
+- Entity props (crates, barrels and cans, magazines, helmets shot off) are simulated by the server, and so are the weapons, ammunition and health lying about, placed or dropped.
+- The map's static-model clutter and furniture, and furniture built from world brushes (tables, benches, crates), are simulated by the client. Sides a prop was built without (nodraw or caulk, never meant to be seen) are covered with its own texture once it moves. The clip brushes that stood in for a prop are removed from collision once it moves.
 
 |Name                 |Default|Description
 |---------------------|-------|-----------
@@ -227,7 +236,7 @@ Props are rigid bodies (Jolt Physics) that bullets, explosions and falling bodie
 |cg_physics           |1      |Client physics on or off
 |cg_physics_props     |1      |Small static models move (takes effect on map load)
 |cg_physics_furniture |1      |Furniture built from world brushes moves (takes effect on map load)
-|cg_physics_clipped   |0      |Props wrapped in clip brushes move even when the clip brushes cannot be removed (multiplayer); the clip brushes then stay where the prop was
+|cg_physics_clipped   |0      |Props wrapped in clip brushes move even when the clip brushes cannot be removed (a single player server in another process); the clip brushes then stay where the prop was
 |cg_physics_log       |0      |1 reports load and step costs, 2 also blasts, hits and each piece of furniture
 |cg_ragdoll_solver    |0      |0: corpses are the particle ragdoll. 1: once the blend out of the death animation ends, a Jolt ragdoll (rigid capsules, hinged knees and elbows, a man's range at the hips and shoulders) carries the body, colliding with the map, props, people and other corpses
 |cg_physics_debug     |0      |1 draws the physics world's shapes near the view; 3 draws every brush prop turned over where it stands, with the sides it was built without covered (4: without the covers), to check them
