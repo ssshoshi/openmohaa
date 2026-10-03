@@ -173,6 +173,10 @@ static const orchPreset_t orchPresets[] = {
      {{"g_entinfo", "1"}}},
     {"perf",     "frame time and entity count; GPU timers",
      {{"r_gpuTimers", "1"}}},
+    {"scripts",  "the script threads near you and the map's, in the panel",
+     {}},
+    {"sounds",   "a marker and the name on each sound playing",
+     {{"s_showsounds", "1"}}},
     {"tris",     "triangle outlines",
      {{"r_showtris", "1"}}},
     {"normals",  "surface normals",
@@ -191,6 +195,9 @@ typedef struct {
 
     pick_t look;
     int    lookAt; // when look was picked
+
+    char scripts[1024]; // the game's last answer to orch_scripts, lines split by |
+    int  scriptsAskedAt;
     int    frameMs[32];
     int    nextFrame;
 } orchDebug_t;
@@ -887,6 +894,11 @@ void CG_OrchDebug_f(void)
     CG_OrchLog("debug", "\"on\": " + CG_JsonString(CG_OrchPresetsOn().c_str()));
 }
 
+void CG_OrchScriptsReply(const char *text)
+{
+    Q_strncpyz(orchDebug.scripts, text, sizeof(orchDebug.scripts));
+}
+
 static qboolean CG_OrchPresetOn(const char *name)
 {
     for (int p = 0; p < ORCH_NUM_PRESETS; p++) {
@@ -939,6 +951,27 @@ static float CG_OrchDrawDebug(float x, float y, float line, fontheader_t *font)
         );
         cgi.R_DrawString(font, text, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
         y += line;
+    }
+
+    if (CG_OrchPresetOn("scripts")) {
+        char  copy[sizeof(orchDebug.scripts)];
+        char *p, *bar;
+
+        // Once a second; the answer comes back as a server command.
+        if (cgi.Milliseconds() - orchDebug.scriptsAskedAt > 1000) {
+            orchDebug.scriptsAskedAt = cgi.Milliseconds();
+            cgi.SendClientCommand("orch_scripts");
+        }
+
+        Q_strncpyz(copy, orchDebug.scripts[0] ? orchDebug.scripts : "(asking the game)", sizeof(copy));
+        for (p = copy; p; p = bar) {
+            bar = strchr(p, '|');
+            if (bar) {
+                *bar++ = 0;
+            }
+            cgi.R_DrawString(font, p, x / cgs.uiHiResScale[0], y / cgs.uiHiResScale[1], -1, cgs.uiHiResScale);
+            y += line;
+        }
     }
 
     if (CG_OrchPresetOn("look")) {

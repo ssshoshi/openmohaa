@@ -66,3 +66,7 @@ qboolean G_OrchScriptInfoCmd(struct gentity_s *ent);
 // Files under orch/ are compiled afresh each time (the agent's snippets);
 // others, a map's own script say, are run as loaded. Single player.
 qboolean G_OrchRunScriptCmd(struct gentity_s *ent);
+// orch_scripts (from cgame, every second while its "scripts" preset is on):
+// answers "orch_scripts <lines>" with the script threads near the player and
+// the map script's, where each is and what it waits for.
+qboolean G_OrchScriptsCmd(struct gentity_s *ent);

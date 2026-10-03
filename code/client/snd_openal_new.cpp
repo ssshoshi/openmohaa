@@ -5136,3 +5136,57 @@ unsigned int openal_channel_two_d_stream::getBitsPerSample() const
 
     return bits * channels;
 }
+
+/*
+==============
+S_ActiveSoundMarkers
+
+Added in OPM.
+The 3D sounds playing and the looping sounds, for s_showsounds (cl_scrn.cpp).
+==============
+*/
+int S_ActiveSoundMarkers(soundMarker_t *out, int max)
+{
+    int n = 0;
+    int i;
+
+    if (!s_bSoundStarted) {
+        return 0;
+    }
+
+    for (i = 0; i < MAX_SOUNDSYSTEM_CHANNELS_3D && n < max; i++) {
+        openal_channel *chan = openal.channel[i];
+        ALint           status;
+
+        if (!chan || !chan->pSfx || chan->pSfx == (sfx_t *)-16 || (chan->iFlags & CHANNEL_FLAG_LOCAL_LISTENER)) {
+            continue;
+        }
+        qalGetSourceiv(chan->source, AL_SOURCE_STATE, &status);
+        if (status != AL_PLAYING) {
+            continue;
+        }
+
+        VectorCopy(chan->vOrigin, out[n].origin);
+        out[n].volume  = chan->fVolume;
+        out[n].entnum  = chan->iEntNum;
+        out[n].looping = (chan->iFlags & CHANNEL_FLAG_LOOPING) ? qtrue : qfalse;
+        Q_strncpyz(out[n].name, chan->pSfx->name, sizeof(out[n].name));
+        n++;
+    }
+
+    for (i = 0; i < MAX_SOUNDSYSTEM_LOOP_SOUNDS && n < max; i++) {
+        const openal_loop_sound_t *loop = &openal.loop_sounds[i];
+
+        if (!loop->bInUse || !loop->bPlaying || !loop->pSfx) {
+            continue;
+        }
+        VectorCopy(loop->vOrigin, out[n].origin);
+        out[n].volume  = loop->fVolume;
+        out[n].entnum  = -1;
+        out[n].looping = qtrue;
+        Q_strncpyz(out[n].name, loop->pSfx->name, sizeof(out[n].name));
+        n++;
+    }
+
+    return n;
+}

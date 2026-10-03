@@ -53,6 +53,8 @@ extern "C" {
     void CG_OrchGhost_f(void);
     // orch_debug [preset...|off]: debug views by name; no argument lists them.
     void CG_OrchDebug_f(void);
+    // The game's answer to orch_scripts (server command), for the panel.
+    void CG_OrchScriptsReply(const char *text);
     // orch_fly: walk or fly while frozen; noclip otherwise.
     void CG_OrchFly_f(void);
     // orch_return: back to where the player last froze.

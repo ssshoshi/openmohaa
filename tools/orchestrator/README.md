@@ -118,6 +118,8 @@ model files (about 340 MB) download to `%LOCALAPPDATA%\openmohaa-orch\kokoro`.
   | `combat` | a rising number where each hit lands, and its direction (`g_showdamage`); grenade decisions |
   | `look` | a card in the panel on what the crosshair is on, and the game's label over it |
   | `perf` | fps, frame time, worst frame and entity count in the panel; `r_gpuTimers` |
+  | `scripts` | the script threads near you (their `self` within 1500 units) and the map script's, in the panel: file:line, waiting on what, whose; asked of the game every second (`orch_scripts`) |
+  | `sounds` | a box and the name, entity and distance on each 3D and looping sound playing; one-shots yellow, loops cyan (`s_showsounds`, drawn by the exe from the sound channels and the last world view) |
   | `tris`, `normals`, `bbox`, `entnums` | the renderer's and server's own debug views |
 
   The game-drawn ones (paths, senses, triggers, damage, entinfo) are single

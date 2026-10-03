@@ -476,6 +476,103 @@ void SCR_DrawScreenField( void ) {
 
 /*
 ==================
+SCR_DrawSoundMarkers
+
+Added in OPM.
+s_showsounds 1: a marker and the name on each sound playing in the world,
+projected with the view cgame last drew the world from. Looping sounds in
+cyan, the rest in yellow. Single player only: it shows what can't be seen.
+==================
+*/
+#define MAX_SOUND_MARKERS 96
+
+void SCR_DrawSoundMarkers( void ) {
+	static cvar_t		*s_showsounds;
+	static const float	pixels[2] = { 1.0f, 1.0f };
+	soundMarker_t		markers[MAX_SOUND_MARKERS];
+	const refdef_t		*fd = &cl_lastWorldRefdef;
+	fontheader_t		*font;
+	float				tx, ty;
+	float				placed[MAX_SOUND_MARKERS][2]; // where labels went, to stack ones that would overlap
+	int					numPlaced = 0;
+	int					n, i, k;
+
+	if ( !s_showsounds ) {
+		s_showsounds = Cvar_Get( "s_showsounds", "0", CVAR_CHEAT );
+	}
+	if ( !s_showsounds->integer || !com_sv_running->integer || Cvar_VariableIntegerValue( "g_gametype" ) != 0 ) {
+		return;
+	}
+	if ( cls.realtime - cl_lastWorldRefdefTime > 500 || fd->fov_x <= 0 || fd->fov_y <= 0 ) {
+		return;
+	}
+
+	font = re.LoadFont( "verdana-14" );
+	if ( !font ) {
+		return;
+	}
+
+	tx = tan( DEG2RAD( fd->fov_x ) * 0.5f );
+	ty = tan( DEG2RAD( fd->fov_y ) * 0.5f );
+	n = S_ActiveSoundMarkers( markers, MAX_SOUND_MARKERS );
+
+	for ( i = 0; i < n; i++ ) {
+		vec3_t		d;
+		float		fwd, left, up, sx, sy;
+		const char	*name, *slash;
+		char		label[96];
+		vec4_t		color;
+
+		VectorSubtract( markers[i].origin, fd->vieworg, d );
+		fwd = DotProduct( d, fd->viewaxis[0] );
+		left = DotProduct( d, fd->viewaxis[1] );
+		up = DotProduct( d, fd->viewaxis[2] );
+		// Behind, or at the listener's own head.
+		if ( fwd < 16.0f || VectorLength( d ) < 48.0f ) {
+			continue;
+		}
+
+		sx = fd->x + fd->width * 0.5f * ( 1.0f - left / fwd / tx );
+		sy = fd->y + fd->height * 0.5f * ( 1.0f - up / fwd / ty );
+		if ( sx < fd->x || sx > fd->x + fd->width || sy < fd->y || sy > fd->y + fd->height ) {
+			continue;
+		}
+
+		name = markers[i].name;
+		slash = strrchr( name, '/' );
+		name = slash ? slash + 1 : name;
+		if ( markers[i].entnum >= 0 ) {
+			Com_sprintf( label, sizeof( label ), "%s #%d %.0f", name, markers[i].entnum, VectorLength( d ) );
+		} else {
+			Com_sprintf( label, sizeof( label ), "%s %.0f", name, VectorLength( d ) );
+		}
+
+		if ( markers[i].looping ) {
+			VectorSet( color, 0.3f, 0.9f, 1.0f );
+		} else {
+			VectorSet( color, 1.0f, 0.9f, 0.3f );
+		}
+		color[3] = 1.0f;
+		re.SetColor( color );
+		re.DrawBox( sx - 3, sy - 3, 6, 6 );
+
+		// Impacts land in heaps: one line under another.
+		for ( k = 0; k < numPlaced; k++ ) {
+			if ( fabs( placed[k][0] - sx ) < 160 && fabs( placed[k][1] - sy ) < 14 ) {
+				sy = placed[k][1] + 14;
+				k = -1;
+			}
+		}
+		placed[numPlaced][0] = sx;
+		placed[numPlaced][1] = sy;
+		numPlaced++;
+		re.DrawString( font, label, sx + 6, sy - 7, -1, pixels );
+	}
+	re.SetColor( NULL );
+}
+
+/*
+==================
 UpdateStereoSide
 ==================
 */

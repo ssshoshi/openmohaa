@@ -770,6 +770,25 @@ qboolean CL_VideoRecording( void );
 //
 void CL_InitConsoleCommands( void );
 
+//
+// Added in OPM: s_showsounds, a marker on each sound playing in the world
+//
+typedef struct {
+	vec3_t		origin;
+	float		volume;
+	int			entnum;
+	qboolean	looping;
+	char		name[64];
+} soundMarker_t;
+
+// snd_openal_new.cpp: the 3D sounds playing and the looping ones
+int S_ActiveSoundMarkers( soundMarker_t *out, int max );
+// cl_cgame.cpp: the last scene cgame drew with the world in it
+extern refdef_t	cl_lastWorldRefdef;
+extern int		cl_lastWorldRefdefTime;
+// cl_scrn.cpp
+void SCR_DrawSoundMarkers( void );
+
 #ifdef __cplusplus
 }
 #endif
