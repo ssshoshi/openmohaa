@@ -46,12 +46,21 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //   screenshots/orch_<id>.jpg      the clean frame
 //   screenshots/orch_<id>_marked.jpg  the same, the target outlined
 // and in single player the savegame orch_<id>, to come back to that moment.
+//
+// While the mode is on, what the player does is logged for the sidecar to put
+// next to what was said: where they are and look (every 250 ms, when it
+// changes), what is under the crosshair (when it changes), long frames, and
+// shots, freezes and the like. It goes out in batches, to a ring of files
+// orch/log/client.<n>.jsonl, since cgame can't append to a file; each batch
+// starts with a line naming its writer and number. The game logs its own side
+// to orch/log/game.jsonl (fgame/g_orch.cpp).
 
 // Jolt first: cg_local.h defines a LERP macro its headers collide with.
 #include "cg_physics_local.h"
 #include "cg_orch.h"
 #include "cg_pick.h"
 
+#include <chrono>
 #include <ctime>
 #include <string>
 
@@ -60,6 +69,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define ORCH_MSG_FADE    2000
 #define ORCH_OUTLINE     1500 // ms the shot's target stays outlined
 #define ORCH_MSG_LEN     512
+
+#define ORCH_LOG_SLOTS   64   // client.<n>.jsonl files in the ring
+#define ORCH_LOG_EVERY   500  // ms between batches
+#define ORCH_LOG_SAMPLE  250  // ms between looks at the trail and the gaze
+#define ORCH_LOG_QUIET   5000 // ms the trail goes unlogged when nothing moves
+#define ORCH_HITCH_MS    50   // a frame longer than this is logged
 
 static cvar_t *orch_active;
 static cvar_t *orch_shotsave;
@@ -110,6 +125,25 @@ typedef struct {
 
 static orchFreecam_t fc;
 
+// The log, while the mode is on.
+typedef struct {
+    std::string buf;       // lines not written yet
+    long long   writer;    // when this cgame started, ms: names its batches
+    int         batch;
+    int         flushedAt;
+    int         sampledAt;
+    int         trailAt;   // when the trail was last logged
+    vec3_t      trailOrigin, trailAngles;
+    int         trailHealth;
+    std::string trailWeapon;
+    std::string gaze;
+    int         frameAt;   // the last frame's cgi.Milliseconds()
+    int         startedAt;
+    std::string map;
+} orchLog_t;
+
+static orchLog_t orchLog;
+
 static void CG_OrchFreecamEnd(qboolean here);
 
 //=============================================================
@@ -137,6 +171,157 @@ static void CG_OrchAddMsg(const char *text, qboolean heard)
     m->time  = cgi.Milliseconds();
     m->heard = heard;
     orch.nextMsg = (orch.nextMsg + 1) % ORCH_MAX_MSGS;
+}
+
+//=============================================================
+// The log
+//=============================================================
+
+static double CG_OrchNow(void)
+{
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0;
+}
+
+// One line; members are the JSON members after "t" and "type", no braces.
+static void CG_OrchLog(const char *type, const std::string& members)
+{
+    if (!orch_active || !orch_active->integer) {
+        return;
+    }
+
+    orchLog.buf += va("{\"t\": %.3f, \"type\": \"%s\"", CG_OrchNow(), type);
+    if (!members.empty()) {
+        orchLog.buf += ", " + members;
+    }
+    orchLog.buf += "}\n";
+}
+
+static void CG_OrchLogFlush(qboolean force)
+{
+    std::string out;
+
+    if (orchLog.buf.empty() || (!force && cgi.Milliseconds() - orchLog.flushedAt < ORCH_LOG_EVERY)) {
+        return;
+    }
+
+    out = va("{\"writer\": %lld, \"batch\": %d}\n", orchLog.writer, orchLog.batch);
+    out += orchLog.buf;
+    cgi.FS_WriteFile(va("orch/log/client.%02d.jsonl", orchLog.batch % ORCH_LOG_SLOTS), out.c_str(), (int)out.length());
+
+    orchLog.batch++;
+    orchLog.buf.clear();
+    orchLog.flushedAt = cgi.Milliseconds();
+}
+
+static const char *CG_OrchCamMode(void)
+{
+    if (!fc.active) {
+        return NULL;
+    }
+    return fc.live ? "ghost" : "frozen";
+}
+
+static void CG_OrchLogTrail(int now)
+{
+    const playerState_t *ps     = &cg.predicted_player_state;
+    const int            health = cg.snap->ps.stats[STAT_HEALTH];
+    const char          *mode   = CG_OrchCamMode();
+    std::string          weapon;
+    std::string          j;
+    vec3_t               d;
+    qboolean             moved;
+
+    if (cg.snap->ps.activeItems[1] >= 0) {
+        weapon = CG_ConfigString(CS_WEAPONS + cg.snap->ps.activeItems[1]);
+    }
+
+    // The camera's view, when it is off on its own.
+    VectorSubtract(cg.refdef.vieworg, orchLog.trailOrigin, d);
+    moved = VectorLength(d) > 4.0f || fabs(AngleSubtract(cg.refdefViewAngles[YAW], orchLog.trailAngles[YAW])) > 5.0f
+         || fabs(AngleSubtract(cg.refdefViewAngles[PITCH], orchLog.trailAngles[PITCH])) > 5.0f;
+    if (!moved && health == orchLog.trailHealth && weapon == orchLog.trailWeapon && now - orchLog.trailAt < ORCH_LOG_QUIET) {
+        return;
+    }
+
+    VectorCopy(cg.refdef.vieworg, orchLog.trailOrigin);
+    VectorCopy(cg.refdefViewAngles, orchLog.trailAngles);
+    orchLog.trailHealth = health;
+    orchLog.trailWeapon = weapon;
+    orchLog.trailAt     = now;
+
+    j += "\"origin\": " + CG_JsonVec(ps->origin);
+    j += ", \"view\": " + CG_JsonVec(cg.refdef.vieworg);
+    j += ", \"angles\": " + CG_JsonVec(cg.refdefViewAngles);
+    j += va(", \"health\": %d", health);
+    if (!weapon.empty()) {
+        j += ", \"weapon\": " + CG_JsonString(weapon.c_str());
+    }
+    if (ps->pm_flags & PMF_DUCKED) {
+        j += ", \"crouched\": true";
+    }
+    if (mode) {
+        j += va(", \"camera\": \"%s\"", mode);
+    }
+    CG_OrchLog("trail", j);
+}
+
+static void CG_OrchLogGaze(void)
+{
+    pick_t      pick;
+    std::string what;
+    std::string j;
+
+    CG_Pick(&pick);
+    what = CG_PickSummary(&pick);
+    if (what == orchLog.gaze) {
+        return;
+    }
+    orchLog.gaze = what;
+
+    j = "\"what\": " + CG_JsonString(what.c_str());
+    if (pick.hit) {
+        j += va(", \"distance\": %.0f", Distance(cg.refdef.vieworg, pick.hitPos));
+        j += ", \"at\": " + CG_JsonVec(pick.hitPos);
+    }
+    if (pick.target.kind == PICK_TARGET_ENTITY) {
+        j += va(", \"entity\": %d", pick.target.index);
+    }
+    CG_OrchLog("gaze", j);
+}
+
+// Every frame, while the mode is on.
+static void CG_OrchLogFrame(void)
+{
+    const int now   = cgi.Milliseconds();
+    const int frame = orchLog.frameAt ? now - orchLog.frameAt : 0;
+
+    orchLog.frameAt = now;
+    if (!orch_active->integer) {
+        orchLog.buf.clear();
+        return;
+    }
+
+    if (orchLog.map != CG_PickMapName()) {
+        orchLog.map = CG_PickMapName();
+        CG_OrchLog("level", "\"map\": " + CG_JsonString(orchLog.map.c_str()) + va(", \"server_time\": %d", cg.snap->serverTime));
+    }
+
+    // Not the load, and not the screenshots the orchestrator takes.
+    if (frame > ORCH_HITCH_MS && now - orchLog.startedAt > 3000 && orch.shotState == ORCH_SHOT_IDLE) {
+        CG_OrchLog(
+            "hitch",
+            va("\"ms\": %d, \"entities\": %d, \"server_time\": %d", frame, cg.snap->numEntities, cg.snap->serverTime)
+        );
+    }
+
+    if (now - orchLog.sampledAt >= ORCH_LOG_SAMPLE) {
+        orchLog.sampledAt = now;
+        CG_OrchLogTrail(now);
+        CG_OrchLogGaze();
+    }
+
+    CG_OrchLogFlush(qfalse);
 }
 
 static void CG_OrchMakeId(void)
@@ -246,6 +431,7 @@ void CG_OrchShot_f(void)
     orch.shotState  = ORCH_SHOT_CLEAN;
     orch.shotFrames = 0;
     cgi.Printf("orch: shot %s %s\n", orch.shotId, CG_PickSummary(&orch.pick).c_str());
+    CG_OrchLog("shot", "\"id\": " + CG_JsonString(orch.shotId) + ", \"what\": " + CG_JsonString(CG_PickSummary(&orch.pick).c_str()));
 }
 
 void CG_OrchMsg_f(void)
@@ -335,6 +521,7 @@ static void CG_OrchFreecamBegin(qboolean live)
     }
     fc.live   = live;
     fc.health = cg.snap->ps.stats[STAT_HEALTH];
+    CG_OrchLog(live ? "ghost" : "freeze", "\"body\": " + CG_JsonVec(fc.frozeAt));
 
     if (live) {
         cgi.Cvar_Set("cl_freecam", "2");
@@ -413,6 +600,7 @@ static void CG_OrchFreecamEnd(qboolean here)
         cgi.SendClientCommand(va("tele %.1f %.1f %.1f", fc.ps.origin[0], fc.ps.origin[1], fc.ps.origin[2]));
     }
     CG_OrchAddMsg(here ? "Resumed here" : "Resumed", qfalse);
+    CG_OrchLog("resume", here ? "\"here\": " + CG_JsonVec(fc.ps.origin) : std::string());
 }
 
 void CG_OrchFreeze_f(void)
@@ -478,6 +666,7 @@ void CG_OrchReturn_f(void)
     }
     cgi.SendClientCommand(va("tele %.1f %.1f %.1f", fc.frozeAt[0], fc.frozeAt[1], fc.frozeAt[2]));
     CG_OrchAddMsg("Back to where you froze", qfalse);
+    CG_OrchLog("return", "\"to\": " + CG_JsonVec(fc.frozeAt));
 }
 
 qboolean CG_OrchFreecamActive(void)
@@ -512,6 +701,7 @@ qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles)
         if (health <= 0) {
             CG_OrchFreecamEnd(qfalse);
             CG_OrchAddMsg("Your body died", qfalse);
+            CG_OrchLog("body_died", "");
             return qfalse;
         }
         if (health < fc.health && now - fc.hitMsgAt > 1000) {
@@ -566,6 +756,8 @@ void CG_OrchFrame(void)
         return;
     }
 
+    CG_OrchLogFrame();
+
     if (orch.outlineUntil - cgi.Milliseconds() > 0) {
         if (orch.pick.target.kind == PICK_TARGET_PROP || orch.pick.target.kind == PICK_TARGET_ENTITY) {
             CG_PickDrawBox(&orch.pick.target, 0.2f, 1.0f, 0.4f);
@@ -606,6 +798,7 @@ static void CG_OrchStepShot(void)
                 ));
                 if (orch_shotsave->integer) {
                     Com_sprintf(cmd, sizeof(cmd), "savegame orch_%s", orch.shotId);
+                    CG_OrchLog("save", va("\"savegame\": \"orch_%s\"", orch.shotId));
                 }
             }
         }
@@ -817,6 +1010,11 @@ void CG_OrchInit(void)
 
     memset(&orch, 0, sizeof(orch));
     memset(&fc, 0, sizeof(fc));
+    orchLog           = orchLog_t();
+    orchLog.writer    = (long long)(CG_OrchNow() * 1000.0);
+    orchLog.startedAt = cgi.Milliseconds();
+    // Loads, vid_restart and map changes all start a new cgame.
+    CG_OrchLog("cgame_start", "");
     // A camera left on by the last cgame (vid_restart while frozen).
     cgi.Cvar_Set("cl_freecam", "0");
 }

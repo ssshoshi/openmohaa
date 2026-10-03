@@ -43,6 +43,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "parm.h"
 #include "worldspawn.h"
 #include "barrels.h"
+#include "g_orch.h"
 
 Event EV_Trigger_ActivateTargets
 (
@@ -507,6 +508,12 @@ void Trigger::TriggerStuff(Event *ev)
 
     if (takedamage == DAMAGE_NO) {
         trigger_time = level.time + wait;
+    }
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        G_OrchLogTrigger(this, activator);
     }
 
     if (!whatToTrigger) {

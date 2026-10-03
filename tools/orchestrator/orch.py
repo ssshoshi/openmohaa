@@ -14,6 +14,10 @@ what is written to home\\main\\orch\\say.
   orch.py say "text"                 speak it and show it in the game's panel
   orch.py heard "text"               show what the player said, as understood
   orch.py state                      where the player is and what they look at
+  orch.py log [--last 30] [--type damage,think]
+                                     what the game logged lately (orch/log): the
+                                     player's trail and gaze, long frames, damage,
+                                     triggers, AI think changes, move orders
   orch.py status                     is the game / the sidecar running
   orch.py stop                       close the live game (never any other)
 
@@ -46,6 +50,7 @@ CMD_DIR = os.path.join(ORCH, "cmd")
 SAY_DIR = os.path.join(ORCH, "say")
 SIDECAR_ALIVE = os.path.join(ORCH, "sidecar.alive")
 BACKLOG = os.path.join(ORCH, "backlog")
+LOG_DIR = os.path.join(ORCH, "log")
 
 BINARIES = ["openmohaa.exe", "cgame.dll", "game.dll", "renderer_opengl1.dll", "renderer_opengl2.dll"]
 RUNTIME = ["SDL2.dll", "OpenAL64.dll", "libcurl.dll"]
@@ -397,6 +402,54 @@ def cmd_state(args):
     sys.stdout.write(out)
 
 
+def read_logs(since):
+    """The game's log entries (both sides) from the Unix time since on, oldest first."""
+    entries = []
+    game = os.path.join(LOG_DIR, "game.jsonl")
+    if os.path.isfile(game):
+        with open(game, "rb") as f:
+            # The end is enough: the file only grows.
+            f.seek(max(0, os.path.getsize(game) - 4 * 1024 * 1024))
+            for line in f.read().split(b"\n"):
+                try:
+                    e = json.loads(line.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                e["source"] = "game"
+                entries.append(e)
+    seen = set()
+    for path in glob.glob(os.path.join(LOG_DIR, "client.*.jsonl")):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = f.read().splitlines()
+            head = json.loads(lines[0])
+        except (OSError, ValueError, IndexError):
+            continue
+        key = (head.get("writer"), head.get("batch"))
+        if key in seen:
+            continue
+        seen.add(key)
+        for line in lines[1:]:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            e["source"] = "client"
+            entries.append(e)
+    entries = [e for e in entries if isinstance(e.get("t"), (int, float)) and e["t"] >= since]
+    return sorted(entries, key=lambda e: e["t"])
+
+
+def cmd_log(args):
+    t_now = time.time()
+    types = set(args.type.split(",")) if args.type else None
+    for e in read_logs(t_now - args.last):
+        if types and e.get("type") not in types:
+            continue
+        ago = round(e.pop("t") - t_now, 1)
+        print(json.dumps(dict({"ago": ago}, **e)))
+
+
 def cmd_status(args):
     procs = live_processes()
     live = [p for p in procs if p[2]]
@@ -472,6 +525,11 @@ def main():
 
     p = sub.add_parser("status")
     p.set_defaults(fn=cmd_status)
+
+    p = sub.add_parser("log", help="what the game logged lately")
+    p.add_argument("--last", type=float, default=30.0, help="seconds back (default 30)")
+    p.add_argument("--type", help="only these, comma separated: trail, gaze, hitch, damage, trigger, think, order, ...")
+    p.set_defaults(fn=cmd_log)
 
     args = ap.parse_args()
     args.fn(args)

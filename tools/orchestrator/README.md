@@ -18,6 +18,7 @@ All the exchange is files under the live install's home path,
 | `cmd/<n>.txt` | orch.py, sidecar | the game (`com_cmddir`): runs each command at once, writes the output to `cmd/<n>.out` |
 | `events/<id>.json`, `<id>.server.txt` | the game, per shot | sidecar |
 | `say/<n>.txt` | orch.py say | sidecar: spoken with Kokoro |
+| `log/client.<n>.jsonl` (a ring of 64 batches), `log/game.jsonl` | the game, while orchestrator mode is on | sidecar, `orch.py log` |
 | `sessions/<stamp>/turns/<n>.json`, `timeline.jsonl` | sidecar | the agent |
 | `backlog/<n>.json` | sidecar (queue mode), `orch.py backlog add` | the agent, later |
 
@@ -105,6 +106,21 @@ model files (about 340 MB) download to `%LOCALAPPDATA%\openmohaa-orch\kokoro`.
   `orch_status <state>`, `orch_state`; the panel.
 - `cgame/cg_pick.cpp`: what is under the crosshair, shared with the F8 reports.
 - `bugreport_server <id> <entnum> orch` (fgame) writes the shot's `server.txt`.
+- The log, while orchestrator mode is on (single player for the game's side).
+  Every line has `t`, Unix seconds, so the sidecar lines it up with speech.
+  - cgame (`cg_orch.cpp`): `trail` (position, view, health, weapon, camera;
+    every 250 ms when it changes, or every 5 s), `gaze` (what is under the
+    crosshair, when it changes), `hitch` (a frame over 50 ms), `shot`, `save`,
+    `freeze`, `ghost`, `resume`, `return`, `level`, `cgame_start`. cgame can't
+    append to a file, so it writes a batch every 500 ms to the next of 64 files.
+  - fgame (`g_orch.cpp`): `damage` (victim, attacker, mod, hit location,
+    health before and after, `killed`), `trigger` (once per 2 s per trigger and
+    activator), `think` (an actor's think state changing, with its enemy),
+    `order` (runto/walkto/crouchto/crawlto/moveto/patrolpath with the script
+    and line that gave it; a repeated order within 5 s is skipped), `level`.
+  - Each turn's `context` is the log from 10 s before what was said or shot
+    until the turn ends, `dt` seconds from its start; trail points a second
+    apart, at most 40 of a type and 200 in all, nearest the moment kept.
 
 ## Swapping code in while the game runs
 

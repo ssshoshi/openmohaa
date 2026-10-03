@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "g_physics.h"
 
 #include "../corepp/tiki.h"
+#include "g_orch.h"
 
 #ifdef WIN32
 #    include <intrin.h>
@@ -353,6 +354,8 @@ void G_ShutdownGame()
     G_WriteSessionData();
 
     ClosePlayerLogFile();
+    // Added in OPM
+    G_OrchShutdown();
 
     level.CleanUp();
 
