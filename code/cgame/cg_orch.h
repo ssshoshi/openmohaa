@@ -47,12 +47,18 @@ extern "C" {
     // through it; again to resume where the player was, "here" to resume at
     // the camera.
     void CG_OrchFreeze_f(void);
+    // orch_ghost [here]: the free camera with the world running; the body
+    // stands where it was, still a target. Again to come back to it, "here" to
+    // bring the body to the camera. From frozen, lets the world run.
+    void CG_OrchGhost_f(void);
     // orch_fly: walk or fly while frozen; noclip otherwise.
     void CG_OrchFly_f(void);
     // orch_return: back to where the player last froze.
     void CG_OrchReturn_f(void);
     // Whether the free camera is on: the player's body is drawn, not the view model.
     qboolean CG_OrchFreecamActive(void);
+    // Whether it roams a running world: the body is not predicted then.
+    qboolean CG_OrchFreecamLive(void);
     // Moves the free camera and gives its view. qfalse when it is off.
     qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles);
     // Once a frame before the scene: outlines.

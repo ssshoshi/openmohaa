@@ -523,6 +523,7 @@ static consoleCommand_t commands[] = {
     {"orch_freeze",            &CG_OrchFreeze_f            },
     {"orch_fly",               &CG_OrchFly_f               },
     {"orch_return",            &CG_OrchReturn_f            },
+    {"orch_ghost",             &CG_OrchGhost_f             },
     {"viewpos",                &CG_Viewpos_f               },
     {"sizeup",                 &CG_SizeUp_f                },
     {"sizedown",               &CG_SizeDown_f              },

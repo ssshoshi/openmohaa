@@ -100,7 +100,9 @@ While frozen (`"frozen": true` in `orch.py state` and shot JSON) the view and
 aim are the free camera's; `player_origin` is still where the body stands.
 "Resume here" is `orch.py cmd "orch_freeze here"`; if that put them somewhere
 bad ("I'm under the map"), `orch.py cmd orch_return`. "Freeze" / "unfreeze"
-are `orch.py cmd orch_freeze`.
+are `orch.py cmd orch_freeze`. "Ghost" / "let it run" is `orch.py cmd
+orch_ghost`: the same camera with the world running (`"ghost": true`); the body
+stays behind and can still be shot, and the camera returns if it dies.
 
 Shots also save the game (`orch_<id>`) in single player: "load shot 3" is
 `orch.py cmd "loadgame <savegame>"` with the savegame from that shot's event.
@@ -133,7 +135,8 @@ When the user asks you to work it (or a limit has reset and they say "check"):
 ## Keys the user has (rebindable)
 
 F10 orchestrator mode on/off, F11 freeze/resume the world (they walk around
-it; N flies), MOUSE3 screenshot, hold MOUSE4 to talk (the
+it; N flies), B ghost (the camera roams the running world, the body stays),
+MOUSE3 screenshot, hold MOUSE4 to talk (the
 sidecar reads it, only while the game has the focus; `--ptt-key` changes it,
 `--always-on` drops it). Pressing it while you speak cuts your reply short.
 Voice-only, handled by the sidecar: "mute", "unmute", "cancel that", "queue

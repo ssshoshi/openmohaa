@@ -323,6 +323,11 @@ void IN_CenterView (void) {
 
 cvar_t	*cl_upspeed;
 cvar_t	*cl_freecam;
+// Added in OPM: the view and stance when the free camera came on (CL_FreecamAngles)
+static qboolean	freecamActive;
+static vec3_t	freecamSaved;
+static int		freecamUpmove;
+static void CL_FreecamGhostCmd( usercmd_t *cmd );
 cvar_t	*cl_forwardspeed;
 cvar_t	*cl_sidespeed;
 
@@ -936,6 +941,7 @@ void CL_WritePacket( void ) {
 	int			i, j;
 	usercmd_t	*cmd, *oldcmd;
 	usercmd_t	nullcmd;
+	usercmd_t	ghostcmds[ MAX_PACKET_USERCMDS ];
 	int			packetNum;
 	int			oldPacketNum;
 	int			count, key;
@@ -1066,6 +1072,13 @@ void CL_WritePacket( void ) {
 		for ( i = 0 ; i < count ; i++ ) {
 			j = (cl.cmdNumber - count + i + 1) & CMD_MASK;
 			cmd = &cl.cmds[j];
+			// Added in OPM
+			//  The body stays put while the orchestrator's camera roams
+			if ( cl_freecam->integer == 2 && freecamActive ) {
+				ghostcmds[i] = *cmd;
+				CL_FreecamGhostCmd( &ghostcmds[i] );
+				cmd = &ghostcmds[i];
+			}
 			MSG_WriteDeltaUsercmdKey (&buf, key, oldcmd, cmd);
 			oldcmd = cmd;
 		}
@@ -1105,18 +1118,39 @@ cl_freecam -1 ends it keeping where it looked.
 =================
 */
 static void CL_FreecamAngles( void ) {
-	static qboolean	active;
-	static vec3_t	saved;
-
-	if ( cl_freecam->integer > 0 && !active ) {
-		VectorCopy( cl.viewangles, saved );
-		active = qtrue;
-	} else if ( cl_freecam->integer <= 0 && active ) {
+	if ( cl_freecam->integer > 0 && !freecamActive ) {
+		VectorCopy( cl.viewangles, freecamSaved );
+		// Still crouching, if it was
+		freecamUpmove = cl.cmds[ cl.cmdNumber & CMD_MASK ].upmove < 0 ? cl.cmds[ cl.cmdNumber & CMD_MASK ].upmove : 0;
+		freecamActive = qtrue;
+	} else if ( cl_freecam->integer <= 0 && freecamActive ) {
 		if ( !cl_freecam->integer ) {
-			VectorCopy( saved, cl.viewangles );
+			VectorCopy( freecamSaved, cl.viewangles );
 		}
-		active = qfalse;
+		freecamActive = qfalse;
 	}
+}
+
+/*
+=================
+CL_FreecamGhostCmd
+
+Added in OPM
+cl_freecam 2: the free camera roams while the world runs. The camera moves
+with the commands made; the server gets them with the body standing still,
+looking where it did.
+=================
+*/
+static void CL_FreecamGhostCmd( usercmd_t *cmd ) {
+	int i;
+
+	for ( i = 0; i < 3; i++ ) {
+		cmd->angles[i] = ANGLE2SHORT( freecamSaved[i] );
+	}
+	cmd->buttons = 0;
+	cmd->forwardmove = 0;
+	cmd->rightmove = 0;
+	cmd->upmove = freecamUpmove;
 }
 
 /*
@@ -1244,7 +1278,8 @@ void CL_InitInput( void ) {
 #endif
 
 	cl_nodelta = Cvar_Get ("cl_nodelta", "0", 0);
-	// Added in OPM: set by cgame/cg_orch.cpp; the view moves while paused
+	// Added in OPM: set by cgame/cg_orch.cpp; the view moves while paused (1)
+	//  or roams while the body stands still (2)
 	cl_freecam = Cvar_Get ("cl_freecam", "0", CVAR_ROM);
 	cl_debugMove = Cvar_Get ("cl_debugMove", "0", 0);
 }
