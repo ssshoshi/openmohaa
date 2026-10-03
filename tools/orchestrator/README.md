@@ -38,6 +38,12 @@ All the exchange is files under the live install's home path,
   it's inside something or over nothing. `orch_return` goes back to where you
   froze, for a "here" that went wrong (under the terrain isn't caught). When
   not frozen, N is the ordinary `noclip`.
+- **B**: ghost. The same camera, with the world still running: your body
+  stays where it was and stays in the fight (enemies still see and shoot it;
+  the camera itself is nothing they can see). The panel says when the body is
+  hit, and the camera comes back if it dies. B again returns to the body,
+  `orch_ghost here` brings the body to the camera, F11 freezes the world
+  without leaving the camera, and B from frozen lets it run again.
 - **MOUSE3** (wheel click): screenshot. It records what is under the crosshair
   and the player's position, takes a clean and an outlined screenshot, and in
   single player saves the game as `orch_<id>`.

@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // - CG_InterpolatePlayerState() footer: Interpolate the lean angles
 
 #include "cg_local.h"
+#include "cg_orch.h"
 
 static pmove_t cg_pmove;
 
@@ -494,6 +495,14 @@ void CG_PredictPlayerState(void)
 
     // demo playback just copies the moves
     if (cg.demoPlayback || (cg.snap->ps.pm_flags & PMF_NO_PREDICTION) || (cg.snap->ps.pm_flags & PMF_FROZEN)) {
+        CG_InterpolatePlayerState(qfalse);
+        return;
+    }
+
+    // Added in OPM
+    //  The orchestrator's camera roams on the commands; the server is sent
+    //  ones that keep the body still (cg_orch.cpp), so it isn't predicted
+    if (CG_OrchFreecamLive()) {
         CG_InterpolatePlayerState(qfalse);
         return;
     }

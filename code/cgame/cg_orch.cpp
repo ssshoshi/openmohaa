@@ -36,6 +36,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // orch_fly (N), through it: AI, scripts and physics stay where they were. The
 // engine keeps making movement commands while paused (cl_freecam) without
 // sending them; the camera runs Pmove on its own copy of the player state.
+// orch_ghost (B) is the same camera with the world running: the engine sends
+// the server commands that keep the body standing where it was. The body is
+// still a target; the camera says when it is hit and comes back if it dies.
 //
 // A shot writes:
 //   orch/events/<id>.json          where the player is and what is aimed at
@@ -91,18 +94,23 @@ typedef struct {
 
 static orchState_t orch;
 
-// The free camera, while the world is frozen.
+// The free camera, while the world is frozen or, live, while it runs.
 typedef struct {
     qboolean      active;
+    qboolean      live; // the world runs, the body stands where it was
     qboolean      fly;
     playerState_t ps;     // a copy of the player's, moved by Pmove
-    int           time;   // the camera's own command clock: the server's is frozen
+    int           time;   // the camera's own command clock: the server's may be frozen
     int           lastMs;
     vec3_t        mins, maxs; // the player's box, from the last Pmove
     vec3_t        frozeAt;    // where the player was when frozen, for orch_return
+    int           health;     // the body's, last frame, while ghosting
+    int           hitMsgAt;   // when the panel last said it was hit
 } orchFreecam_t;
 
 static orchFreecam_t fc;
+
+static void CG_OrchFreecamEnd(qboolean here);
 
 //=============================================================
 // Helpers
@@ -165,8 +173,9 @@ static std::string CG_OrchPlayerJson(const char *indent)
     j += in + "\"view_origin\": " + CG_JsonVec(cg.refdef.vieworg) + ",\n";
     j += in + "\"view_angles\": " + CG_JsonVec(cg.refdefViewAngles) + ",\n";
     j += in + va("\"health\": %d,\n", cg.snap->ps.stats[STAT_HEALTH]);
-    // The view is the free camera's, not the player's, while frozen.
-    j += in + va("\"frozen\": %s", fc.active ? "true" : "false");
+    // The view is the free camera's, not the player's, while frozen or ghosting.
+    j += in + va("\"frozen\": %s,\n", fc.active && !fc.live ? "true" : "false");
+    j += in + va("\"ghost\": %s", fc.active && fc.live ? "true" : "false");
     return j;
 }
 
@@ -212,6 +221,9 @@ void CG_Orch_f(void)
         on = !orch_active->integer;
     }
 
+    if (!on && fc.active) {
+        CG_OrchFreecamEnd(qfalse);
+    }
     cgi.Cvar_Set("orch_active", on ? "1" : "0");
     CG_OrchAddMsg(on ? "Orchestrator on" : "Orchestrator off", qfalse);
     cgi.Printf("orch: %s\n", on ? "on" : "off");
@@ -302,27 +314,44 @@ static qboolean CG_OrchPaused(void)
     return cgi.Cvar_Get("paused", "0", 0)->integer ? qtrue : qfalse;
 }
 
-static void CG_OrchFreecamBegin(void)
+// live: the world keeps running and the body stands where it is. Switches
+// between the two when the camera is already on.
+static void CG_OrchFreecamBegin(qboolean live)
 {
     if (!CG_OrchSinglePlayer()) {
-        CG_OrchAddMsg("Freezing works in single player only", qfalse);
+        CG_OrchAddMsg(live ? "Ghosting works in single player only" : "Freezing works in single player only", qfalse);
         return;
     }
 
-    fc.ps = cg.predicted_player_state;
-    VectorCopy(cg.predicted_player_state.origin, fc.frozeAt);
-    fc.ps.pm_flags = 0;
-    VectorClear(fc.ps.velocity);
-    fc.time           = 1000;
-    fc.ps.commandTime = fc.time;
-    fc.lastMs         = cgi.Milliseconds();
-    fc.active         = qtrue;
-
-    cgi.Cvar_Set("cl_freecam", "1");
-    if (!CG_OrchPaused()) {
-        cgi.Cmd_Execute(EXEC_NOW, "pause\n");
+    if (!fc.active) {
+        fc.ps = cg.predicted_player_state;
+        VectorCopy(cg.predicted_player_state.origin, fc.frozeAt);
+        fc.ps.pm_flags = 0;
+        VectorClear(fc.ps.velocity);
+        fc.time           = 1000;
+        fc.ps.commandTime = fc.time;
+        fc.lastMs         = cgi.Milliseconds();
+        fc.active         = qtrue;
     }
-    CG_OrchAddMsg(fc.fly ? "Frozen, flying. F11 resumes, N walks." : "Frozen. F11 resumes, N flies.", qfalse);
+    fc.live   = live;
+    fc.health = cg.snap->ps.stats[STAT_HEALTH];
+
+    if (live) {
+        cgi.Cvar_Set("cl_freecam", "2");
+        if (CG_OrchPaused()) {
+            cgi.Cmd_Execute(EXEC_NOW, "pause\n");
+        }
+        CG_OrchAddMsg("Ghost: the world runs, your body stays. B comes back, F11 freezes.", qfalse);
+    } else {
+        cgi.Cvar_Set("cl_freecam", "1");
+        if (!CG_OrchPaused()) {
+            cgi.Cmd_Execute(EXEC_NOW, "pause\n");
+        }
+        CG_OrchAddMsg(
+            fc.fly ? "Frozen, flying. F11 resumes, N walks, B lets it run." : "Frozen. F11 resumes, N flies, B lets it run.",
+            qfalse
+        );
+    }
 }
 
 // Whether the player could stand where the camera is: not in a wall, and with
@@ -374,6 +403,7 @@ static void CG_OrchFreecamEnd(qboolean here)
     }
 
     fc.active = qfalse;
+    fc.live   = qfalse;
     cgi.Cvar_Set("cl_freecam", here ? "-1" : "0");
     if (CG_OrchPaused()) {
         cgi.Cmd_Execute(EXEC_NOW, "pause\n");
@@ -397,10 +427,31 @@ void CG_OrchFreeze_f(void)
         return;
     }
 
-    if (fc.active) {
+    if (fc.active && fc.live && !here) {
+        CG_OrchFreecamBegin(qfalse);
+    } else if (fc.active) {
         CG_OrchFreecamEnd(here);
     } else if (!here) {
-        CG_OrchFreecamBegin();
+        CG_OrchFreecamBegin(qfalse);
+    }
+}
+
+void CG_OrchGhost_f(void)
+{
+    const qboolean here = cgi.Argc() > 1 && !Q_stricmp(cgi.Argv(1), "here") ? qtrue : qfalse;
+
+    if (!cg.snap) {
+        return;
+    }
+    if (!orch_active->integer) {
+        cgi.Printf("orch_ghost: turn the orchestrator on first (orch)\n");
+        return;
+    }
+
+    if (fc.active && (fc.live || here)) {
+        CG_OrchFreecamEnd(here);
+    } else if (!here) {
+        CG_OrchFreecamBegin(qtrue);
     }
 }
 
@@ -434,6 +485,11 @@ qboolean CG_OrchFreecamActive(void)
     return fc.active;
 }
 
+qboolean CG_OrchFreecamLive(void)
+{
+    return fc.active && fc.live ? qtrue : qfalse;
+}
+
 qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles)
 {
     const int now = cgi.Milliseconds();
@@ -442,11 +498,27 @@ qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles)
     if (!fc.active) {
         return qfalse;
     }
-    if (!CG_OrchPaused()) {
+    if (!fc.live && !CG_OrchPaused()) {
         // Unpaused some other way (the pause key, a menu).
         fc.active = qfalse;
         cgi.Cvar_Set("cl_freecam", "0");
         return qfalse;
+    }
+
+    // The body left behind is still in the fight.
+    if (fc.live) {
+        const int health = cg.snap->ps.stats[STAT_HEALTH];
+
+        if (health <= 0) {
+            CG_OrchFreecamEnd(qfalse);
+            CG_OrchAddMsg("Your body died", qfalse);
+            return qfalse;
+        }
+        if (health < fc.health && now - fc.hitMsgAt > 1000) {
+            CG_OrchAddMsg(va("Your body is hit: health %d", health), qfalse);
+            fc.hitMsgAt = now;
+        }
+        fc.health = health;
     }
 
     dt        = now - fc.lastMs;
@@ -644,11 +716,20 @@ static void CG_OrchDrawPanel(void)
         y += line;
 
         if (fc.active) {
+            const char *mode;
+
+            if (fc.live) {
+                mode = fc.fly ? "GHOST  flying   B back   F11 freeze   N walk"
+                              : "GHOST  walking   B back   F11 freeze   N fly";
+            } else {
+                mode = fc.fly ? "FROZEN  flying   F11 resume   N walk   B run"
+                              : "FROZEN  walking   F11 resume   N fly   B run";
+            }
             CG_OrchColor(color, 0.5f, 0.85f, 1.0f, 1.0f);
             cgi.R_SetColor(color);
             cgi.R_DrawString(
                 font,
-                fc.fly ? "FROZEN  flying   F11 resume   N walk" : "FROZEN  walking   F11 resume   N fly",
+                mode,
                 x / cgs.uiHiResScale[0],
                 y / cgs.uiHiResScale[1],
                 -1,
@@ -727,7 +808,10 @@ void CG_OrchInit(void)
             cgi.Cmd_Execute(EXEC_APPEND, "bind F10 orch\nbind MOUSE3 orch_shot\n");
         }
         if (bound < 2) {
-            cgi.Cmd_Execute(EXEC_APPEND, "bind F11 orch_freeze\nbind n orch_fly\nseta orch_bound 2\n");
+            cgi.Cmd_Execute(EXEC_APPEND, "bind F11 orch_freeze\nbind n orch_fly\n");
+        }
+        if (bound < 3) {
+            cgi.Cmd_Execute(EXEC_APPEND, "bind b orch_ghost\nseta orch_bound 3\n");
         }
     }
 

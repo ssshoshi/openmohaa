@@ -738,6 +738,13 @@ void CG_EyeOffset(vec3_t *o_vOfs)
 
 void CG_EyeAngles(vec3_t *o_vAngles)
 {
+    // Added in OPM
+    //  The server gets the body's view, not the orchestrator's camera
+    if (CG_OrchFreecamActive()) {
+        VectorCopy(cg.predicted_player_state.viewangles, *o_vAngles);
+        return;
+    }
+
     (*o_vAngles)[0] = cg.refdefViewAngles[0];
     (*o_vAngles)[1] = cg.refdefViewAngles[1];
     (*o_vAngles)[2] = cg.refdefViewAngles[2];
