@@ -640,6 +640,102 @@ def cmd_script(args):
     sys.stdout.write(out)
 
 
+def cmd_wait(args):
+    if not wait_in_game(args.timeout):
+        sys.exit("not in game after %d s" % args.timeout)
+    print("in game")
+
+
+def cmd_view(args):
+    """Puts the player at x y z looking at pitch/yaw: tele takes a position
+    only, so the angles go through the player's viewangles setter."""
+    x, y, z = args.pos
+    out = run_commands(f"tele {x} {y} {z}", 5.0)
+    if out is None:
+        sys.exit("the game didn't take the command (not running, or still loading?)")
+    if args.pitch is not None or args.yaw is not None:
+        state = json.loads(run_commands("orch_state", 5.0) or "{}")
+        pitch = args.pitch if args.pitch is not None else state.get("view_angles", [0, 0])[0]
+        yaw = args.yaw if args.yaw is not None else state.get("view_angles", [0, 0])[1]
+        args.code, args.file, args.label, args.timeout = [f"$player.viewangles = ( {pitch} {yaw} 0 )"], None, None, 5.0
+        cmd_script(args)
+    time.sleep(0.3)
+    cmd_state(argparse.Namespace(timeout=5.0))
+
+
+def cmd_frames(args):
+    """N screenshots args.every seconds apart, after an optional script, on one
+    contact sheet: one image to look at instead of N."""
+    from PIL import Image
+
+    shots = os.path.join(MAIN, "screenshots")
+    tag = args.name or time.strftime("f%H%M%S")
+    if args.script:
+        args.code, args.file, args.label, args.timeout = [args.script], None, None, 5.0
+        cmd_script(args)
+    names = []
+    for i in range(args.count):
+        if i:
+            time.sleep(args.every)
+        name = f"{tag}_{i}"
+        if run_commands(f"screenshotJPEG {name}", 5.0) is None:
+            sys.exit("the game didn't take the command (not running, or still loading?)")
+        names.append(os.path.join(shots, name + ".jpg"))
+
+    tiles = []
+    for path in names:
+        for _ in range(50):
+            if os.path.isfile(path) and os.path.getsize(path) > 0:
+                break
+            time.sleep(0.1)
+        im = Image.open(path)
+        if args.crop:
+            x0, y0, x1, y1 = args.crop
+            w, h = im.size
+            im = im.crop((int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)))
+        im.thumbnail((args.width, args.width))
+        tiles.append(im.convert("RGB"))
+
+    cols = min(args.cols, len(tiles))
+    rows = (len(tiles) + cols - 1) // cols
+    tw, th = tiles[0].size
+    sheet = Image.new("RGB", (cols * tw, rows * th))
+    for i, im in enumerate(tiles):
+        sheet.paste(im, ((i % cols) * tw, (i // cols) * th))
+    out = os.path.join(shots, tag + "_sheet.jpg")
+    sheet.save(out, quality=85)
+    print(out)
+
+
+# What the game writes into its home path itself; anything else there is a
+# loose override from a test (a .tik, a .scr, a shader) that shadows the paks.
+OWN = {"orch", "save", "screenshots", "configs", "demos", "physics.txt", "qconsole.log"}
+
+
+def cmd_reset(args):
+    found = []
+    for entry in sorted(os.listdir(MAIN)):
+        if entry in OWN or entry.endswith(".cfg") or entry.endswith(".log"):
+            continue
+        path = os.path.join(MAIN, entry)
+        if os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                found += [os.path.join(root, f) for f in files]
+        else:
+            found.append(path)
+    for path in found:
+        print(os.path.relpath(path, MAIN))
+    if not found:
+        print("no loose overrides in", MAIN)
+    elif args.apply:
+        for entry in {os.path.relpath(p, MAIN).split(os.sep)[0] for p in found}:
+            path = os.path.join(MAIN, entry)
+            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+        print("removed %d files" % len(found))
+    else:
+        print("(%d files; --apply removes them)" % len(found))
+
+
 def cmd_status(args):
     procs = live_processes()
     live = [p for p in procs if p[2]]
@@ -731,6 +827,31 @@ def main():
     p.add_argument("--label", help="run from this label")
     p.add_argument("--timeout", type=float, default=5.0)
     p.set_defaults(fn=cmd_script)
+
+    p = sub.add_parser("wait", help="until the game is in a level")
+    p.add_argument("--timeout", type=float, default=120.0)
+    p.set_defaults(fn=cmd_wait)
+
+    p = sub.add_parser("view", help="put the player at x y z, facing pitch/yaw")
+    p.add_argument("pos", nargs=3, type=float)
+    p.add_argument("--pitch", type=float)
+    p.add_argument("--yaw", type=float)
+    p.set_defaults(fn=cmd_view)
+
+    p = sub.add_parser("frames", help="timed screenshots on one contact sheet")
+    p.add_argument("count", type=int, nargs="?", default=4)
+    p.add_argument("--every", type=float, default=0.5, help="seconds between frames")
+    p.add_argument("--script", help="script code to run first (an explosion, a spawn)")
+    p.add_argument("--crop", type=float, nargs=4, metavar=("X0", "Y0", "X1", "Y1"),
+                   help="part of each frame, as fractions (0 0 1 1 is all)")
+    p.add_argument("--width", type=int, default=640, help="each frame's size on the sheet")
+    p.add_argument("--cols", type=int, default=2)
+    p.add_argument("--name", help="file name prefix")
+    p.set_defaults(fn=cmd_frames)
+
+    p = sub.add_parser("reset", help="list (--apply: remove) loose overrides in the install's home")
+    p.add_argument("--apply", action="store_true")
+    p.set_defaults(fn=cmd_reset)
 
     p = sub.add_parser("log", help="what the game logged lately")
     p.add_argument("--last", type=float, default=30.0, help="seconds back (default 30)")
