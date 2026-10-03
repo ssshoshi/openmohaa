@@ -62,3 +62,7 @@ bool G_OrchWantsDamage(void);
 void G_OrchShowDamage(const Vector& position, const Vector& direction, float damage, bool killed);
 // scriptinfo [threadnum]: the script threads, or one in detail.
 qboolean G_OrchScriptInfoCmd(struct gentity_s *ent);
+// orch_runscript <file> [label]: runs a script now, from the top or a label.
+// Files under orch/ are compiled afresh each time (the agent's snippets);
+// others, a map's own script say, are run as loaded. Single player.
+qboolean G_OrchRunScriptCmd(struct gentity_s *ent);

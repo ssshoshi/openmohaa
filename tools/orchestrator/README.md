@@ -142,10 +142,31 @@ model files (about 340 MB) download to `%LOCALAPPDATA%\openmohaa-orch\kokoro`.
 
 ## Swapping code in while the game runs
 
-Windows won't overwrite a loaded DLL, but it will rename one. So: rename
-`cgame.dll` to `cgame.old-1.dll`, copy the new `cgame.dll` in, `vid_restart`.
-The same works for the renderers. `game.dll` reloads on `killserver` followed by
-`loadgame`. `orch.py setup` deletes the `*.old-*.dll` files.
+`orch.py swap cgame|game|renderer` (run from the worktree; `--build` is the
+cmake folder, `build/win64` by default):
+
+1. Refuses if the module's interface with the exe changed since `orch.py setup`
+   (setup writes `orch-build.json` with hashes of `cg_public.h`, `g_public.h`,
+   `tr_public.h`/`tr_types.h`, `bg_public.h` and `q_shared.h`): then the exe
+   must be rebuilt too, so stop, setup and relaunch. `--force` skips this.
+2. Builds the one target (`-j4`; `--no-build` swaps what is built).
+3. Windows won't overwrite a loaded DLL but will rename one: the loaded one
+   becomes `<name>.old-<n>.dll` and the new one is copied in.
+4. Reloads: `vid_restart` for cgame and the renderer (about 20 s), and for
+   the game `savegame orch_swap`, `killserver`, `loadgame orch_swap`, since a
+   same-map load keeps the DLL (about 6 s). If the save fails (dead, a
+   cinematic) the old DLL is put back and nothing is reloaded.
+5. Checks the game is back in the level (closing the main menu if it came up)
+   and that nothing failed to load; otherwise says to relaunch.
+
+`orch.py setup` deletes the `*.old-*.dll` files.
+
+`orch.py script '$guy3 runto $node_x'` writes the code to
+`orch/scripts/<stamp>.scr` and runs it now with `orch_runscript` (fgame);
+compile errors come back. `--file x.scr --label main` runs a file from a label.
+`orch_runscript maps/m3l2.scr <label>` reruns a thread of the map's own script
+without recompiling it (recompiling ends a script's running threads, so only
+files under `orch/` are recompiled).
 
 ## Testing without a microphone
 
