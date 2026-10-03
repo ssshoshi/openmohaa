@@ -972,7 +972,7 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
                 }
             }
 
-            if ((ent->e.customShader) && (ent->e.renderfx & RF_CUSTOMSHADERPASS)) {
+            if (!personalModel && (ent->e.customShader) && (ent->e.renderfx & RF_CUSTOMSHADERPASS)) {
                 shader = R_GetShaderByHandle(ent->e.customShader);
                 R_AddDrawSurf((surfaceType_t *)surface, shader, 0, 0, 0, 0);
             }
