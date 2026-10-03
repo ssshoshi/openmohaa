@@ -398,7 +398,9 @@ void G_PhysicsInitLevel(const char *mapfile)
     G_PhysicsShutdown();
     G_PhysicsRulesLoad();
 
-    if (!g_physics->integer || !mapfile || !mapfile[0]) {
+    // Single player only: in multiplayer the ragdolls, on each client, are the
+    // only physics, and crates, barrels and helmets behave as they always have.
+    if (!g_physics->integer || g_gametype->integer != GT_SINGLE_PLAYER || !mapfile || !mapfile[0]) {
         return;
     }
 

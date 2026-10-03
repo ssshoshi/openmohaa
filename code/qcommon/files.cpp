@@ -248,6 +248,7 @@ typedef struct {
 	int				hashSize;					// hash table size (power of 2)
 	fileInPack_t*	*hashTable;					// hash table
 	fileInPack_t*	buildBuffer;				// buffer with the filenames etc.
+	qboolean		singlePlayer;				// named in fs_singlePlayerPaks (Added in OPM)
 } pack_t;
 
 typedef struct {
@@ -288,6 +289,10 @@ static int fs_checksumFeed;
 
 static cvar_t* fs_gamedirvar;
 static cvar_t* fs_restrict;
+// Added in OPM: paks for single player only, such as a mod that changes how
+// every player aims, hidden while the game in progress is a multiplayer one.
+static cvar_t* fs_singlePlayerPaks;
+static qboolean fs_multiplayer;
 static cvar_t* fs_filedir;
 cvar_t* fs_mapdir;
 
@@ -384,6 +389,90 @@ FS_Initialized
 
 qboolean FS_Initialized( void ) {
 	return (fs_searchpaths != NULL);
+}
+
+/*
+=================
+FS_PakHidden
+
+Added in OPM: a single player pak, during a multiplayer game.
+=================
+*/
+static qboolean FS_PakHidden( const pack_t *pack ) {
+	return ( fs_multiplayer && pack->singlePlayer ) ? qtrue : qfalse;
+}
+
+/*
+=================
+FS_MarkSinglePlayerPaks
+
+Added in OPM: which paks fs_singlePlayerPaks names, by basename, each word of
+it a pattern ("*MOHAIM*").
+=================
+*/
+static void FS_MarkSinglePlayerPaks( void ) {
+	searchpath_t	*search;
+	char			pattern[MAX_OSPATH];
+	char			*p;
+	char			*token;
+
+	for ( search = fs_searchpaths; search; search = search->next ) {
+		if ( !search->pack ) {
+			continue;
+		}
+
+		search->pack->singlePlayer = qfalse;
+		p = fs_singlePlayerPaks ? fs_singlePlayerPaks->string : NULL;
+		for ( token = COM_ParseExt( &p, qfalse ); token[0]; token = COM_ParseExt( &p, qfalse ) ) {
+			Q_strncpyz( pattern, token, sizeof( pattern ) );
+			if ( Com_FilterPath( pattern, search->pack->pakBasename, qfalse ) ) {
+				search->pack->singlePlayer = qtrue;
+				break;
+			}
+		}
+	}
+}
+
+/*
+=================
+FS_SetMultiplayer
+
+Added in OPM: whether the game in progress is a multiplayer one, set as a
+server spawns a map and as the client takes a server's game state, before
+either loads anything of the map's.
+=================
+*/
+void FS_SetMultiplayer( qboolean multiplayer ) {
+	searchpath_t	*search;
+	const qboolean	changed = fs_multiplayer != multiplayer ? qtrue : qfalse;
+
+	fs_multiplayer = multiplayer;
+	if ( !fs_searchpaths ) {
+		return;
+	}
+
+	FS_MarkSinglePlayerPaks();
+
+	if ( !changed ) {
+		return;
+	}
+
+	for ( search = fs_searchpaths; search; search = search->next ) {
+		if ( search->pack && FS_PakHidden( search->pack ) ) {
+			Com_Printf( "%s is for single player only, so is not used in multiplayer\n", search->pack->pakBasename );
+		}
+	}
+}
+
+/*
+=================
+FS_Multiplayer
+
+Added in OPM: whether single player paks are hidden now.
+=================
+*/
+qboolean FS_Multiplayer( void ) {
+	return fs_multiplayer;
 }
 
 /*
@@ -1369,6 +1458,16 @@ long FS_FOpenFileReadDir(const char *filename, searchpath_t *search, fileHandle_
 		return -1;
 	}
 
+	// Added in OPM: a single player pak in a multiplayer game has nothing.
+	if(search->pack && FS_PakHidden(search->pack))
+	{
+		if(file == NULL)
+			return 0;
+
+		*file = 0;
+		return -1;
+	}
+
 	if(file == NULL)
 	{
 		// just wants to see if file is there
@@ -1890,7 +1989,7 @@ int	FS_FileIsInPAK(const char *filename, int *pChecksum ) {
 		// is the element a pak file?
 		if ( search->pack && search->pack->hashTable[hash] ) {
 			// disregard if it doesn't match one of the allowed pure pak files
-			if ( !FS_PakIsPure(search->pack) ) {
+			if ( !FS_PakIsPure(search->pack) || FS_PakHidden(search->pack) ) {
 				continue;
 			}
 
@@ -2448,7 +2547,7 @@ char **FS_ListFilteredFiles( const char *path, const char *extension, const char
 
 				//ZOID:  If we are pure, don't search for files on paks that
 				// aren't on the pure list
-				if ( !FS_PakIsPure(search->pack) ) {
+				if ( !FS_PakIsPure(search->pack) || FS_PakHidden(search->pack) ) {
 					continue;
 				}
 
@@ -2988,6 +3087,9 @@ void FS_Path_f( void ) {
 	for( s = fs_searchpaths; s; s = s->next ) {
 		if( s->pack ) {
 			Com_Printf( "%s (%i files)\n", s->pack->pakFilename, s->pack->numfiles );
+			if( FS_PakHidden( s->pack ) ) {
+				Com_Printf( "    single player only, not used in this multiplayer game\n" );
+			}
 			if( fs_numServerPaks ) {
 				if( !FS_PakIsPure( s->pack ) ) {
 					Com_Printf( "    not on the pure list\n" );
@@ -3629,6 +3731,7 @@ static void FS_Startup(const char* gameName)
 	fs_homestatepath = Cvar_Get ("fs_homestatepath", statePath, CVAR_INIT|CVAR_PROTECTED );
 	fs_gamedirvar = Cvar_Get ("fs_game", "", CVAR_INIT|CVAR_SYSTEMINFO );
 	fs_restrict = Cvar_Get( "fs_restrict", "", CVAR_INIT );
+	fs_singlePlayerPaks = Cvar_Get( "fs_singlePlayerPaks", "*MOHAIM*", CVAR_ARCHIVE );
 	fs_steampath = Cvar_Get ("fs_steampath", Sys_SteamPath(), CVAR_INIT|CVAR_PROTECTED );
 	fs_gogpath = Cvar_Get ("fs_gogpath", Sys_GogPath(), CVAR_INIT|CVAR_PROTECTED );
 	fs_microsoftstorepath = Cvar_Get ("fs_microsoftstorepath", Sys_MicrosoftStorePath(), CVAR_INIT|CVAR_PROTECTED );
@@ -3700,6 +3803,8 @@ static void FS_Startup(const char* gameName)
 	// https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=506
 	// reorder the pure pk3 files according to server order
 	FS_ReorderPurePaks();
+
+	FS_MarkSinglePlayerPaks();
 
 	// print the current search paths
 	FS_Path_f();
@@ -3789,8 +3894,9 @@ const char *FS_LoadedPakChecksums( void ) {
 	info[0] = 0;
 
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
-		// is the element a pak file?
-		if ( !search->pack ) {
+		// is the element a pak file? (a single player one, in multiplayer, is
+		// not there)
+		if ( !search->pack || FS_PakHidden( search->pack ) ) {
 			continue;
 		}
 
@@ -3815,8 +3921,9 @@ const char *FS_LoadedPakNames( void ) {
 	info[0] = 0;
 
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
-		// is the element a pak file?
-		if ( !search->pack ) {
+		// is the element a pak file? (a single player one, in multiplayer, is
+		// not there)
+		if ( !search->pack || FS_PakHidden( search->pack ) ) {
 			continue;
 		}
 
@@ -3845,8 +3952,9 @@ const char *FS_LoadedPakPureChecksums( void ) {
 	info[0] = 0;
 
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
-		// is the element a pak file?
-		if ( !search->pack ) {
+		// is the element a pak file? (a single player one, in multiplayer, is
+		// not there)
+		if ( !search->pack || FS_PakHidden( search->pack ) ) {
 			continue;
 		}
 
@@ -3873,7 +3981,7 @@ const char *FS_ReferencedPakChecksums( void ) {
 
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
 		// is the element a pak file?
-		if ( search->pack ) {
+		if ( search->pack && !FS_PakHidden( search->pack ) ) {
 			if (search->pack->referenced || Q_stricmpn(search->pack->pakGamename, com_basegame->string, strlen(com_basegame->string))) {
 				Q_strcat( info, sizeof( info ), va("%i ", search->pack->checksum ) );
 			}
@@ -3915,7 +4023,7 @@ const char *FS_ReferencedPakPureChecksums( void ) {
 		*/
 		for ( search = fs_searchpaths ; search ; search = search->next ) {
 			// is the element a pak file and has it been referenced based on flag?
-			if ( search->pack && (search->pack->referenced & nFlags)) {
+			if ( search->pack && !FS_PakHidden( search->pack ) && (search->pack->referenced & nFlags)) {
 				Q_strcat( info, sizeof( info ), va("%i ", search->pack->pure_checksum ) );
 				if (nFlags & (FS_CGAME_REF | FS_UI_REF)) {
 					break;
@@ -3950,7 +4058,7 @@ const char *FS_ReferencedPakNames( void ) {
 	// and referenced one's from baseq3
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
 		// is the element a pak file?
-		if ( search->pack ) {
+		if ( search->pack && !FS_PakHidden( search->pack ) ) {
 			if (*info) {
 				Q_strcat(info, sizeof( info ), " " );
 			}

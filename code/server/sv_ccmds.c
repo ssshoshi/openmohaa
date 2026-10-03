@@ -164,6 +164,8 @@ static void SV_Map_f( void ) {
 	char		map[ MAX_QPATH ];
 	char		mapname[ MAX_QPATH ];
 	const char	*spawnpos;
+	int			gametype;
+	qboolean	wasMultiplayer;
 
 	if( Cmd_Argc() != 2 ) {
 		Com_Printf( "USAGE: map <map>\n" );
@@ -199,12 +201,25 @@ static void SV_Map_f( void ) {
 	} else {
 		Com_sprintf( expanded, sizeof( expanded ), "maps/%s_sml.bsp", map );
 	}
+	// Added in OPM: look for the map with the paks of the game type it is to
+	// be played in, since single player paks are hidden in multiplayer.
+	cmd = Cmd_Argv( 0 );
+	if( !Q_stricmpn( cmd, "sp", 2 ) ) {
+		gametype = GT_SINGLE_PLAYER;
+	} else if( g_gametype->latchedString ) {
+		gametype = atoi( g_gametype->latchedString );
+	} else {
+		gametype = g_gametype->integer;
+	}
+	wasMultiplayer = FS_Multiplayer();
+	FS_SetMultiplayer( gametype != GT_SINGLE_PLAYER );
+
 	if( FS_ReadFile( expanded, NULL ) == -1 ) {
 		Com_Printf( "Can't find map %s\n", expanded );
+		// The game in progress goes on as it was.
+		FS_SetMultiplayer( wasMultiplayer );
 		return;
 	}
-
-	cmd = Cmd_Argv( 0 );
 
 	if( !Q_stricmpn( cmd, "sp", 2 ) )
 	{
@@ -221,6 +236,7 @@ static void SV_Map_f( void ) {
 	if( !Q_stricmpn( map, "dm/", 3 ) && g_gametype->integer == GT_OBJECTIVE )
 	{
 		Com_Printf( "Can't load regular dm map in objective game type\n" );
+		FS_SetMultiplayer( wasMultiplayer );
 		return;
 	}
 
