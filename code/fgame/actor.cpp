@@ -51,6 +51,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "g_physics.h"
 
 #include <cmath>
+#include "g_orch.h"
 
 extern Vector PLAYER_BASE_MIN;
 extern Vector PLAYER_BASE_MAX;
@@ -4458,9 +4459,21 @@ Actor::MoveTo
 Move actor to specific location/listener with specific animation.
 ===============
 */
+// Added in OPM
+//  A runto or the like is giving the order: it has logged it (g_orch.cpp)
+static bool orchOrderLogged;
+
 void Actor::MoveTo(Event *ev)
 {
     m_csPatrolCurrentAnim = ev->GetConstString(1);
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp). runto and the like log their
+    //  own, with the script that gave the order.
+    if (!orchOrderLogged && G_OrchLogging()) {
+        ScriptVariable dest = ev->GetValue(2);
+        G_OrchLogOrder(this, "moveto", Director.GetString(m_csPatrolCurrentAnim).c_str(), &dest);
+    }
 
     if (ev->IsVectorAt(2)) {
         Vector vec = ev->GetVector(2);
@@ -4489,6 +4502,18 @@ void Actor::WalkTo(Event *ev)
     Event event = Event(EV_Listener_ExecuteScript, 2);
     event.AddConstString(STRING_GLOBAL_WALKTO_SCR);
     event.AddValue(ev->GetValue(1));
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        ScriptVariable dest = ev->GetValue(1);
+        G_OrchLogOrder(this, "walkto", NULL, &dest);
+        orchOrderLogged = true;
+        ExecuteScript(&event);
+        orchOrderLogged = false;
+        return;
+    }
+
     ExecuteScript(&event);
 }
 
@@ -4504,6 +4529,18 @@ void Actor::RunTo(Event *ev)
     Event event = Event(EV_Listener_ExecuteScript, 2);
     event.AddConstString(STRING_GLOBAL_RUNTO_SCR);
     event.AddValue(ev->GetValue(1));
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        ScriptVariable dest = ev->GetValue(1);
+        G_OrchLogOrder(this, "runto", NULL, &dest);
+        orchOrderLogged = true;
+        ExecuteScript(&event);
+        orchOrderLogged = false;
+        return;
+    }
+
     ExecuteScript(&event);
 }
 
@@ -4519,6 +4556,18 @@ void Actor::CrouchTo(Event *ev)
     Event event = Event(EV_Listener_ExecuteScript, 2);
     event.AddConstString(STRING_GLOBAL_CROUCHTO_SCR);
     event.AddValue(ev->GetValue(1));
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        ScriptVariable dest = ev->GetValue(1);
+        G_OrchLogOrder(this, "crouchto", NULL, &dest);
+        orchOrderLogged = true;
+        ExecuteScript(&event);
+        orchOrderLogged = false;
+        return;
+    }
+
     ExecuteScript(&event);
 }
 
@@ -4534,6 +4583,18 @@ void Actor::CrawlTo(Event *ev)
     Event event = Event(EV_Listener_ExecuteScript, 2);
     event.AddConstString(STRING_GLOBAL_CRAWLTO_SCR);
     event.AddValue(ev->GetValue(1));
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        ScriptVariable dest = ev->GetValue(1);
+        G_OrchLogOrder(this, "crawlto", NULL, &dest);
+        orchOrderLogged = true;
+        ExecuteScript(&event);
+        orchOrderLogged = false;
+        return;
+    }
+
     ExecuteScript(&event);
 }
 
@@ -6129,6 +6190,13 @@ Set current patrol path.
 void Actor::EventSetPatrolPath(Event *ev)
 {
     SetPatrolCurrentNode(ev->GetListener(1));
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        ScriptVariable dest = ev->GetValue(1);
+        G_OrchLogOrder(this, "patrolpath", NULL, &dest);
+    }
 }
 
 /*
@@ -7712,8 +7780,17 @@ void Actor::Think(void)
     }
 
     if (m_bDirtyThinkState) {
+        // Added in OPM
+        //  The orchestrator's log (g_orch.cpp)
+        const int oldState = m_ThinkState;
+        const int oldThink = CurrentThink();
+
         m_bDirtyThinkState = false;
         ThinkStateTransitions();
+
+        if ((oldState != m_ThinkState || oldThink != CurrentThink()) && G_OrchLogging()) {
+            G_OrchLogThink(this, oldState, oldThink);
+        }
     }
 
     GlobalFuncs_t *Think = &GlobalFuncs[m_Think[m_ThinkLevel]];

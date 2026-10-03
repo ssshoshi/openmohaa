@@ -213,6 +213,8 @@ public:
 
     ScriptClass *GetScriptClass(void);
     str          FileName(void);
+    // Added in OPM: "maps/m1l1.scr:210", where the thread is (g_orch.cpp)
+    str          SourcePos(void);
 
     void EventCreateListener(Event *ev);
     void EventDebugInt3(Event *ev); // Added in 2.0

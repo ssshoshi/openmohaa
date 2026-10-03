@@ -9,7 +9,11 @@ orch/sessions/<date>/turns/<n>.json and announced on stdout with one line,
 
   TURN 12 "make this guy flank left instead" shots=1 errors=0 /mnt/d/.../turns/0012.json
 
-which is what the agent's Monitor turns into a notification. Replies the agent
+which is what the agent's Monitor turns into a notification. The game logs what
+happens as it plays (orch/log: the player's trail and gaze, long frames,
+damage, triggers, AI think changes, move orders); each turn carries the part of
+that from 10 s before it began ("context"), and all of it goes to the session's
+timeline.jsonl. Replies the agent
 writes to orch/say/*.txt are spoken with Kokoro; pressing the talk key cuts a
 reply short.
 
@@ -91,6 +95,13 @@ LOCAL_COMMANDS = {
     "queue": re.compile(r"^\W*(queue|offline|note|notes|backlog) mode\W*$", re.I),
     "live": re.compile(r"^\W*(live|online) mode\W*$", re.I),
 }
+
+
+LOG_SLOTS = 64          # cgame's ring of client.<n>.jsonl files (cg_orch.cpp)
+LOG_KEEP = 120.0        # seconds of the game's log kept for turns
+CONTEXT_BEFORE = 10.0   # seconds of it before a turn that go with the turn
+CONTEXT_MAX = 200       # entries a turn carries at most
+CONTEXT_TYPE_MAX = 40   # and of one type
 
 
 def now():
@@ -180,6 +191,7 @@ class Sidecar:
         self.lock = threading.Lock()
         self.utterances = queue.Queue()   # (start, end, audio) to transcribe
         self.pending = []                 # events of the turn being gathered
+        self.recent = collections.deque() # the game's log, the last LOG_KEEP seconds
         self.last_activity = 0.0          # when speech last ended, or a shot came
         self.in_speech = False
         self.muted = False
@@ -570,6 +582,112 @@ class Sidecar:
                 self.set_status(self.idle_status())
             time.sleep(0.05)
 
+    # ------------------------------------------------------------ the game's own logs
+
+    def watch_logs(self):
+        """What cgame and the game log (orch/log), into the timeline and self.recent."""
+        log_dir = os.path.join(self.orch, "log")
+        os.makedirs(log_dir, exist_ok=True)
+        slot_glob = os.path.join(log_dir, "client.*.jsonl")
+        game_path = os.path.join(log_dir, "game.jsonl")
+        game_pos = os.path.getsize(game_path) if os.path.isfile(game_path) else 0
+        game_rest = b""
+        slots = {}                                     # slot file -> mtime read
+        for path in glob.glob(slot_glob):              # from before this session
+            try:
+                slots[path] = os.stat(path).st_mtime_ns
+            except OSError:
+                pass
+        read = collections.deque(maxlen=4 * LOG_SLOTS)  # (writer, batch) read
+
+        while not self.stop.is_set():
+            entries = []
+
+            # cgame: whole batches, each file rewritten in turn.
+            for path in glob.glob(slot_glob):
+                try:
+                    mtime = os.stat(path).st_mtime_ns
+                    if slots.get(path) == mtime:
+                        continue
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                if not text.endswith("\n"):
+                    continue  # still being written
+                lines = text.splitlines()
+                try:
+                    head = json.loads(lines[0])
+                    batch = [json.loads(line) for line in lines[1:] if line.strip()]
+                except ValueError:
+                    continue
+                slots[path] = mtime
+                key = (head.get("writer"), head.get("batch"))
+                if key in read:
+                    continue
+                read.append(key)
+                for e in batch:
+                    e["source"] = "client"
+                    entries.append(e)
+
+            # The game: appended to.
+            if os.path.isfile(game_path):
+                size = os.path.getsize(game_path)
+                if size < game_pos:
+                    game_pos, game_rest = 0, b""
+                if size > game_pos:
+                    try:
+                        with open(game_path, "rb") as f:
+                            f.seek(game_pos)
+                            chunk = f.read()
+                            game_pos = f.tell()
+                    except OSError:
+                        chunk = b""
+                    *lines, game_rest = (game_rest + chunk).split(b"\n")
+                    for line in lines:
+                        try:
+                            e = json.loads(line.decode("utf-8", "replace"))
+                        except ValueError:
+                            continue
+                        e["source"] = "game"
+                        entries.append(e)
+
+            if entries:
+                entries = [e for e in entries if isinstance(e.get("t"), (int, float))]
+                entries.sort(key=lambda e: e["t"])
+                with self.lock:
+                    self.recent.extend(entries)
+                    cutoff = now() - LOG_KEEP
+                    while self.recent and self.recent[0]["t"] < cutoff:
+                        self.recent.popleft()
+                for e in entries:
+                    self.log(dict(e, time=iso(e["t"])))
+            time.sleep(0.2)
+
+    def turn_context(self, start, end):
+        """The game's log around a turn: dt is seconds from the turn's start."""
+        with self.lock:
+            window = [e for e in self.recent if start - CONTEXT_BEFORE <= e["t"] <= end]
+        context = []
+        last_trail = None
+        for e in window:
+            # A trail point a second is enough to follow.
+            if e.get("type") == "trail":
+                if last_trail is not None and e["t"] - last_trail < 1.0:
+                    continue
+                last_trail = e["t"]
+            item = {"dt": round(e["t"] - start, 2)}
+            item.update((k, v) for k, v in e.items() if k != "t")
+            context.append(item)
+        # Keep the moment itself: of a type there's too much of, and overall,
+        # the entries nearest the turn's start.
+        kept, per_type = [], collections.Counter()
+        for e in sorted(context, key=lambda e: abs(e["dt"])):
+            per_type[e.get("type")] += 1
+            if per_type[e.get("type")] <= CONTEXT_TYPE_MAX and len(kept) < CONTEXT_MAX:
+                kept.append(e)
+        return sorted(kept, key=lambda e: e["dt"])
+
     def flush_turn(self):
         with self.lock:
             if not self.pending or self.in_speech or not self.utterances.empty():
@@ -588,12 +706,16 @@ class Sidecar:
         speech = " ".join(e["text"] for e in events if e["type"] == "speech")
         shots = [e for e in events if e["type"] == "shot"]
         errors = [e for e in events if e["type"] == "console"]
+        # From what was said or shot, not from console errors that waited for a turn.
+        anchor = min((e["t"] for e in events if e["type"] != "console"), default=events[0]["t"])
+        context = self.turn_context(anchor, now())
         turn = {
             "turn": self.turn_number,
             "start": events[0].get("time") or events[0].get("start"),
             "end": iso(now()),
             "speech": speech,
             "events": [{k: v for k, v in e.items() if k != "t"} for e in events],
+            "context": context,
         }
         path = os.path.join(self.turns_dir, f"{self.turn_number:04d}.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -602,10 +724,10 @@ class Sidecar:
         quoted = json.dumps(speech[:160])
         if self.queue_mode:
             item = self.add_to_backlog(turn, path)
-            self.emit(f"QUEUED {item} {quoted} shots={len(shots)} errors={len(errors)} {to_wsl(path)}")
+            self.emit(f"QUEUED {item} {quoted} shots={len(shots)} errors={len(errors)} context={len(context)} {to_wsl(path)}")
             return
         self.set_status("thinking")
-        self.emit(f"TURN {self.turn_number} {quoted} shots={len(shots)} errors={len(errors)} {to_wsl(path)}")
+        self.emit(f"TURN {self.turn_number} {quoted} shots={len(shots)} errors={len(errors)} context={len(context)} {to_wsl(path)}")
 
     def add_to_backlog(self, turn, turn_path):
         """Files a turn as a backlog item for an agent to work on later; returns its id."""
@@ -628,6 +750,7 @@ class Sidecar:
             "session": to_wsl(self.session),
             "turn": to_wsl(turn_path),
             "events": turn["events"],
+            "context": turn.get("context", []),
         }
         tmp = f"{path}.{os.getpid()}.tmp_w"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -712,7 +835,7 @@ class Sidecar:
     def run(self):
         self.emit(f"INFO session {to_wsl(self.session)}")
         threads = [threading.Thread(target=f, daemon=True)
-                   for f in (self.listen, self.transcribe, self.watch_game, self.speak)]
+                   for f in (self.listen, self.transcribe, self.watch_game, self.watch_logs, self.speak)]
         for t in threads:
             t.start()
         try:

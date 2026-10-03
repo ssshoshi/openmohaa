@@ -2426,6 +2426,21 @@ str ScriptThread::FileName(void)
     return m_ScriptVM->Filename();
 }
 
+str ScriptThread::SourcePos(void)
+{
+    str sourceLine;
+    int column, line;
+
+    if (!m_ScriptVM || !m_ScriptVM->GetScript()) {
+        return "";
+    }
+    if (m_ScriptVM->m_PrevCodePos
+        && m_ScriptVM->GetScript()->GetSourceAt(m_ScriptVM->m_PrevCodePos, &sourceLine, column, line)) {
+        return m_ScriptVM->Filename() + ":" + str(line);
+    }
+    return m_ScriptVM->Filename();
+}
+
 void ScriptThread::StartedWaitFor(void)
 {
     Stop();

@@ -122,7 +122,15 @@ bool AbstractScript::GetSourceAt(size_t sourcePos, str *sourceLine, int& column,
 
 bool AbstractScript::GetSourceAt(const unsigned char *sourcePos, str *sourceLine, int& column, int& line)
 {
-    const sourceinfo_t *codePos = m_ProgToSource->findKeyValue(sourcePos);
+    const sourceinfo_t *codePos;
+
+    // Fixed in OPM
+    //  No source info without it
+    if (!m_ProgToSource) {
+        return false;
+    }
+
+    codePos = m_ProgToSource->findKeyValue(sourcePos);
 
     if (!codePos) {
         return false;

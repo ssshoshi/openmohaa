@@ -58,14 +58,21 @@ Paths:
 
 ## Each TURN
 
-A Monitor line `TURN <n> "<speech>" shots=<k> errors=<e> <path>` means the user
+A Monitor line `TURN <n> "<speech>" shots=<k> errors=<e> context=<c> <path>` means the user
 finished talking (or clicked a shot). Then:
 
 1. Read the turn JSON. Its `events` are speech, shots and console errors in time
    order. For each shot, read its `json` (aim, target, player position) and look
    at `files.screenshot_marked` (the target outlined) with Read. `server.txt`
    (beside the shot JSON) has the game's view of the target: class, targetname,
-   AI think state, script threads.
+   AI think state, script threads. Its `context` is what the game logged from
+   10 s before until the turn ended (`dt`: seconds from the first words or
+   shot): where they stood and looked (`trail`, `gaze`), long frames
+   (`hitch`), `damage` and kills, `trigger`s, AI `think` changes and move
+   `order`s with the script line that gave them. "That guy just did something
+   weird", "it stuttered", "why did he run there" are answered from it, often
+   without a shot. `orch.py log --last 60 [--type think,order]` reads further
+   back.
 2. Resolve "this", "that guy", "here" from the shot nearest in time to those
    words; without a shot, run `orch.py state` for where they look now.
 3. If the request is unclear, ask one short question with `orch.py say` and wait

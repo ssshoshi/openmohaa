@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 
 #include "entity.h"
+#include "g_orch.h"
 #include "g_physics.h"
 #include "scriptmaster.h"
 #include "sentient.h"
@@ -2661,6 +2662,22 @@ void Entity::Damage(
     ev->AddInteger(dflags);
     ev->AddInteger(meansofdeath);
     ev->AddInteger(location);
+
+    // Added in OPM
+    //  The orchestrator's log (g_orch.cpp)
+    if (G_OrchLogging()) {
+        const float     healthBefore = health;
+        const EntityPtr This         = this;
+        const EntityPtr by           = attacker;
+        const EntityPtr with         = inflictor;
+
+        ProcessEvent(ev);
+        if (This) {
+            G_OrchLogDamage(this, by, with, damage, meansofdeath, location, healthBefore);
+        }
+        return;
+    }
+
     ProcessEvent(ev);
 }
 
