@@ -1337,6 +1337,7 @@ public:
     virtual bool   CanSeeFrom(vec3_t pos, Entity *ent);
     bool           CanSeeEnemy(int iMaxDirtyTime);
     bool           CanShootEnemy(int iMaxDirtyTime);
+    bool           BeyondWeaponRange(const Vector& pos); // Added in OPM
     void           ShowInfo(void);
     virtual void   ShowInfo(float fDot, float fDist) override;
     void           DefaultPain(Event *ev);

@@ -4131,7 +4131,70 @@ bool Actor::CanShootEnemy(int iMaxDirtyTime)
         CanShoot(m_Enemy);
     }
 
+    // Added in OPM
+    if (m_bCanShootEnemy && m_Enemy && BeyondWeaponRange(m_Enemy->origin)) {
+        return false;
+    }
+
     return m_bCanShootEnemy;
+}
+
+/*
+===============
+Actor::BeyondWeaponRange
+
+Added in OPM
+  Whether pos is further than ai_rangemult times the range of the weapon in
+  hand (g_aishortrange, g_aimediumrange, g_ailongrange, g_aisniperrange, the
+  ranges its aim already spreads beyond). A friendly stood firing an SMG at
+  Germans three thousand units off, every round wide (backlog #20); out there
+  he moves up instead, or holds his fire.
+===============
+*/
+bool Actor::BeyondWeaponRange(const Vector& pos)
+{
+    static cvar_t *ranges[4];
+    Weapon        *weapon;
+    float          range;
+
+    if (!AI_Enhanced(ai_rangemult) || ai_rangemult->value <= 0) {
+        return false;
+    }
+
+    weapon = GetActiveWeapon(WEAPON_MAIN);
+    if (!weapon || weapon->mAIRange < 0 || weapon->mAIRange > 3) {
+        return false;
+    }
+
+    if (!ranges[0]) {
+        ranges[0] = gi.Cvar_Get("g_aishortrange", "500", 0);
+        ranges[1] = gi.Cvar_Get("g_aimediumrange", "700", 0);
+        ranges[2] = gi.Cvar_Get("g_ailongrange", "1000", 0);
+        ranges[3] = gi.Cvar_Get("g_aisniperrange", "2200", 0);
+    }
+
+    range = ranges[weapon->mAIRange]->value * ai_rangemult->value;
+    if ((pos - origin).lengthSquared() <= range * range) {
+        return false;
+    }
+
+    if (ai_debug && ai_debug->integer) {
+        static int lastSaid[MAX_GENTITIES];
+
+        if (level.inttime >= lastSaid[entnum] + 2000) {
+            lastSaid[entnum] = level.inttime;
+            AI_Debug(
+                "%s (%d) holds fire: %.0f away, past %.0f for its %s",
+                TargetName().c_str(),
+                entnum,
+                (pos - origin).length(),
+                range,
+                weapon->getName().c_str()
+            );
+        }
+    }
+
+    return true;
 }
 
 /*

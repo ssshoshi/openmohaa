@@ -194,7 +194,8 @@ void Actor::Suspend_Turret(void)
 
 void Actor::State_Turret_Combat(void)
 {
-    if (CanSeeEnemy(200)) {
+    // OPM: beyond its weapon's range it closes in rather than firing
+    if (CanSeeEnemy(200) && !BeyondWeaponRange(m_Enemy->origin)) {
         ClearPath();
         Anim_Attack();
         AimAtTargetPos();
@@ -340,6 +341,11 @@ bool Actor::CanSuppressEnemy(void)
     trace_t trace;
 
     if (rand() % 100 >= m_iSuppressChance) {
+        return false;
+    }
+
+    // OPM: not at a place too far for the weapon in hand
+    if (BeyondWeaponRange(m_vLastEnemyPos)) {
         return false;
     }
 

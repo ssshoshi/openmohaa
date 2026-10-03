@@ -343,6 +343,7 @@ cvar_t *ai_enhanced;
 cvar_t *ai_debug;
 cvar_t *ai_suppress;
 cvar_t *ai_suppress_chance;
+cvar_t *ai_rangemult;
 cvar_t *ai_grenades;
 cvar_t *ai_grenade_cooldown;
 cvar_t *ai_grenade_ammo;
@@ -801,6 +802,9 @@ void CVAR_Init(void)
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);
     ai_suppress        = gi.Cvar_Get("ai_suppress", "1", CVAR_ARCHIVE);
     ai_suppress_chance = gi.Cvar_Get("ai_suppress_chance", "50", CVAR_ARCHIVE);
+    // How far an AI fires, in multiples of its weapon's range (g_aishortrange..
+    //  g_aisniperrange); 0 for no limit
+    ai_rangemult       = gi.Cvar_Get("ai_rangemult", "3", CVAR_ARCHIVE);
     ai_grenades         = gi.Cvar_Get("ai_grenades", "1", CVAR_ARCHIVE);
     ai_grenade_cooldown = gi.Cvar_Get("ai_grenade_cooldown", "6", CVAR_ARCHIVE);
     ai_grenade_ammo     = gi.Cvar_Get("ai_grenade_ammo", "1", CVAR_ARCHIVE);

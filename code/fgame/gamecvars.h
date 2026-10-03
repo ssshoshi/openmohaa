@@ -375,6 +375,7 @@ extern cvar_t *ai_enhanced;
 extern cvar_t *ai_debug;
 extern cvar_t *ai_suppress;
 extern cvar_t *ai_suppress_chance;
+extern cvar_t *ai_rangemult;
 extern cvar_t *ai_grenades;
 extern cvar_t *ai_grenade_cooldown;
 extern cvar_t *ai_grenade_ammo;
