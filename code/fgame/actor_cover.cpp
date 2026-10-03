@@ -324,7 +324,7 @@ void Actor::State_Cover_Target(void)
         return;
     }
 
-    if (DecideToThrowGrenade(m_vLastEnemyPos + velocity, &m_vGrenadeVel, &m_eGrenadeMode, false)) {
+    if (DecideToThrowSmoke() || DecideToThrowGrenade(m_vLastEnemyPos + velocity, &m_vGrenadeVel, &m_eGrenadeMode, false)) {
         SetDesiredYawDir(m_vGrenadeVel);
         DesiredAnimation(
             ANIM_MODE_NORMAL,
