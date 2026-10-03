@@ -2974,6 +2974,9 @@ Actor::Actor()
     m_iOPMNextArcSearchTime = 0;
     m_iOPMHoldGrenadeTime   = 0;
     m_bOPMGrenadeTarget     = false;
+    m_bOPMSmokeThrow        = false;
+    m_iOPMLastSmokeTime     = 0;
+    m_iOPMNextSmokeCheck    = 0;
 
     m_bBreathSteam = false;
 
@@ -10363,6 +10366,97 @@ bool Actor::FindGrenadeArc(const Vector& vTo, Vector *pvVel)
     return false;
 }
 
+// OPM: Spearhead's German smoke grenade, which tools/ai-assets/build.py packs
+//  from the player's own Spearhead install; without it there is no smoke.
+static const char *OPM_SMOKE_GRENADE_MODEL = "models/projectiles/nebelhandgranate.tik";
+
+static bool OPM_SmokeGrenadeAvailable(void)
+{
+    static int iAvailable = 0;
+
+    if (!iAvailable) {
+        iAvailable = gi.modeltiki(OPM_SMOKE_GRENADE_MODEL) ? 1 : -1;
+    }
+    return iAvailable > 0;
+}
+
+/*
+===============
+Actor::DecideToThrowSmoke
+
+OPM (ai_smoke): a German in a firefight now and then throws smoke about half
+way to his enemy, to screen his squad from it. At most one of a squad in
+ai_smoke_cooldown seconds, only for a squad of two or more, and he gives it a
+thought (ai_smoke_chance percent) at most every three seconds. If he throws,
+the throw is set up as for a grenade (m_vGrenadeVel, m_eGrenadeMode).
+===============
+*/
+bool Actor::DecideToThrowSmoke(void)
+{
+    Sentient *pSquadMate;
+    Vector    vDelta, vTo, vFrom, vVel;
+    float     fDist;
+    int       iSince;
+    trace_t   trace;
+
+    if (!AI_Enhanced(ai_smoke) || m_Team != TEAM_GERMAN || !m_Enemy || level.inttime < m_iOPMNextSmokeCheck) {
+        return false;
+    }
+    m_iOPMNextSmokeCheck = level.inttime + 3000;
+
+    if (m_pNextSquadMate == this || !CanSeeEnemy(200)) {
+        return false;
+    }
+
+    vDelta   = m_Enemy->origin - origin;
+    vDelta.z = 0;
+    fDist    = vDelta.length();
+    if (fDist < 500 || fDist > 1500) {
+        return false;
+    }
+
+    // Not again so soon from this squad.
+    iSince = level.inttime - (int)(ai_smoke_cooldown->value * 1000);
+    if (m_iOPMLastSmokeTime && m_iOPMLastSmokeTime > iSince) {
+        return false;
+    }
+    for (pSquadMate = m_pNextSquadMate; pSquadMate != this; pSquadMate = pSquadMate->m_pNextSquadMate) {
+        if (pSquadMate->IsSubclassOfActor()) {
+            Actor *pActor = static_cast<Actor *>(pSquadMate);
+            if (pActor->m_iOPMLastSmokeTime && pActor->m_iOPMLastSmokeTime > iSince) {
+                return false;
+            }
+        }
+    }
+
+    if (random() * 100 >= ai_smoke_chance->value || !OPM_SmokeGrenadeAvailable()) {
+        return false;
+    }
+
+    // On the ground about half way.
+    vTo   = origin + vDelta * (0.4f + random() * 0.15f);
+    trace = G_Trace(
+        vTo + Vector(0, 0, 128), vec_zero, vec_zero, vTo - Vector(0, 0, 512), this, MASK_SOLID, qfalse, "Actor::DecideToThrowSmoke"
+    );
+    vTo   = trace.endpos;
+    vTo.z += 4;
+
+    vFrom = GrenadeThrowPoint(origin, vTo - origin, STRING_ANIM_GRENADETHROW_SCR);
+    if (!SolveGrenadeArc(vFrom, vTo, &vVel)) {
+        return false;
+    }
+
+    m_vGrenadeVel       = vVel;
+    m_eGrenadeMode      = AI_GREN_TOSS_THROW;
+    m_vOPMGrenadeTarget = vTo;
+    m_bOPMGrenadeTarget = true;
+    m_bOPMSmokeThrow    = true;
+    m_iOPMLastSmokeTime = level.inttime;
+
+    AI_Debug("%s throws smoke %.0f away, to screen his squad", TargetName().c_str(), (vTo - origin).length());
+    return true;
+}
+
 /*
 ===============
 Actor::SolveGrenadeArc
@@ -10379,7 +10473,12 @@ bool Actor::SolveGrenadeArc(const Vector& vFrom, const Vector& vTo, Vector *pvVe
     float              fTime;
 
     vFlat.z = 0;
-    for (fTime = Q_max(0.5f, vFlat.length() / 800.0f); fTime <= 3.0f; fTime += 0.2f) {
+
+    // From a lob, as a grenade is thrown (three quarters of the time a throw
+    // at 45 degrees is in the air), to a steep one: never a flat line drive,
+    // which no one throws and which would skip into rising ground.
+    for (fTime = Q_max(0.5f, 0.75f * sqrtf(2.0f * vFlat.length() / Q_max(1.0f, fGravity))); fTime <= 3.0f;
+         fTime += 0.2f) {
         Vector vVel = (vTo - vFrom) * (1.0f / fTime);
 
         vVel.z += 0.5f * fGravity * fTime;
@@ -10682,6 +10781,9 @@ bool Actor::DecideToThrowGrenade(const Vector& vTo, Vector *pvVel, eGrenadeTossM
 {
     bool bVerbose = ai_debug && ai_debug->integer >= 2;
 
+    // OPM: a smoke throw cut short does not make this one smoke
+    m_bOPMSmokeThrow = false;
+
     if (!AmmoCount("grenade")) {
         if (bVerbose) {
             AI_Debug("%s: no grenade to throw", TargetName().c_str());
@@ -10843,6 +10945,14 @@ void Actor::Grenade_EventFire(Event *ev)
         GrenadeThrowError(dir, speed);
     }
     m_bOPMGrenadeTarget = false;
+
+    // OPM: a smoke grenade (DecideToThrowSmoke), which costs him no grenade
+    if (m_bOPMSmokeThrow) {
+        m_bOPMSmokeThrow = false;
+        ProjectileAttack(pos, dir, this, OPM_SMOKE_GRENADE_MODEL, 0, speed);
+        AI_Debug("%s lets go of the smoke grenade", TargetName().c_str());
+        return;
+    }
 
     ProjectileAttack(pos, dir, this, strGrenade, 0, speed);
     UseAmmo("grenade", 1);

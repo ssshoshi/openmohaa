@@ -284,6 +284,9 @@ Single-player enemies get behaviour the original game's AI lacks. Each part has 
 |ai_grenade_cooldown|6      |Seconds a squad waits after one of them throws before another does
 |ai_grenade_fumble  |8      |Percent of throws that go badly wrong: the grenade slips and lands a few yards ahead, falls short, or goes wide (enemies get hurt by their own grenades)
 |ai_grenade_drop    |1      |An enemy killed while winding up drops the grenade, live
+|ai_smoke           |1      |A German in a firefight now and then throws smoke about half way to his enemy, to screen his squad. Needs Spearhead's smoke grenade: `tools/ai-assets/build.py` builds `zzzzzzzzz-opm-ai.pk3` from your Spearhead install (without it there is no smoke)
+|ai_smoke_cooldown  |30     |Seconds a squad waits after one of them throws smoke before another does
+|ai_smoke_chance    |25     |Percent chance, at most every three seconds, that a German who could throws smoke
 |ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown
 
 ### Map add-ons

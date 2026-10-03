@@ -349,6 +349,9 @@ cvar_t *ai_grenade_ammo;
 cvar_t *ai_grenade_range;
 cvar_t *ai_grenade_fumble;
 cvar_t *ai_grenade_drop;
+cvar_t *ai_smoke;
+cvar_t *ai_smoke_cooldown;
+cvar_t *ai_smoke_chance;
 
 void CVAR_Init(void)
 {
@@ -804,6 +807,9 @@ void CVAR_Init(void)
     ai_grenade_range    = gi.Cvar_Get("ai_grenade_range", "1400", CVAR_ARCHIVE);
     ai_grenade_fumble   = gi.Cvar_Get("ai_grenade_fumble", "8", CVAR_ARCHIVE);
     ai_grenade_drop     = gi.Cvar_Get("ai_grenade_drop", "1", CVAR_ARCHIVE);
+    ai_smoke            = gi.Cvar_Get("ai_smoke", "1", CVAR_ARCHIVE);
+    ai_smoke_cooldown   = gi.Cvar_Get("ai_smoke_cooldown", "30", CVAR_ARCHIVE);
+    ai_smoke_chance     = gi.Cvar_Get("ai_smoke_chance", "25", CVAR_ARCHIVE);
 
     cl_running = gi.Cvar_Get("cl_running", "", 0);
 }

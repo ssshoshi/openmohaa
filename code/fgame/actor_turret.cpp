@@ -128,7 +128,8 @@ void Actor::Turret_SelectState(void)
             TransitionState(ACTOR_STATE_TURRET_CHARGE, 0);
         }
     } else {
-        if (DecideToThrowGrenade(m_vLastEnemyPos + m_Enemy->velocity, &m_vGrenadeVel, &m_eGrenadeMode, false)) {
+        if (DecideToThrowSmoke()
+            || DecideToThrowGrenade(m_vLastEnemyPos + m_Enemy->velocity, &m_vGrenadeVel, &m_eGrenadeMode, false)) {
             SetDesiredYawDir(m_vGrenadeVel);
 
             DesiredAnimation(

@@ -809,6 +809,11 @@ public:
     //  land, to aim it again from where it actually leaves his hand.
     Vector m_vOPMGrenadeTarget;
     bool   m_bOPMGrenadeTarget;
+    // OPM: smoke (ai_smoke): whether the throw under way is smoke, when he
+    //  last threw it and when he may next think of it.
+    bool m_bOPMSmokeThrow;
+    int  m_iOPMLastSmokeTime;
+    int  m_iOPMNextSmokeCheck;
     /* used for turret actot to run back to home Turret_SelectState() */
     int m_iRunHomeTime;
     /* no cover path for initial turret state */
@@ -1109,6 +1114,7 @@ public:
     bool          GrenadeArcClear(const Vector &vFrom, const Vector &vVel, float fTime);
     bool          FindGrenadeArc(const Vector &vTo, Vector *pvVel);
     bool          SolveGrenadeArc(const Vector &vFrom, const Vector &vTo, Vector *pvVel);
+    bool          DecideToThrowSmoke(void);
     void          HoldGrenade(void);
     void          ReleaseHeldGrenade(void);
     void          DropHeldGrenade(void);
