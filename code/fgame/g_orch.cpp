@@ -38,6 +38,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "scriptmaster.h"
 #include "scriptthread.h"
 #include "scriptexception.h"
+#include "../script/scriptvm.h"
+#include "../script/scriptclass.h"
 
 #include <chrono>
 
@@ -642,5 +644,129 @@ qboolean G_OrchRunScriptCmd(gentity_t *ent)
     } catch (ScriptException& exc) {
         gi.Printf("orch_runscript: %s\n", exc.string.c_str());
     }
+    return qtrue;
+}
+
+#define ORCH_SCRIPTS_RADIUS 1500.0f // how near a thread's self must be
+#define ORCH_SCRIPTS_LINES  10
+#define ORCH_SCRIPTS_LEN    96      // characters a line
+
+typedef struct {
+    float dist;
+    str   line;
+} orchThreadLine_t;
+
+static int G_OrchThreadSort(const void *a, const void *b)
+{
+    const float d = ((const orchThreadLine_t *)a)->dist - ((const orchThreadLine_t *)b)->dist;
+    return d < 0 ? -1 : d > 0 ? 1 : 0;
+}
+
+qboolean G_OrchScriptsCmd(gentity_t *ent)
+{
+    MEM_BlockAlloc_enum<ScriptClass> en = ScriptClass_allocator;
+    Container<orchThreadLine_t>      lines;
+    orchThreadLine_t                 tl;
+    Entity                          *player;
+    str                              out;
+    int                              total = 0;
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER || !ent || !ent->entity) {
+        return qtrue;
+    }
+    player = ent->entity;
+
+    for (ScriptClass *sc = en.NextElement(); sc; sc = en.NextElement()) {
+        for (ScriptVM *vm = sc->m_Threads; vm; vm = vm->next) {
+            Listener *self   = sc->m_Self;
+            bool      mapScr = !Q_stricmp(vm->Filename().c_str(), level.m_mapscript.c_str());
+            float     dist   = 0;
+            str       where, line, sourceLine;
+            int       column, lineNum;
+
+            total++;
+            if (self && self->isSubclassOf(Entity) && self != world) {
+                dist = (((Entity *)self)->centroid - player->centroid).length();
+                if (dist > ORCH_SCRIPTS_RADIUS) {
+                    continue;
+                }
+            } else if (!mapScr) {
+                continue;
+            } else {
+                dist = ORCH_SCRIPTS_RADIUS; // the level's own, after the near ones
+            }
+
+            where = vm->Filename();
+            if (vm->GetScript() && vm->m_PrevCodePos
+                && vm->GetScript()->GetSourceAt(vm->m_PrevCodePos, &sourceLine, column, lineNum)) {
+                where += ":" + str(lineNum);
+            }
+            line = where;
+
+            switch (vm->ThreadState()) {
+            case THREAD_WAITING:
+                if (vm->m_Thread && vm->m_Thread->m_WaitForList) {
+                    con_set_enum<const_str, ConList>    wen = *vm->m_Thread->m_WaitForList;
+                    con_set<const_str, ConList>::Entry *e   = wen.NextElement();
+
+                    if (e) {
+                        line += " waittill " + Director.GetString(e->GetKey());
+                        if (e->value.NumObjects() && e->value.ObjectAt(1)) {
+                            Listener *l = e->value.ObjectAt(1);
+
+                            if (l->isSubclassOf(SimpleEntity) && ((SimpleEntity *)l)->TargetName().length()) {
+                                line += " on $" + ((SimpleEntity *)l)->TargetName();
+                            } else {
+                                line += str(" on ") + l->getClassname();
+                            }
+                        }
+                    }
+                } else {
+                    line += " waiting";
+                }
+                break;
+            case THREAD_SUSPENDED:
+                line += " suspended";
+                break;
+            default:
+                line += " running";
+                break;
+            }
+
+            if (self && self->isSubclassOf(SimpleEntity) && self != world) {
+                SimpleEntity *se = (SimpleEntity *)self;
+
+                if (se->TargetName().length()) {
+                    line += " ($" + se->TargetName() + ")";
+                } else if (se->isSubclassOf(Entity)) {
+                    line += " (#" + str(((Entity *)se)->entnum) + " " + se->getClassname() + ")";
+                } else {
+                    line += str(" (") + se->getClassname() + ")";
+                }
+            }
+
+            // Server commands are split on quotes and the panel's lines on |.
+            for (int i = 0; i < line.length(); i++) {
+                if (line[i] == '"' || line[i] == '|' || line[i] == '\n') {
+                    line[i] = '\'';
+                }
+            }
+            if (line.length() > ORCH_SCRIPTS_LEN) {
+                line = str(line, 0, ORCH_SCRIPTS_LEN);
+            }
+
+            tl.dist = dist;
+            tl.line = line;
+            lines.AddObject(tl);
+        }
+    }
+
+    lines.Sort(G_OrchThreadSort);
+    out = va("%d threads, %d here", total, lines.NumObjects());
+    for (int i = 1; i <= lines.NumObjects() && i <= ORCH_SCRIPTS_LINES; i++) {
+        out += "|" + lines.ObjectAt(i).line;
+    }
+
+    gi.SendServerCommand(ent - g_entities, "orch_scripts \"%s\"", out.c_str());
     return qtrue;
 }

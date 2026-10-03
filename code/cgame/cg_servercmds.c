@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cg_servercmds.c -- text commands sent by the server
 
 #include "cg_local.h"
+#include "cg_orch.h"
 #include "cg_physics.h"
 #include "../fgame/bg_voteoptions.h"
 #include "cg_servercmds_filter.h"
@@ -416,6 +417,12 @@ static void CG_ServerCommand(qboolean modelOnly)
     //  The server would not carry what the grabber took hold of.
     if (!strcmp(cmd, "physgrab_denied")) {
         CG_PhysicsGrabDenied();
+        return;
+    }
+
+    //  The script threads near the player, for the orchestrator's panel.
+    if (!strcmp(cmd, "orch_scripts")) {
+        CG_OrchScriptsReply(cgi.Argv(1));
         return;
     }
 

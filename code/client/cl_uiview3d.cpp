@@ -592,6 +592,10 @@ void View3D::Draw2D(void)
 
         if (!cls.no_menus) {
             DrawSoundOverlay();
+            // Added in OPM: s_showsounds (cl_scrn.cpp)
+            if (clc.state == CA_ACTIVE) {
+                SCR_DrawSoundMarkers();
+            }
             DrawNetProfile();
             DrawSubtitleOverlay();
         }

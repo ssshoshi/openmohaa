@@ -111,8 +111,8 @@ aim are the free camera's; `player_origin` is still where the body stands.
 bad ("I'm under the map"), `orch.py cmd orch_return`. "Freeze" / "unfreeze"
 are `orch.py cmd orch_freeze`. "Show me the AI / triggers / damage / what
 I'm looking at / the frame rate" is `orch.py cmd "orch_debug ai"` (presets:
-ai, entinfo, nodes, triggers, cameras, combat, look, perf, tris, normals, bbox,
-entnums; each toggles, `off` clears, no argument lists). "Why is this guy
+ai, entinfo, nodes, triggers, cameras, combat, look, perf, scripts, sounds,
+tris, normals, bbox, entnums; each toggles, `off` clears, no argument lists). "Why is this guy
 standing there": `orch.py cmd scriptinfo`, then `scriptinfo <n>` for a thread.
 "Ghost" / "let it run" is `orch.py cmd
 orch_ghost`: the same camera with the world running (`"ghost": true`); the body

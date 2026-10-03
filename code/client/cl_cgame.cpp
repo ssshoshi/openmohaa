@@ -602,6 +602,26 @@ void CL_ClearSavedCgameState() {
 
 /*
 ====================
+CL_RenderScene
+
+Added in OPM.
+cgame's scenes go through here to keep the last one with the world in it,
+whose view s_showsounds projects its markers with (cl_scrn.cpp).
+====================
+*/
+refdef_t	cl_lastWorldRefdef;
+int			cl_lastWorldRefdefTime;
+
+static void CL_RenderScene( const refdef_t *fd ) {
+	if ( !( fd->rdflags & ( RDF_NOWORLDMODEL | RDF_HUD ) ) ) {
+		cl_lastWorldRefdef = *fd;
+		cl_lastWorldRefdefTime = cls.realtime;
+	}
+	re.RenderScene( fd );
+}
+
+/*
+====================
 CL_InitCGameDLL
 ====================
 */
@@ -712,7 +732,7 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 	cgi->get_camera_offset			= get_camera_offset;
 	
 	cgi->R_ClearScene				= re.ClearScene;
-	cgi->R_RenderScene				= re.RenderScene;
+	cgi->R_RenderScene				= CL_RenderScene;
 
 	cgi->R_LoadWorldMap				= re.LoadWorld;
 	cgi->R_PrintBSPFileSizes		= re.PrintBSPFileSizes;
