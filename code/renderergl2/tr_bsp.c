@@ -3973,6 +3973,9 @@ void RE_LoadWorldMap( const char *name ) {
     R_InitTerrain();
     ri.UI_LoadResource("*113");
     R_InitStaticModels();
+    // Added in OPM
+    //  After the sun (R_Sphere_InitLights) and the static models.
+    R_RtLoadWorld();
     ri.UI_LoadResource("*114");
     R_LevelMarksLoad(name);
     ri.UI_LoadResource("*115");
@@ -4041,6 +4044,9 @@ freed world data
 =================
 */
 void R_ClearWorld(void) {
+    // Added in OPM
+    R_RtFreeWorld();
+
     if (tr.world) {
         if (tr.world->shaders) {
             ri.Hunk_FreeTempMemory(tr.world->shaders);

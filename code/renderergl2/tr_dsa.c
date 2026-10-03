@@ -24,7 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 static struct
 {
-	GLuint textures[NUM_TEXTURE_BUNDLES];
+	GLuint textures[NUM_TEXTURE_UNITS];
 	GLenum texunit;
 
 	GLuint program;
@@ -41,7 +41,7 @@ void GL_BindNullTextures(void)
 
 	if (glRefConfig.directStateAccess)
 	{
-		for (i = 0; i < NUM_TEXTURE_BUNDLES; i++)
+		for (i = 0; i < NUM_TEXTURE_UNITS; i++)
 		{
 			qglBindMultiTextureEXT(GL_TEXTURE0 + i, GL_TEXTURE_2D, 0);
 			glDsaState.textures[i] = 0;
@@ -49,7 +49,7 @@ void GL_BindNullTextures(void)
 	}
 	else
 	{
-		for (i = 0; i < NUM_TEXTURE_BUNDLES; i++)
+		for (i = 0; i < NUM_TEXTURE_UNITS; i++)
 		{
 			qglActiveTexture(GL_TEXTURE0 + i);
 			qglBindTexture(GL_TEXTURE_2D, 0);
@@ -195,6 +195,13 @@ GLvoid APIENTRY GLDSA_ProgramUniform1fvEXT(GLuint program, GLint location,
 {
 	GL_UseProgram(program);
 	qglUniform1fv(location, count, value);
+}
+
+GLvoid APIENTRY GLDSA_ProgramUniform4fvEXT(GLuint program, GLint location,
+	GLsizei count, const GLfloat *value)
+{
+	GL_UseProgram(program);
+	qglUniform4fv(location, count, value);
 }
 
 GLvoid APIENTRY GLDSA_ProgramUniformMatrix4fvEXT(GLuint program, GLint location,

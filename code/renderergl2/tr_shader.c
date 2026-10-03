@@ -2826,6 +2826,7 @@ static qboolean ParseShader( char **text )
 			}
 
 			shader.sprite.scale = 1.0;
+			shader.rtParticle = qtrue;
 			continue;
 		}
 		else if (!Q_stricmp(token, "spritescale"))

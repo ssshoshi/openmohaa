@@ -572,6 +572,8 @@ void R_RotateForViewer (void)
 	tr.ori.axis[0][0] = 1;
 	tr.ori.axis[1][1] = 1;
 	tr.ori.axis[2][2] = 1;
+	// Added in OPM: the world is in world space (u_ModelMatrix, the realtime lights)
+	Mat4Identity( tr.ori.transformMatrix );
 	VectorCopy (tr.viewParms.ori.origin, tr.ori.viewOrigin);
 
 	// transform by the camera placement
@@ -891,7 +893,8 @@ void R_SetupProjectionZ(viewParms_t *dest)
 {
 	float zNear, zFar, depth;
 	
-	zNear = r_znear->value;
+	// Added in OPM: a view may have its own (the realtime lights' shadow faces)
+	zNear = dest->zNear > 0 ? dest->zNear : r_znear->value;
 	zFar	= dest->zFar;
 
 	depth	= zFar - zNear;
@@ -1789,7 +1792,16 @@ void R_AddEntitySurfaces (void) {
 		double tStart = R_MicroSeconds();
 
 		for ( i = 0; i < tr.refdef.num_entities; i++)
+		{
+			// Added in OPM
+			//  A realtime light's shadow of what stands still, or of what moves.
+			if ((tr.viewParms.flags & VPF_RTSTATIC) && !(tr.refdef.entities[i].rtCaster & RT_CASTS_STANDING))
+				continue;
+			if ((tr.viewParms.flags & VPF_RTDYNAMIC) && !(tr.refdef.entities[i].rtCaster & RT_CASTS_MOVING))
+				continue;
+
 			R_AddEntitySurface(i);
+		}
 
 		tr.pc.t_entitySurfaces += R_MicroSeconds() - tStart;
 		tr.pc.c_entitySubmissions += tr.refdef.num_entities;
@@ -1805,7 +1817,10 @@ R_GenerateDrawSurfs
 void R_GenerateDrawSurfs( void ) {
 	R_AddWorldSurfaces ();
 
-	R_AddPolygonSurfaces();
+	// Added in OPM
+	//  A realtime light's shadow of what stands still has the world alone.
+	if (!(tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)))
+		R_AddPolygonSurfaces();
 
 	// set the projection matrix with the minimum zfar
 	// now that we have the world bounded
@@ -1822,7 +1837,14 @@ void R_GenerateDrawSurfs( void ) {
 	// we know the size of the clipping volume. Now set the rest of the projection matrix.
 	R_SetupProjectionZ (&tr.viewParms);
 
+	// nor the entities
+	if (tr.viewParms.flags & VPF_RTBAKED)
+		return;
+
 	R_AddEntitySurfaces ();
+
+	if (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC))
+		return;
 
 	//
 	// OPENMOHAA-specific stuff
@@ -3250,6 +3272,8 @@ void R_RotateForStaticModel( cStaticModelUnpacked_t *SM, const viewParms_t *view
 	glMatrix[11] = 0;
 	glMatrix[15] = 1;
 
+	// Added in OPM: model to world, for the realtime lights (u_ModelMatrix)
+	Mat4Copy( glMatrix, ori->transformMatrix );
 	myGlMultMatrix( glMatrix, viewParms->world.modelMatrix, ori->modelMatrix );
 
 	// calculate the viewer origin in the model's space

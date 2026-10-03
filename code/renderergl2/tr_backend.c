@@ -1205,6 +1205,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	isShadowView = !!(backEnd.viewParms.flags & VPF_DEPTHSHADOW);
 
+	// Added in OPM: until the prepass copies it, not this view's depth
+	backEnd.softDepth = qfalse;
+
 	// clear the z buffer, set the modelview, etc
 	RB_BeginDrawingView ();
 
@@ -1266,6 +1269,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 				VectorSet4(srcTexCoords, 0.0f, 0.0f, 1.0f, 1.0f);
 
 				FBO_BlitFromTexture(tr.renderDepthImage, srcTexCoords, NULL, tr.hdrDepthFbo, NULL, NULL, NULL, 0);
+				backEnd.softDepth = qtrue;
 			}
 
 			if (r_sunlightMode->integer && backEnd.viewParms.flags & VPF_USESUNLIGHT)

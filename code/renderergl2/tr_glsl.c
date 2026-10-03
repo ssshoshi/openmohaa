@@ -174,7 +174,21 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_AlphaTest", GLSL_INT },
 
 	{ "u_BoneMatrix", GLSL_MAT16_BONEMATRIX },
-	{ "u_Greyscale", GLSL_FLOAT }
+	{ "u_Greyscale", GLSL_FLOAT },
+
+	// Added in OPM: the realtime lights (tr_rtlight.c)
+	{ "u_RtLights",        GLSL_VEC4_RTLIGHTS },
+	{ "u_RtParams",        GLSL_VEC4 },
+	{ "u_RtSunDir",        GLSL_VEC4 },
+	{ "u_RtSunColor",      GLSL_VEC4 },
+	{ "u_RtAmbient",       GLSL_VEC4 },
+	{ "u_RtStage",         GLSL_INT },
+	{ "u_RtShadowStatic",  GLSL_INT },
+	{ "u_RtShadowDynamic", GLSL_INT },
+	{ "u_RtSunShadow",     GLSL_INT },
+	{ "u_RtShadowBaked",   GLSL_INT },
+	{ "u_RtCapsules",      GLSL_INT },
+	{ "u_SoftParticle",    GLSL_VEC4 }
 };
 
 typedef enum
@@ -258,6 +272,262 @@ static void GLSL_PrintLog(GLuint programOrShader, glslPrintLog_t type, qboolean 
 	}
 
 }
+
+/*
+Added in OPM
+The realtime lights (tr_rtlight.c), for the fragment shaders of the programs
+built with USE_RTLIGHT. RtLight(P, N) is the light a surface at P facing N
+gets from them, in lightmap units: the map's point and spot lights with their
+shadows from the atlases, and the sun with its screen shadow.
+
+The generic program's vertex shader has them too (USE_RTLIGHT_PARTICLES,
+RT_VERTEX), for RtLightParticle: dust and smoke are big translucent quads piled
+deep, which the whole light loop for every pixel of every layer brought to a
+crawl, so they are lit at their corners instead.
+
+A point light's shadow is six faces, tiles in a row in an atlas: forward, left
+and up as R_RtFaceAxes sets them, a 90 degree view each.
+*/
+static const char *rt_glsl =
+	"#define RT_STAGE_NONE      0\n"
+	"#define RT_STAGE_LIGHTING  1\n"
+	"#define RT_STAGE_LIGHTING2 2\n"
+	"#define RT_STAGE_LIT       3\n"
+	"#define RT_STAGE_LIT_BAKED 4\n"
+	"#define RT_STAGE_PARTICLE  5\n"
+	"#define RT_STAGE_PARTICLE_LIT 6\n"
+	"uniform vec4 u_RtLights[RT_MAX_LIGHTS * 4];\n"
+	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
+	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
+	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
+	"uniform vec4 u_RtAmbient;\n"
+	"uniform int  u_RtStage;\n"
+	"uniform sampler2DShadow u_RtShadowStatic;\n"
+	"uniform sampler2DShadow u_RtShadowDynamic;\n"
+	"uniform sampler2D u_RtSunShadow;\n"
+	"uniform sampler2DShadow u_RtShadowBaked;\n"
+	"#if defined(RT_CAPSULES)\n"
+	"uniform sampler2D u_RtCapsules;\n"
+	"#endif\n"
+	"\n"
+	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth)\n"
+	"{\n"
+	"	vec2  origin = vec2(mod(tile, RT_TILES), floor(tile / RT_TILES));\n"
+	"	float texel  = 1.0 / RT_TILE_TEXELS;\n"
+	"	vec2  st     = clamp(faceUV, vec2(1.5 * texel), vec2(1.0 - 1.5 * texel));\n"
+	"	vec2  uv     = (origin + st) / RT_TILES;\n"
+	"	float d      = 0.5 / (RT_TILES * RT_TILE_TEXELS);\n"
+	"	return 0.25 * (shadow2D(atlas, vec3(uv + vec2(-d, -d), depth))\n"
+	"	             + shadow2D(atlas, vec3(uv + vec2( d, -d), depth))\n"
+	"	             + shadow2D(atlas, vec3(uv + vec2(-d,  d), depth))\n"
+	"	             + shadow2D(atlas, vec3(uv + vec2( d,  d), depth)));\n"
+	"}\n"
+	"\n"
+	// info: x the static tiles, y the dynamic ones (< 0: none), z near, w far;
+	// v: from the light to the point
+	"float RtShadow(vec4 info, vec3 v, bool baked)\n"
+	"{\n"
+	"	vec3  a = abs(v);\n"
+	"	float face, fwd, left, up;\n"
+	"	if (a.x >= a.y && a.x >= a.z) {\n"
+	"		if (v.x > 0.0) { face = 0.0; fwd =  v.x; left =  v.y; up = v.z; }\n"
+	"		else           { face = 1.0; fwd = -v.x; left = -v.y; up = v.z; }\n"
+	"	} else if (a.y >= a.z) {\n"
+	"		if (v.y > 0.0) { face = 2.0; fwd =  v.y; left = -v.x; up = v.z; }\n"
+	"		else           { face = 3.0; fwd = -v.y; left =  v.x; up = v.z; }\n"
+	"	} else {\n"
+	"		if (v.z > 0.0) { face = 4.0; fwd =  v.z; left = -v.y; up = v.x; }\n"
+	"		else           { face = 5.0; fwd = -v.z; left =  v.y; up = v.x; }\n"
+	"	}\n"
+	"	vec2  faceUV = vec2(-left, up) / fwd * 0.5 + 0.5;\n"
+	"	float n = RT_ZNEAR, f = info.w;\n"
+	"	float depth = ((f + n) / (f - n) - 2.0 * f * n / ((f - n) * fwd)) * 0.5 + 0.5;\n"
+	"	float vis = 1.0;\n"
+	// the world as the map was compiled, in the same tiles as what stands still
+	"	if (baked)\n"
+	"		return info.x >= 0.0 ? RtShadowAtlas(u_RtShadowBaked, info.x + face, faceUV, depth) : 1.0;\n"
+	"	if (info.x >= 0.0) vis *= RtShadowAtlas(u_RtShadowStatic, info.x + face, faceUV, depth);\n"
+	// the moving things' tiles, with the faces drawn in the fraction, a bit each
+	"	if (info.y >= 0.0)\n"
+	"	{\n"
+	"		float mask = floor(fract(info.y) * 64.0 + 0.5);\n"
+	"		if (mod(floor(mask / exp2(face)), 2.0) > 0.5)\n"
+	"			vis *= RtShadowAtlas(u_RtShadowDynamic, floor(info.y) + face, faceUV, depth);\n"
+	"	}\n"
+	"	return vis;\n"
+	"}\n"
+	"\n"
+	// delta: the change from the map's own lighting, what the lights bring now
+	// less what they brought where the map was compiled (r_realtimeLighting 1)
+	"#if !defined(RT_VERTEX)\n"
+	"vec3 RtLight(vec3 P, vec3 N, bool delta);\n"
+	"#endif\n"
+	// the bodies between P and the light at Lp: info is where the light's run
+	// of them starts, with how many entries in the fraction (R_RtLightCapsules),
+	// each body a sphere around it, then how many capsules, then those
+	"float RtCapsules(vec3 P, vec3 Lp, float info)\n"
+	"{\n"
+	"	float vis = 1.0;\n"
+	"#if defined(RT_CAPSULES)\n"
+	"	int   i   = int(floor(info));\n"
+	"	int   end = i + int(floor(fract(info) * float(RT_MAX_RUN + 1) + 0.5));\n"
+	"	vec3  d1 = Lp - P;\n"
+	"	float a  = dot(d1, d1);\n"
+	"	float len = sqrt(a);\n"
+	"	while (i < end)\n"
+	"	{\n"
+	"		vec4  S = texelFetch(u_RtCapsules, ivec2(i * 2, 0), 0);\n"
+	"		int   n = int(texelFetch(u_RtCapsules, ivec2(i * 2 + 1, 0), 0).x);\n"
+	"		float sS = clamp(dot(S.xyz - P, d1) / a, 0.0, 1.0);\n"
+	"		if (length(P + d1 * sS - S.xyz) > S.w + 1.0 + 0.06 * sS * len)\n"
+	"		{\n"
+	"			i += 1 + n;\n"
+	"			continue;\n"
+	"		}\n"
+	"		for (int c = i + 1; c <= i + n; c++)\n"
+	"		{\n"
+	"			vec4  A = texelFetch(u_RtCapsules, ivec2(c * 2, 0), 0);\n"
+	"			vec4  B = texelFetch(u_RtCapsules, ivec2(c * 2 + 1, 0), 0);\n"
+	"			vec3  d2 = B.xyz - A.xyz;\n"
+	"			vec3  r  = P - A.xyz;\n"
+	"			float e  = dot(d2, d2), f = dot(d2, r);\n"
+	// P on or in this capsule: the body itself, not in its shadow
+	"			float tp = e > 1e-4 ? clamp(f / e, 0.0, 1.0) : 0.0;\n"
+	"			if (length(r - d2 * tp) < A.w + 1.0) continue;\n"
+	// the nearest the ray from P to the light comes to the capsule's core
+	"			float b  = dot(d1, d2), cc = dot(d1, r);\n"
+	"			float denom = a * e - b * b;\n"
+	"			float s  = denom > 1e-4 ? clamp((b * f - cc * e) / denom, 0.0, 1.0) : 0.0;\n"
+	"			float t  = e > 1e-4 ? (b * s + f) / e : 0.0;\n"
+	"			if (t < 0.0) { t = 0.0; s = clamp(-cc / a, 0.0, 1.0); }\n"
+	"			else if (t > 1.0) { t = 1.0; s = clamp((b - cc) / a, 0.0, 1.0); }\n"
+	"			float dist = length(P + d1 * s - A.xyz - d2 * t);\n"
+	// softer the farther it is from P, as a lamp that is not a point makes it,
+	// but dark in the middle still however thin it is
+	"			float soft = min(1.0 + 0.03 * s * len, 0.7 * A.w);\n"
+	"			vis *= smoothstep(A.w - soft, A.w + soft, dist);\n"
+	"		}\n"
+	"		i += 1 + n;\n"
+	"	}\n"
+	"#endif\n"
+	"	return vis;\n"
+	"}\n"
+	// the map's lighting and what the lights change of it, never darker than
+	// a part of what it was: the lights' model is too bright near a lamp
+	"vec3 RtDelta(vec3 base, vec3 delta)\n"
+	"{\n"
+	"	return max(base + delta, base * u_RtParams.w);\n"
+	"}\n"
+	"#if !defined(RT_VERTEX)\n"
+	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
+	"{\n"
+	"	vec3 sum   = vec3(0.0);\n"
+	"	int  count = int(u_RtParams.x);\n"
+	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	{\n"
+	"		if (i >= count) break;\n"
+	"		vec4  l0 = u_RtLights[i * 4];\n"
+	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
+	"		vec3  toLight = l0.xyz - P;\n"
+	"		float d2 = dot(toLight, toLight);\n"
+	"		float r2 = l1.w * l1.w;\n"
+	"		if (d2 >= r2) continue;\n"
+	"		float d   = sqrt(d2);\n"
+	"		float ndl = dot(N, toLight) / d;\n"
+	"		if (ndl <= 0.0) continue;\n"
+	"		float fade = 1.0 - d2 / r2;\n"
+	// the compiler's point light: intensity * 7500 / distance squared, never nearer than 16
+	"		float att  = ndl * fade * fade / max(d2, 256.0);\n"
+	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
+	// flash, a blast): never shadowed, and on top of the map's lighting always
+	"		bool added = l0.w > 1.5;\n"
+	"		if (l0.w > 0.5 && !added)\n"
+	"		{\n"
+	// the compiler's spot light: a cone, with a 32 unit soft edge
+	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
+	"			float along = -dot(toLight, l2.xyz);\n"
+	"			if (along <= 0.001) continue;\n"
+	"			float radiusAtDist = l2.w * along;\n"
+	"			float sampleRadius = length(-toLight - l2.xyz * along);\n"
+	"			if (sampleRadius >= radiusAtDist) continue;\n"
+	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
+	"		}\n"
+	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
+	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
+	"		{\n"
+	// off the surface by a texel and a half of the shadow at that distance
+	"			float texelWorld = 2.0 * d / RT_TILE_TEXELS;\n"
+	"			vec3  v = P + N * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
+	"			float now = RtShadow(l3, v, false);\n"
+	"			if (l3.z >= 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
+	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
+	"		}\n"
+	"		else if (delta && !added) continue;\n"
+	"		sum += l1.rgb * att;\n"
+	"	}\n"
+	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
+	"	{\n"
+	"		float ndl = dot(N, u_RtSunDir.xyz);\n"
+	"		if (ndl > 0.0)\n"
+	"		{\n"
+	"			float vis = 1.0;\n"
+	"			if (u_RtSunColor.w > 0.5)\n"
+	"				vis = texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r;\n"
+	"			sum += u_RtSunColor.rgb * (ndl * vis);\n"
+	"		}\n"
+	"	}\n"
+	"	return sum;\n"
+	"}\n"
+	"#else\n"
+	// dust or smoke at P, lit from every side as it hangs in the light, which
+	// it is not in the shadow maps of; sunUV is where it is on the screen, whose
+	// sun shadow (that of what is behind it) it takes
+	"vec3 RtLightParticle(vec3 P, vec2 sunUV, bool delta)\n"
+	"{\n"
+	"	vec3 sum   = vec3(0.0);\n"
+	"	int  count = int(u_RtParams.x);\n"
+	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	{\n"
+	"		if (i >= count) break;\n"
+	"		vec4  l0 = u_RtLights[i * 4];\n"
+	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
+	"		vec3  toLight = l0.xyz - P;\n"
+	"		float d2 = dot(toLight, toLight);\n"
+	"		float r2 = l1.w * l1.w;\n"
+	"		if (d2 >= r2) continue;\n"
+	"		float fade = 1.0 - d2 / r2;\n"
+	"		float att  = fade * fade / max(d2, 256.0);\n"
+	"		bool added = l0.w > 1.5;\n"
+	"		if (l0.w > 0.5 && !added)\n"
+	"		{\n"
+	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
+	"			float along = -dot(toLight, l2.xyz);\n"
+	"			if (along <= 0.001) continue;\n"
+	"			float radiusAtDist = l2.w * along;\n"
+	"			float sampleRadius = length(-toLight - l2.xyz * along);\n"
+	"			if (sampleRadius >= radiusAtDist) continue;\n"
+	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
+	"		}\n"
+	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
+	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
+	"		{\n"
+	"			vec3  v = P - l0.xyz;\n"
+	"			float now = RtShadow(l3, v, false);\n"
+	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
+	"		}\n"
+	"		else if (delta && !added) continue;\n"
+	"		sum += l1.rgb * att;\n"
+	"	}\n"
+	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
+	"	{\n"
+	"		float vis = 1.0;\n"
+	"		if (u_RtSunColor.w > 0.5)\n"
+	"			vis = texture2D(u_RtSunShadow, sunUV).r;\n"
+	"		sum += u_RtSunColor.rgb * vis;\n"
+	"	}\n"
+	"	return sum;\n"
+	"}\n"
+	"#endif\n";
 
 static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *dest, int size )
 {
@@ -416,6 +686,21 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 	fbufHeightScale = 1.0f / ((float)glConfig.vidHeight);
 	Q_strcat(dest, size,
 			 va("#ifndef r_FBufScale\n#define r_FBufScale vec2(%f, %f)\n#endif\n", fbufWidthScale, fbufHeightScale));
+
+	// Added in OPM: the realtime lights, and for the particles lit at their
+	// corners (USE_RTLIGHT_PARTICLES), the vertex shader too
+	if (extra && ((shaderType == GL_FRAGMENT_SHADER && strstr(extra, "#define USE_RTLIGHT"))
+		|| (shaderType == GL_VERTEX_SHADER && strstr(extra, "#define USE_RTLIGHT_PARTICLES"))))
+	{
+		if (shaderType == GL_VERTEX_SHADER)
+			Q_strcat(dest, size, "#define RT_VERTEX\n#define texture2D texture\n#define shadow2D texture\n");
+		Q_strcat(dest, size, va("#define RT_MAX_LIGHTS %d\n#define RT_TILES %d.0\n#define RT_TILE_TEXELS %d.0\n#define RT_ZNEAR %f\n",
+			RT_MAX_LIGHTS, RT_ATLAS_TILES, r_rtShadowTile->integer, RT_ZNEAR));
+		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
+		if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
+			Q_strcat(dest, size, va("#define RT_CAPSULES\n#define RT_MAX_RUN %d\n", RT_MAX_RUN));
+		Q_strcat(dest, size, rt_glsl);
+	}
 
 	if (r_pbr->integer)
 		Q_strcat(dest, size, "#define USE_PBR\n");
@@ -745,6 +1030,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_MAT16_BONEMATRIX:
 				size += sizeof(vec_t) * 16 * glRefConfig.glslMaxAnimatedBones;
 				break;
+			case GLSL_VEC4_RTLIGHTS:
+				size += sizeof(vec4_t) * RT_MAX_LIGHTS * RT_LIGHT_VEC4S;
+				break;
 			default:
 				break;
 		}
@@ -926,6 +1214,40 @@ void GLSL_SetUniformMat4(shaderProgram_t *program, int uniformNum, const mat4_t 
 	Mat4Copy(matrix, compare);
 
 	qglProgramUniformMatrix4fvEXT(program->program, uniforms[uniformNum], 1, GL_FALSE, matrix);
+}
+
+/*
+Added in OPM
+The realtime lights, RT_LIGHT_VEC4S vec4s each (tr_rtlight.c). Only the first
+count are sent; the shader reads no further than u_RtParams.x.
+*/
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+	int    floats   = count * RT_LIGHT_VEC4S * 4;
+
+	if (uniforms[uniformNum] == -1 || count <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_RTLIGHTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformRtLights: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (count > RT_MAX_LIGHTS) {
+		count  = RT_MAX_LIGHTS;
+		floats = count * RT_LIGHT_VEC4S * 4;
+	}
+
+	if (!memcmp(v, compare, floats * sizeof(float))) {
+		return;
+	}
+
+	Com_Memcpy(compare, v, floats * sizeof(float));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], count * RT_LIGHT_VEC4S, &v[0][0]);
 }
 
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies)
@@ -1126,7 +1448,15 @@ static qboolean GLSL_InitLightallShader(int i)
 		}
 	}
 
-	if (i & LIGHTDEF_USE_SHADOWMAP)
+	// Added in OPM
+	//  With all of the light live (r_realtimeLighting 2) the sun is one of the
+	//  realtime lights (RtLight), and reads its screen shadow itself: it no
+	//  longer darkens the lightmap. With the direct light live alone (1) it
+	//  darkens it as ever.
+	if (r_realtimeLighting->integer)
+		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
+
+	if ((i & LIGHTDEF_USE_SHADOWMAP) && r_realtimeLighting->integer != 2)
 	{
 		Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\n");
 
@@ -1178,6 +1508,11 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SPECULARMAP, TB_SPECULARMAP);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SHADOWMAP,   TB_SHADOWMAP);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_CUBEMAP,     TB_CUBEMAP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 
@@ -1278,6 +1613,14 @@ void GLSL_InitGPUShaders(void)
 		if (i & GENERICDEF_USE_RGBAGEN)
 			Q_strcat(extradefines, 1024, "#define USE_RGBAGEN\n");
 
+		// Added in OPM
+		if (r_realtimeLighting->integer)
+			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
+		if (R_RtVertexParticles())
+			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT_PARTICLES\n");
+		if (r_softParticles->value > 0)
+			Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
+
 		if (!GLSL_InitGPUShader(&tr.genericShader[i], "generic", attribs, qtrue, extradefines, qtrue, fallbackShader_generic_vp, fallbackShader_generic_fp))
 		{
 			ri.Error(ERR_FATAL, "Could not load generic shader!");
@@ -1287,6 +1630,12 @@ void GLSL_InitGPUShaders(void)
 
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_LIGHTMAP,   TB_LIGHTMAP);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);
 

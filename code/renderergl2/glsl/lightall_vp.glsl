@@ -70,6 +70,15 @@ uniform vec4   u_VertColor;
 uniform mat4   u_ModelMatrix;
 #endif
 
+// Added in OPM: the realtime lights light the surface in world space
+#if defined(USE_RTLIGHT)
+  #if !defined(USE_MODELMATRIX)
+uniform mat4   u_ModelMatrix;
+  #endif
+varying vec3   var_RtPos;
+varying vec3   var_RtNormal;
+#endif
+
 #if defined(USE_VERTEX_ANIMATION)
 uniform float  u_VertexLerp;
 #elif defined(USE_BONE_ANIMATION)
@@ -243,6 +252,11 @@ void main()
 #endif
 
 	gl_Position = u_ModelViewProjectionMatrix * vec4(position, 1.0);
+
+#if defined(USE_RTLIGHT)
+	var_RtPos    = (u_ModelMatrix * vec4(position, 1.0)).xyz;
+	var_RtNormal = (u_ModelMatrix * vec4(normal,   0.0)).xyz;
+#endif
 
 #if defined(USE_MODELMATRIX)
 	position  = (u_ModelMatrix * vec4(position, 1.0)).xyz;

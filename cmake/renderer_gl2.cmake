@@ -39,6 +39,7 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_shadows.c
     ${SOURCE_DIR}/renderergl2/tr_sky_portal.cpp
     ${SOURCE_DIR}/renderergl2/tr_sky.c
+    ${SOURCE_DIR}/renderergl2/tr_rtlight.c
     ${SOURCE_DIR}/renderergl2/tr_sphere_shade.cpp
     ${SOURCE_DIR}/renderergl2/tr_sprite.c
     ${SOURCE_DIR}/renderergl2/tr_staticmodels.cpp

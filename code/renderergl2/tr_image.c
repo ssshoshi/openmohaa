@@ -2954,7 +2954,8 @@ void R_CreateBuiltinImages( void ) {
 		if (r_shadowBlur->integer || r_hdr->integer)
 			tr.screenScratchImage = R_CreateImage("screenScratch", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
 
-		if (r_shadowBlur->integer || r_ssao->integer)
+		// Added in OPM: soft particles read the view's depth from it too
+		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0)
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 
 		if (r_drawSunRays->integer)
@@ -2996,6 +2997,30 @@ void R_CreateBuiltinImages( void ) {
 			tr.pshadowMaps[x] = R_CreateImage(va("*shadowmap%i", x), NULL, PSHADOW_MAP_SIZE, PSHADOW_MAP_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
 			//qglTextureParameterfEXT(tr.pshadowMaps[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
 			//qglTextureParameterfEXT(tr.pshadowMaps[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+		}
+
+		// Added in OPM
+		//  The realtime lights' shadow atlases (tr_rtlight.c): what stands
+		//  still, what moves, and (r_realtimeLighting 1) the world as the map
+		//  was compiled. Filtered, so a tap compares four texels.
+		if (r_realtimeLighting->integer)
+		{
+			const int size = r_rtShadowTile->integer * RT_ATLAS_TILES;
+
+			// the bodies' capsules (R_RtCharacterCapsules), two texels each
+			tr.rtCapsuleImage = R_CreateImage("*rtcapsules", NULL, RT_MAX_CAPSULES * 2, 1, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+			// fetched texel by texel: a float texture that must filter may not be complete
+			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+			for ( x = 0; x < (r_realtimeLighting->integer == 1 ? 3 : 2); x++)
+			{
+				tr.rtShadowImage[x] = R_CreateImage(va("*rtshadow%i", x), NULL, size, size, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
+				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			}
 		}
 
 		if (r_sunlightMode->integer)

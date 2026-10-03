@@ -148,7 +148,25 @@ typedef struct {
     // frame and the resulting sphere is reused by every surface of it.
     qboolean	sphereCalculated;
     int			lightingSphere;
+
+    // Added in OPM
+    //  In which of the realtime lights' shadows it is drawn this frame
+    //  (RT_CASTS_*, tr_rtlight.c).
+    int			rtCaster;
+
+    // Added in OPM
+    //  The scene a skeletal model was posed for (tr.sceneCount) and which pose
+    //  that is. Every view of a scene draws it with the bones it was given last,
+    //  so it is posed once (R_AddSkelSurfaces) and skinned once (RB_SkelMesh)
+    //  for all of them: the main view, the prepass and each shadow view.
+    int			posedScene;
+    int			poseId;
+    vec3_t		boneCentre; // the bounds of its bones, in its own space
+    float		boneRadius;
 } trRefEntity_t;
+
+#define RT_CASTS_MOVING   1 // with what moves, every frame
+#define RT_CASTS_STANDING 2 // with what stands still, kept
 
 
 typedef struct {
@@ -487,6 +505,24 @@ enum
 	NUM_TEXTURE_BUNDLES = 7
 };
 
+// Added in OPM
+//  Texture units past the stage bundles, for the realtime lights
+//  (tr_rtlight.c): their shadow atlases and the sun's screen shadow.
+#define TMU_RTSHADOW_STATIC  7
+#define TMU_RTSHADOW_DYNAMIC 8
+#define TMU_RTSUNSHADOW      9
+#define TMU_RTSHADOW_BAKED   10
+#define NUM_TEXTURE_UNITS    16
+
+#define RT_MAX_LIGHTS   48
+#define RT_LIGHT_VEC4S  4
+#define RT_ATLAS_TILES  16 // a side, so 256 faces: 42 lights
+#define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
+#define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
+#define RT_MAX_RUN      1023 // of those, for one light
+#define TMU_RTCAPSULES  11
+#define TMU_SOFTDEPTH   12 // Added in OPM: the view's depth, for soft particles
+
 typedef enum
 {
 	// material shader stage types
@@ -645,6 +681,9 @@ typedef struct shader_s {
     float fDistRange;
     float fDistNear;
     spriteParms_t sprite;
+    // Added in OPM: drawn as sprites (spriteGen, or a .spr model's), which the
+    // realtime lights light at the corners (RT_STAGE_PARTICLE)
+    qboolean rtParticle;
     // Set when any stage uses rgbGen lightinggrid or lightingspherical, so the
     // backend knows which of MOH:AA's two entity lighting models to set up.
     int needsLGrid;
@@ -779,7 +818,8 @@ enum
 	GLSL_VEC3,
 	GLSL_VEC4,
 	GLSL_MAT16,
-	GLSL_MAT16_BONEMATRIX
+	GLSL_MAT16_BONEMATRIX,
+	GLSL_VEC4_RTLIGHTS  // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
 };
 
 typedef enum
@@ -899,6 +939,20 @@ typedef enum
 	UNIFORM_BONEMATRIX,
 
 	UNIFORM_GREYSCALE,
+
+	// Added in OPM: the realtime lights (tr_rtlight.c)
+	UNIFORM_RTLIGHTS,
+	UNIFORM_RTPARAMS,
+	UNIFORM_RTSUNDIR,
+	UNIFORM_RTSUNCOLOR,
+	UNIFORM_RTAMBIENT,
+	UNIFORM_RTSTAGE,
+	UNIFORM_RTSHADOWSTATIC,
+	UNIFORM_RTSHADOWDYNAMIC,
+	UNIFORM_RTSUNSHADOW,
+	UNIFORM_RTSHADOWBAKED,
+	UNIFORM_RTCAPSULES,
+	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1060,7 +1114,15 @@ typedef enum {
 	VPF_ORTHOGRAPHIC    = 0x10,
 	VPF_USESUNLIGHT     = 0x20,
 	VPF_FARPLANEFRUSTUM = 0x40,
-	VPF_NOCUBEMAPS      = 0x80
+	VPF_NOCUBEMAPS      = 0x80,
+	// Added in OPM: a face of a realtime light's shadow (tr_rtlight.c), either
+	// what stands still (the world, terrain, static models where the map put
+	// them) or what moves (entities, and the static models the client moved)
+	VPF_RTSTATIC        = 0x100,
+	VPF_RTDYNAMIC       = 0x200,
+	// the world as the map was compiled, for r_realtimeLighting 1: what the
+	// lightmaps' shadows were made of
+	VPF_RTBAKED         = 0x400
 } viewParmFlags_t;
 
 typedef struct {
@@ -1082,7 +1144,7 @@ typedef struct {
 	cplane_t	frustum[5];
 	vec3_t		visBounds[2];
 	float		zFar;
-	float       zNear;
+	float       zNear;	// Added in OPM: the near plane, when not r_znear (0: r_znear)
 	stereoFrame_t	stereoFrame;
 
 	//
@@ -1519,6 +1581,16 @@ typedef struct cStaticModelUnpacked_s {
     float cull_radius;
     int iGridLighting;
     float lodpercentage[2];
+
+    // Added in OPM
+    //  Where the map placed it, and whether the client has moved it since
+    //  (RE_SetStaticModelTransform): the realtime lights' shadows keep what
+    //  stands still apart from what moves.
+    vec3_t baseOrigin;
+    vec3_t baseAxis[3];
+    qboolean moved;
+    int rtCaster; // once moved, RT_CASTS_*
+    qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
@@ -2202,6 +2274,7 @@ typedef struct {
 	FBO_t *last2DFBO;
 	qboolean    colorMask[4];
 	qboolean    depthFill;
+	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	float       greyscale;
 
 	//
@@ -2440,6 +2513,17 @@ typedef struct {
     spherel_t sSunLight;
     spherel_t sLights[1532];
     int numSLights;
+
+    // Added in OPM: the realtime lights (tr_rtlight.c)
+    image_t *rtShadowImage[3]; // what stands still, what moves, the world as compiled
+    FBO_t   *rtShadowFbo[3];
+    int      rtNumActive;      // lights in rtLightData this frame
+    vec4_t   rtLightData[RT_MAX_LIGHTS * RT_LIGHT_VEC4S];
+    vec4_t   rtParams;         // lights, atlas tiles a side, mode, scale
+    vec4_t   rtSunDir;         // w: 1 with a sun
+    vec4_t   rtSunColor;
+    vec4_t   rtAmbient;
+    image_t *rtCapsuleImage;   // two texels a capsule: (a, radius), (b, 0)
     int rendererhandle;
     qboolean shadersParsed;
     int frame_skel_index;
@@ -2592,6 +2676,22 @@ extern  cvar_t  *r_forceSunAmbientScale;
 extern  cvar_t  *r_sunlightMode;
 extern  cvar_t  *r_drawSunRays;
 extern  cvar_t  *r_sunShadows;
+
+// Added in OPM: the realtime lights (tr_rtlight.c)
+extern  cvar_t  *r_realtimeLighting;
+extern  cvar_t  *r_rtScale;
+extern  cvar_t  *r_rtShadows;
+extern  cvar_t  *r_rtShadowTile;
+extern  cvar_t  *r_rtFacesPerFrame;
+extern  cvar_t  *r_rtMaxLights;
+extern  cvar_t  *r_rtAmbient;
+extern  cvar_t  *r_rtDynamicLights;
+extern  cvar_t  *r_rtShadowCharacters;
+extern  cvar_t  *r_rtDarkest;
+extern  cvar_t  *r_rtDlights;
+extern  cvar_t  *r_rtLightsAtFixtures;
+extern  cvar_t  *r_rtCapsules;
+extern  cvar_t  *r_rtDebug;
 extern  cvar_t  *r_sunShadowScale;
 extern  cvar_t  *r_shadowFilter;
 extern  cvar_t  *r_shadowBlur;
@@ -2603,6 +2703,8 @@ extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
 extern  cvar_t  *r_skelCull;
+extern  cvar_t  *r_skinCache;
+extern  cvar_t  *r_softParticles;
 extern  cvar_t  *r_ignoreDstAlpha;
 
 extern	cvar_t	*r_greyscale;
@@ -2771,6 +2873,32 @@ void R_SwapBuffers( int );
 
 void R_RenderView( viewParms_t *parms );
 void R_RenderDlightCubemaps(const refdef_t *fd);
+
+// Added in OPM: the realtime lights (tr_rtlight.c)
+enum {
+	RT_STAGE_NONE,      // a stage the lights leave alone
+	RT_STAGE_LIGHTING,  // the stage's texture is the lighting (a lightmap): the lights add to it
+	RT_STAGE_LIGHTING2, // its second texture is (a lightmap by nextBundle)
+	RT_STAGE_LIT,       // lit by its colour, worked out at run time (sphere or grid lighting)
+	RT_STAGE_LIT_BAKED, // lit by its colour, baked into the map (static models, vertex lit world)
+	RT_STAGE_PARTICLE,  // translucent dust or smoke: as RT_STAGE_LIT_BAKED, lit at its corners from every side
+	RT_STAGE_PARTICLE_LIT // the same, as RT_STAGE_LIT
+};
+qboolean R_RtActive(void);
+qboolean R_RtLitLive(void);
+void R_RtRegister(void);
+void R_RtLoadWorld(void);
+void R_RtFreeWorld(void);
+void R_RtRenderShadows(const refdef_t *fd);
+void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs);
+void R_RtSetUniforms(shaderProgram_t *sp, int stage);
+int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean lightall);
+qboolean R_RtVertexParticles(void);
+qboolean R_RtIsCharacter(const refEntity_t *ent);
+int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
+void R_RtAddTestEntity(void);
+void R_RtTestCommands(qboolean add);
+void R_RtBindTextures(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);
 void R_RenderCubemapSide( int cubemapIndex, int cubemapSide, qboolean subscene );
@@ -3217,6 +3345,7 @@ void GLSL_SetUniformVec3(shaderProgram_t *program, int uniformNum, const vec3_t 
 void GLSL_SetUniformVec4(shaderProgram_t *program, int uniformNum, const vec4_t v);
 void GLSL_SetUniformMat4(shaderProgram_t *program, int uniformNum, const mat4_t matrix);
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies);
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 
