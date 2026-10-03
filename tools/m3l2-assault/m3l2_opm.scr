@@ -100,9 +100,50 @@
 	if ($scene4_mg42 != NULL)
 		$scene4_mg42 maxYawOffset 75
 
+	thread scene2_sniper_blood
 	thread scene3_smoke
 	thread scene4_car
 	thread scene4_director
+end
+
+//=============================================================================
+// Scene 2: the sniper's shot that kills Paulsen is a script "damage", not a
+// bullet, so none of his blood reaches the door beside him. When he dies, a
+// bullet's flesh hit is shown at his head ("bloodsplat": the blood and its
+// splat on the wall behind, which reaches some 240 units), toward the door he
+// just opened, or along the line from the sniper if the door is gone. Once:
+// level.opm_s2_blood survives saves. Older game modules don't have
+// "bloodsplat" and skip it.
+
+scene2_sniper_blood:
+	if (level.opm_s2_blood == 1)
+		end
+
+	while (level.paulsen == NIL || level.paulsen == NULL)
+		wait 0.5
+	while (level.paulsen != NULL && isalive level.paulsen)
+		waitframe
+
+	level.opm_s2_blood = 1
+	if (level.paulsen == NULL || $scene2_sniper_speaker == NULL)
+		end
+
+	local.head = level.paulsen gettagposition "Bip01 Head"
+	local.dir = vector_normalize (local.head - $scene2_sniper_speaker.origin)
+	if ($scene2_airborne_door != NULL)
+	{
+		local.door = $scene2_airborne_door.centroid
+		local.door[2] = local.head[2]
+		if (vector_length (local.door - local.head) < 200)
+			local.dir = vector_normalize (local.door - local.head)
+	}
+
+	// a few, as a rifle round through the head would leave more than one
+	for (local.i = 1; local.i <= 3; local.i++)
+	{
+		level.paulsen bloodsplat local.head local.dir 1
+		wait 0.05
+	}
 end
 
 //=============================================================================
