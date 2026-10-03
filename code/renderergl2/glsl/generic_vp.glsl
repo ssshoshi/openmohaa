@@ -66,6 +66,17 @@ uniform mat4   u_ModelViewProjectionMatrix;
 uniform vec4   u_BaseColor;
 uniform vec4   u_VertColor;
 
+// Added in OPM: the realtime lights light the surface in world space
+#if defined(USE_RTLIGHT)
+uniform mat4   u_ModelMatrix;
+varying vec3   var_RtPos;
+varying vec3   var_RtNormal;
+#endif
+// and dust and smoke at their corners (RtLightParticle)
+#if defined(USE_RTLIGHT_PARTICLES)
+varying vec3   var_RtParticleLight;
+#endif
+
 #if defined(USE_RGBAGEN)
 uniform int    u_ColorGen;
 uniform int    u_AlphaGen;
@@ -304,6 +315,17 @@ void main()
 #endif
 
 	gl_Position = u_ModelViewProjectionMatrix * vec4(position, 1.0);
+
+#if defined(USE_RTLIGHT)
+	var_RtPos    = (u_ModelMatrix * vec4(position, 1.0)).xyz;
+	var_RtNormal = (u_ModelMatrix * vec4(normal,   0.0)).xyz;
+#endif
+#if defined(USE_RTLIGHT_PARTICLES)
+	var_RtParticleLight = vec3(0.0);
+	if (u_RtStage == RT_STAGE_PARTICLE || u_RtStage == RT_STAGE_PARTICLE_LIT)
+		var_RtParticleLight = RtLightParticle(var_RtPos, gl_Position.xy / max(gl_Position.w, 0.0001) * 0.5 + 0.5,
+			u_RtStage == RT_STAGE_PARTICLE && u_RtParams.y < 1.5);
+#endif
 
 	// MOH:AA global fog. u_LocalViewOrigin is in the same space as position.
 	var_FogDist = distance(position, u_LocalViewOrigin);

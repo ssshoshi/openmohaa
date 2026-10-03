@@ -51,6 +51,11 @@ sprite_t *SPR_RegisterSprite(const char *name)
 		spr->origin_y = spr->height * 0.5;
 		spr->shader = shader;
 		spr->scale = spr->shader->sprite.scale;
+		// Added in OPM: what a sprite is drawn with is a particle's, whether or
+		// not its shader says spriteGen (R_RtStageKind)
+		if (shader != tr.defaultShader) {
+			shader->rtParticle = qtrue;
+		}
 		return spr;
 	}
 	return 0;

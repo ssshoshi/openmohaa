@@ -53,6 +53,11 @@ uniform vec4      u_CubeMapInfo;
 
 uniform int       u_AlphaTest;
 
+#if defined(USE_RTLIGHT)
+varying vec3      var_RtPos;
+varying vec3      var_RtNormal;
+#endif
+
 uniform vec4      u_GlobalFogColor;
 uniform vec2      u_GlobalFogParams;
 
@@ -290,6 +295,12 @@ void main()
 
 	lightColor = var_Color.rgb;
 
+#if defined(USE_RTLIGHT) && defined(USE_LIGHT_VERTEX)
+	// all of it live: the baked vertex lighting gives way to the ambient
+	if (u_RtParams.y > 1.5)
+		lightColor = u_RtAmbient.rgb;
+#endif
+
 #if defined(USE_LIGHTMAP)
 	vec4 lightmapColor = texture2D(u_LightMap, var_TexCoords.zw);
   #if defined(RGBM_LIGHTMAP)
@@ -299,6 +310,12 @@ void main()
 	lightmapColor.rgb *= lightmapColor.rgb;
   #endif
 	lightColor *= lightmapColor.rgb;
+
+  #if defined(USE_RTLIGHT)
+	// all of it live: the lightmap gives way to the ambient
+	if (u_RtParams.y > 1.5)
+		lightColor = var_Color.rgb * u_RtAmbient.rgb;
+  #endif
 #endif
 
 	vec2 texCoords = var_TexCoords.xy;
@@ -536,6 +553,26 @@ void main()
 #endif
 
 	gl_FragColor.a = alpha;
+
+#if defined(USE_RTLIGHT)
+	// Added in OPM: the realtime lights, on the surface's own colour
+	{
+  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+		vec3 rtNormal = N;
+  #else
+		vec3 rtNormal = normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+  #endif
+  #if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
+		// the map's own lighting: with the direct light live alone
+		// (r_realtimeLighting 1), what the lights change of it
+		gl_FragColor.rgb = RtDelta(gl_FragColor.rgb, diffuse.rgb * RtLight(var_RtPos, rtNormal, u_RtParams.y < 1.5));
+  #else
+		// lit at run time: the lights, when all of it is live
+		if (u_RtParams.y > 1.5)
+			gl_FragColor.rgb += diffuse.rgb * RtLight(var_RtPos, rtNormal, false);
+  #endif
+	}
+#endif
 
 	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer
 	// gets from fixed function GL_FOG.

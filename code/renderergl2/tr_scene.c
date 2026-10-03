@@ -249,6 +249,9 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	}
 
 	backEndData->entities[r_numentities].e = *ent;
+	backEndData->entities[r_numentities].rtCaster = 0;
+	backEndData->entities[r_numentities].posedScene = 0;
+	backEndData->entities[r_numentities].poseId = 0;
 	backEndData->entities[r_numentities].lightingCalculated = qfalse;
 	backEndData->entities[r_numentities].bLightGridCalculated = qfalse;
 	backEndData->entities[r_numentities].sphereCalculated = qfalse;
@@ -530,6 +533,11 @@ void RE_RenderScene( const refdef_t *fd ) {
 	if ( !tr.registered ) {
 		return;
 	}
+
+	// Added in OPM: r_rtTestMove's piece
+	if ( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
+		R_RtAddTestEntity();
+	}
 	GLimp_LogComment( "====== RE_RenderScene =====\n" );
 
 	if ( r_norefresh->integer ) {
@@ -618,6 +626,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 
 		tr.pc.t_shadowFrontend += R_MicroSeconds() - tShadowStart;
 	}
+
+	// Added in OPM
+	//  The realtime lights: which of them light the view, and their shadows.
+	R_RtRenderShadows(fd);
 
 	// playing with cube maps
 	// this is where dynamic cubemaps would be rendered

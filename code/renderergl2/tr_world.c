@@ -803,6 +803,16 @@ void R_AddWorldSurfaces (void) {
 	tr.currentEntityNum = REFENTITYNUM_WORLD;
 	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
 
+	// Added in OPM
+	//  A realtime light's shadow of what moves: of the world, only the static
+	//  models the client moved.
+	if (tr.viewParms.flags & VPF_RTDYNAMIC) {
+		if (r_drawstaticmodels->integer) {
+			R_AddStaticModelSurfaces();
+		}
+		return;
+	}
+
 	//
 	// OPENMOHAA-specific stuff
 	//=========================
@@ -826,7 +836,9 @@ void R_AddWorldSurfaces (void) {
 	// determine which leaves are in the PVS / areamask
 	// Shadow cascades skip this, which is why the timer is worth having: it
 	// separates the one view that pays for PVS from the several that do not.
-	if (!(tr.viewParms.flags & VPF_DEPTHSHADOW))
+	// Added in OPM
+	//  A realtime light's shadow sees from the light, not from the view.
+	if (!(tr.viewParms.flags & VPF_DEPTHSHADOW) || (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTBAKED)))
 	{
 		double tStart = R_MicroSeconds();
 		R_MarkLeaves ();
@@ -856,6 +868,11 @@ void R_AddWorldSurfaces (void) {
 	{
 		dlightBits = ( 1ULL << tr.refdef.num_dlights ) - 1;
 		pshadowBits = ( 1ULL << tr.refdef.num_pshadows ) - 1;
+
+		// Added in OPM
+		//  The realtime lights take the dynamic lights in (tr_rtlight.c).
+		if (R_RtActive() && r_rtDlights->value > 0)
+			dlightBits = 0;
 	}
 	else
 	{
@@ -883,8 +900,9 @@ void R_AddWorldSurfaces (void) {
 				continue;
 
 			// Added in OPM
-			//  Drawn by the model it was detached into.
-			if (tr.world->surfaces[i].detached)
+			//  Drawn by the model it was detached into, except as the map was
+			//  compiled.
+			if (tr.world->surfaces[i].detached && !(tr.viewParms.flags & VPF_RTBAKED))
 				continue;
 
 			R_AddWorldSurface( tr.world->surfaces + i, tr.world->surfacesDlightBits[i], tr.world->surfacesPshadowBits[i] );
@@ -905,7 +923,8 @@ void R_AddWorldSurfaces (void) {
 		R_AddTerrainSurfaces();
 		tr.pc.t_terrainSurfaces += R_MicroSeconds() - tStart;
 	}
-	if (r_drawstaticmodels->integer) {
+	// the compiler never had the static models in the way of its lights
+	if (r_drawstaticmodels->integer && !(tr.viewParms.flags & VPF_RTBAKED)) {
 		double tStart = R_MicroSeconds();
 		tr.pc.c_staticModelWalks++;
 		R_AddStaticModelSurfaces();
@@ -1126,6 +1145,10 @@ qhandle_t RE_DetachWorldSurfaces(const int *surfaces, int numSurfaces)
 			VectorSet( bmodel->bounds[1], MAX_WORLD_COORD, MAX_WORLD_COORD, MAX_WORLD_COORD );
 		}
 	}
+
+	// Added in OPM
+	//  The realtime lights draw what stands still again without it.
+	R_RtStandingChanged( bmodel->bounds[0], bmodel->bounds[1] );
 
 	mod->type = MOD_BRUSH;
 	mod->bmodel = bmodel;

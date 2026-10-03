@@ -168,6 +168,8 @@ cvar_t  *r_sunEntityShadowCascades;
 cvar_t  *r_sunCascade2CacheDist;
 cvar_t  *r_sunCascade2CacheAngle;
 cvar_t  *r_skelCull;
+cvar_t  *r_skinCache;
+cvar_t  *r_softParticles;
 cvar_t  *r_ignoreDstAlpha;
 
 cvar_t	*r_ignoreGLErrors;
@@ -1626,6 +1628,9 @@ void R_Register( void )
 	r_sunlightMode = ri.Cvar_Get( "r_sunlightMode", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	r_sunShadows = ri.Cvar_Get( "r_sunShadows", "1", CVAR_ARCHIVE | CVAR_LATCH );
+
+	// Added in OPM
+	R_RtRegister();
 	// ioq3 uses 0.5, which assumes the lightmap holds no direct sun. MOH:AA
 	// bakes the sun into its lightmaps, so at 0.5 every interior is simply halved.
 	r_sunShadowScale = ri.Cvar_Get( "r_sunShadowScale", "0.85", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1658,6 +1663,16 @@ void R_Register( void )
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.
 	r_skelCull = ri.Cvar_Get( "r_skelCull", "1", 0 );
+	// Pose each skeletal model once per scene and skin each of its surfaces
+	// once per pose, rather than again in every view that draws it (prepass,
+	// sun cascades, the realtime lights' shadows). Not archived: an A/B switch.
+	r_skinCache = ri.Cvar_Get( "r_skinCache", "1", 0 );
+	// Dust and smoke fade out over this many units where they meet what is
+	// behind them, instead of showing the hard line where their quad cuts into
+	// a wall or the ceiling. Takes the depth prepass (r_depthPrepass), whose
+	// depth is copied for it; 0 at start up leaves the copy out.
+	r_softParticles = ri.Cvar_Get( "r_softParticles", "16", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_softParticles, "Dust and smoke fade out over this many units where they meet walls, floors and ceilings (0 off; needs r_depthPrepass)" );
 	r_ignoreDstAlpha = ri.Cvar_Get( "r_ignoreDstAlpha", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	//
@@ -1818,6 +1833,8 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "minimize", GLimp_Minimize );
 	ri.Cmd_AddCommand( "gfxmeminfo", GfxMemInfo_f );
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
+	// Added in OPM
+	R_RtTestCommands( qtrue );
 
 	//
 	// OPENMOHAA-specific stuff
@@ -2089,6 +2106,8 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "minimize" );
 	ri.Cmd_RemoveCommand( "gfxmeminfo" );
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
+	// Added in OPM
+	R_RtTestCommands( qfalse );
 
 
 	if ( tr.registered ) {

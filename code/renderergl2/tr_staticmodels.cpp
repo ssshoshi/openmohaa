@@ -79,6 +79,13 @@ void R_InitStaticModels(void)
         pSM->bRendered = qfalse;
         AngleVectorsLeft(pSM->angles, pSM->axis[0], pSM->axis[1], pSM->axis[2]);
 
+        // Added in OPM
+        //  where the map placed it (RE_SetStaticModelTransform)
+        VectorCopy(pSM->origin, pSM->baseOrigin);
+        AxisCopy(pSM->axis, pSM->baseAxis);
+        pSM->moved    = qfalse;
+        pSM->rtCaster = 0;
+
         if (!strnicmp(pSM->model, "models", 6)) {
             Q_strncpyz(szTemp, pSM->model, sizeof(szTemp));
         } else {
@@ -317,6 +324,19 @@ void R_AddStaticModelSurfaces(void)
         tiki = SM->tiki;
 
         if (!tiki) {
+            continue;
+        }
+
+        // Added in OPM
+        //  The realtime lights' shadows: what stands still, and what moves;
+        //  never the lamps, which the lights are in.
+        if ((tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)) && SM->rtFixture) {
+            continue;
+        }
+        if ((tr.viewParms.flags & VPF_RTSTATIC) && SM->moved && !(SM->rtCaster & RT_CASTS_STANDING)) {
+            continue;
+        }
+        if ((tr.viewParms.flags & VPF_RTDYNAMIC) && !(SM->moved && (SM->rtCaster & RT_CASTS_MOVING))) {
             continue;
         }
 
@@ -608,4 +628,20 @@ void RE_SetStaticModelTransform(int index, const vec3_t origin, const vec3_t axi
     SM = &tr.world->staticModels[index];
     VectorCopy(origin, SM->origin);
     AxisCopy(axis, SM->axis);
+
+    // Added in OPM
+    //  Moved from where the map put it: the realtime lights' shadows of what
+    //  stands still are drawn again without it, and it casts with what moves.
+    if (!SM->moved && (!VectorCompare(origin, SM->baseOrigin) || !VectorCompare(axis[0], SM->baseAxis[0])
+                       || !VectorCompare(axis[1], SM->baseAxis[1]) || !VectorCompare(axis[2], SM->baseAxis[2]))) {
+        vec3_t mins, maxs;
+        int    k;
+
+        SM->moved = qtrue;
+        for (k = 0; k < 3; k++) {
+            mins[k] = SM->baseOrigin[k] - SM->cull_radius;
+            maxs[k] = SM->baseOrigin[k] + SM->cull_radius;
+        }
+        R_RtStandingChanged(mins, maxs);
+    }
 }

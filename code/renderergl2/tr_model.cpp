@@ -23,6 +23,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // tr_models.cpp -- model loading and caching
 
 #include "tr_local.h"
+
+#include <vector>
+#include <algorithm>
 #include "../corepp/tiki.h"
 #include "../corepp/vector.h"
 
@@ -34,7 +37,13 @@ static int entityNumIndexes[MAX_REFENTITIES];
 static int staticModelNumIndexes[4095];
 
 static int R_CullSkelModel(dtiki_t *tiki, refEntity_t *e, skelAnimFrame_t *newFrame, float fScale, float *vLocalOrg);
-static int R_CullSkelBones(const skelAnimFrame_t *frame, int numBones, float fScale, const vec3_t vLocalOrg);
+static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, float tiki_scale, const vec3_t tiki_localorigin, int iRadiusCull);
+static void R_AddSkelDrawSurfs(trRefEntity_t *ent, dtiki_t *tiki, qboolean personalModel);
+
+// the mesh reaches past the joints (a skull above the head bone, a torso
+// around the spine): a margin on the bounds of the bones, in world units
+#define SKEL_BONE_CULL_MARGIN 32.0f
+
 
 /*
 ** R_GetModelByHandle
@@ -739,28 +748,19 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     float            tiki_scale;
     vec3_t           tiki_localorigin;
     vec3_t           tiki_worldorigin;
-    skelBoneCache_t *outbones;
     //int tikiSurfNumOffset;
     static cvar_t   *vmEntity = NULL;
-    skeletor_c      *skeletor;
     float            radius;
     SkelVec3         centroid;
-    skelAnimFrame_t *newFrame;
-    int              added;
-    shader_t        *shader;
-    dtikisurface_t  *dsurf;
-    byte            *bsurf;
     //float range;
     //int render_count, total_tris;
-    skelSurfaceGame_t *surface;
     //int skinnum;
     //float target;
     Vector newDistance;
     //vec3_t org;
-    int i;
-    int mesh;
     int iRadiusCull = 0;
     int num_tags;
+    qboolean posed;
 
     tiki = ent->e.tiki;
 
@@ -783,11 +783,13 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
 
     R_UpdatePoseInternal(&ent->e);
 
-    outbones = &TIKI_Skel_Bones[TIKI_Skel_Bones_Index];
-
     num_tags = ri.TIKI_GetNumChannels(tiki);
 
-    if (num_tags + TIKI_Skel_Bones_Index > MAX_SKELBONES) {
+    // posed for another view of this scene already: every view draws it with
+    // the bones it was given last, so posing it again changed nothing
+    posed = ent->posedScene == tr.sceneCount && r_skinCache->integer;
+
+    if (!posed && num_tags + TIKI_Skel_Bones_Index > MAX_SKELBONES) {
         ri.Printf(PRINT_DEVELOPER, "R_AddSkelSurfaces: too many skeleton models visible on '%s'\n", tiki->a->name);
         return;
     }
@@ -841,10 +843,9 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
         }
     }
 
-    newFrame = (skelAnimFrame_t *)ri.Hunk_AllocateTempMemory(
-        sizeof(skelAnimFrame_t) + ri.TIKI_GetNumChannels(tiki) * sizeof(SkelMat4)
-    );
-    R_GetFrame(&ent->e, newFrame);
+    if (!posed) {
+        R_PoseSkelModel(ent, tiki, num_tags, tiki_scale, tiki_localorigin, iRadiusCull);
+    }
 
     // Nothing here ever skipped a model outside the view: it was posed,
     // skinned and drawn regardless, and every sun cascade that takes entities
@@ -853,14 +854,62 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     // ragdoll's bones can lie well away from the sphere, which follows the
     // entity and not the body. The main view is left as it was.
     if (r_skelCull->integer && !lod_tool->integer && iRadiusCull == CULL_OUT
-        && (tr.viewParms.flags & VPF_DEPTHSHADOW)
-        && R_CullSkelBones(newFrame, num_tags, tiki_scale, tiki_localorigin) == CULL_OUT) {
-        ri.Hunk_FreeTempMemory(newFrame);
-        return;
+        && (tr.viewParms.flags & VPF_DEPTHSHADOW)) {
+        vec3_t centre;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        if (R_CullPointAndRadius(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN) == CULL_OUT) {
+            return;
+        }
+    }
+
+    //
+    // draw all meshes
+    //
+    R_AddSkelDrawSurfs(ent, tiki, personalModel);
+}
+
+/*
+=============
+R_PoseSkelModel
+
+Added in OPM, out of R_AddSkelSurfaces: the bones and morphs of a skeletal
+model for this scene, and the bounds of its bones.
+=============
+*/
+static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, float tiki_scale, const vec3_t tiki_localorigin, int iRadiusCull)
+{
+    static int       poses;
+    skelBoneCache_t *outbones = &TIKI_Skel_Bones[TIKI_Skel_Bones_Index];
+    skelAnimFrame_t *newFrame;
+    skeletor_c      *skeletor;
+    vec3_t           mins, maxs, local;
+    int              added;
+    int              i;
+
+    newFrame = (skelAnimFrame_t *)ri.Hunk_AllocateTempMemory(
+        sizeof(skelAnimFrame_t) + ri.TIKI_GetNumChannels(tiki) * sizeof(SkelMat4)
+    );
+    R_GetFrame(&ent->e, newFrame);
+
+    // the bounds of its bones, which a ragdoll's can leave well behind the
+    // animation's own sphere (the shadow views cull by them)
+    ClearBounds(mins, maxs);
+    for (i = 0; i < num_tags; i++) {
+        VectorMA(tiki_localorigin, tiki_scale, newFrame->bones[i][3], local);
+        AddPointToBounds(local, mins, maxs);
+    }
+    if (num_tags > 0) {
+        VectorAdd(mins, maxs, ent->boneCentre);
+        VectorScale(ent->boneCentre, 0.5f, ent->boneCentre);
+        ent->boneRadius = Distance(maxs, ent->boneCentre);
+    } else {
+        VectorCopy(tiki_localorigin, ent->boneCentre);
+        ent->boneRadius = 0;
     }
 
     if (lod_tool->integer || iRadiusCull != CULL_CLIP
-        || R_CullSkelModel(tiki, &ent->e, newFrame, tiki_scale, tiki_localorigin) != CULL_OUT) {
+        || R_CullSkelModel(tiki, &ent->e, newFrame, tiki_scale, (float *)tiki_localorigin) != CULL_OUT) {
         //
         // copy bones position and axis
         //
@@ -912,9 +961,31 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
         ent->e.hasMorph = qtrue;
     }
 
-    //
-    // draw all meshes
-    //
+    ent->posedScene = tr.sceneCount;
+    // never 0, which is no pose (RB_SkelMesh keeps nothing of it)
+    if (++poses <= 0) {
+        poses = 1;
+    }
+    ent->poseId = poses;
+}
+
+/*
+=============
+R_AddSkelDrawSurfs
+
+Added in OPM, out of R_AddSkelSurfaces: the surfaces of a posed skeletal model
+into this view.
+=============
+*/
+static void R_AddSkelDrawSurfs(trRefEntity_t *ent, dtiki_t *tiki, qboolean personalModel)
+{
+    shader_t          *shader;
+    dtikisurface_t    *dsurf;
+    byte              *bsurf;
+    skelSurfaceGame_t *surface;
+    int                mesh;
+    int                i;
+
     dsurf = tiki->surfaces;
     bsurf = &ent->e.surfaces[0];
     for (mesh = 0; mesh < tiki->numMeshes; mesh++) {
@@ -1192,8 +1263,116 @@ done:
 RB_SkelMesh
 =============
 */
+/*
+=============
+Skinning cache
+
+Added in OPM. A pose (R_PoseSkelModel) is the same in every view of a scene,
+so a surface skinned for one is copied into the others: the prepass, the sun
+cascades and the realtime lights' shadow faces draw each character again, and
+used to skin it again each time. Keyed by the pose, the surface and how many of
+its vertexes the level of detail keeps; direct mapped, and started over when
+full. A key never comes back, so nothing needs clearing between frames.
+=============
+*/
+#define SKIN_CACHE_SLOTS 4096 // a power of two
+#define SKIN_CACHE_VERTS (128 * 1024)
+
+typedef struct {
+    int                      poseId;
+    const skelSurfaceGame_t *sf;
+    unsigned int             count;
+    int                      first;
+    qboolean                 tangents;
+} skinCacheSlot_t;
+
+static skinCacheSlot_t skinSlots[SKIN_CACHE_SLOTS];
+static vec4_t          skinXyz[SKIN_CACHE_VERTS];
+static int16_t         skinNormal[SKIN_CACHE_VERTS][4];
+static int16_t         skinTangent[SKIN_CACHE_VERTS][4];
+static vec2_t          skinTexCoords[SKIN_CACHE_VERTS];
+static int             skinUsed;
+
+static skinCacheSlot_t *R_SkinCacheSlot(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
+{
+    unsigned int h = (unsigned int)poseId * 2654435761u;
+
+    h ^= (unsigned int)((uintptr_t)sf >> 4) * 40503u;
+    h ^= count * 2246822519u;
+    return &skinSlots[(h ^ (h >> 15)) & (SKIN_CACHE_SLOTS - 1)];
+}
+
+// 0: not kept; 1: copied whole; 2: copied but for the tangents, which it was
+// kept without
+static int R_SkinCacheFetch(int poseId, const skelSurfaceGame_t *sf, unsigned int count, int base, qboolean tangents)
+{
+    const skinCacheSlot_t *slot;
+
+    if (!poseId || !r_skinCache->integer) {
+        return 0;
+    }
+
+    slot = R_SkinCacheSlot(poseId, sf, count);
+    if (slot->poseId != poseId || slot->sf != sf || slot->count != count) {
+        return 0;
+    }
+
+    Com_Memcpy(tess.xyz[base], skinXyz[slot->first], count * sizeof(skinXyz[0]));
+    Com_Memcpy(tess.normal[base], skinNormal[slot->first], count * sizeof(skinNormal[0]));
+    Com_Memcpy(tess.texCoords[base], skinTexCoords[slot->first], count * sizeof(skinTexCoords[0]));
+    if (!tangents) {
+        return 1;
+    }
+    if (!slot->tangents) {
+        return 2;
+    }
+    Com_Memcpy(tess.tangent[base], skinTangent[slot->first], count * sizeof(skinTangent[0]));
+    return 1;
+}
+
+static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned int count, int base, qboolean tangents)
+{
+    skinCacheSlot_t *slot;
+
+    if (!poseId || !r_skinCache->integer || count > SKIN_CACHE_VERTS) {
+        return;
+    }
+
+    slot = R_SkinCacheSlot(poseId, sf, count);
+    if (slot->poseId == poseId && slot->sf == sf && slot->count == count) {
+        // kept already, now with its tangents
+        if (tangents && !slot->tangents) {
+            Com_Memcpy(skinTangent[slot->first], tess.tangent[base], count * sizeof(skinTangent[0]));
+            slot->tangents = qtrue;
+        }
+        return;
+    }
+
+    if (skinUsed + count > SKIN_CACHE_VERTS) {
+        // full: start over
+        Com_Memset(skinSlots, 0, sizeof(skinSlots));
+        skinUsed = 0;
+    }
+
+    slot->poseId   = poseId;
+    slot->sf       = sf;
+    slot->count    = count;
+    slot->first    = skinUsed;
+    slot->tangents = tangents;
+    skinUsed += count;
+
+    Com_Memcpy(skinXyz[slot->first], tess.xyz[base], count * sizeof(skinXyz[0]));
+    Com_Memcpy(skinNormal[slot->first], tess.normal[base], count * sizeof(skinNormal[0]));
+    Com_Memcpy(skinTexCoords[slot->first], tess.texCoords[base], count * sizeof(skinTexCoords[0]));
+    if (tangents) {
+        Com_Memcpy(skinTangent[slot->first], tess.tangent[base], count * sizeof(skinTangent[0]));
+    }
+}
+
 void RB_SkelMesh(skelSurfaceGame_t *sf)
 {
+    qboolean           tangents;
+    int                kept;
     unsigned int       baseIndex, baseVertex;
     unsigned int       render_count;
     unsigned int       indexes;
@@ -1359,6 +1538,18 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 
         entityNumIndexes[backEnd.currentEntity - backEnd.refdef.entities] += indexes;
         tess.numIndexes += i;
+    }
+
+    // skinned for another view of this scene already
+    tangents = (tess.shader->vertexAttribs & ATTR_TANGENT) ? qtrue : qfalse;
+    kept     = R_SkinCacheFetch(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
+    if (kept == 1) {
+        return;
+    }
+    if (kept == 2) {
+        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
+        R_SkinCacheStore(backEnd.currentEntity->poseId, sf, render_count, baseVertex, qtrue);
+        return;
     }
 
     //
@@ -1625,9 +1816,12 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     //}
     //tess.numVertexes += sf->numVerts;
 
-    if (tess.shader->vertexAttribs & ATTR_TANGENT) {
-        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, indexes);
+    if (tangents) {
+        // the indexes written: fewer than the surface's when the level of
+        // detail dropped some
+        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
     }
+    R_SkinCacheStore(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
 }
 
 /*
@@ -2006,43 +2200,6 @@ float R_CalcLod(const vec3_t origin, float radius)
 
 /*
 =============
-R_CullSkelBones
-
-Culls a sphere around where the bones of the given frame actually are. The
-mesh reaches past the joints (a skull above the head bone, a torso around the
-spine), hence the margin, which is in world units.
-=============
-*/
-#define SKEL_BONE_CULL_MARGIN 32.0f
-
-static int R_CullSkelBones(const skelAnimFrame_t *frame, int numBones, float fScale, const vec3_t vLocalOrg)
-{
-    vec3_t mins, maxs, local, center, half;
-    int    i;
-
-    if (numBones <= 0) {
-        return CULL_OUT;
-    }
-
-    ClearBounds(mins, maxs);
-
-    for (i = 0; i < numBones; i++) {
-        local[0] = frame->bones[i][3][0] * fScale + vLocalOrg[0];
-        local[1] = frame->bones[i][3][1] * fScale + vLocalOrg[1];
-        local[2] = frame->bones[i][3][2] * fScale + vLocalOrg[2];
-        AddPointToBounds(local, mins, maxs);
-    }
-
-    VectorAdd(mins, maxs, local);
-    VectorScale(local, 0.5f, local);
-    VectorSubtract(maxs, local, half);
-    R_LocalPointToWorld(local, center);
-
-    return R_CullPointAndRadius(center, VectorLength(half) + SKEL_BONE_CULL_MARGIN);
-}
-
-/*
-=============
 R_CullTIKI
 =============
 */
@@ -2204,4 +2361,276 @@ int R_LerpTag(orientation_t *tag, qhandle_t handle, int startFrame, int endFrame
 {
     // stub
     return 0;
+}
+/*
+=============
+R_RtIsCharacter
+
+Added in OPM. Is the entity a character (a skinned body): the realtime lights
+(tr_rtlight.c) may leave those out of their shadows.
+=============
+*/
+qboolean R_RtIsCharacter(const refEntity_t *ent)
+{
+    const model_t *model = R_GetModelByHandle(ent->hModel);
+
+    return (model && model->type == MOD_TIKI && model->d.tiki && model->d.tiki->a && model->d.tiki->a->bIsCharacter) ? qtrue : qfalse;
+}
+
+/*
+=============
+R_RtCharacterCapsules
+
+Added in OPM. A character's body as capsules, in the world: out[i * 2] is one
+end and the radius, out[i * 2 + 1] the other. The realtime lights
+(tr_rtlight.c) shade with them, which costs nothing like drawing the body
+again into every shadow face it is in. Returns how many.
+
+Each capsule is fitted once per model to the vertices a bone moves most: along
+the bone as far as they reach, as thick as they spread around it. So they
+follow the mesh, whatever the skeleton.
+=============
+*/
+#define RT_BODY_CAPSULES 16
+
+typedef struct {
+    int    bone;
+    vec3_t a, b; // in the bone's space
+    float  radius;
+} rtBodyCapsule_t;
+
+typedef struct {
+    dtiki_t        *tiki;
+    int             numCapsules;
+    rtBodyCapsule_t capsules[RT_BODY_CAPSULES];
+} rtBody_t;
+
+static rtBody_t rt_bodies[64];
+static int      rt_numBodies;
+
+// A capsule around points: along the way they spread the most, as long as they
+// reach and as thick as they are around it. False if they make no capsule.
+static bool R_RtFitCapsule(const std::vector<float> &pts, rtBodyCapsule_t *c)
+{
+    const size_t n = pts.size() / 3;
+    double       mean[3] = {0, 0, 0}, cov[3][3] = {{0}};
+    double       axis[3] = {0, 0, 0}, len, sumD2 = 0;
+    float        lo = 1e9f, hi = -1e9f, radius;
+    size_t       v;
+    int          i, j, it, widest = 0;
+
+    for (v = 0; v < n; v++) {
+        for (i = 0; i < 3; i++) {
+            mean[i] += pts[v * 3 + i];
+        }
+    }
+    for (i = 0; i < 3; i++) {
+        mean[i] /= n;
+    }
+    for (v = 0; v < n; v++) {
+        for (i = 0; i < 3; i++) {
+            for (j = 0; j < 3; j++) {
+                cov[i][j] += (pts[v * 3 + i] - mean[i]) * (pts[v * 3 + j] - mean[j]);
+            }
+        }
+    }
+
+    // the most spread: power iteration, from the widest of the three axes
+    for (i = 1; i < 3; i++) {
+        if (cov[i][i] > cov[widest][widest]) {
+            widest = i;
+        }
+    }
+    axis[widest] = 1;
+    for (it = 0; it < 32; it++) {
+        double next[3] = {0, 0, 0};
+
+        for (i = 0; i < 3; i++) {
+            for (j = 0; j < 3; j++) {
+                next[i] += cov[i][j] * axis[j];
+            }
+        }
+        len = sqrt(next[0] * next[0] + next[1] * next[1] + next[2] * next[2]);
+        if (len < 1e-9) {
+            break;
+        }
+        for (i = 0; i < 3; i++) {
+            axis[i] = next[i] / len;
+        }
+    }
+
+    for (v = 0; v < n; v++) {
+        double d[3], t = 0, d2 = 0;
+
+        for (i = 0; i < 3; i++) {
+            d[i] = pts[v * 3 + i] - mean[i];
+            t += d[i] * axis[i];
+        }
+        for (i = 0; i < 3; i++) {
+            const double perp = d[i] - axis[i] * t;
+            d2 += perp * perp;
+        }
+        sumD2 += d2;
+        lo = Q_min(lo, (float)t);
+        hi = Q_max(hi, (float)t);
+    }
+
+    // the vertices are on the skin: their distance from the axis is its radius
+    radius = (float)sqrt(sumD2 / n);
+    if (radius < 1.0f) {
+        return false;
+    }
+    // the ends are round, and reach that far past the core
+    lo += radius * 0.5f;
+    hi -= radius * 0.5f;
+    if (hi < lo) {
+        lo = hi = (lo + hi) * 0.5f;
+    }
+    for (i = 0; i < 3; i++) {
+        c->a[i] = (float)(mean[i] + axis[i] * lo);
+        c->b[i] = (float)(mean[i] + axis[i] * hi);
+    }
+    c->radius = radius;
+    return true;
+}
+
+static const rtBody_t *R_RtBody(dtiki_t *tiki)
+{
+    rtBody_t                        *body;
+    std::vector<std::vector<float> > points; // each bone's heaviest vertices, in its space
+    std::vector<int>                 order;
+    int                              numChannels, mesh, surf, i, k;
+
+    for (k = 0; k < rt_numBodies; k++) {
+        if (rt_bodies[k].tiki == tiki) {
+            return &rt_bodies[k];
+        }
+    }
+
+    // a small cache: start over when full
+    if (rt_numBodies == (int)(sizeof(rt_bodies) / sizeof(rt_bodies[0]))) {
+        rt_numBodies = 0;
+    }
+    body              = &rt_bodies[rt_numBodies++];
+    body->tiki        = tiki;
+    body->numCapsules = 0;
+
+    numChannels = ri.TIKI_GetNumChannels(tiki);
+    if (numChannels <= 0) {
+        return body;
+    }
+    points.resize(numChannels);
+
+    for (mesh = 0; mesh < tiki->numMeshes; mesh++) {
+        skelHeaderGame_t  *skelmodel = ri.TIKI_GetSkel(tiki->mesh[mesh]);
+        skelSurfaceGame_t *surface;
+
+        if (!skelmodel) {
+            continue;
+        }
+
+        surface = skelmodel->pSurfaces;
+        for (surf = 0; surf < skelmodel->numSurfaces; surf++, surface = surface->pNext) {
+            skeletorVertex_t *vert = surface->pVerts;
+
+            for (i = 0; i < surface->numVerts; i++) {
+                skelWeight_t *weight = (skelWeight_t *)((byte *)vert + sizeof(skeletorVertex_t)
+                                                        + sizeof(skeletorMorph_t) * vert->numMorphs);
+                skelWeight_t *heaviest = NULL;
+                int           bone;
+
+                for (k = 0; k < vert->numWeights; k++) {
+                    if (!heaviest || weight[k].boneWeight > heaviest->boneWeight) {
+                        heaviest = &weight[k];
+                    }
+                }
+
+                if (heaviest) {
+                    bone = mesh > 0 ? ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[heaviest->boneIndex].channel)
+                                    : heaviest->boneIndex;
+                    if (bone >= 0 && bone < numChannels) {
+                        points[bone].insert(points[bone].end(), heaviest->offset, heaviest->offset + 3);
+                    }
+                }
+
+                vert = (skeletorVertex_t *)((byte *)vert + sizeof(skeletorVertex_t)
+                                            + sizeof(skeletorMorph_t) * vert->numMorphs
+                                            + sizeof(skelWeight_t) * vert->numWeights);
+            }
+        }
+    }
+
+    // the bones that move the most of the body
+    std::vector<rtBodyCapsule_t> fitted;
+    std::vector<float>           area;
+
+    for (i = 0; i < numChannels; i++) {
+        rtBodyCapsule_t c;
+
+        if (points[i].size() >= 8 * 3 && R_RtFitCapsule(points[i], &c)) {
+            c.bone = i;
+            fitted.push_back(c);
+            // what of the body it hides: its outline, side on
+            area.push_back((Distance(c.a, c.b) + 2 * c.radius) * 2 * c.radius);
+            order.push_back((int)order.size());
+        }
+    }
+    // the parts that hide the most, not the ones with the most vertices (the
+    // face and the hands have plenty and hide little)
+    std::sort(order.begin(), order.end(), [&](int x, int y) { return area[x] > area[y]; });
+
+    for (size_t n = 0; n < order.size() && body->numCapsules < RT_BODY_CAPSULES; n++) {
+        body->capsules[body->numCapsules++] = fitted[order[n]];
+    }
+
+    return body;
+}
+
+int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max)
+{
+    const rtBody_t  *body;
+    skelAnimFrame_t *frame;
+    float            scale;
+    int              count = 0, i, k;
+
+    if (!ent->tiki || max <= 0) {
+        return 0;
+    }
+
+    body = R_RtBody(ent->tiki);
+    if (!body->numCapsules) {
+        return 0;
+    }
+
+    frame = (skelAnimFrame_t *)ri.Hunk_AllocateTempMemory(
+        sizeof(skelAnimFrame_t) + ri.TIKI_GetNumChannels(ent->tiki) * sizeof(SkelMat4)
+    );
+    R_GetFrame(ent, frame);
+    scale = ent->tiki->load_scale * ent->scale;
+
+    for (i = 0; i < body->numCapsules && count < max; i++) {
+        const rtBodyCapsule_t *c     = &body->capsules[i];
+        const SkelMat4        &bone  = frame->bones[c->bone];
+        const float           *ends[2] = {c->a, c->b};
+
+        for (k = 0; k < 2; k++) {
+            const float *p = ends[k];
+            vec3_t       local;
+            int          j;
+
+            for (j = 0; j < 3; j++) {
+                local[j] = (p[0] * bone[0][j] + p[1] * bone[1][j] + p[2] * bone[2][j] + bone[3][j]) * scale;
+            }
+            VectorCopy(ent->origin, out[count * 2 + k]);
+            for (j = 0; j < 3; j++) {
+                VectorMA(out[count * 2 + k], local[j], ent->axis[j], out[count * 2 + k]);
+            }
+        }
+        out[count * 2][3]     = c->radius * scale;
+        out[count * 2 + 1][3] = 0;
+        count++;
+    }
+
+    ri.Hunk_FreeTempMemory(frame);
+    return count;
 }

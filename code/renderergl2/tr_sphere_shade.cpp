@@ -1157,8 +1157,14 @@ void RB_Sphere_SetupEntity()
         backEnd.currentSphere->TessFunction = &RB_Light_Fullbright;
     } else if (RB_Sphere_SetupGlobals() && RB_Sphere_ResetPointColors()) {
         backEnd.currentSphere->numRealLights = 0;
-        RB_Sphere_Light_Sun();
-        RB_Sphere_BuildStaticLights();
+        // Added in OPM
+        //  With all of the light live (r_realtimeLighting 2) the map's lights
+        //  and the sun light the model per pixel as it is drawn
+        //  (tr_rtlight.c); here only the ambient and the dynamic lights.
+        if (!R_RtLitLive()) {
+            RB_Sphere_Light_Sun();
+            RB_Sphere_BuildStaticLights();
+        }
         RB_Sphere_BuildDLights();
         backEnd.pc.c_characterlights += backEnd.currentSphere->numRealLights;
         RB_OptimizeLights();

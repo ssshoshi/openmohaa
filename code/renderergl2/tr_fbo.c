@@ -338,6 +338,28 @@ void FBO_Init(void)
 		}
 	}
 
+	// Added in OPM
+	//  The realtime lights' shadow atlases: depth alone, so nothing to draw
+	//  colour into (a colour buffer the size of the atlas would be 64 MB).
+	for (i = 0; i < 3; i++)
+	{
+		if (!tr.rtShadowImage[i])
+			continue;
+
+		tr.rtShadowFbo[i] = FBO_Create(va("_rtshadow%d", i), tr.rtShadowImage[i]->width, tr.rtShadowImage[i]->height);
+		FBO_AttachImage(tr.rtShadowFbo[i], tr.rtShadowImage[i], GL_DEPTH_ATTACHMENT, 0);
+		FBO_Bind(tr.rtShadowFbo[i]);
+		qglDrawBuffer(GL_NONE);
+		qglReadBuffer(GL_NONE);
+		if (!R_CheckFBO(tr.rtShadowFbo[i]))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no shadow atlas, it is off\n");
+			tr.rtShadowFbo[0] = tr.rtShadowFbo[1] = tr.rtShadowFbo[2] = NULL;
+			break;
+		}
+		FBO_Bind(NULL);
+	}
+
 	if (tr.sunShadowDepthImage[0])
 	{
 		for (i = 0; i < 4; i++)

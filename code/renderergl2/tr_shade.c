@@ -1569,6 +1569,44 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 
 		GLSL_BindProgram(sp);
 
+		// Added in OPM: the realtime lights, in views of the world
+		if (R_RtActive())
+		{
+			if (!backEnd.projection2D && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+			{
+				R_RtSetUniforms(sp, R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader));
+				R_RtBindTextures();
+			}
+			else
+			{
+				R_RtSetUniforms(sp, -1);
+			}
+		}
+
+		// Added in OPM: dust and smoke fade out where they meet what is behind
+		// them, rather than showing where their quads cut into it
+		if (pStage->glslShaderGroup != tr.lightallShader)
+		{
+			const int dstBlend = pStage->stateBits & GLS_DSTBLEND_BITS;
+			vec4_t    soft;
+
+			VectorClear4(soft);
+			if (backEnd.softDepth && r_softParticles->value > 0 && tess.shader->rtParticle
+				&& !(pStage->stateBits & GLS_DEPTHMASK_TRUE) && !backEnd.projection2D
+				&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+				&& (dstBlend == GLS_DSTBLEND_ONE || dstBlend == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA))
+			{
+				soft[0] = r_softParticles->value;
+				// added on top: fade what it adds; blended: fade how much it covers
+				soft[1] = dstBlend == GLS_DSTBLEND_ONE ? 1.0f : 0.0f;
+				soft[2] = backEnd.viewParms.zNear > 0 ? backEnd.viewParms.zNear : r_znear->value;
+				soft[3] = backEnd.viewParms.zFar;
+				GL_BindToTMU(tr.hdrDepthImage, TMU_SOFTDEPTH);
+			}
+			GLSL_SetUniformVec4(sp, UNIFORM_SOFTPARTICLE, soft);
+		}
+
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);
 		GLSL_SetUniformVec3(sp, UNIFORM_LOCALVIEWORIGIN, backEnd.ori.viewOrigin);
@@ -1639,6 +1677,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec3(sp, UNIFORM_AMBIENTLIGHT, vec);
 
 			VectorScale(backEnd.currentEntity->directedLight, 1.0f / 255.0f, vec);
+			// Added in OPM: the realtime lights are the directed light
+			if (R_RtLitLive())
+				VectorClear(vec);
 			GLSL_SetUniformVec3(sp, UNIFORM_DIRECTEDLIGHT, vec);
 			
 			VectorCopy(backEnd.currentEntity->lightDir, vec);
