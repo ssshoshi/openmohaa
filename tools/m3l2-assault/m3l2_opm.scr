@@ -100,8 +100,16 @@
 	if ($scene4_mg42 != NULL)
 		$scene4_mg42 maxYawOffset 75
 
+	if (level.opm_flak_awake == NIL)
+	{
+		level.opm_flak_awake[1] = 0
+		level.opm_flak_awake[2] = 0
+	}
+
 	thread scene2_sniper_blood
 	thread scene11_mg_crews
+	thread flak88_chase 1
+	thread flak88_chase 2
 	thread scene3_smoke
 	thread scene4_car
 	thread scene4_director
@@ -1288,3 +1296,81 @@ scene11_mg_man local.k local.path:
 	local.g thread maps/m3l2.scr::scene11_mgspawn_targeting local.mg
 	println ("m3l2_opm: t=" + level.time + " MG " + local.k + " manned by " + local.name)
 end
+
+//=============================================================================
+// The two Flak 88s (scenes 6 and 13). The map only fires them while the
+// player is in their trigger zones: short of him in the outer one, a kill in
+// the inner. Once he has been in the outer zone, the gun now also hunts him
+// wherever it can see him (backlog: "it should aim at the player and chase
+// them out of line of sight"): a round every 3.5 to 4.5 seconds at where he
+// will be when it lands, each closer than the last, until he is out of its
+// sight, or until the gun is bombed.
+
+flak88_chase local.k:
+	local.scatter = 220
+	local.seen = 0
+
+	while (1)
+	{
+		if (local.k == 1)
+		{
+			local.gun = $scene10_flak88_gun
+			local.zone = $scene6_flak88_trigger1
+			local.state = level.scene6_enroute
+		}
+		else
+		{
+			local.gun = $scene13_flak88_gun
+			local.zone = $scene13_flak88_trigger1
+			local.state = level.scene13_enroute
+		}
+
+		// bombed, or the bomb is on its way
+		if (local.gun == NULL || local.zone == NULL || (local.state != NIL && local.state != 2))
+			end
+
+		if (level.opm_flak_awake[local.k] != 1)
+		{
+			if ($player != NULL && ($player istouching local.zone))
+				level.opm_flak_awake[local.k] = 1
+			wait 0.5
+		}
+		else if ($player == NULL || !(isalive $player) || !(sighttrace (local.gun.origin + ( 0 0 64 )) ($player.origin + ( 0 0 56 )) 0))
+		{
+			local.scatter = 220
+			wait 0.5
+		}
+		else
+		{
+			local.gun anim fire_scripted
+			local.lead = $player.velocity * 0.8
+			wait 0.8
+
+			// where he will be, roughly, and on the ground there
+			local.at = $player.origin + local.lead
+			local.at[0] += (randomfloat (local.scatter * 2)) - local.scatter
+			local.at[1] += (randomfloat (local.scatter * 2)) - local.scatter
+			local.at = trace (local.at + ( 0 0 96 )) (local.at - ( 0 0 512 )) 0
+
+			local.shell = spawn "fx/scriptbazookaexplosion.tik"
+			local.shell.origin = local.at + ( 0 0 8 )
+			local.shell anim start
+			local.shell playsound flak88_hit
+			exec global/earthquake.scr .23 2 0 0
+			local.shell thread flak88_shell_gone
+
+			if (local.scatter > 90)
+				local.scatter = local.scatter * 0.65
+			else
+				local.scatter = 60
+			wait (2.7 + (randomfloat 1))
+		}
+	}
+end
+
+flak88_shell_gone:
+	wait 1
+	if (self != NULL)
+		self remove
+end
+

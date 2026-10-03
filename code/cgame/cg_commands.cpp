@@ -5911,6 +5911,21 @@ void ClientGameCommandManager::EventExplode(Event *ev)
         return;
     }
 
+    // Once per spawned model: its entry commands run again each time it comes
+    // back into the snapshot, and the maps leave some lying (a Flak 88 shook
+    // the view again whenever the player walked back to it).
+    if (current_centity) {
+        static int lastUsage[MAX_GENTITIES];
+        int        num = current_centity->currentState.number;
+
+        if (num >= 0 && num < MAX_GENTITIES) {
+            if (lastUsage[num] == current_centity->currentState.usageIndex + 1) {
+                return;
+            }
+            lastUsage[num] = current_centity->currentState.usageIndex + 1;
+        }
+    }
+
     size = ev->GetString(1);
     if (!size.icmp("small")) {
         effect = SFX_OPM_EXPLOSION_SMALL;
