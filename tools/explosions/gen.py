@@ -128,6 +128,9 @@ def emitters(s, fire=1.0, dirt=False):
     if dirt:
         c += geyser(s)
 
+    if fire == 0:
+        c += shell_hit(s)
+
     # the shock ring
     c.append("""originspawn
 (
@@ -336,6 +339,51 @@ def geyser(s):
 	offsetalongaxis crandom %s crandom %s random %s
 	smokeparms 0 2.5 2.5
 )""" % (n(12 * s), f(4 * s), f(22 * s), f(22 * s), f(22 * s), f(44 * s), f(44 * s), f(22 * s)))
+    return c
+
+
+def shell_hit(s):
+    """A shell landing (the Flak 88's rounds): a flash of light at the very
+    instant, and a plume of black smoke going up with the earth."""
+    n = lambda k: max(1, int(round(k)))
+    c = []
+
+    # the instant: a light far brighter and shorter than the glow after it
+    c.append("""blockdlight %s 0.12
+(
+	color 1.0 1.0 0.9
+	colorvelocity -8.0 -8.0 -7.5
+)""" % f(520 * s))
+    c.append("""originspawn
+(
+	model grenexp_flash.spr
+	count 1
+	color 1.0 1.0 0.95
+	scale %s
+	scalerate 2.0
+	life 0.08
+	fade
+)""" % f(3.4 * s))
+
+    # the plume: shot up with the earth, then slowing and spreading
+    c.append("DELAY 0.05 " + """originspawn
+(
+	model vsssource.spr
+	count %d
+	color 0.07 0.07 0.07
+	alpha 0.9
+	offset crandom %s crandom %s random %s
+	randvel crandom %s crandom %s range %s %s
+	friction 1.2
+	accel 0 0 4
+	scalemin %s
+	scalemax %s
+	scalerate 0.3
+	life %s
+	randomroll
+	fade
+)""" % (n(12 * s), f(12 * s), f(12 * s), f(30 * s), f(24 * s), f(24 * s), f(60 * s), f(160 * s),
+        f(1.4 * s), f(2.2 * s), f(8 + 2 * s)))
     return c
 
 

@@ -125,6 +125,38 @@ init
 			offsetalongaxis crandom 66 crandom 66 random 33
 			smokeparms 0 2.5 2.5
 		)
+		sfx blockdlight 780 0.12
+		(
+			color 1.0 1.0 0.9
+			colorvelocity -8.0 -8.0 -7.5
+		)
+		sfx originspawn
+		(
+			model grenexp_flash.spr
+			count 1
+			color 1.0 1.0 0.95
+			scale 5.1
+			scalerate 2.0
+			life 0.08
+			fade
+		)
+		delayedsfx 0.05 originspawn
+		(
+			model vsssource.spr
+			count 18
+			color 0.07 0.07 0.07
+			alpha 0.9
+			offset crandom 18 crandom 18 random 45
+			randvel crandom 36 crandom 36 range 90 240
+			friction 1.2
+			accel 0 0 4
+			scalemin 2.1
+			scalemax 3.3
+			scalerate 0.3
+			life 11
+			randomroll
+			fade
+		)
 		sfx originspawn
 		(
 			model fgrenshock.spr
