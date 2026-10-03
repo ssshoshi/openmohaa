@@ -21,7 +21,7 @@ OMBENCH_INTERVAL=600 tools/win-bench/bench.sh
 
 | var | default | meaning |
 |-----|---------|---------|
-| `OMBENCH_INSTALL`  | `/mnt/d/Medal of Honor/openmohaa-ragdoll` | dir with `openmohaa.exe` + `renderer_opengl2.dll` |
+| `OMBENCH_INSTALL`  | `/mnt/d/Medal of Honor/openmohaa-play` | dir with `openmohaa.exe` + `renderer_opengl2.dll` |
 | `OMBENCH_BASEPATH` | `/mnt/d/Medal of Honor` | `fs_basepath` (holds `main/Pak*.pk3`) |
 | `OMBENCH_OUT`      | `/mnt/d/Medal of Honor/bench-out` | scratch `fs_homepath`; log + screenshots land here |
 | `OMBENCH_MAP`      | `dm/mohdm1` | map loaded via `devmap` |

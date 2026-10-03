@@ -18,7 +18,7 @@
 #   OMBENCH_TIMEOUT   hard ceiling (s) before the run is force-killed
 set -uo pipefail
 
-INSTALL="${OMBENCH_INSTALL:-/mnt/d/Medal of Honor/openmohaa-ragdoll}"
+INSTALL="${OMBENCH_INSTALL:-/mnt/d/Medal of Honor/openmohaa-play}"
 BASEPATH="${OMBENCH_BASEPATH:-/mnt/d/Medal of Honor}"
 OUT="${OMBENCH_OUT:-/mnt/d/Medal of Honor/bench-out}"
 MAP="${OMBENCH_MAP:-dm/mohdm1}"

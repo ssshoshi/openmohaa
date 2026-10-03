@@ -16,7 +16,7 @@ binaries, and:
 It refuses to run while the user's own game is open: it would take the focus,
 and the harness must never touch the user's process.
 
-  tools/bugreport/repro.py --issue 5 --build "/mnt/d/Medal of Honor/openmohaa-ragdoll" --tag before
+  tools/bugreport/repro.py --issue 5 --build "/mnt/d/Medal of Honor/openmohaa-play" --tag before
   tools/bugreport/repro.py --issue 5 --build .cmake-win/RelWithDebInfo --tag after
   tools/bugreport/repro.py --report "<home>/bugreports/<id>" --build ... --extra "r_showtris 1"
 
