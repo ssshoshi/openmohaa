@@ -8,6 +8,12 @@ commands from home\\main\\orch\\cmd (com_cmddir) and the voice sidecar speaks
 what is written to home\\main\\orch\\say.
 
   orch.py setup --build <dir>        copy the five binaries (and runtime DLLs) in
+  orch.py swap cgame|game|renderer [--build build/win64]
+                                     build one module and swap it into the running
+                                     game: rename the loaded DLL, copy, reload
+                                     (vid_restart, or save/killserver/load for game)
+  orch.py script "<code>" [--label L] | --file F
+                                     run script code in the game now (orch_runscript)
   orch.py seed                       copy the user's config, physics.txt and saves in
   orch.py launch [--save X|--map Y]  start the game (detached)
   orch.py cmd "viewpos; orch_state"  run console commands, print their output
@@ -33,6 +39,7 @@ Without an agent (a usage limit reached, or just to note things down):
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -55,6 +62,15 @@ LOG_DIR = os.path.join(ORCH, "log")
 BINARIES = ["openmohaa.exe", "cgame.dll", "game.dll", "renderer_opengl1.dll", "renderer_opengl2.dll"]
 RUNTIME = ["SDL2.dll", "OpenAL64.dll", "libcurl.dll"]
 HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS = os.path.join(ORCH, "scripts")
+# What the installed binaries were built from: their interfaces' hashes.
+MANIFEST = os.path.join(LIVE, "orch-build.json")
+# A module can be swapped alone while these are what the exe was built with.
+INTERFACES = {
+    "cgame": ["code/cgame/cg_public.h", "code/fgame/bg_public.h", "code/qcommon/q_shared.h"],
+    "game": ["code/fgame/g_public.h", "code/fgame/bg_public.h", "code/qcommon/q_shared.h"],
+    "renderer": ["code/renderercommon/tr_public.h", "code/renderercommon/tr_types.h", "code/qcommon/q_shared.h"],
+}
 FOCUS = os.path.join(os.path.dirname(HERE), "win-bench", "focus.ps1")
 
 
@@ -106,7 +122,45 @@ def cmd_setup(args):
     # DLLs swapped out while the game ran (hotswap) are free to go now.
     for old in glob.glob(os.path.join(LIVE, "*.old-*.dll")):
         os.remove(old)
+    source = build_source(args.build)
+    manifest = {"build": os.path.abspath(args.build), "source": source,
+                "commit": git_head(source), "interfaces": interface_hashes(source),
+                "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    with open(MANIFEST, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=1)
     print(f"installed {len(BINARIES)} binaries into {LIVE}")
+
+
+def build_source(build):
+    """The source tree a build folder (or its Release/ subfolder) was configured from."""
+    for d in (build, os.path.dirname(os.path.abspath(build))):
+        cache = os.path.join(d, "CMakeCache.txt")
+        if os.path.isfile(cache):
+            for line in open(cache, encoding="utf-8", errors="replace"):
+                if line.startswith("CMAKE_HOME_DIRECTORY:"):
+                    return line.split("=", 1)[1].strip()
+    return None
+
+
+def git_head(source):
+    if not source:
+        return None
+    r = subprocess.run(["git", "-C", source, "rev-parse", "--short", "HEAD"], capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def interface_hashes(source):
+    if not source:
+        return {}
+    out = {}
+    for module, files in INTERFACES.items():
+        h = hashlib.sha1()
+        for rel in files:
+            path = os.path.join(source, rel)
+            if os.path.isfile(path):
+                h.update(open(path, "rb").read())
+        out[module] = h.hexdigest()
+    return out
 
 
 def cmd_seed(args):
@@ -450,6 +504,142 @@ def cmd_log(args):
         print(json.dumps(dict({"ago": ago}, **e)))
 
 
+def console_tail(since_size):
+    log = os.path.join(MAIN, "qconsole.log")
+    if not os.path.isfile(log):
+        return ""
+    with open(log, "rb") as f:
+        f.seek(since_size if os.path.getsize(log) >= since_size else 0)
+        return f.read().decode("utf-8", "replace")
+
+
+def wait_in_game(timeout):
+    """Until the game answers orch_state from inside a level."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        out = run_commands("orch_state", timeout=2.0)
+        if out and '"in_game": true' in out:
+            return True
+        # A full screen menu (the main menu comes up when the window loses the
+        # focus) pauses the world, and a new cgame gets no snapshot under it.
+        if out and '"paused" is:"2"' in (run_commands("paused", timeout=2.0) or ""):
+            run_commands("popmenu 0", timeout=2.0)
+        time.sleep(1.0)
+    return False
+
+
+def cmd_swap(args):
+    module = args.module
+    build = os.path.abspath(args.build)
+    out_dir = next((os.path.join(build, d) for d in ("Release", "RelWithDebInfo", "Debug")
+                    if os.path.isdir(os.path.join(build, d))), build)
+    running = any(live for _, _, live in live_processes())
+
+    renderer = None
+    if module == "renderer":
+        renderer = "opengl1"
+        if running:
+            out = run_commands("cl_renderer", timeout=3.0) or ""
+            m = __import__("re").search(r'is:"(\w+)"', out)
+            renderer = m.group(1) if m else renderer
+        if args.renderer:
+            renderer = args.renderer
+    target = {"cgame": "cgame", "game": "game", "renderer": f"renderer_{renderer}"}[module]
+    dll = target + ".dll"
+
+    # Only while the interfaces are the ones the exe was built with.
+    if not args.force:
+        try:
+            manifest = json.load(open(MANIFEST, encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = None
+        now_hash = interface_hashes(build_source(build)).get(module)
+        then_hash = (manifest or {}).get("interfaces", {}).get(module)
+        if not manifest:
+            print("(no orch-build.json from setup: can't check the interfaces)", file=sys.stderr)
+        elif now_hash != then_hash:
+            sys.exit(f"{module}'s interface with the exe changed since setup ({', '.join(INTERFACES[module])}); "
+                     "rebuild everything and relaunch: orch.py stop; orch.py setup --build ...; "
+                     "orch.py launch --save <save>  (or --force)")
+
+    if not args.no_build:
+        r = subprocess.run(["cmake", "--build", build, "--target", target, "--parallel", "4"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            sys.stdout.write("\n".join(l for l in (r.stdout + r.stderr).splitlines()
+                                       if "error" in l.lower())[-4000:] + "\n")
+            sys.exit(f"build of {target} failed")
+
+    new = os.path.join(out_dir, dll)
+    if not os.path.isfile(new):
+        sys.exit(f"{new} not built")
+    live_dll = os.path.join(LIVE, dll)
+
+    if not running:
+        shutil.copyfile(new, live_dll)
+        print(f"copied {dll} (the game isn't running)")
+        return
+
+    # Windows lets a loaded DLL be renamed, not overwritten.
+    n = 1
+    while os.path.exists(os.path.join(LIVE, f"{target}.old-{n}.dll")):
+        n += 1
+    old = os.path.join(LIVE, f"{target}.old-{n}.dll")
+    os.rename(live_dll, old)
+    shutil.copyfile(new, live_dll)
+
+    log = os.path.join(MAIN, "qconsole.log")
+    log_size = os.path.getsize(log) if os.path.isfile(log) else 0
+    if module == "game":
+        # Same-map loadgame would keep the old DLL loaded.
+        started = time.time()
+        run_commands("savegame orch_swap", timeout=15.0)
+        time.sleep(1.0)
+        saves = glob.glob(os.path.join(MAIN, "save", "*", "orch_swap.sav"))
+        if not any(os.path.getmtime(p) >= started - 1 for p in saves):
+            # Put the loaded one back under its name; nothing was reloaded.
+            os.remove(live_dll)
+            os.rename(old, live_dll)
+            sys.exit("the game couldn't save here (dead, a cinematic?); nothing swapped")
+        replies = [run_commands("killserver", timeout=15.0), run_commands("loadgame orch_swap", timeout=90.0)]
+    else:
+        replies = [run_commands("vid_restart", timeout=90.0)]
+
+    ok = wait_in_game(90)
+    # What the commands print goes to their replies, not to qconsole.log.
+    tail = "\n".join(r or "" for r in replies) + "\n" + console_tail(log_size)
+    if args.verbose:
+        print(tail)
+    reloaded = {"game": "InitGame", "cgame": "CL_InitCGame", "renderer": "Initializing Renderer"}[module]
+    if reloaded.lower() not in tail.lower():
+        print(f"(didn't see '{reloaded}' in the output; check the game)", file=sys.stderr)
+    bad = [l for l in tail.splitlines() if __import__("re").search(
+        r"(failed to load game DLL|Sys_LoadGameDll\(.*\) failed|Sys_GetCGameAPI\(.*\) failed|Couldn't load game"
+        r"|game is version \d+, not|Failed to load renderer|Mismatched REF_API_VERSION)", l)]
+    if not ok or bad:
+        print("\n".join(bad[-5:]))
+        sys.exit(f"the swapped {dll} didn't come up; the old one is {os.path.basename(old)}. "
+                 "Relaunch: orch.py stop; orch.py launch" + (" --save orch_swap" if module == "game" else ""))
+    print(f"swapped {dll} ({os.path.basename(old)} kept until the next setup)")
+
+
+def cmd_script(args):
+    if args.file:
+        code = open(args.file, encoding="utf-8").read()
+    else:
+        code = " ".join(args.code)
+    if not code.strip():
+        sys.exit("no script")
+    os.makedirs(SCRIPTS, exist_ok=True)
+    name = f"s{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1000000}.scr"
+    with open(os.path.join(SCRIPTS, name), "w", newline="\n", encoding="utf-8") as f:
+        f.write(code.rstrip() + "\n")
+    out = run_commands(f"orch_runscript orch/scripts/{name}" + (f" {args.label}" if args.label else ""), args.timeout)
+    if out is None:
+        sys.exit("the game didn't take the command (not running, or still loading?)")
+    sys.stdout.write(out)
+
+
 def cmd_status(args):
     procs = live_processes()
     live = [p for p in procs if p[2]]
@@ -525,6 +715,22 @@ def main():
 
     p = sub.add_parser("status")
     p.set_defaults(fn=cmd_status)
+
+    p = sub.add_parser("swap", help="build one module and swap it into the running game")
+    p.add_argument("module", choices=["cgame", "game", "renderer"])
+    p.add_argument("--build", default="build/win64", help="the cmake build folder (default build/win64)")
+    p.add_argument("--renderer", help="opengl1 or opengl2 (default: the game's cl_renderer)")
+    p.add_argument("--no-build", action="store_true", help="swap what is already built")
+    p.add_argument("--force", action="store_true", help="even if the module's interface changed since setup")
+    p.add_argument("--verbose", action="store_true", help="print what the reload printed")
+    p.set_defaults(fn=cmd_swap)
+
+    p = sub.add_parser("script", help="run script code in the game now")
+    p.add_argument("code", nargs="*", help="script source, e.g. '$guy3 runto $node_x'")
+    p.add_argument("--file", help="a .scr file instead")
+    p.add_argument("--label", help="run from this label")
+    p.add_argument("--timeout", type=float, default=5.0)
+    p.set_defaults(fn=cmd_script)
 
     p = sub.add_parser("log", help="what the game logged lately")
     p.add_argument("--last", type=float, default=30.0, help="seconds back (default 30)")

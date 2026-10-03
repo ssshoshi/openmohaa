@@ -89,6 +89,7 @@ consolecmd_t G_ConsoleCmds[] = {
     {"bugreport_server", G_BugReportServerCmd, qfalse},
     // The script threads, for the orchestrator (g_orch.cpp)
     {"scriptinfo",      G_OrchScriptInfoCmd,  qfalse},
+    {"orch_runscript",  G_OrchRunScriptCmd,   qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif

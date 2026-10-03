@@ -37,6 +37,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "level.h"
 #include "scriptmaster.h"
 #include "scriptthread.h"
+#include "scriptexception.h"
 
 #include <chrono>
 
@@ -604,6 +605,42 @@ qboolean G_OrchScriptInfoCmd(gentity_t *ent)
         Director.PrintThread(atoi(gi.Argv(1)));
     } else {
         Director.PrintStatus();
+    }
+    return qtrue;
+}
+
+qboolean G_OrchRunScriptCmd(gentity_t *ent)
+{
+    str file, label;
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER) {
+        gi.Printf("orch_runscript: single player only\n");
+        return qtrue;
+    }
+    if (gi.Argc() < 2) {
+        gi.Printf("Usage: orch_runscript <file> [label]\n");
+        return qtrue;
+    }
+
+    file  = gi.Argv(1);
+    label = gi.Argc() > 2 ? gi.Argv(2) : "";
+
+    try {
+        // Recompiling a script ends its threads: only the agent's own.
+        GameScript   *scr = Director.GetGameScript(file, !Q_stricmpn(file.c_str(), "orch/", 5));
+        ScriptThread *thread;
+
+        if (!scr || !scr->successCompile) {
+            gi.Printf("orch_runscript: %s didn't compile\n", file.c_str());
+            return qtrue;
+        }
+        thread = Director.CreateThread(scr, label);
+        if (thread) {
+            thread->Execute();
+        }
+        gi.Printf("orch_runscript: ran %s%s%s\n", file.c_str(), label.length() ? "::" : "", label.c_str());
+    } catch (ScriptException& exc) {
+        gi.Printf("orch_runscript: %s\n", exc.string.c_str());
     }
     return qtrue;
 }

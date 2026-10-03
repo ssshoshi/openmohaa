@@ -84,16 +84,18 @@ finished talking (or clicked a shot). Then:
    |---|---|---|
    | Console, cvars, cheats, debug views (`noclip`, `god`, `timescale`, `ai_shownode 30`, `sv_showbboxes 4`...) | `orch.py cmd "..."` | no |
    | Which objects are physics bodies | edit `home/main/physics.txt` in the live install, then `orch.py cmd phys_reload` | no |
+   | A live script tweak (`$guy3 runto $node_x`, `$tank.health = 2000`, start a thread) | `orch.py script '<code>'`, or `--file x.scr --label main`; runs now, no restart; compile errors come back | no |
    | Map scripts | a loose `home/main/maps/<map>.scr` override; it takes effect on `restart` (developer 1), which restarts the level, so say so | no, but tell them |
    | Shaders, textures | loose files in `home/main/`, then `vid_restart` | no |
    | C/C++ code | edit in the session worktree, build the one module (`--target cgame`, `game` or `renderer_opengl2`) | **yes**: say a one-line summary, wait for "go" |
 
-   After a code build, swap it in without exiting (verified for cgame):
-   rename the loaded DLL in the live install to `<name>.old-<n>.dll`, copy the
-   new one in, then `orch.py cmd vid_restart --timeout 60` (cgame, renderer).
-   For `game.dll`: `savegame orch_swap`, `killserver`, then `loadgame orch_swap`.
-   A loaded DLL can be renamed but not overwritten. Changes to the exe need
-   `orch.py stop` and a relaunch (`--save orch_swap`).
+   After "go", `orch.py swap cgame|game|renderer` from the worktree builds the
+   one module and swaps it into the running game (cgame/renderer reload with
+   `vid_restart`, about 20 s; game with save, killserver and load, about 6 s).
+   Tell them the screen will blink. It refuses when the module's interface with
+   the exe changed (then: `orch.py stop`, `orch.py setup --build
+   build/win64/Release`, `orch.py launch --save orch_swap`), as do changes to
+   the exe itself.
 5. Tell them what you did in a sentence. Record every change and how to undo it
    in `<session>/actions.jsonl` (the session folder is printed at sidecar start),
    so "undo that" can be done.
