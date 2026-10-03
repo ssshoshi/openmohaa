@@ -144,7 +144,7 @@ cvar_t *g_gametypestring;
 cvar_t *g_realismmode;
 cvar_t *g_teamdamage;
 cvar_t *g_mg42_overheat;
-cvar_t *g_mg42_heatpershot;
+cvar_t *g_mg42_overheattime;
 cvar_t *g_mg42_heatmax;
 cvar_t *g_mg42_heatresume;
 cvar_t *g_mg42_cooldown;
@@ -534,12 +534,13 @@ void CVAR_Init(void)
     g_teamdamage = gi.Cvar_Get("g_teamdamage", "0", 0);
 
     // Added in OPM
-    //  MG42 barrels overheat (TurretGun::ShotFired): each shot adds heat, the
-    //  barrel sheds it once the firing stops, and at the limit the gun will
-    //  not fire until it has cooled to the resume level. About five seconds
-    //  of fire at 20 rounds a second, and three to be usable again.
+    //  MG42 barrels overheat (TurretGun::ShotFired): each shot adds the time it
+    //  takes to fire, as a share of g_mg42_heatmax, so the gun overheats after
+    //  g_mg42_overheattime seconds of continuous fire at any rate of fire. The
+    //  barrel sheds heat once the firing stops, and at the limit the gun will
+    //  not fire until it has cooled to the resume level (three seconds).
     g_mg42_overheat    = gi.Cvar_Get("g_mg42_overheat", "1", CVAR_ARCHIVE);
-    g_mg42_heatpershot = gi.Cvar_Get("g_mg42_heatpershot", "1", CVAR_ARCHIVE);
+    g_mg42_overheattime = gi.Cvar_Get("g_mg42_overheattime", "4", CVAR_ARCHIVE);
     g_mg42_heatmax     = gi.Cvar_Get("g_mg42_heatmax", "100", CVAR_ARCHIVE);
     g_mg42_heatresume  = gi.Cvar_Get("g_mg42_heatresume", "40", CVAR_ARCHIVE);
     g_mg42_cooldown    = gi.Cvar_Get("g_mg42_cooldown", "20", CVAR_ARCHIVE);
