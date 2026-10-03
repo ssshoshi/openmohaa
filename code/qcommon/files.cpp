@@ -444,6 +444,7 @@ either loads anything of the map's.
 */
 void FS_SetMultiplayer( qboolean multiplayer ) {
 	searchpath_t	*search;
+	const qboolean	changed = fs_multiplayer != multiplayer ? qtrue : qfalse;
 
 	fs_multiplayer = multiplayer;
 	if ( !fs_searchpaths ) {
@@ -452,11 +453,26 @@ void FS_SetMultiplayer( qboolean multiplayer ) {
 
 	FS_MarkSinglePlayerPaks();
 
+	if ( !changed ) {
+		return;
+	}
+
 	for ( search = fs_searchpaths; search; search = search->next ) {
 		if ( search->pack && FS_PakHidden( search->pack ) ) {
 			Com_Printf( "%s is for single player only, so is not used in multiplayer\n", search->pack->pakBasename );
 		}
 	}
+}
+
+/*
+=================
+FS_Multiplayer
+
+Added in OPM: whether single player paks are hidden now.
+=================
+*/
+qboolean FS_Multiplayer( void ) {
+	return fs_multiplayer;
 }
 
 /*
@@ -3965,7 +3981,7 @@ const char *FS_ReferencedPakChecksums( void ) {
 
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
 		// is the element a pak file?
-		if ( search->pack ) {
+		if ( search->pack && !FS_PakHidden( search->pack ) ) {
 			if (search->pack->referenced || Q_stricmpn(search->pack->pakGamename, com_basegame->string, strlen(com_basegame->string))) {
 				Q_strcat( info, sizeof( info ), va("%i ", search->pack->checksum ) );
 			}
@@ -4007,7 +4023,7 @@ const char *FS_ReferencedPakPureChecksums( void ) {
 		*/
 		for ( search = fs_searchpaths ; search ; search = search->next ) {
 			// is the element a pak file and has it been referenced based on flag?
-			if ( search->pack && (search->pack->referenced & nFlags)) {
+			if ( search->pack && !FS_PakHidden( search->pack ) && (search->pack->referenced & nFlags)) {
 				Q_strcat( info, sizeof( info ), va("%i ", search->pack->pure_checksum ) );
 				if (nFlags & (FS_CGAME_REF | FS_UI_REF)) {
 					break;
@@ -4042,7 +4058,7 @@ const char *FS_ReferencedPakNames( void ) {
 	// and referenced one's from baseq3
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
 		// is the element a pak file?
-		if ( search->pack ) {
+		if ( search->pack && !FS_PakHidden( search->pack ) ) {
 			if (*info) {
 				Q_strcat(info, sizeof( info ), " " );
 			}
