@@ -8,7 +8,9 @@ Two kinds of line go:
   says anything about the turn (a missing precache hint, a player animation
   the mod doesn't have, a missing localization entry);
 - repeats: the same line, numbers and the timestamp aside, is kept once, with
-  how many times it came ("x14").
+  how many times it came ("x14");
+- GROUP: lines of one kind that differ only in the file they name (missing
+  sounds) are kept as the first of them, with how many different ones came.
 """
 
 import re
@@ -26,6 +28,13 @@ DROP = [
     r"^\s*Reason: couldn't find (end|start) node",
 ]
 _DROP = re.compile("|".join(DROP), re.I)
+
+# A kind of line kept once however many files it names. Missing models stay
+# one a line: one of those was a real bug (a mod naming a model it lacks).
+GROUP = [
+    r"^Couldn't load sound: ",
+]
+_GROUP = [re.compile(g, re.I) for g in GROUP]
 
 # "[2026-10-03 01:17:06 UTC-5.000] " in front of every logged line
 _STAMP = re.compile(r"^\[\d{4}-\d\d-\d\d [\d:]+ UTC[-+][\d.]+\]\s*")
@@ -49,13 +58,24 @@ def key(line):
 def collapse(events):
     """A turn's or an item's events with the spam dropped and repeated console
     lines kept once, counted. Other events are left as they are, in order."""
-    out, seen = [], {}
+    out, seen, groups = [], {}, {}
     for e in events:
         if e.get("type") != "console":
             out.append(e)
             continue
         line = e.get("line", "")
         if dropped(line):
+            continue
+        text = strip_stamp(line)
+        g = next((g.pattern for g in _GROUP if g.search(text)), None)
+        if g:
+            if g in groups:
+                groups[g]["files"] = groups[g].get("files", 1) + 1
+                groups[g]["line"] = groups[g]["first"] + f"  (+{groups[g]['files'] - 1} more like it)"
+                continue
+            e = dict(e, line=text, first=text)
+            groups[g] = e
+            out.append(e)
             continue
         k = key(line)
         if k in seen:

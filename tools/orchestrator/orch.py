@@ -389,11 +389,13 @@ def reserve_id():
 
 def summary(item):
     shots = sum(1 for e in item.get("events", []) if e.get("type") == "shot")
+    marks = sum(1 for e in item.get("events", []) if e.get("type") == "mark")
     where = (item.get("state") or {}).get("map") or ""
     text = item.get("speech") or "(shot only)"
     if len(text) > 100:
         text = text[:97] + "..."
-    extra = "  ".join(x for x in (where, f"{shots} shot(s)" if shots else "") if x)
+    extra = "  ".join(x for x in (where, f"{shots} shot(s)" if shots else "",
+                                  f"{marks} mark(s)" if marks else "") if x)
     return f"{item['id']:>4}  {item['status']:<7} {item.get('created', '')[:16]}  {text}" + (f"  [{extra}]" if extra else "")
 
 
@@ -872,6 +874,18 @@ def cmd_look(args):
             marked = (e.get("files") or {}).get("screenshot_marked")
             if marked:
                 print(f"    look: {small_shot(marked, args.width)}")
+        elif e["type"] == "mark":
+            aim, target = {}, {}
+            if e.get("json") and os.path.isfile(e["json"]):
+                with open(e["json"], encoding="utf-8") as f:
+                    m = json.load(f)
+                aim, target = m.get("aim", {}), m.get("target", {})
+            bits = [f"shader {aim['shader']}" if aim.get("shader") else "",
+                    f"{target.get('kind')} {target.get('model') or ''}".strip() if target.get("kind") else "",
+                    f"entity {target['entnum']}" if target.get("entnum") is not None else "",
+                    f"at {[round(v) for v in aim['position']]}" if aim.get("position") else ""]
+            print(f"  mark {e.get('id')}: {e.get('summary')}")
+            print("    " + "  ".join(b for b in bits if b))
         elif e["type"] == "console":
             n = f" x{e['count']}" if e.get("count", 1) > 1 else ""
             print(f"  console{n}: {e['line'][:200]}")

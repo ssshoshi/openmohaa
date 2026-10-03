@@ -51,7 +51,8 @@ Paths:
 ## Each TURN
 
 A Monitor line `TURN <n> "<speech>" shots=<k> errors=<e> context=<c> <path>` means the user
-finished talking (or clicked a shot). Then:
+finished talking (or clicked a shot or a mark). `continues=<m>` before the path means they said
+"add to that": the turn belongs with turn m, one request built over several turns. Then:
 
 1. `orch.py look <turn json>` gives the turn in brief: what was said, each shot's
    target from the game's side (class, targetname, model, animation, think state),
@@ -145,11 +146,13 @@ When the user asks you to work it (or a limit has reset and they say "check"):
 
 F10 orchestrator mode on/off, F11 freeze/resume the world (they walk around
 it; N flies), B ghost (the camera roams the running world, the body stays),
-MOUSE3 screenshot, hold MOUSE4 to talk (the
+MOUSE3 screenshot, MOUSE5 mark (what is under the crosshair, as a shot records it, with no
+screenshot or save; marks of the last minute are outlined on the next shot), hold MOUSE4 to talk (the
 sidecar reads it, only while the game has the focus; `--ptt-key` changes it,
 `--always-on` drops it). Pressing it while you speak cuts your reply short.
 Voice-only, handled by the sidecar: "mute", "unmute", "cancel that", "queue
-mode", "live mode".
+mode", "live mode", "add to that" (what follows goes into the last item, or continues the last
+turn, until "new item" or two minutes with nothing added).
 
 ## End
 

@@ -96,7 +96,13 @@ LOCAL_COMMANDS = {
     "cancel": re.compile(r"^\W*(cancel that|never mind|scratch that)\W*$", re.I),
     "queue": re.compile(r"^\W*(queue|offline|note|notes|backlog) mode\W*$", re.I),
     "live": re.compile(r"^\W*(live|online) mode\W*$", re.I),
+    # One item built over several turns: what follows goes into the last one,
+    # until "new item" or APPEND_IDLE seconds with nothing added.
+    "append": re.compile(r"^\W*(add (that|this|these|it)? ?to (that|it|the last( one| item)?)|same item|"
+                         r"keep adding|more for (that|the last one))\W*$", re.I),
+    "new": re.compile(r"^\W*(new item|next item|new one|that's it|done with that)\W*$", re.I),
 }
+APPEND_IDLE = 120.0
 
 
 LOG_SLOTS = 64          # cgame's ring of client.<n>.jsonl files (cg_orch.cpp)
@@ -200,6 +206,9 @@ class Sidecar:
         self.queue_mode = args.queue      # turns go to the backlog, nobody answers live
         self.speaking_until = 0.0         # the mic is deaf until then
         self.turn_number = 0
+        self.appending = False  # "add to that": turns go into the last item / continue the last turn
+        self.append_time = 0.0
+        self.last_item = None
         self.status = ""
         self.status_time = 0.0
         self.stop = threading.Event()
@@ -512,6 +521,13 @@ class Sidecar:
             with self.lock:
                 self.pending = []
             self.game('orch_msg -heard "(dropped)"')
+        elif name == "append":
+            self.appending = True
+            self.append_time = now()
+            self.game('orch_msg -heard "(adding to the last one)"')
+        elif name == "new":
+            self.appending = False
+            self.game('orch_msg -heard "(next one is new)"')
         elif name in ("queue", "live"):
             self.queue_mode = name == "queue"
             self.set_status(self.idle_status())
@@ -542,7 +558,8 @@ class Sidecar:
                     continue
                 files = {k: to_wsl(os.path.join(self.main, v.replace("/", os.sep)))
                          for k, v in shot.get("files", {}).items() if k != "savegame"}
-                event = {"type": "shot", "t": t, "time": iso(t), "id": shot.get("id"),
+                # A mark (orch_mark) is a shot without a screenshot or a save.
+                event = {"type": shot.get("kind", "shot"), "t": t, "time": iso(t), "id": shot.get("id"),
                          "summary": shot.get("summary"), "json": to_wsl(path), "files": files,
                          "savegame": shot.get("files", {}).get("savegame")}
                 self.log(event)
@@ -712,7 +729,12 @@ class Sidecar:
 
         self.turn_number += 1
         speech = " ".join(e["text"] for e in events if e["type"] == "speech")
-        shots = [e for e in events if e["type"] == "shot"]
+        shots = [e for e in events if e["type"] in ("shot", "mark")]
+        if self.appending and now() - self.append_time > APPEND_IDLE:
+            self.appending = False
+        continues = self.turn_number - 1 if self.appending and self.turn_number > 1 else None
+        if self.appending:
+            self.append_time = now()
         errors = [e for e in events if e["type"] == "console"]
         # From what was said or shot, not from console errors that waited for a turn.
         anchor = min((e["t"] for e in events if e["type"] != "console"), default=events[0]["t"])
@@ -731,14 +753,36 @@ class Sidecar:
         self.log({"type": "turn", "turn": self.turn_number, "time": iso(now()), "path": to_wsl(path)})
         quoted = json.dumps(speech[:160])
         if self.queue_mode:
-            item = self.add_to_backlog(turn, path)
+            item = self.add_to_backlog(turn, path, self.last_item if self.appending else None)
+            self.last_item = item
             self.emit(f"QUEUED {item} {quoted} shots={len(shots)} errors={len(errors)} context={len(context)} {to_wsl(path)}")
             return
         self.set_status("thinking")
-        self.emit(f"TURN {self.turn_number} {quoted} shots={len(shots)} errors={len(errors)} context={len(context)} {to_wsl(path)}")
+        more = f" continues={continues}" if continues else ""
+        self.emit(f"TURN {self.turn_number} {quoted} shots={len(shots)} errors={len(errors)} context={len(context)}{more} {to_wsl(path)}")
 
-    def add_to_backlog(self, turn, turn_path):
-        """Files a turn as a backlog item for an agent to work on later; returns its id."""
+    def add_to_backlog(self, turn, turn_path, into=None):
+        """Files a turn as a backlog item for an agent to work on later; returns its id.
+        With into (an item id, after "add to that"), adds the turn to that item instead."""
+        if into is not None:
+            path = os.path.join(self.backlog_dir, f"{int(into):04d}.json")
+            try:
+                with open(path, encoding="utf-8") as f:
+                    item = json.load(f)
+            except (OSError, ValueError):
+                item = None
+            if item is not None:
+                if turn["speech"]:
+                    item["speech"] = (item.get("speech", "") + " | " + turn["speech"]).strip(" |")
+                item["events"] = item.get("events", []) + turn["events"]
+                item.setdefault("turns", [item.get("turn")]).append(to_wsl(turn_path))
+                tmp = f"{path}.{os.getpid()}.tmp_w"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(item, f, indent=1)
+                os.replace(tmp, path)
+                self.log({"type": "queued", "item": into, "added": True, "time": iso(now())})
+                self.say(f"Added to {into}.")
+                return into
         state = None
         out = self.ask_game("orch_state")
         for line in (out or "").splitlines():

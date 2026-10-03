@@ -517,6 +517,7 @@ static consoleCommand_t commands[] = {
     {"br_submit",              &CG_BugReportSubmit_f       },
     {"orch",                   &CG_Orch_f                  },
     {"orch_shot",              &CG_OrchShot_f              },
+    {"orch_mark",              &CG_OrchMark_f              },
     {"orch_msg",               &CG_OrchMsg_f               },
     {"orch_status",            &CG_OrchStatus_f            },
     {"orch_state",             &CG_OrchState_f             },
