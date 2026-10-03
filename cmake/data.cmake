@@ -4,7 +4,9 @@
 #
 #   data/opm-bugreport/ui/bugreport.urc -> zzzzzzzzz-opm-bugreport.pk3
 
-file(GLOB _OPM_DATA_DIRS LIST_DIRECTORIES true ${CMAKE_SOURCE_DIR}/data/*)
+# CONFIGURE_DEPENDS: a new folder under data/ is picked up by the next build,
+# not only by the next cmake run.
+file(GLOB _OPM_DATA_DIRS LIST_DIRECTORIES true CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/data/*)
 
 set(_OPM_PAKS)
 foreach(_dir ${_OPM_DATA_DIRS})

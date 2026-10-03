@@ -22,7 +22,8 @@ replies to one or two short sentences, and ask at most one question at a time.
 
 Tools live in `tools/orchestrator/` (README.md there has the details):
 - `orch.py` (WSL): `setup`, `seed`, `launch`, `cmd`, `say`, `state`, `status`, `stop`,
-  `offline`, `backlog`
+  `offline`, `backlog`; for checking a change: `wait`, `view x y z --pitch --yaw`,
+  `frames N --every s --script '...'` (one contact sheet), `reset` (loose overrides)
 - `sidecar.py` (Windows Python): voice in/out, shots, turn grouping
 
 Paths:
