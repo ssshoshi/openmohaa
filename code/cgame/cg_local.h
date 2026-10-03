@@ -687,6 +687,9 @@ extern "C" {
         trace_t     *tr,
         qboolean     cylinder
     );
+    void CG_ClipMoveToBrushEntities(
+        const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int mask, trace_t *tr
+    );
     void CG_Trace(
         trace_t     *result,
         const vec3_t start,
@@ -861,6 +864,12 @@ extern double cgmOpen[CGM_COUNT];
     // Added in OPM
     //  A hot MG42 barrel's glow (cg_mg42.cpp)
     void CG_MG42BarrelGlow(refEntity_t *model, const entityState_t *s1);
+
+    // cg_blast.cpp
+    void CG_BlastInit(void);
+    void CG_BlastShutdown(void);
+    void CG_BlastFeel(const vec3_t origin, float size);
+    void CG_BlastUpdate(vec3_t angles);
 
     void CG_InitTestTreadMark();
     void CG_AddTreadMarks();

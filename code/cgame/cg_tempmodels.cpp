@@ -636,6 +636,12 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
             qfalse,
             "Collision"
         );
+        // Added in OPM
+        //  And doors and other brush entities: blood thrown at a door went
+        //  through it, and its decal ended up on the wall behind or nowhere.
+        CG_ClipMoveToBrushEntities(
+            p->cgd.oldorigin, vec3_origin, vec3_origin, p->cgd.origin, p->cgd.collisionmask, &trace
+        );
     } else {
         // Fake it out so it never collides
         trace.fraction = 1.0;

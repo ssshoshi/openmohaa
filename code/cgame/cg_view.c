@@ -633,6 +633,9 @@ static int CG_CalcViewValues(void)
     }
 
     // FIXME: fffx screen shake on win32 builds?
+    // Added in OPM
+    //  A nearby explosion shakes the view (cg_blast.cpp).
+    CG_BlastUpdate(cg.refdefViewAngles);
 
     // add error decay
     if (cg_errorDecay->value > 0) {

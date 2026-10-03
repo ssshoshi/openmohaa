@@ -615,6 +615,19 @@ Event EV_Sentient_Client_Landing
     "Play a landing sound that is appropriate to the surface we are landing on\n"
 );
 
+// Added in OPM
+Event EV_Sentient_BloodSplat
+(
+    "bloodsplat",
+    EV_DEFAULT,
+    "vvI",
+    "position direction large",
+    "Shows a bullet's flesh hit at position, travelling along direction: the blood,\n"
+    "and its splat on the wall behind, as a real bullet would. No damage is done.\n"
+    "For scripted kills that use \"damage\" instead of a bullet.",
+    EV_NORMAL
+);
+
 CLASS_DECLARATION(Animate, Sentient, NULL) {
     {&EV_Sentient_ReloadWeapon,           &Sentient::ReloadWeapon                 },
     {&EV_Sentient_Attack,                 &Sentient::FireWeapon                   },
@@ -680,6 +693,7 @@ CLASS_DECLARATION(Animate, Sentient, NULL) {
     {&EV_Sentient_GetNewActiveWeapon,     &Sentient::GetNewActiveWeapon           },
     {&EV_Sentient_GetNewActiveWeaponHand, &Sentient::GetNewActiveWeaponHand       },
     {&EV_Sentient_Client_Landing,         &Sentient::EventClientLanding           },
+    {&EV_Sentient_BloodSplat,             &Sentient::EventBloodSplat              },
     {NULL,                                NULL                                    }
 };
 
@@ -3066,6 +3080,45 @@ void Sentient::SetTurret(TurretGun *pTurret)
 Entity *Sentient::GetLadder() const
 {
     return m_pLadder;
+}
+
+/*
+====================
+Sentient::EventBloodSplat
+
+Added in OPM
+  The flesh hit message BulletAttack sends (CGM_BULLET_8), with the direction
+  back along the bullet as it sends it.
+====================
+*/
+void Sentient::EventBloodSplat(Event *ev)
+{
+    Vector vPos  = ev->GetVector(1);
+    Vector vDir  = ev->GetVector(2);
+    int    large = ev->NumArgs() >= 3 ? ev->GetInteger(3) : 1;
+    int    bulletbits;
+
+    if (g_protocol >= protocol_e::PROTOCOL_MOHTA_MIN) {
+        bulletbits = 2;
+        large      = Q_clamp_int(large, 0, 3);
+    } else {
+        bulletbits = 1;
+        large      = large ? 1 : 0;
+    }
+
+    if (vDir.normalize() == 0) {
+        return;
+    }
+    vDir *= -1;
+
+    gi.SetBroadcastVisible(vPos, NULL);
+    gi.MSG_StartCGM(BG_MapCGMToProtocol(g_protocol, CGM_BULLET_8));
+    gi.MSG_WriteCoord(vPos[0]);
+    gi.MSG_WriteCoord(vPos[1]);
+    gi.MSG_WriteCoord(vPos[2]);
+    gi.MSG_WriteDir(vDir);
+    gi.MSG_WriteBits(large, bulletbits);
+    gi.MSG_EndCGM();
 }
 
 #define GROUND_DISTANCE        8

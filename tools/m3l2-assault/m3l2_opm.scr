@@ -100,9 +100,65 @@
 	if ($scene4_mg42 != NULL)
 		$scene4_mg42 maxYawOffset 75
 
+	if (level.opm_flak_awake == NIL)
+	{
+		level.opm_flak_awake[1] = 0
+		level.opm_flak_awake[2] = 0
+	}
+
+	thread scene2_sniper_blood
+	thread scene11_mg_crews
+	thread flak88_chase 1
+	thread flak88_chase 2
 	thread scene3_smoke
 	thread scene4_car
 	thread scene4_director
+end
+
+//=============================================================================
+// Scene 2: the sniper's shot that kills Paulsen is a script "damage", not a
+// bullet, so none of his blood reaches the door beside him. When he dies, a
+// bullet's flesh hit is shown at his head ("bloodsplat": the blood and its
+// splat on the wall behind, which reaches some 240 units), toward the door he
+// just opened, or along the line from the sniper if the door is gone. Once:
+// level.opm_s2_blood survives saves. Older game modules don't have
+// "bloodsplat" and skip it.
+
+scene2_sniper_blood:
+	if (level.opm_s2_blood == 1)
+		end
+
+	while (level.paulsen == NIL || level.paulsen == NULL)
+		wait 0.5
+	// a save from after he died: not seen to die, no blood
+	if (!(isalive level.paulsen))
+	{
+		level.opm_s2_blood = 1
+		end
+	}
+	while (level.paulsen != NULL && isalive level.paulsen)
+		waitframe
+
+	level.opm_s2_blood = 1
+	if (level.paulsen == NULL || $scene2_sniper_speaker == NULL)
+		end
+
+	local.head = level.paulsen gettagposition "Bip01 Head"
+	local.dir = vector_normalize (local.head - $scene2_sniper_speaker.origin)
+	if ($scene2_airborne_door != NULL)
+	{
+		local.door = $scene2_airborne_door.centroid
+		local.door[2] = local.head[2]
+		if (vector_length (local.door - local.head) < 200)
+			local.dir = vector_normalize (local.door - local.head)
+	}
+
+	// a few, as a rifle round through the head would leave more than one
+	for (local.i = 1; local.i <= 3; local.i++)
+	{
+		level.paulsen bloodsplat local.head local.dir 1
+		wait 0.05
+	}
 end
 
 //=============================================================================
@@ -1109,5 +1165,212 @@ chargers_send:
 		wait (0.3 + (randomfloat 0.7))
 	}
 	println ("m3l2_opm: t=" + level.time + " " + local.count + " charging through the smoke")
+end
+
+//=============================================================================
+// Scene 11, the 20mm flak's MG42 nests. The map sends a gunner to each MG one
+// at a time, four in all, a new one three seconds after the last died, for as
+// long as the player is in its detector, which reaches back to the edge of the
+// field: from there the player shot each one as he ran out (backlog #17).
+// Instead each MG is manned from the start, its first gunner put on it as soon
+// as the map starts the spawner, and the replacements only come while the
+// player is out on the field, among the craters (level.opm_s11_xmin..ymax), going
+// from one to the next. From the edge, sniping, nobody runs out. The hold is a
+// 1 added to the spawner's count of gunners alive (as scene 4's), so the map's
+// own spawner waits.
+
+scene11_mg_crews:
+	// the craters across the field, and some room round them
+	level.opm_s11_xmin = 2265
+	level.opm_s11_xmax = 4300
+	level.opm_s11_ymin = -3800
+	level.opm_s11_ymax = -1450
+	if (level.opm_s11_hold == NIL)
+	{
+		level.opm_s11_hold[1] = 0
+		level.opm_s11_hold[2] = 0
+		level.opm_s11_manned[1] = 0
+		level.opm_s11_manned[2] = 0
+	}
+
+	while (1)
+	{
+		for (local.k = 1; local.k <= 2; local.k++)
+			waitthread scene11_mg_crew local.k
+		wait 0.5
+	}
+end
+
+scene11_mg_crew local.k:
+	if (local.k == 1)
+	{
+		local.mg = $scene11_mg1
+		local.path = $scene11_mg1_gunner_path
+		local.spawned = level.scene11_mgspawn1_teamvalue
+	}
+	else
+	{
+		local.mg = $scene11_mg2
+		local.path = $scene11_mg2_gunner_path
+		local.spawned = level.scene11_mgspawn2_teamvalue
+	}
+	if (local.mg == NULL || local.path == NULL || local.spawned == NIL || $player == NULL)
+		end
+
+	// The first gunner, on the gun before the player gets there.
+	if (level.opm_s11_manned[local.k] == 0)
+	{
+		level.opm_s11_manned[local.k] = 1
+		if (local.spawned == 0)
+			waitthread scene11_mg_man local.k local.path
+		end
+	}
+
+	local.o = $player.origin
+	local.onfield = (local.o[0] >= level.opm_s11_xmin && local.o[0] <= level.opm_s11_xmax && local.o[1] >= level.opm_s11_ymin && local.o[1] <= level.opm_s11_ymax)
+	local.change = 0
+
+	if (level.opm_s11_hold[local.k] == 0 && !local.onfield)
+	{
+		level.opm_s11_hold[local.k] = 1
+		local.change = 1
+	}
+	else if (level.opm_s11_hold[local.k] == 1 && local.onfield)
+	{
+		level.opm_s11_hold[local.k] = 0
+		local.change = -1
+	}
+
+	if (local.change == 0)
+		end
+	if (local.k == 1)
+		level.scene11_mgspawn1_currentalive += local.change
+	else
+		level.scene11_mgspawn2_currentalive += local.change
+	println ("m3l2_opm: t=" + level.time + " MG " + local.k + " replacements held " + level.opm_s11_hold[local.k])
+end
+
+// Spawns MG k's first gunner where its gunners stand, counted by the map's
+// spawner as one of its own and counted dead by its thread, and puts him on the
+// gun as the map's navigate thread does (that one runs him to where he already
+// stands, and waits for a move that is over before it starts).
+scene11_mg_man local.k local.path:
+	if (local.k == 1)
+		local.name = "scene11_mgspawn1_ai1_" + level.scene11_mgspawn1_teamvalue
+	else
+		local.name = "scene11_mgspawn2_ai1_" + level.scene11_mgspawn2_teamvalue
+
+	spawn models/human/german_wehrmact_grenadier "targetname" local.name "type_attack" "cover"
+	local.g = $(local.name)
+	if (local.g == NULL)
+		end
+	local.g.origin = local.path.origin
+
+	if (local.k == 1)
+	{
+		level.scene11_mgspawn1_currentalive++
+		level.scene11_mgspawn1_teamvalue++
+		local.g thread maps/m3l2.scr::scene11_mgspawn1_detect_death
+		local.mg = $scene11_mg1
+	}
+	else
+	{
+		level.scene11_mgspawn2_currentalive++
+		level.scene11_mgspawn2_teamvalue++
+		local.g thread maps/m3l2.scr::scene11_mgspawn2_detect_death
+		local.mg = $scene11_mg2
+	}
+
+	waitframe
+	if (local.g == NULL || !(isalive local.g))
+		end
+	local.g type_idle machinegunner
+	local.g type_attack machinegunner
+	local.g type_disguise machinegunner
+	local.g type_grenade machinegunner
+	local.g gun "mp40"
+	local.g holster
+	local.g health 100
+	local.g sight 4000
+	local.g turret local.mg
+	local.g thread maps/m3l2.scr::scene11_mgspawn_targeting local.mg
+	println ("m3l2_opm: t=" + level.time + " MG " + local.k + " manned by " + local.name)
+end
+
+//=============================================================================
+// The two Flak 88s (scenes 6 and 13). The map only fires them while the
+// player is in their trigger zones: short of him in the outer one, a kill in
+// the inner. Once he has been in the outer zone, the gun now also hunts him
+// wherever it can see him (backlog: "it should aim at the player and chase
+// them out of line of sight"): a round every 3.5 to 4.5 seconds at where he
+// will be when it lands, each closer than the last, until he is out of its
+// sight, or until the gun is bombed.
+
+flak88_chase local.k:
+	local.scatter = 220
+	local.seen = 0
+
+	while (1)
+	{
+		if (local.k == 1)
+		{
+			local.gun = $scene10_flak88_gun
+			local.zone = $scene6_flak88_trigger1
+			local.state = level.scene6_enroute
+		}
+		else
+		{
+			local.gun = $scene13_flak88_gun
+			local.zone = $scene13_flak88_trigger1
+			local.state = level.scene13_enroute
+		}
+
+		// bombed, or the bomb is on its way
+		if (local.gun == NULL || local.zone == NULL || (local.state != NIL && local.state != 2))
+			end
+
+		if (level.opm_flak_awake[local.k] != 1)
+		{
+			if ($player != NULL && ($player istouching local.zone))
+				level.opm_flak_awake[local.k] = 1
+			wait 0.5
+		}
+		else if ($player == NULL || !(isalive $player) || !(sighttrace (local.gun.origin + ( 0 0 64 )) ($player.origin + ( 0 0 56 )) 0))
+		{
+			local.scatter = 220
+			wait 0.5
+		}
+		else
+		{
+			local.gun anim fire_scripted
+			local.lead = $player.velocity * 0.8
+			wait 0.8
+
+			// where he will be, roughly, and on the ground there
+			local.at = $player.origin + local.lead
+			local.at[0] += (randomfloat (local.scatter * 2)) - local.scatter
+			local.at[1] += (randomfloat (local.scatter * 2)) - local.scatter
+			local.at = trace (local.at + ( 0 0 96 )) (local.at - ( 0 0 512 )) 0
+
+			local.shell = spawn "fx/scriptbazookaexplosion.tik"
+			local.shell.origin = local.at + ( 0 0 8 )
+			local.shell anim start
+			local.shell playsound flak88_hit
+			exec global/earthquake.scr .23 2 0 0
+			local.shell thread flak88_shell_gone
+
+			if (local.scatter > 90)
+				local.scatter = local.scatter * 0.65
+			else
+				local.scatter = 60
+			wait (2.7 + (randomfloat 1))
+		}
+	}
+end
+
+flak88_shell_gone:
+	wait 1
+	if (self != NULL)
+		self remove
 end
 

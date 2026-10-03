@@ -914,6 +914,8 @@ private:
     void SetEndAlpha(Event *ev);
     void SetEyeLimits(Event *ev);
     void SetEyeMovement(Event *ev);
+    void EventBlast(Event *ev);   // Added in OPM
+    void EventExplode(Event *ev); // Added in OPM
     void StartSFX(Event *ev);
     void StartSFXDelayed(Event *ev);
     void StartSFXCommand(Event *ev, qboolean bDelayed);

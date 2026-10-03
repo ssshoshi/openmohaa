@@ -360,6 +360,7 @@ public:
     void GetNewActiveWeapon(Event *ev);
     void GetNewActiveWeaponHand(Event *ev);
     void EventClientLanding(Event *ev);
+    void EventBloodSplat(Event *ev); // Added in OPM
 
     void FootstepMain(trace_t *trace, int iRunning, int iEquipment);
     void Footstep(const char *szTagName, int iRunning, int iEquipment);

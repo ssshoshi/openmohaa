@@ -9521,15 +9521,30 @@ static qboolean CG_RagdollStandInArrived(int entityNum)
     return cg.time - rd_appearedAt[entityNum] <= RD_STANDIN_WINDOW ? qtrue : qfalse;
 }
 
-static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson, qboolean standIn)
+// A corpse the map placed rather than one that died: a script model posed
+// lying dead (models/animate/allied_airborne_soldier_dead.tik, the Omaha
+// beach bodies models/animate/body_*.tik). It carries no EF_DEAD, but it is a
+// body like any other, and lying stiff in its pose it did not react to
+// anything near it (backlog #14).
+static qboolean CG_RagdollPosedCorpse(const refEntity_t *model)
 {
-    const entityState_t *s1 = &cent->currentState;
+    const char *name = model->tiki->a->name;
+    const char *base;
 
-    if (!cg_ragdoll->integer || !cgs.ragdollAllowed) {
+    if (Q_stricmpn(name, "models/animate/", 15)) {
         return qfalse;
     }
 
-    if (!(s1->eFlags & EF_DEAD) && !standIn) {
+    base = name + 15;
+    return (Q_stristr(base, "_dead") || !Q_stricmpn(base, "body_", 5)) ? qtrue : qfalse;
+}
+
+static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson, qboolean standIn)
+{
+    const entityState_t *s1 = &cent->currentState;
+    qboolean             posed;
+
+    if (!cg_ragdoll->integer || !cgs.ragdollAllowed) {
         return qfalse;
     }
 
@@ -9537,9 +9552,16 @@ static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean
         return qfalse;
     }
 
+    posed = CG_RagdollPosedCorpse(model);
+
+    if (!(s1->eFlags & EF_DEAD) && !standIn && !posed) {
+        return qfalse;
+    }
+
     // The engine's own "this is an animated character" bit, already used to
-    // pick the skeletal LOD path.
-    if (!model->tiki->a->bIsCharacter) {
+    // pick the skeletal LOD path. The posed corpses don't declare it, though
+    // they are built on the same human skeleton.
+    if (!model->tiki->a->bIsCharacter && !posed) {
         return qfalse;
     }
 

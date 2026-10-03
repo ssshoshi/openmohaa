@@ -1733,8 +1733,11 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
             // shown even when the view weapon is hidden
             memcpy(shadowModel.surfaces, s1->surfaces, MAX_MODEL_SURFACES);
             shadowModel.entityNumber = ENTITYNUM_NONE;
-            shadowModel.renderfx &= ~(RF_FIRST_PERSON | RF_DEPTHHACK);
+            shadowModel.renderfx &= ~(RF_FIRST_PERSON | RF_DEPTHHACK | RF_CUSTOMSHADERPASS);
             shadowModel.renderfx |= RF_THIRD_PERSON;
+            // only its shadow is wanted: no MG42 glow pass, which the
+            // renderer would draw in the view on the shadow body's hand
+            shadowModel.customShader = 0;
             cgi.R_AddRefEntityToScene(&shadowModel, ENTITYNUM_NONE);
         }
         CGM_END(CGM_ADDREF);
