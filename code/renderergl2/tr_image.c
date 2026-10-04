@@ -2165,7 +2165,19 @@ R_CreateImage2
 This is the only way any image_t are created
 ================
 */
+static image_t *R_CreateImage2Inner( const char *name, byte *pic, int width, int height, GLenum picFormat, int numMips, imgType_t type, imgFlags_t flags, int internalFormat );
+
 image_t *R_CreateImage2( const char *name, byte *pic, int width, int height, GLenum picFormat, int numMips, imgType_t type, imgFlags_t flags, int internalFormat ) {
+	image_t *image = R_CreateImage2Inner( name, pic, width, height, picFormat, numMips, type, flags, internalFormat );
+
+	// OPM: made on this map (R_FreeUnusedImages)
+	if ( image ) {
+		image->r_sequence = r_sequencenumber;
+	}
+	return image;
+}
+
+static image_t *R_CreateImage2Inner( const char *name, byte *pic, int width, int height, GLenum picFormat, int numMips, imgType_t type, imgFlags_t flags, int internalFormat ) {
 	byte       *resampledBuffer = NULL;
 	image_t    *image;
 	qboolean    isLightmap = qfalse, scaled = qfalse;
@@ -2580,6 +2592,10 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 				if ( image->flags != flags ) {
 					ri.Printf( PRINT_DEVELOPER, "WARNING: reused image %s with mixed flags (%i vs %i)\n", name, image->flags, flags );
 				}
+			}
+			// OPM: in use on this map (R_FreeUnusedImages)
+			if ( image->r_sequence != -1 ) {
+				image->r_sequence = r_sequencenumber;
 			}
 			return image;
 		}
@@ -3628,4 +3644,53 @@ R_FreeRawImage
 */
 void R_FreeRawImage(byte *pic) {
     ri.Free(pic);
+}
+
+/*
+===============
+R_MarkImagesPermanent
+
+Added in OPM
+The images that exist before the first map (the renderer's own, the UI's,
+and those of the shaders that are kept for good, see R_PurgeMapShaders) are
+never freed by R_FreeUnusedImages.
+===============
+*/
+void R_MarkImagesPermanent( void ) {
+	int i;
+
+	for ( i = 0; i < tr.numImages; i++ ) {
+		tr.images[i]->r_sequence = -1;
+	}
+}
+
+/*
+===============
+R_FreeUnusedImages
+
+Added in OPM
+GL1's way of not piling up every map's textures until MAX_DRAWIMAGES: a map
+change registers its shaders afresh (R_PurgeMapShaders), which marks each
+image they use with the new sequence, and what the new map didn't mark goes.
+An image needed again later is simply loaded again.
+===============
+*/
+void R_FreeUnusedImages( void ) {
+	int i, before;
+
+	R_IssuePendingRenderCommands();
+
+	before = tr.numImages;
+	// R_FreeImage moves the last image into the freed slot, so go backwards
+	for ( i = tr.numImages - 1; i >= 0; i-- ) {
+		image_t *image = tr.images[i];
+
+		if ( image->r_sequence != -1 && image->r_sequence != r_sequencenumber ) {
+			R_FreeImage( image );
+		}
+	}
+
+	if ( tr.numImages != before ) {
+		ri.Printf( PRINT_DEVELOPER, "R_FreeUnusedImages: freed %d images, %d left\n", before - tr.numImages, tr.numImages );
+	}
 }

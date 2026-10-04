@@ -2164,6 +2164,14 @@ void RE_BeginRegistration(glconfig_t* glconfigOut) {
     R_ClearFlares();
     RE_ClearScene();
 
+    // OPM: as GL1 does, each map registers its shaders afresh, and the images
+    //  only the previous maps used go at RE_EndRegistration (they piled up
+    //  until MAX_DRAWIMAGES after a few map changes)
+    if ( R_PurgeMapShaders() ) {
+        R_MarkImagesPermanent();
+    }
+    r_sequencenumber++;
+
 	//
 	// OPENMOHAA-specific stuff
     //=========================
@@ -2191,6 +2199,7 @@ Touch all images to make sure they are resident
 */
 void RE_EndRegistration( void ) {
 	R_IssuePendingRenderCommands();
+	R_FreeUnusedImages();
 	if (!ri.Sys_LowPhysicalMemory()) {
 		RB_ShowImages();
 	}

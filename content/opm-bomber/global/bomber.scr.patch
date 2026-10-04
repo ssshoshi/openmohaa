@@ -1,0 +1,15 @@
+--- a/global/bomber.scr
++++ b/global/bomber.scr
+@@ -398,8 +398,10 @@
+ 		
+ 		$("bombdrop" + local.num) model "ammo/us_bomb.tik"
+ 		$("bombdrop" + local.num) notsolid
+-		$("bombdrop" + local.num) scale 1
+-		$("bombdrop" + local.num) flypath self 2500 2000 256
++		// OPM: bigger and slower, so the bomb is seen falling from the plane
++		//  (it fell the last 1000 units in half a second at half size)
++		$("bombdrop" + local.num) scale 2.5
++		$("bombdrop" + local.num) flypath self 900 600 256
+ 		// speed accell lookahead
+ 		$("bombdrop" + local.num) waitmove
+ 		

@@ -412,6 +412,12 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_OPM_EXPLOSION_LARGE:
             szEffectModel = "models/fx/opm_explosion_large.tik";
             break;
+        case SFX_OPM_EARTH_GREN:
+            szEffectModel = "models/fx/opm_earth_gren.tik";
+            break;
+        case SFX_OPM_EARTH_BAZOOKA:
+            szEffectModel = "models/fx/opm_earth_bazooka.tik";
+            break;
         default:
             szEffectModel = "models/fx/bh_stone_hard.tik";
             break;

@@ -31,12 +31,14 @@ OUT = os.path.join(HERE, "..", "..", "data", "opm-explosions")
 # Most explosions are mostly earth, not fire: fire scales the fireball (1 the
 # full one), and dirt adds the geyser of earth of the mortar hits on Omaha
 # beach (m3l1), which the bazookas, the shells and the Flak 88 rounds landing
-# round the player (m3l2) throw up.
+# round the player (m3l2) throw up. "ground": the earth is a separate effect
+# (EARTH) that the client adds only where it lands on soft ground (dirt,
+# grass, mud, sand, snow), never on a floor indoors.
 #   name: (size, sound, fire, dirt)
 EXPLOSIONS = {
-    "grenexp_base":         (1.0, "grenade_explode", 0.6, True),
+    "grenexp_base":         (1.0, "grenade_explode", 0.6, "ground"),
     # also the Flak 88's rounds (scriptbazookaexplosion): earth, no fire
-    "bazookaexp_base":      (1.5, "bazooka_exp", 0.0, True),
+    "bazookaexp_base":      (1.5, "bazooka_exp", 0.0, "ground"),
     "opm_explosion_small":  (1.8, None, 0.6, False),
     "opm_explosion_medium": (2.4, None, 0.6, True),
     "opm_explosion_large":  (3.0, None, 0.7, True),
@@ -46,6 +48,14 @@ EXPLOSIONS = {
 # above ("opm_explode", cgame). The first animation listed is the one they are
 # spawned in, the second the one the map plays or that follows it.
 #   name: (explosion, anims)
+# The earth the weapons' explosions throw up on soft ground (cgame
+# CG_MakeExplosionEffect plays them with the surface's own effect).
+#   name: size
+EARTH = {
+    "opm_earth_gren":    1.0,
+    "opm_earth_bazooka": 1.5,
+}
+
 MODELS = {
     "fx_tank_explosion":   ("medium", ["idle", "start"]),
     "fx_flak88_explosion": ("large", ["aaaa", "idle"]),
@@ -125,7 +135,7 @@ def emitters(s, fire=1.0, dirt=False):
 )""" % (n(2 + s), f(0.5 * s), f(0.9 * s), f(36 * s), f(36 * s), f(30 * s),
         f(140 * s), f(140 * s), f(60 * s), f(180 * s)))
 
-    if dirt:
+    if dirt is True:
         c += geyser(s)
 
     if fire == 0:
@@ -176,21 +186,9 @@ def emitters(s, fire=1.0, dirt=False):
 	fade
 )""" % (n(6 * s), f(300 * s), f(300 * s), f(250 * s), f(700 * s)))
 
-    # clods of dirt, thrown up and falling back
-    c.append("""originspawn
-(
-	model bh_dirt_piece.spr
-	count %d
-	scalemin 0.35
-	scalemax 0.8
-	life 1.8
-	randvel crandom %s crandom %s range %s %s
-	accel 0 0 -900
-	collision
-	dietouch
-	randomroll
-	fade
-)""" % (n(10 * s), f(260 * s), f(260 * s), f(300 * s), f(800 * s)))
+    # (on soft ground only, for those whose earth is separate)
+    if dirt != "ground":
+        c += clods(s)
 
     # dust rolling out along the ground
     c.append("DELAY 0.15 " + """originspawn
@@ -269,6 +267,25 @@ def emitters(s, fire=1.0, dirt=False):
 )""" % f(36 * s))
 
     return c
+
+
+def clods(s):
+    """Clods of dirt, thrown up and falling back."""
+    n = lambda k: max(1, int(round(k)))
+    return ["""originspawn
+(
+	model bh_dirt_piece.spr
+	count %d
+	scalemin 0.35
+	scalemax 0.8
+	life 1.8
+	randvel crandom %s crandom %s range %s %s
+	accel 0 0 -900
+	collision
+	dietouch
+	randomroll
+	fade
+)""" % (n(10 * s), f(260 * s), f(260 * s), f(300 * s), f(800 * s))]
 
 
 def geyser(s):
@@ -434,6 +451,27 @@ def explosion_tiki(size, sound, fire, dirt):
     return "\n".join(lines) + "\n"
 
 
+def earth_tiki(size):
+    lines = HEADER + ["// The earth an explosion of size %s throws up from soft ground." % f(size)] + SETUP
+    lines += [
+        "init",
+        "{",
+        "\tclient",
+        "\t{",
+        "\t\tcache mortar_dirthit.spr",
+        "\t\tcache mortar_dirthit2.spr",
+        "\t\tcache dirtplume.spr",
+    ]
+    for cmd in geyser(size) + clods(size):
+        if cmd.startswith("DELAY "):
+            _, delay, cmd = cmd.split(" ", 2)
+            lines.append(indent("delayedsfx %s %s" % (delay, cmd), 2))
+        else:
+            lines.append(indent("sfx " + cmd, 2))
+    lines += ["\t}", "}", "", "animations", "{", "\tidle dummy2.skc", "}"]
+    return "\n".join(lines) + "\n"
+
+
 def model_tiki(explosion, anims):
     lines = HEADER + ["// A map's explosion: plays opm_explosion_%s where it is spawned." % explosion] + SETUP
     lines += [
@@ -486,6 +524,9 @@ def main():
     for name, (size, sound, fire, dirt) in EXPLOSIONS.items():
         with open(os.path.join(fx, name + ".tik"), "w", newline="\r\n") as out:
             out.write(explosion_tiki(size, sound, fire, dirt))
+    for name, size in EARTH.items():
+        with open(os.path.join(fx, name + ".tik"), "w", newline="\r\n") as out:
+            out.write(earth_tiki(size))
     for name, (explosion, anims) in MODELS.items():
         with open(os.path.join(fx, name + ".tik"), "w", newline="\r\n") as out:
             out.write(model_tiki(explosion, anims))
@@ -493,7 +534,7 @@ def main():
     snd = os.path.join(OUT, "sound", "opm")
     os.makedirs(snd, exist_ok=True)
     ear_ring(os.path.join(snd, "ear_ring.wav"))
-    print("wrote %d effects and the ear ring into %s" % (len(EXPLOSIONS) + len(MODELS), os.path.normpath(OUT)))
+    print("wrote %d effects and the ear ring into %s" % (len(EXPLOSIONS) + len(EARTH) + len(MODELS), os.path.normpath(OUT)))
 
 
 if __name__ == "__main__":
