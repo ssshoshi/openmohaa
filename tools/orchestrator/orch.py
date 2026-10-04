@@ -487,7 +487,7 @@ def backlog_repro(item, args):
 
     me = [sys.executable, os.path.abspath(__file__)]
     env = dict(os.environ, ORCH_LIVE=target)
-    for step in (["stop"], ["launch", "--save", save], ["wait", "--timeout", "180"], ["cmd", "god 1"]):
+    for step in (["stop"], ["launch", "--save", save], ["wait", "--timeout", "180"], ["cmd", "dog 1"]):
         subprocess.run(me + step, env=env, check=step[0] == "wait")
     if origin:
         view = ["view", *[str(v) for v in origin]]

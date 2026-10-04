@@ -75,7 +75,7 @@ finished talking (or clicked a shot or a mark). `continues=<m>` before the path 
 
    | Change | How | Ask first? |
    |---|---|---|
-   | Console, cvars, cheats, debug views (`noclip`, `god`, `timescale`, `ai_shownode 30`, `sv_showbboxes 4`...) | `orch.py cmd "..."` | no |
+   | Console, cvars, cheats, debug views (`noclip`, `dog 1` (god mode), `timescale`, `ai_shownode 30`, `sv_showbboxes 4`...) | `orch.py cmd "..."` | no |
    | Which objects are physics bodies | edit `home/main/physics.txt` in the live install, then `orch.py cmd phys_reload` | no |
    | A live script tweak (`$guy3 runto $node_x`, `$tank.health = 2000`, start a thread) | `orch.py script '<code>'`, or `--file x.scr --label main`; runs now, no restart; compile errors come back | no |
    | Map scripts | a loose `home/main/maps/<map>.scr` override; it takes effect on `restart` (developer 1), which restarts the level, so say so | no, but tell them |
