@@ -5113,10 +5113,15 @@ static void CreateExternalShaders( void ) {
 R_InitShaders
 ==================
 */
+// OPM: the shaders that exist when the first map is registered (the
+//  renderer's own and the UI's); -1 until then (R_PurgeMapShaders)
+static int numPersistentShaders = -1;
+
 void R_InitShaders( void ) {
 	ri.Printf( PRINT_ALL, "Initializing Shaders\n" );
 
 	Com_Memset(hashTable, 0, sizeof(hashTable));
+	numPersistentShaders = -1;
 
 	CreateInternalShaders();
 
@@ -5318,4 +5323,65 @@ qhandle_t RE_RegisterShaderVertexLit( const char *name ) {
 	}
 
 	return sh->index;
+}
+
+/*
+==================
+R_PurgeMapShaders
+
+Added in OPM
+Called as each map is registered. GL1 rebuilds all its shaders then; here
+the shaders that existed at the first map (the renderer's, the UI's) stay,
+and the ones registered since are dropped, so the new map registers what it
+uses afresh (the client frees its models and restarts cgame on every map
+change, and the UI re-registers its materials). Their images can then be
+told apart by sequence (R_FreeUnusedImages). The dropped shaders' memory is
+small and stays with the renderer's other allocations until a vid_restart.
+
+Returns qtrue the first time, when nothing is dropped.
+==================
+*/
+qboolean R_PurgeMapShaders( void ) {
+	int i, j, old;
+
+	if ( numPersistentShaders < 0 ) {
+		numPersistentShaders = tr.numShaders;
+		return qtrue;
+	}
+
+	old = tr.numShaders;
+	if ( old <= numPersistentShaders ) {
+		return qfalse;
+	}
+
+	// out of the name hash
+	for ( i = 0; i < FILE_HASH_SIZE; i++ ) {
+		shader_t **link = &hashTable[i];
+
+		while ( *link ) {
+			if ( (*link)->index >= numPersistentShaders ) {
+				*link = (*link)->next;
+			} else {
+				link = &(*link)->next;
+			}
+		}
+	}
+
+	// out of the sorted list, the rest keeping their order
+	for ( i = 0, j = 0; i < old; i++ ) {
+		shader_t *sh = tr.sortedShaders[i];
+
+		if ( sh->index < numPersistentShaders ) {
+			sh->sortedIndex = j;
+			tr.sortedShaders[j++] = sh;
+		}
+	}
+
+	for ( i = numPersistentShaders; i < old; i++ ) {
+		tr.shaders[i] = NULL;
+	}
+	tr.numShaders = numPersistentShaders;
+
+	ri.Printf( PRINT_DEVELOPER, "R_PurgeMapShaders: dropped %d shaders, %d kept\n", old - numPersistentShaders, numPersistentShaders );
+	return qfalse;
 }
