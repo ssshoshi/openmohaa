@@ -391,6 +391,9 @@ extern cvar_t *ai_flank_cooldown;
 extern cvar_t *ai_rush;
 extern cvar_t *ai_rush_chance;
 extern cvar_t *ai_smoke_advance;
+extern cvar_t *ai_accuracy_model;
+extern cvar_t *ai_accuracy_acquire;
+extern cvar_t *ai_cover;
 
 void CVAR_Init(void);
 

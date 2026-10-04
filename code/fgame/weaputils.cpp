@@ -2545,6 +2545,9 @@ float BulletAttack(
 
         VectorCopy(vTmpEnd, vEndArray[i]);
 
+        // OPM: the Germans it passed close to are under fire
+        AI_BulletPassed(owner, start, vTmpEnd);
+
         if (iTracerFrequency && piTracerCount) {
             (*piTracerCount)++;
 

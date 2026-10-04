@@ -2796,6 +2796,11 @@ Actor::Actor()
     m_iOPMLastFlankTime        = 0;
     m_iOPMNextRushTime         = 0;
     m_iOPMSmokeAdvanceTime     = 0;
+    m_iOPMUnderFireTime        = 0;
+    m_pOPMExposureNode         = NULL;
+    m_iOPMExposures            = 0;
+    m_iOPMExposureLimit        = 0;
+    m_iOPMDuckUntil            = 0;
 
     if (LoadingSavegame) {
         return;
@@ -11553,6 +11558,12 @@ Vector Actor::GunTarget(bool bNoCollision, const vec3_t position, const vec3_t f
     fAccuracy = (1.0 - fCoverFactor) * 2 * scatterMult;
     if (fAccuracy < 0) {
         fAccuracy = 0;
+    }
+
+    // OPM: wider when he has only just seen the player, either of them
+    //  moves, or he is under fire (ai_accuracy_model)
+    if (player) {
+        fAccuracy *= Accuracy_ScatterMult(player);
     }
 
     if (player) {

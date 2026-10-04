@@ -301,7 +301,10 @@ Single-player enemies get behaviour the original game's AI lacks. Each part has 
 |ai_rush            |1      |When the player reloads, or just after a German grenade went off by him, a German or two within about 1000 units who can see (or hear) it rush closer
 |ai_rush_chance     |50     |Percent chance that a German who could rush does
 |ai_smoke_advance   |1      |When a German throws smoke, his squad moves up into it a few seconds later
-|ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown and why a German does not flank, rush or advance. A line repeated within 2 s is counted, not printed
+|ai_accuracy_model  |1      |Germans shoot wider at the player when they have only just seen him (see ai_accuracy_acquire), when he moves (up to 1.6 times at a run), when they move themselves (1.4 times), and for 1.5 s after one of his bullets passed within 64 units of them (1.5 times). At a player standing still who has been in sight for 2 s they aim as in stock
+|ai_accuracy_acquire|2.0    |How many times wider a German's first shots go when he has just seen the player; it eases to normal over 2 s
+|ai_cover           |1      |A German at a cover node ducks back for a second or two after each burst (longer while under fire): crouched behind low cover, holding fire behind other cover. After two or three bursts from one node he moves to another
+|ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown and why a German does not flank, rush or advance, how much wider each aims and who is under fire. A line repeated within 2 s is counted, not printed
 
 ### Map add-ons
 

@@ -43,3 +43,7 @@ class Entity;
 // A grenade (or other explosive) thrown by owner went off at pos, for
 // ai_rush (actor_maneuver.cpp).
 void AI_GrenadeWentOff(Entity *owner, const float *pos);
+
+// A bullet fired by owner went from start to end, for being under fire
+// (actor_accuracy.cpp).
+void AI_BulletPassed(Entity *owner, const float *start, const float *end);
