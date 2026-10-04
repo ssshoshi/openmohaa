@@ -403,6 +403,13 @@ static void RB_SurfaceVertsAndIndexes( int numVerts, srfVert_t *verts, int numIn
 	tess.numVertexes += numVerts;
 }
 
+// Added in OPM
+//  Ground cover tufts: through tess, never the vertex cache (tr_groundcover.c).
+void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes)
+{
+	RB_SurfaceVertsAndIndexes(numVerts, verts, numIndexes, indexes, 0, 0);
+}
+
 static qboolean RB_SurfaceVaoCached(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes, int dlightBits, int pshadowBits)
 {
 	qboolean recycleVertexBuffer = qfalse;
@@ -1607,5 +1614,6 @@ void (*rb_surfaceTable[SF_NUM_SURFACE_TYPES])( void *) = {
 	(void(*)(void*))RB_DrawSwipeSurface,	// SF_SWIPE
 	(void(*)(void*))RB_DrawSprite,			// SF_SPRITE
     (void(*)(void*))RB_DrawTerrainTris,		// SF_TERRAIN_PATCH
+    (void(*)(void*))RB_SurfaceGroundCover,	// SF_GROUNDCOVER
     //=========================
 };

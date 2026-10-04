@@ -1200,6 +1200,7 @@ typedef enum {
     SF_SWIPE,
     SF_SPRITE,
     SF_TERRAIN_PATCH,
+    SF_GROUNDCOVER,
 	SF_NUM_SURFACE_TYPES,
 	SF_MAX = 0x7fffffff			// ensures that sizeof( surfaceType_t ) == sizeof( int )
 } surfaceType_t;
@@ -2020,6 +2021,7 @@ typedef struct {
 	double	t_surfaceScan;
 	double	t_terrainSurfaces;
 	double	t_staticModels;
+	double	t_groundCover;
 	double	t_shadowFrontend;
 	// Entity submission, summed over every view. Skeletal entities repeat the
 	// per-bone work once per view they appear in, so with
@@ -3588,6 +3590,22 @@ void R_ShutdownTerrain();
 void R_TerrainFree();
 void R_TerrainPrepareFrame();
 qboolean R_TerrainHeightForPoly(cTerraPatchUnpacked_t* pPatch, polyVert_t* pVerts, int nVerts);
+
+/*
+=============================================================
+GROUND COVER (tr_groundcover.c)
+=============================================================
+*/
+void R_GroundCoverRegisterCvars(void);
+// tr_image.c: an image file's pixels, without making a texture of it
+void R_LoadImage(const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips);
+void R_LoadImageUncompressed(const char *name, byte **pic, int *width, int *height, GLenum *picFormat);
+void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header);
+void R_GroundCoverFree(void);
+void R_AddGroundCoverSurfaces(void);
+void R_GroundCoverInfo_f(void);
+void RB_SurfaceGroundCover(void *surface);
+void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
 void R_SwapTerraPatch(cTerraPatch_t* pPatch);
 
 void R_TerrainCrater_f(void);

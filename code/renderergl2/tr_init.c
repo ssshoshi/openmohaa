@@ -1794,6 +1794,8 @@ void R_Register( void )
 	// could not be re-checked because DM spawn points are picked at random and
 	// two runs do not share a camera.
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
+	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
+	R_GroundCoverRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
 	// precisely when a benchmark wants this.
@@ -1834,6 +1836,7 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "gfxmeminfo", GfxMemInfo_f );
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
 	// Added in OPM
+	ri.Cmd_AddCommand( "groundcoverinfo", R_GroundCoverInfo_f );
 	R_RtTestCommands( qtrue );
 
 	//
@@ -2107,11 +2110,14 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "gfxmeminfo" );
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
 	// Added in OPM
+	ri.Cmd_RemoveCommand( "groundcoverinfo" );
 	R_RtTestCommands( qfalse );
 
 
 	if ( tr.registered ) {
 		R_IssuePendingRenderCommands();
+		// Added in OPM
+		R_GroundCoverFree();
 		R_ShutDownQueries();
 		if (glRefConfig.framebufferObject)
 			FBO_Shutdown();

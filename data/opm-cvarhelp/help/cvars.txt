@@ -848,6 +848,13 @@ r_glossType	0	3	code/renderergl2/tr_init.c:1613	How specular maps encode glossin
 r_gpuTimers	0		code/renderergl2/tr_init.c:1785	Print per-pass GPU timings, averaged over this many frames per report. 0 is off. Not a cheat, so it works during demo playback for benchmarks. (OpenGL 2 renderer.)
 r_gpuTimerSync	0	1	code/renderergl2/tr_init.c:1795	Make r_gpuTimers wait for the GPU at every pass boundary: exact per-pass numbers, slower frames. Cheat-protected. (OpenGL 2 renderer.)
 r_greyscale	0	1	code/renderergl2/tr_init.c:1559	Desaturate everything toward greyscale (0 colour, 1 fully grey). (OpenGL 2 renderer.)
+r_groundCover	0	1	code/renderergl2/tr_groundcover.c:180	Grass tufts stood on the ground the map calls grass, near the view, swaying in the wind and sinking away with distance. Needs zzzzzzzzz-opm-groundcover.pk3; takes effect at the next map. (OpenGL 2 renderer.)
+r_groundCoverBrightness	0	4	code/renderergl2/tr_groundcover.c:188	Brightness of the ground cover against the ground's own light where it stands.
+r_groundCoverDensity	0	8	code/renderergl2/tr_groundcover.c:182	Ground cover tufts per 32x32 units of grass. The tufts are made again when it changes.
+r_groundCoverDistance	128	8192	code/renderergl2/tr_groundcover.c:184	How far out the farthest ground cover tufts reach, in game units; most are gone by half of it.
+r_groundCoverHeight	0.25	4	code/renderergl2/tr_groundcover.c:185	Scale of the ground cover tufts' height.
+r_groundCoverMask	0	1	code/renderergl2/tr_groundcover.c:190	Leave out ground cover where the ground's texture is not green (paths, dirt) on surfaces marked grass.
+r_groundCoverWind	0		code/renderergl2/tr_groundcover.c:186	How far the ground cover sways in the wind. 0 holds it still.
 r_hdr	0	1	code/renderergl2/tr_init.c:1569	High dynamic range rendering with tone mapping. Off for MOH:AA: its filmic curve compresses highlights and lifts midtones against how the maps were lit. (OpenGL 2 renderer.)
 r_ignore			code/renderergl1/tr_init.c:1486	Internal test value used by some debug drawing. Cheat-protected.
 r_ignoreDstAlpha	0	1	code/renderergl2/tr_init.c:1661	Ignore destination alpha blending in shaders; avoids problems on framebuffers without alpha. (OpenGL 2 renderer.)
