@@ -302,3 +302,41 @@ gore/pool
 		alphaGen vertex
 	}
 }
+
+gore/stump
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/opm_gore/stump.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/brain
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/opm_gore/brain.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/chunk
+{
+	cull none
+	nopicmip
+	{
+		clampmap textures/opm_gore/chunk.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}

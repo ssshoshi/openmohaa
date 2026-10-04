@@ -10413,6 +10413,7 @@ void CG_RagdollAddUnsent(void)
             continue;
         }
 
+        CG_GoreModifyEntity(cent, &model, qtrue);
         cgi.R_AddRefEntityToScene(&model, ENTITYNUM_NONE);
         CG_GoreAddEntity(cent, &model, qtrue);
     }

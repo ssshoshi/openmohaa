@@ -1130,6 +1130,36 @@ inline static void SkelWeightMorphGetXyz(skelWeight_t *weight, skelBoneCache_t *
             * weight->boneWeight;
 }
 
+// Added in OPM
+//  The dents of RF_GORE_DENTS (R_GoreDents), pushed into one vertex in model
+//  space before the scale, for RE_GetSkinnedMesh to hand over the mesh as drawn.
+static void R_GoreDentSkinned(const refEntity_t *model, const skelAnimFrame_t *frame, int numBones, vec3_t local)
+{
+    int i, k;
+
+    for (i = 0; i < model->num_gore_dents && i < MAX_GORE_DENTS; i++) {
+        const goreDent_t *dent = &model->gore_dents[i];
+        vec3_t            centre, d;
+        float             dist;
+
+        if (dent->boneIndex < 0 || dent->boneIndex >= numBones || dent->radius <= 0) {
+            continue;
+        }
+
+        for (k = 0; k < 3; k++) {
+            centre[k] = dent->offset[0] * frame->bones[dent->boneIndex][0][k]
+                      + dent->offset[1] * frame->bones[dent->boneIndex][1][k]
+                      + dent->offset[2] * frame->bones[dent->boneIndex][2][k] + frame->bones[dent->boneIndex][3][k];
+        }
+
+        VectorSubtract(local, centre, d);
+        dist = VectorLength(d);
+        if (dist < dent->radius && dist > 0.0001f) {
+            VectorMA(centre, dent->radius / dist, d, local);
+        }
+    }
+}
+
 /*
 =============
 RE_GetSkinnedMesh
@@ -1235,6 +1265,10 @@ int RE_GetSkinnedMesh(refEntity_t *model, skinnedVert_t *verts, int maxVerts, in
                     }
                 }
 
+                if ((model->renderfx & RF_GORE_DENTS) && model->gore_dents) {
+                    R_GoreDentSkinned(model, frame, ri.TIKI_GetNumChannels(tiki), local);
+                }
+
                 VectorScale(local, scale, local);
 
                 VectorCopy(model->origin, out->xyz);
@@ -1266,6 +1300,114 @@ done:
 RB_SkelMesh
 =============
 */
+
+/*
+=============
+R_GoreDents
+
+Added in OPM. Pushes the dents of a refEntity with RF_GORE_DENTS into vertexes
+just skinned, in model space and at the model's scale: each vertex closer to a
+dent's middle than its radius goes out to the radius, and faces back towards
+the middle, the inside of the hollow. See goreDent_t.
+=============
+*/
+static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones, int numBones, float scale, int i, vec3_t centre, float *radius)
+{
+    const goreDent_t      *dent = &e->gore_dents[i];
+    const skelBoneCache_t *bone;
+    int                    k;
+
+    *radius = 0;
+    if (dent->boneIndex < 0 || dent->boneIndex >= numBones) {
+        return;
+    }
+
+    bone = &bones[dent->boneIndex];
+    for (k = 0; k < 3; k++) {
+        centre[k] = (dent->offset[0] * bone->matrix[0][k] + dent->offset[1] * bone->matrix[1][k]
+                     + dent->offset[2] * bone->matrix[2][k] + bone->offset[k])
+                  * scale;
+    }
+    *radius = dent->radius * scale;
+}
+
+static qboolean R_GoreDentVertex(const vec3_t centre, float radius, float *xyz, vec3_t normal)
+{
+    vec3_t d;
+    float  dist;
+
+    VectorSubtract(xyz, centre, d);
+    dist = VectorLength(d);
+    if (dist >= radius || dist < 0.0001f) {
+        return qfalse;
+    }
+
+    VectorScale(d, 1.0f / dist, d);
+    VectorMA(centre, radius, d, xyz);
+    VectorNegate(d, normal);
+    return qtrue;
+}
+
+static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, float scale, int first, int count)
+{
+    int numBones, i, v;
+
+    if (!(e->renderfx & RF_GORE_DENTS) || !e->gore_dents || e->num_gore_dents <= 0 || !e->tiki) {
+        return;
+    }
+
+    numBones = ri.TIKI_GetNumChannels(e->tiki);
+    for (i = 0; i < e->num_gore_dents && i < MAX_GORE_DENTS; i++) {
+        vec3_t centre, normal;
+        float  radius;
+
+        R_GoreDentCentre(e, bones, numBones, scale, i, centre, &radius);
+        if (radius <= 0) {
+            continue;
+        }
+
+        for (v = first; v < first + count; v++) {
+            if (R_GoreDentVertex(centre, radius, tess.xyz[v], normal)) {
+                VectorCopy(normal, tess.normal[v]);
+            }
+        }
+    }
+}
+
+// Added in OPM
+//  A model the gore system has cut a part off (RF_GORE_DENTS): the part's
+//  triangles are folded into its joint, and drawn as they are they would come
+//  out with no area and tangents of nothing over nothing. They are left out.
+static void R_GoreDropFolded(const refEntity_t *e, int firstIndex)
+{
+    int i, kept = firstIndex;
+
+    if (!(e->renderfx & RF_GORE_DENTS)) {
+        return;
+    }
+
+    for (i = firstIndex; i + 2 < tess.numIndexes; i += 3) {
+        const float *a = tess.xyz[tess.indexes[i]];
+        const float *b = tess.xyz[tess.indexes[i + 1]];
+        const float *c = tess.xyz[tess.indexes[i + 2]];
+        vec3_t       e1, e2, n;
+
+        VectorSubtract(b, a, e1);
+        VectorSubtract(c, a, e2);
+        CrossProduct(e1, e2, n);
+        if (VectorLengthSquared(n) < 0.0001f) {
+            continue;
+        }
+
+        tess.indexes[kept]     = tess.indexes[i];
+        tess.indexes[kept + 1] = tess.indexes[i + 1];
+        tess.indexes[kept + 2] = tess.indexes[i + 2];
+        kept += 3;
+    }
+
+    tess.numIndexes = kept;
+}
+
 void RB_SkelMesh(skelSurfaceGame_t *sf)
 {
     unsigned int       baseIndex, baseVertex;
@@ -1644,6 +1786,10 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
             }
         }
     }
+
+    // Added in OPM
+    R_GoreDents(&backEnd.currentEntity->e, bones, scale, baseVertex, render_count);
+    R_GoreDropFolded(&backEnd.currentEntity->e, baseIndex);
 
 #if 0
 	if( backEnd.currentEntity->e.staticModelIndex ) {

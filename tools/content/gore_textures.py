@@ -179,6 +179,37 @@ def main():
         save(f"wound_frag{v + 1}.tga", *wound(rng, 64, pal, meat=0.25, stain=0.7, jag=0.6, spatter=3, tissue=0.6))
     save("wound_run.tga", *run(rng, 64, 256), round_=False)
 
+    # where a limb came off: torn flesh about a pale bone, wet blood round it
+    r, ang = polar((128, 128))
+    n = noise(rng, (128, 128), 4)
+    fine = noise(rng, (128, 128), 14, 3)
+    rr = r / ragged(rng, ang, 11, 0.35)
+    rgb = mix(np.array([84, 22, 18], float)[None, None], np.array([46, 5, 4], float)[None, None], smooth(0.45, 0.62, fine))
+    rgb = mix(rgb, np.array([30, 3, 2], float)[None, None], smooth(0.55, 0.95, rr))
+    bone = smooth(0.2, 0.14, polar((128, 128), (0.5 + 0.04 * rng.random(), 0.5))[0] / (0.9 + 0.2 * n))
+    rgb = mix(rgb, np.array([150, 132, 104], float)[None, None] * (0.8 + 0.3 * fine[..., None]), bone)
+    rgb = mix(rgb, np.array([40, 30, 22], float)[None, None], bone * smooth(0.12, 0.06, r))  # the marrow
+    save("stump.tga", rgb, smooth(1.0, 0.75, rr) * 0.97)
+
+    # the inside of a head: grey-pink folds, bits of skull, and blood
+    r, ang = polar((128, 128))
+    folds = noise(rng, (128, 128), 10, 2)
+    folds = np.abs(np.sin(folds * 18.0))
+    n = noise(rng, (128, 128), 5)
+    rr = r / ragged(rng, ang, 10, 0.5)
+    rgb = mix(np.array([96, 62, 60], float)[None, None], np.array([54, 22, 22], float)[None, None], smooth(0.3, 0.9, folds))
+    rgb = mix(rgb, np.array([44, 4, 3], float)[None, None], smooth(0.35, 0.75, n) * 0.7 + smooth(0.6, 0.9, rr))
+    skull = smooth(0.82, 0.88, noise(rng, (128, 128), 16, 2)) * smooth(0.5, 0.75, rr)
+    rgb = mix(rgb, np.array([150, 138, 116], float)[None, None], skull)
+    save("brain.tga", rgb, smooth(1.0, 0.8, rr) * 0.97)
+
+    # a bit of a head in the air
+    r, ang = polar((32, 32))
+    n = noise(rng, (32, 32), 4)
+    rr = r / ragged(rng, ang, 6, 0.5)
+    rgb = mix(np.array([80, 20, 16], float)[None, None], np.array([110, 72, 64], float)[None, None], smooth(0.5, 0.8, n))
+    save("chunk.tga", rgb, smooth(0.95, 0.7, rr))
+
     # soot from a blast close by
     r, ang = polar((128, 128))
     n = noise(rng, (128, 128), 3)

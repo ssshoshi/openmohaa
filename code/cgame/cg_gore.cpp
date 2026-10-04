@@ -52,6 +52,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define GORE_MAX_BLASTS     8
 #define GORE_MAX_DROPS      384
 #define GORE_MAX_POOLS      32
+#define GORE_MAX_GIBS       32
+#define GORE_MAX_OVERRIDES  160 // the ragdoll's and the cut bones'
+#define GORE_GIB_KEY        MAX_GENTITIES // a gib's body is keyed from here up
+#define GORE_GIB_LIGHT_UP   12.f // lit from above its middle: on the ground, the grid there is dark
 #define GORE_MAX_DECAL_FRAGS 320
 #define GORE_SKIN_VERTS     8192
 #define GORE_SKIN_TRIS      12288
@@ -75,6 +79,8 @@ typedef enum {
     GK_FRAG,
     GK_RUN,
     GK_BURN,
+    GK_STUMP, // where a limb came off
+    GK_BRAIN, // the inside of a head a round has opened
     GK_NUM
 } goreKind_t;
 
@@ -95,7 +101,8 @@ static int gore_numVariants;
 #define GORE_SKIN_FADE      120 // on skin it is there at once
 
 static const char *gore_shaderNames[GK_NUM] = {
-    "gore/wound_entry%d", "gore/wound_exit%d", "gore/wound_frag%d", "gore/wound_run", "gore/burn"
+    "gore/wound_entry%d", "gore/wound_exit%d", "gore/wound_frag%d", "gore/wound_run", "gore/burn", "gore/stump",
+    "gore/brain"
 };
 
 // A triangle of the body: which surface, and which of its vertices.
@@ -141,6 +148,26 @@ typedef struct {
     int    lightTime;
 } goreDecal_t;
 
+// The parts a man can lose, each cut off at the joint it hangs from.
+typedef enum {
+    GP_HEAD,
+    GP_L_UPPERARM,
+    GP_L_FOREARM,
+    GP_L_HAND,
+    GP_R_UPPERARM,
+    GP_R_FOREARM,
+    GP_R_HAND,
+    GP_L_THIGH,
+    GP_L_CALF,
+    GP_R_THIGH,
+    GP_R_CALF,
+    GP_NUM
+} gorePart_t;
+
+// Where a round went in, when it is not one of the parts.
+#define GORE_ZONE_NONE -1
+#define GORE_ZONE_NECK GP_NUM
+
 // The surfaces of a model, each as R_GetSkinnedMesh hands it over.
 typedef struct {
     int   numSurfs;
@@ -161,6 +188,36 @@ typedef struct {
     unsigned int poseHash;
     unsigned int poseMask;
     qboolean     dirty;
+
+    // Severing and dents (see there)
+    qboolean       gib;            // a severed part's own body
+    unsigned int   severed;        // parts gone (gorePart_t bits)
+    unsigned int   severPending;   // parts to cut off when next drawn
+    unsigned int   explodePending; // of those, the ones that go to pieces
+    unsigned int   stumpPending;   // stumps still to be given their decal
+    vec3_t         stumpAt[GP_NUM], stumpDir[GP_NUM]; // in the world, when cut
+    float          stumpCut[GP_NUM][3];               // the joint, in model space before the scale
+    // The opening each part came out of, the end of what is left (the end of
+    // a sleeve, not the shoulder joint inside it), and the way it faces, in
+    // the frame of the bone above; and how wide.
+    vec3_t         capAt[GP_NUM], capDir[GP_NUM];
+    float          capRadius[GP_NUM];
+    int            partHits[GP_NUM]; // rounds into each part of a corpse
+    goreDent_t     dents[MAX_GORE_DENTS];
+    vec3_t         dentOut[MAX_GORE_DENTS]; // the way each opens, in the head bone's frame
+    int            numDents;
+    unsigned int   dentPending; // dents whose hollow still needs its decal
+    boneOverride_t ovr[GORE_MAX_OVERRIDES];
+    int            numOvr;
+
+    // the last round into him, for the one that killed him
+    int      lastHitTime, lastHitZone, lastHitLarge;
+    vec3_t   lastHitPos, lastHitDir, lastHitExitPos;
+    qboolean lastHitExit;
+    // and the last blast near him
+    int      blastTime, blastKind;
+    float    blastNear; // 1 at the blast, 0 at the edge of its reach
+    vec3_t   blastPos;
 } goreBody_t;
 
 typedef struct {
@@ -184,11 +241,28 @@ typedef struct {
 
 typedef struct {
     qboolean active;
+    qboolean chunk; // a piece of a head, not a drop of blood
     vec3_t   p, v;
     float    size;
     int      born;
     vec3_t   light;
 } goreDrop_t;
+
+// A part cut off, flying and then lying where it fell: a copy of the body with
+// every bone but the part's folded into the joint it came away at.
+typedef struct {
+    qboolean       active;
+    int            key; // its body's entity number, GORE_GIB_KEY and up
+    int            part;
+    refEntity_t    ref;
+    boneOverride_t ovr[GORE_MAX_OVERRIDES];
+    goreDent_t     dents[MAX_GORE_DENTS];
+    vec3_t         centre; // the middle of the part, in the world
+    vec3_t         vel;
+    vec3_t         spin; // axis, at its length in degrees a second
+    int            born;
+    qboolean       resting;
+} goreGib_t;
 
 typedef struct {
     qboolean active;
@@ -205,10 +279,12 @@ static cvar_t *cg_gore_bleed;
 static cvar_t *cg_gore_pools;
 static cvar_t *cg_gore_scale;
 static cvar_t *cg_gore_debug;
+static cvar_t *cg_gore_dismember;
+static cvar_t *cg_gore_maxGibs;
 static cvar_t *com_blood_gore;
 
 static qhandle_t gore_shaders[GK_NUM][GORE_VARIANTS];
-static qhandle_t gore_dropShader, gore_splatShader, gore_poolShader;
+static qhandle_t gore_dropShader, gore_splatShader, gore_poolShader, gore_chunkShader;
 
 static goreBody_t  gore_bodies[GORE_MAX_BODIES];
 static goreDrawn_t gore_drawn[GORE_MAX_DRAWN];
@@ -220,9 +296,31 @@ static int         gore_numBlasts;
 static goreDrop_t  gore_drops[GORE_MAX_DROPS];
 static int         gore_nextDrop;
 static gorePool_t  gore_pools[GORE_MAX_POOLS];
+static goreGib_t   gore_gibs[GORE_MAX_GIBS];
 static float       gore_splatTokens;
 
 static std::map<dtiki_t *, goreLayout_t> gore_layouts;
+
+// A model's skeleton as far as cutting it goes: for each part, the bone cut
+// off at its joint (the first) and every bone that goes with it.
+typedef struct {
+    qboolean         valid;
+    dtiki_t         *tiki;
+    int              root;
+    int              numBones;
+    int              cut[GP_NUM];
+    int              parent[GP_NUM]; // the bone a part hangs from
+    std::vector<int> bones[GP_NUM];
+    unsigned int     within[GP_NUM]; // the parts that go with each
+} goreRig_t;
+
+static std::map<dtiki_t *, goreRig_t> gore_rigs;
+
+static void CG_GoreSpawnDrop(const vec3_t pos, const vec3_t vel, float size, const vec3_t light);
+static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model);
+static void CG_GoreBlastBody(goreBody_t *body);
+static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model);
+static int  CG_GoreZone(const char *bone);
 
 static skinnedVert_t gore_verts[GORE_SKIN_VERTS];
 static int           gore_tris[GORE_SKIN_TRIS * 3];
@@ -253,6 +351,8 @@ void CG_GoreInit(void)
     cg_gore_pools     = cgi.Cvar_Get("cg_gore_pools", "1", CVAR_ARCHIVE);
     cg_gore_scale     = cgi.Cvar_Get("cg_gore_scale", "1", CVAR_ARCHIVE);
     cg_gore_debug     = cgi.Cvar_Get("cg_gore_debug", "0", 0);
+    cg_gore_dismember = cgi.Cvar_Get("cg_gore_dismember", "1", CVAR_ARCHIVE);
+    cg_gore_maxGibs   = cgi.Cvar_Get("cg_gore_maxGibs", "24", CVAR_ARCHIVE);
     com_blood_gore    = cgi.Cvar_Get("com_blood", "1", 0);
 }
 
@@ -279,9 +379,12 @@ void CG_GoreClear(void)
     gore_dropShader  = cgi.R_RegisterShader("gore/drop");
     gore_splatShader = cgi.R_RegisterShader("gore/splat");
     gore_poolShader  = cgi.R_RegisterShader("gore/pool");
+    gore_chunkShader = cgi.R_RegisterShader("gore/chunk");
 
     memset(gore_drops, 0, sizeof(gore_drops));
     memset(gore_pools, 0, sizeof(gore_pools));
+    memset(gore_gibs, 0, sizeof(gore_gibs));
+    gore_rigs.clear();
     gore_layouts.clear();
     gore_numDrawn  = 0;
     gore_numHits   = 0;
@@ -346,6 +449,19 @@ static goreBody_t *CG_GoreBody(const goreDrawn_t *drawn)
     body->deathTime = cg.time;
     body->pooled    = qfalse;
     body->dirty     = qtrue;
+
+    body->gib            = qfalse;
+    body->severed        = 0;
+    body->severPending   = 0;
+    body->explodePending = 0;
+    body->stumpPending   = 0;
+
+    body->numDents       = 0;
+    body->dentPending    = 0;
+    body->numOvr         = 0;
+    body->lastHitTime    = 0;
+    body->blastTime      = 0;
+    memset(body->partHits, 0, sizeof(body->partHits));
     return body;
 }
 
@@ -371,11 +487,58 @@ void CG_GoreTransfer(int fromEntity, int toEntity)
     from->dirty     = qtrue;
 }
 
-void CG_GoreAddEntity(centity_t *cent, const refEntity_t *model, qboolean dead)
+// The body an entity has, if it is still the same man: the slot can have gone
+// to someone else, another model, or the dead man is up again (a respawn), or
+// a living one has been away too long. Notes his death when it comes.
+static goreBody_t *CG_GoreBodyFor(int key, refEntity_t *model, qboolean dead)
+{
+    goreBody_t *body = CG_GoreFindBody(key);
+
+    if (!body) {
+        return NULL;
+    }
+
+    if (body->tiki != model->tiki || (body->dead && !dead) || (!dead && cg.time - body->lastSeen > 10000)) {
+        CG_GoreFreeBody(body);
+        return NULL;
+    }
+
+    body->lastSeen = cg.time;
+    if (dead && !body->dead) {
+        body->dead      = qtrue;
+        body->deathTime = cg.time;
+
+        // what killed him
+        if (body->lastHitTime && cg.time - body->lastHitTime < 500) {
+            CG_GoreKillShot(body, model);
+        }
+        if (body->blastTime && cg.time - body->blastTime < 700) {
+            CG_GoreBlastBody(body);
+        }
+    }
+
+    return body;
+}
+
+static void CG_GoreAddEntityKey(int key, const refEntity_t *model, qboolean dead)
 {
     goreDrawn_t *drawn;
-    goreBody_t  *body;
 
+    if (gore_numDrawn >= GORE_MAX_DRAWN) {
+        return;
+    }
+
+    drawn            = &gore_drawn[gore_numDrawn++];
+    drawn->entityNum = key;
+    drawn->ref       = *model;
+    drawn->dead      = dead;
+    drawn->noDraw    = (model->renderfx & RF_THIRD_PERSON) && !cg.renderingThirdPerson ? qtrue : qfalse;
+
+    CG_GoreBodyFor(key, &drawn->ref, dead);
+}
+
+void CG_GoreAddEntity(centity_t *cent, const refEntity_t *model, qboolean dead)
+{
     if (!CG_GoreEnabled() || !model->tiki || !model->tiki->a || !model->tiki->a->bIsCharacter) {
         return;
     }
@@ -384,35 +547,7 @@ void CG_GoreAddEntity(centity_t *cent, const refEntity_t *model, qboolean dead)
         return;
     }
 
-    if (gore_numDrawn >= GORE_MAX_DRAWN) {
-        return;
-    }
-
-    drawn            = &gore_drawn[gore_numDrawn++];
-    drawn->entityNum = cent->currentState.number;
-    drawn->ref       = *model;
-    drawn->dead      = dead;
-    drawn->noDraw    = (model->renderfx & RF_THIRD_PERSON) && !cg.renderingThirdPerson ? qtrue : qfalse;
-
-    body = CG_GoreFindBody(drawn->entityNum);
-    if (!body) {
-        return;
-    }
-
-    // The slot went to someone else: another model, or the dead man is up
-    // again (a respawn), or a living one has been away too long to be the
-    // same man.
-    if (body->tiki != model->tiki || (body->dead && !dead) || (!dead && cg.time - body->lastSeen > 10000)) {
-        CG_GoreFreeBody(body);
-        return;
-    }
-
-    if (dead && !body->dead) {
-        body->deathTime = cg.time;
-    }
-
-    body->dead     = dead;
-    body->lastSeen = cg.time;
+    CG_GoreAddEntityKey(cent->currentState.number, model, dead);
 }
 
 //=============================================================
@@ -842,7 +977,7 @@ static void CG_GoreLay(
         // after the wound it comes from (CG_GoreLayRun), down the body
         decal.soakStart = cg.time;
         decal.soakTime  = (int)GoreRand(1500, 3000);
-    } else if (decal.cloth && kind != GK_BURN) {
+    } else if (decal.cloth && kind != GK_BURN && kind != GK_STUMP && kind != GK_BRAIN) {
         decal.soakStart = cg.time + (int)GoreRand(GORE_SOAK_DELAY_MIN, GORE_SOAK_DELAY_MAX);
         decal.soakTime  = (int)GoreRand(GORE_SOAK_MIN, GORE_SOAK_MAX);
     } else {
@@ -876,11 +1011,24 @@ static void CG_GoreLay(
             p[k] = gore_verts[gore_tris[i * 3 + k]].xyz;
         }
 
+        // folded away with a part that is gone
+        {
+            vec3_t e1, e2, c;
+
+            VectorSubtract(p[1], p[0], e1);
+            VectorSubtract(p[2], p[0], e2);
+            CrossProduct(e1, e2, c);
+            if (VectorLengthSquared(c) < 0.0001f) {
+                continue;
+            }
+        }
+
         // Either way round: a head or a hand often has triangles wound against
         // the rest, and leaving them out cuts holes in the decal. What faces
         // away (the far side of an arm) is kept out by the depth.
         CG_GoreTriNormal(p[0], p[1], p[2], lay->winding, nt);
-        if (fabs(DotProduct(nt, normal)) < 0.2f) {
+        // a stump or a hollow is laid over whatever is there
+        if (fabs(DotProduct(nt, normal)) < (kind == GK_BRAIN ? 0.0f : (kind == GK_STUMP ? 0.15f : 0.2f))) {
             continue;
         }
 
@@ -1214,7 +1362,1193 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
         }
     }
 
+    // For what it does to him if it kills him, or to a corpse.
+    {
+        int v = gore_tris[tr.entryTri * 3];
+
+        body->lastHitTime  = cg.time;
+        body->lastHitLarge = hit->large;
+        body->lastHitZone  = gore_verts[v].bone >= 0 ? CG_GoreZone(cgi.Tag_NameForNum(best->ref.tiki, gore_verts[v].bone))
+                                                     : GORE_ZONE_NONE;
+        VectorCopy(entry, body->lastHitPos);
+        VectorCopy(hit->dir, body->lastHitDir);
+        body->lastHitExit = tr.exitTri >= 0 ? qtrue : qfalse;
+        if (body->lastHitExit) {
+            VectorMA(ray, tr.tExit, hit->dir, body->lastHitExitPos);
+        }
+
+        if (body->dead && !body->gib) {
+            refEntity_t ref = best->ref;
+
+            CG_GoreCorpseHit(body, &ref);
+        }
+    }
+
     return qtrue;
+}
+
+// Lays a decal of kind about a point, on the triangle of the body nearest it.
+static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius)
+{
+    const goreLayout_t *lay = CG_GoreLayout(&drawn->ref);
+    float               bary[3] = {1.0f / 3, 1.0f / 3, 1.0f / 3};
+    float               bestDist = 0;
+    size_t              before = body->decals.size();
+    int                 i, best = -1;
+
+    if (!lay || !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay))) {
+        return qfalse;
+    }
+
+    for (i = 0; i < gore_numTris; i++) {
+        const float *a = gore_verts[gore_tris[i * 3 + 0]].xyz;
+        const float *b = gore_verts[gore_tris[i * 3 + 1]].xyz;
+        const float *c = gore_verts[gore_tris[i * 3 + 2]].xyz;
+        vec3_t       mid, e1, e2, n;
+        float        d;
+
+        VectorSubtract(b, a, e1);
+        VectorSubtract(c, a, e2);
+        CrossProduct(e1, e2, n);
+        if (VectorLengthSquared(n) < 0.0001f) {
+            continue; // folded away
+        }
+
+        VectorAdd(a, b, mid);
+        VectorAdd(mid, c, mid);
+        VectorScale(mid, 1.0f / 3, mid);
+        d = DistanceSquared(mid, at);
+        if (best < 0 || d < bestDist) {
+            best     = i;
+            bestDist = d;
+        }
+    }
+
+    if (best < 0) {
+        return qfalse;
+    }
+
+    CG_GoreLay(body, lay, kind, at, normal, NULL, best, bary, radius, 0);
+    return body->decals.size() > before && body->decals.back().kind == kind ? qtrue : qfalse;
+}
+
+//=============================================================
+// Severing and dents
+//=============================================================
+//
+// A part comes off by folding its bones into the joint it hangs from: each is
+// given a model space transform shrunk to nothing at that joint (bone_override,
+// as the ragdoll drives a skeleton), so the skin it carries goes to a point
+// and the skin shared with the bone above pinches into a stump. The part
+// itself flies off as a second copy of the model with the opposite done to
+// it: every bone but the part's folded into the same joint, and the part's
+// held in the pose it had.
+//
+// A head a heavy round has gone through is dented instead (goreDent_t): the
+// renderer pushes the skin about the way in and the way out back to a sphere,
+// and the hollow is given the inside of a head for a decal.
+//
+// The bones are the Biped's, by name, which every man in the game has.
+
+// %c: L or R. A name a model does not have is passed over.
+static const char *gore_handBones[] = {
+    "Bip01 %c Hand", "Bip01 %c Finger0", "Bip01 %c Finger01", "Bip01 %c Finger02", "Bip01 %c Finger1",
+    "Bip01 %c Finger11", "Bip01 %c Finger12", "Bip01 %c Finger2", "Bip01 %c Finger21", "Bip01 %c Finger22",
+    "Bip01 %c Finger3", "Bip01 %c Finger31", "Bip01 %c Finger32", "Bip01 %c Finger4", "Bip01 %c Finger41",
+    "Bip01 %c Finger42", "Bip01 %c Finger0Nub", "Bip01 %c Finger1Nub", "Bip01 %c Finger2Nub", NULL
+};
+static const char *gore_forearmBones[] = {"Bip01 %c Forearm", "Bip01 %c ForeTwist", "Bip01 %c ForeTwist1", NULL};
+// helper Relbow hangs from the right shoulder's helpers, not from the arm
+// The shoulder helpers carry the sleeve and the top of the arm on some models
+// (the shirt-sleeve ones): they go with it. The right's second is named for
+// the left.
+static const char *gore_upperarmBones[] = {
+    "Bip01 %c UpperArm", "Bip01 %c UpArmTwist", "helper %celbow", "helper %cshoulder", "helper %cshoulder01", NULL
+};
+static const char *gore_upperarmBonesR[] = {"helper Lshoulder02", NULL};
+static const char *gore_calfBones[] = {
+    "Bip01 %c Calf", "Bip01 %c Foot", "Bip01 %c Toe0", "Bip01 %c Toe0Nub", "helper %cankle", NULL
+};
+static const char *gore_thighBones[] = {"Bip01 %c Thigh", "helper %cknee", NULL};
+static const char *gore_headBones[]  = {"Bip01 Head", "eyes bone", "Bip01 HeadNub", NULL};
+
+static const char *gore_partNames[GP_NUM] = {
+    "head", "left arm", "left forearm", "left hand", "right arm", "right forearm", "right hand",
+    "left leg", "left shin", "right leg", "right shin"
+};
+
+// How wide the stump of each, in world units.
+static const float gore_stumpRadius[GP_NUM] = {4.5f, 4.0f, 3.2f, 2.4f, 4.0f, 3.2f, 2.4f, 5.0f, 4.0f, 5.0f, 4.0f};
+
+static void CG_GoreRigAdd(goreRig_t *rig, int part, const char **names, char side)
+{
+    int i;
+
+    for (i = 0; names[i]; i++) {
+        int bone = cgi.Tag_NumForName(rig->tiki, va(names[i], side, side));
+
+        if (bone < 0) {
+            continue;
+        }
+
+        if (rig->bones[part].empty()) {
+            rig->cut[part] = bone; // the first named: the bone cut off
+        }
+        rig->bones[part].push_back(bone);
+    }
+}
+
+static const goreRig_t *CG_GoreRig(dtiki_t *tiki)
+{
+    std::map<dtiki_t *, goreRig_t>::iterator it = gore_rigs.find(tiki);
+    goreRig_t                               *rig;
+    int                                      side, p, q;
+
+    if (it != gore_rigs.end()) {
+        return it->second.valid ? &it->second : NULL;
+    }
+
+    rig       = &gore_rigs[tiki];
+    rig->tiki = tiki;
+    for (p = 0; p < GP_NUM; p++) {
+        rig->cut[p] = -1;
+    }
+
+    rig->root = cgi.Tag_NumForName(tiki, "Bip01");
+    // Tag_NameForNum is NULL past the last
+    for (rig->numBones = 0, p = 0; p < TIKI_MAX_BONES; p++) {
+        if (cgi.Tag_NameForNum(tiki, p)) {
+            rig->numBones = p + 1;
+        }
+    }
+    CG_GoreRigAdd(rig, GP_HEAD, gore_headBones, ' ');
+
+    // The arm takes the forearm and hand with it, and so on down.
+    for (side = 0; side < 2; side++) {
+        char c   = side ? 'R' : 'L';
+        int  arm = side ? GP_R_UPPERARM : GP_L_UPPERARM;
+        int  leg = side ? GP_R_THIGH : GP_L_THIGH;
+
+        CG_GoreRigAdd(rig, arm + 2, gore_handBones, c);
+        CG_GoreRigAdd(rig, arm + 1, gore_forearmBones, c);
+        CG_GoreRigAdd(rig, arm + 1, gore_handBones, c);
+        CG_GoreRigAdd(rig, arm, gore_upperarmBones, c);
+        if (side) {
+            CG_GoreRigAdd(rig, arm, gore_upperarmBonesR, c);
+        }
+        CG_GoreRigAdd(rig, arm, gore_forearmBones, c);
+        CG_GoreRigAdd(rig, arm, gore_handBones, c);
+
+        CG_GoreRigAdd(rig, leg + 1, gore_calfBones, c);
+        CG_GoreRigAdd(rig, leg, gore_thighBones, c);
+        CG_GoreRigAdd(rig, leg, gore_calfBones, c);
+    }
+
+    {
+        static const char *parents[GP_NUM] = {
+            "Bip01 Neck", "Bip01 L Clavicle", "Bip01 L UpperArm", "Bip01 L Forearm", "Bip01 R Clavicle",
+            "Bip01 R UpperArm", "Bip01 R Forearm", "Bip01 Pelvis", "Bip01 L Thigh", "Bip01 Pelvis", "Bip01 R Thigh"
+        };
+
+        for (p = 0; p < GP_NUM; p++) {
+            rig->parent[p] = cgi.Tag_NumForName(tiki, parents[p]);
+        }
+    }
+
+    for (p = 0; p < GP_NUM; p++) {
+        rig->within[p] = 0;
+        for (q = 0; q < GP_NUM; q++) {
+            if (rig->cut[q] >= 0
+                && std::find(rig->bones[p].begin(), rig->bones[p].end(), rig->cut[q]) != rig->bones[p].end()) {
+                rig->within[p] |= 1u << q;
+            }
+        }
+    }
+
+    rig->valid = rig->root >= 0 && rig->cut[GP_HEAD] >= 0 ? qtrue : qfalse;
+    return rig->valid ? rig : NULL;
+}
+
+// Which part a bone belongs to, by its name.
+static int CG_GoreZone(const char *bone)
+{
+    qboolean right;
+
+    if (!bone) {
+        return GORE_ZONE_NONE;
+    }
+
+    if (Q_stristr(bone, "head") || Q_stristr(bone, "eye")) {
+        return GP_HEAD;
+    }
+    if (Q_stristr(bone, "neck")) {
+        return GORE_ZONE_NECK;
+    }
+
+    right = Q_stristr(bone, " R ") || Q_stristr(bone, "helper R") ? qtrue : qfalse;
+    if (!right && !Q_stristr(bone, " L ") && !Q_stristr(bone, "helper L")) {
+        return GORE_ZONE_NONE;
+    }
+
+    if (Q_stristr(bone, "hand") || Q_stristr(bone, "finger")) {
+        return right ? GP_R_HAND : GP_L_HAND;
+    }
+    if (Q_stristr(bone, "forearm") || Q_stristr(bone, "foretwist") || Q_stristr(bone, "elbow")) {
+        return right ? GP_R_FOREARM : GP_L_FOREARM;
+    }
+    if (Q_stristr(bone, "upperarm") || Q_stristr(bone, "uparm")) {
+        return right ? GP_R_UPPERARM : GP_L_UPPERARM;
+    }
+    if (Q_stristr(bone, "calf") || Q_stristr(bone, "foot") || Q_stristr(bone, "toe") || Q_stristr(bone, "knee")
+        || Q_stristr(bone, "ankle")) {
+        return right ? GP_R_CALF : GP_L_CALF;
+    }
+    if (Q_stristr(bone, "thigh") || Q_stristr(bone, "hip")) {
+        return right ? GP_R_THIGH : GP_L_THIGH;
+    }
+
+    return GORE_ZONE_NONE;
+}
+
+static float CG_GoreModelScale(const refEntity_t *model)
+{
+    return model->scale * (model->tiki ? model->tiki->load_scale : 1.0f);
+}
+
+// A bone as posed for model, in model space before the scale (the space of
+// bone_override and goreDent_t), and where it is in the world.
+static qboolean CG_GoreBoneFrame(refEntity_t *model, int bone, float m[4][3], vec3_t world)
+{
+    orientation_t o;
+    float         scale = CG_GoreModelScale(model);
+    int           k;
+
+    if (bone < 0 || scale <= 0) {
+        return qfalse;
+    }
+
+    o = cgi.TIKI_Orientation(model, bone);
+    if (VectorLengthSquared(o.axis[0]) < 0.25f) {
+        return qfalse; // folded already, or no such bone
+    }
+
+    for (k = 0; k < 3; k++) {
+        VectorCopy(o.axis[k], m[k]);
+        m[3][k] = o.origin[k] / scale - model->tiki->load_origin[k];
+    }
+
+    if (world) {
+        VectorCopy(model->origin, world);
+        for (k = 0; k < 3; k++) {
+            VectorMA(world, o.origin[k], model->axis[k], world);
+        }
+    }
+
+    return qtrue;
+}
+
+static void CG_GoreModelToWorldDir(const refEntity_t *model, const vec3_t in, vec3_t out)
+{
+    int k;
+
+    VectorClear(out);
+    for (k = 0; k < 3; k++) {
+        VectorMA(out, in[k], model->axis[k], out);
+    }
+}
+
+// A bone folded into point: shrunk almost to nothing rather than to nothing,
+// so no normal made from it comes out as zero over zero.
+static void CG_GoreFoldInto(boneOverride_t *ovr, int bone, const float point[3])
+{
+    int k;
+
+    memset(ovr, 0, sizeof(*ovr));
+    ovr->boneIndex = bone;
+    for (k = 0; k < 3; k++) {
+        ovr->matrix[k][k] = 0.001f;
+        ovr->matrix[3][k] = point[k];
+    }
+}
+
+//
+// Gibs
+//
+
+static void CG_GoreFreeGib(goreGib_t *gib)
+{
+    goreBody_t *body = CG_GoreFindBody(gib->key);
+
+    if (body) {
+        CG_GoreFreeBody(body);
+    }
+    gib->active = qfalse;
+}
+
+// The part as it is posed on model, thrown off at vel.
+static void CG_GoreSpawnGib(goreBody_t *from, const goreRig_t *rig, refEntity_t *model, int part, const vec3_t vel, const float cut[3])
+{
+    goreGib_t  *gib    = NULL;
+    goreGib_t  *oldest = NULL;
+    goreBody_t *body;
+    float       m[4][3];
+    vec3_t      world;
+    int         i, n, used = 0, q;
+
+    for (i = 0; i < GORE_MAX_GIBS && i < Q_max(cg_gore_maxGibs->integer, 1); i++) {
+        if (!gore_gibs[i].active) {
+            gib = &gore_gibs[i];
+            break;
+        }
+        used++;
+        if (!oldest || gore_gibs[i].born < oldest->born) {
+            oldest = &gore_gibs[i];
+        }
+    }
+
+    if (!gib) {
+        if (!oldest) {
+            return;
+        }
+        CG_GoreFreeGib(oldest);
+        gib = oldest;
+    }
+
+    memset(gib, 0, sizeof(*gib));
+    gib->key  = GORE_GIB_KEY + (int)(gib - gore_gibs);
+    gib->part = part;
+    gib->born = cg.time;
+    gib->ref  = *model;
+
+    // Everything folds into the cut but the part, held as it is. Every bone
+    // by itself: the feet are placed in model space, not from the legs, and
+    // would stay where they were if only the root were folded.
+    n = 0;
+    for (i = 0; i < rig->numBones && n < GORE_MAX_OVERRIDES; i++) {
+        if (std::find(rig->bones[part].begin(), rig->bones[part].end(), i) == rig->bones[part].end()) {
+            CG_GoreFoldInto(&gib->ovr[n++], i, cut);
+        }
+    }
+    used = n;
+    VectorClear(gib->centre);
+    for (i = 0; i < (int)rig->bones[part].size() && n < GORE_MAX_OVERRIDES; i++) {
+        int bone = rig->bones[part][i];
+
+        if (!CG_GoreBoneFrame(model, bone, m, world)) {
+            continue;
+        }
+        gib->ovr[n].boneIndex = bone;
+        memcpy(gib->ovr[n].matrix, m, sizeof(m));
+        n++;
+        VectorAdd(gib->centre, world, gib->centre);
+    }
+
+    // a smaller part of it that was gone already stays gone
+    for (q = 0; q < GP_NUM; q++) {
+        if (q == part || !(rig->within[part] & (1u << q)) || !(from->severed & (1u << q))) {
+            continue;
+        }
+        for (i = 0; i < n; i++) {
+            if (std::find(rig->bones[q].begin(), rig->bones[q].end(), gib->ovr[i].boneIndex) != rig->bones[q].end()) {
+                CG_GoreFoldInto(&gib->ovr[i], gib->ovr[i].boneIndex, from->stumpCut[q]);
+            }
+        }
+    }
+
+    if (n <= used) {
+        gib->active = qfalse;
+        return;
+    }
+
+    VectorScale(gib->centre, 1.0f / (n - used), gib->centre);
+
+    gib->ref.bone_override      = gib->ovr;
+    gib->ref.num_bone_overrides = n;
+    gib->ref.entityNumber       = ENTITYNUM_NONE;
+    gib->ref.bone_tag           = NULL;
+    gib->ref.bone_quat          = NULL;
+    gib->ref.renderfx &= ~(RF_THIRD_PERSON | RF_FIRST_PERSON | RF_DEPTHHACK | RF_FIRST_PERSON_BODY);
+    gib->ref.renderfx |= RF_LIGHTING_ORIGIN | RF_GORE_DENTS; // the folded triangles left out
+    VectorCopy(gib->centre, gib->ref.lightingOrigin);
+    gib->ref.lightingOrigin[2] += GORE_GIB_LIGHT_UP;
+    gib->ref.gore_dents     = NULL;
+    gib->ref.num_gore_dents = 0;
+
+    // a head takes its dents with it
+    if (part == GP_HEAD && from->numDents) {
+        memcpy(gib->dents, from->dents, sizeof(gib->dents));
+        gib->ref.gore_dents     = gib->dents;
+        gib->ref.num_gore_dents = from->numDents;
+        gib->ref.renderfx |= RF_GORE_DENTS;
+    }
+
+    VectorCopy(vel, gib->vel);
+    gib->spin[0] = crandom();
+    gib->spin[1] = crandom();
+    gib->spin[2] = crandom();
+    VectorNormalize(gib->spin);
+    VectorScale(gib->spin, GoreRand(250, 700), gib->spin);
+    gib->active = qtrue;
+
+    // Its own body, with the wounds it had and a stump where it came off.
+    body = CG_GoreFindBody(gib->key);
+    if (body) {
+        CG_GoreFreeBody(body);
+    }
+    {
+        goreDrawn_t drawn;
+
+        drawn.entityNum = gib->key;
+        drawn.ref       = gib->ref;
+        drawn.dead      = qtrue;
+        drawn.noDraw    = qfalse;
+        body            = CG_GoreBody(&drawn);
+    }
+    body->gib    = qtrue;
+    body->decals = from->decals;
+    body->dirty  = qtrue;
+    for (i = 0; i < (int)body->decals.size(); i++) {
+        body->decals[i].bleedUntil = Q_min(body->decals[i].bleedUntil, cg.time + 3000);
+        body->decals[i].spurtUntil = 0;
+    }
+    if (part == GP_HEAD) {
+        memcpy(body->dents, from->dents, sizeof(body->dents));
+        memcpy(body->dentOut, from->dentOut, sizeof(body->dentOut));
+        body->numDents = from->numDents;
+    }
+    VectorCopy(from->stumpAt[part], body->stumpAt[part]);
+    VectorNegate(from->stumpDir[part], body->stumpDir[part]);
+    body->stumpPending = 1u << part;
+}
+
+static void CG_GoreSpinAxis(vec3_t axis[3], const vec3_t spin, float dt)
+{
+    vec3_t dir, out;
+    float  deg = VectorLength(spin) * dt;
+    int    k;
+
+    if (deg < 0.01f) {
+        return;
+    }
+
+    VectorScale(spin, 1.0f / VectorLength(spin), dir);
+    for (k = 0; k < 3; k++) {
+        RotatePointAroundVector(out, dir, axis[k], deg);
+        VectorCopy(out, axis[k]);
+    }
+}
+
+// Flies, tumbling, and bounces to a stop.
+static void CG_GoreUpdateGib(goreGib_t *gib, float dt)
+{
+    static const vec3_t mins = {-2, -2, -2}, maxs = {2, 2, 2};
+    trace_t             tr;
+    vec3_t              next, offset, dir;
+    float               deg;
+
+    if (gib->resting || dt <= 0) {
+        return;
+    }
+
+    gib->vel[2] -= GORE_GRAVITY * dt;
+    VectorMA(gib->centre, dt, gib->vel, next);
+
+    CG_Trace(&tr, gib->centre, mins, maxs, next, ENTITYNUM_NONE, MASK_SOLID, qfalse, qfalse, "gore gib");
+    if (tr.startsolid) {
+        gib->resting = qtrue;
+        if (cg_gore_debug->integer) {
+            Com_Printf("gore: the %s starts in something at %.0f %.0f %.0f\n", gore_partNames[gib->part], gib->centre[0], gib->centre[1], gib->centre[2]);
+        }
+        return;
+    }
+
+    // Turned about its middle.
+    VectorSubtract(gib->ref.origin, gib->centre, offset);
+    deg = VectorLength(gib->spin) * dt;
+    if (deg > 0.01f) {
+        vec3_t turned;
+
+        VectorScale(gib->spin, 1.0f / VectorLength(gib->spin), dir);
+        RotatePointAroundVector(turned, dir, offset, deg);
+        VectorCopy(turned, offset);
+        CG_GoreSpinAxis(gib->ref.axis, gib->spin, dt);
+    }
+
+    VectorCopy(tr.endpos, gib->centre);
+
+    if (tr.fraction < 1.0f) {
+        float into = DotProduct(gib->vel, tr.plane.normal);
+
+        // off the surface, a little bounce, and dragged along it
+        VectorMA(gib->vel, -1.3f * into, tr.plane.normal, gib->vel);
+        VectorScale(gib->vel, 0.6f, gib->vel);
+        VectorScale(gib->spin, 0.5f, gib->spin);
+
+        if (tr.plane.normal[2] > 0.7f && VectorLength(gib->vel) < 40.0f) {
+            VectorClear(gib->vel);
+            VectorClear(gib->spin);
+            gib->resting = qtrue;
+            if (cg_gore_debug->integer) {
+                Com_Printf("gore: the %s comes to rest at %.0f %.0f %.0f\n", gore_partNames[gib->part], gib->centre[0], gib->centre[1], gib->centre[2]);
+            }
+        }
+    }
+
+    VectorAdd(gib->centre, offset, gib->ref.origin);
+    VectorCopy(gib->ref.origin, gib->ref.oldorigin);
+    VectorCopy(gib->centre, gib->ref.lightingOrigin);
+    gib->ref.lightingOrigin[2] += GORE_GIB_LIGHT_UP;
+}
+
+static void CG_GoreAddGibs(void)
+{
+    float dt = Q_max(cg.frametime * 0.001f, 0.0f);
+    int   i;
+
+    for (i = 0; i < GORE_MAX_GIBS; i++) {
+        goreGib_t *gib = &gore_gibs[i];
+
+        if (!gib->active) {
+            continue;
+        }
+
+        CG_GoreUpdateGib(gib, Q_min(dt, 0.05f));
+
+        if (Distance(gib->centre, cg.refdef.vieworg) > cg_gore_drawDist->value) {
+            continue;
+        }
+
+        cgi.R_AddRefEntityToScene(&gib->ref, ENTITYNUM_NONE);
+        CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue);
+    }
+}
+
+//
+// Cutting
+//
+
+// A burst of blood and bits of a head.
+static void CG_GoreBurst(const vec3_t pos, const vec3_t dir, const vec3_t light, int drops, int chunks)
+{
+    int i;
+
+    for (i = 0; i < drops + chunks; i++) {
+        vec3_t vel;
+
+        VectorScale(dir, GoreRand(40, 160), vel);
+        vel[0] += crandom() * 120;
+        vel[1] += crandom() * 120;
+        vel[2] += GoreRand(60, 220);
+        CG_GoreSpawnDrop(pos, vel, i < drops ? GoreRand(0.5f, 1.0f) : GoreRand(1.0f, 2.0f), light);
+        if (i >= drops) {
+            gore_drops[(gore_nextDrop + GORE_MAX_DROPS - 1) % GORE_MAX_DROPS].chunk = qtrue;
+        }
+    }
+}
+
+// Where the part comes out of what is left, measured on the body as it is
+// just before the cut: the seam, the vertices that stay on the triangles
+// that join them to the part's own. That is the end of a sleeve an arm came
+// out of, or the skin about a shoulder, and where the stump goes. Kept in the
+// frame of the bone above, as that is what it moves with.
+static void CG_GoreFindOpening(goreBody_t *body, const goreRig_t *rig, refEntity_t *model, int part, const vec3_t joint, vec3_t dir)
+{
+    const goreLayout_t *lay = CG_GoreLayout(model);
+    std::vector<char>   inPartVert, seam;
+    qboolean            inPart[TIKI_MAX_BONES];
+    float               pm[4][3], scale = CG_GoreModelScale(model);
+    float               wide = 0;
+    vec3_t              opening, raw;
+    int                 i, k, count = 0;
+
+    VectorCopy(joint, opening);
+    body->capRadius[part] = gore_stumpRadius[part] * cg_gore_scale->value;
+
+    memset(inPart, 0, sizeof(inPart));
+    for (i = 0; i < (int)rig->bones[part].size(); i++) {
+        if (rig->bones[part][i] < TIKI_MAX_BONES) {
+            inPart[rig->bones[part][i]] = qtrue;
+        }
+    }
+
+    if (lay && CG_GoreSkin(model, lay, CG_GoreVisibleMask(model, lay))) {
+        inPartVert.assign(gore_numVerts, 0);
+        seam.assign(gore_numVerts, 0);
+        for (i = 0; i < gore_numVerts; i++) {
+            int b = gore_verts[i].bone;
+
+            inPartVert[i] = b >= 0 && b < TIKI_MAX_BONES && inPart[b] ? 1 : 0;
+        }
+
+        for (i = 0; i < gore_numTris; i++) {
+            const int *t = &gore_tris[i * 3];
+            int        parts = inPartVert[t[0]] + inPartVert[t[1]] + inPartVert[t[2]];
+
+            if (parts == 0 || parts == 3) {
+                continue;
+            }
+            for (k = 0; k < 3; k++) {
+                if (!inPartVert[t[k]]) {
+                    seam[t[k]] = 1;
+                }
+            }
+        }
+
+        VectorClear(opening);
+        for (i = 0; i < gore_numVerts; i++) {
+            if (seam[i]) {
+                VectorAdd(opening, gore_verts[i].xyz, opening);
+                count++;
+            }
+        }
+
+        if (count) {
+            VectorScale(opening, 1.0f / count, opening);
+            for (i = 0; i < gore_numVerts; i++) {
+                if (seam[i]) {
+                    wide = Q_max(wide, Distance(gore_verts[i].xyz, opening));
+                }
+            }
+            body->capRadius[part] = Q_bound(2.0f, wide * 0.9f, 5.5f) * cg_gore_scale->value;
+        } else {
+            VectorCopy(joint, opening);
+        }
+    }
+
+    VectorSubtract(opening, joint, dir);
+    if (VectorNormalize(dir) < 0.5f) {
+        VectorCopy(body->lastHitDir, dir);
+    }
+
+    // into the frame of the bone above
+    if (!CG_GoreBoneFrame(model, rig->parent[part], pm, NULL) || scale <= 0) {
+        memset(pm, 0, sizeof(pm));
+        pm[0][0] = pm[1][1] = pm[2][2] = 1;
+    }
+    for (k = 0; k < 3; k++) {
+        vec3_t rel;
+
+        VectorSubtract(opening, model->origin, rel);
+        raw[k] = DotProduct(rel, model->axis[k]) / scale - model->tiki->load_origin[k];
+    }
+    VectorSubtract(raw, pm[3], raw);
+    for (k = 0; k < 3; k++) {
+        vec3_t dirModel;
+        int    j;
+
+        for (j = 0; j < 3; j++) {
+            dirModel[j] = DotProduct(dir, model->axis[j]);
+        }
+        body->capAt[part][k]  = DotProduct(raw, pm[k]);
+        body->capDir[part][k] = DotProduct(dirModel, pm[k]);
+    }
+}
+
+// Cuts a part off, on model as it is about to be drawn.
+static void CG_GoreCut(goreBody_t *body, const goreRig_t *rig, refEntity_t *model, int part)
+{
+    float  m[4][3];
+    vec3_t world, dir, vel, light;
+
+    if (rig->cut[part] < 0 || !CG_GoreBoneFrame(model, rig->cut[part], m, world)) {
+        return;
+    }
+
+    dir[0] = dir[1] = dir[2] = 0;
+    CG_GoreFindOpening(body, rig, model, part, world, dir);
+    VectorCopy(world, body->stumpAt[part]);
+    VectorCopy(dir, body->stumpDir[part]);
+    VectorCopy(m[3], body->stumpCut[part]);
+    body->stumpPending |= 1u << part;
+
+    // Thrown off by what did it: a blast, or the round.
+    if (cg.time - body->blastTime < 1000) {
+        VectorSubtract(world, body->blastPos, vel);
+        VectorNormalize(vel);
+        VectorScale(vel, GoreRand(300, 520), vel);
+        vel[2] += GoreRand(150, 300);
+    } else {
+        VectorScale(body->lastHitDir, GoreRand(110, 200), vel);
+        vel[0] += crandom() * 40;
+        vel[1] += crandom() * 40;
+        vel[2] += GoreRand(70, 150);
+    }
+
+    cgi.R_GetLightingForDecal(light, dir, world);
+    VectorScale(light, GORE_LIGHT_SCALE, light);
+
+    if (body->explodePending & (1u << part)) {
+        CG_GoreBurst(world, dir, light, 40, 14);
+    } else {
+        CG_GoreSpawnGib(body, rig, model, part, vel, m[3]);
+        CG_GoreBurst(world, dir, light, 16, 0);
+    }
+
+    body->severed |= rig->within[part] | (1u << part);
+
+    if (cg_gore_debug->integer) {
+        Com_Printf(
+            "gore: entity %d loses its %s%s\n", body->entityNum, gore_partNames[part],
+            (body->explodePending & (1u << part)) ? " (to pieces)" : ""
+        );
+    }
+}
+
+static void CG_GoreSever(goreBody_t *body, int part, qboolean toPieces)
+{
+    if (part < 0 || part >= GP_NUM || !cg_gore_dismember->integer || (body->severed & (1u << part)) || body->gib) {
+        return;
+    }
+
+    body->severPending |= 1u << part;
+    if (toPieces) {
+        body->explodePending |= 1u << part;
+    }
+}
+
+// The bones as they are drawn: the ragdoll's, if it has one, and every bone of
+// a part that is gone folded into its joint.
+static void CG_GoreApply(goreBody_t *body, refEntity_t *model)
+{
+    static const int order[GP_NUM] = {
+        GP_HEAD, GP_L_UPPERARM, GP_L_FOREARM, GP_L_HAND, GP_R_UPPERARM, GP_R_FOREARM, GP_R_HAND,
+        GP_L_THIGH, GP_L_CALF, GP_R_THIGH, GP_R_CALF
+    };
+    const goreRig_t *rig;
+    float            folded[TIKI_MAX_BONES][3];
+    qboolean         isFolded[TIKI_MAX_BONES];
+    int              i, k, p, n;
+
+    if (body->numDents && !(body->severed & (1u << GP_HEAD))) {
+        model->gore_dents     = body->dents;
+        model->num_gore_dents = body->numDents;
+        model->renderfx |= RF_GORE_DENTS;
+    }
+
+    if (!(body->severed | body->severPending)) {
+        return;
+    }
+
+    rig = CG_GoreRig(model->tiki);
+    if (!rig) {
+        body->severPending = 0;
+        return;
+    }
+
+    for (p = 0; p < GP_NUM; p++) {
+        if (body->severPending & (1u << order[p])) {
+            CG_GoreCut(body, rig, model, order[p]);
+        }
+    }
+    body->severPending   = 0;
+    body->explodePending = 0;
+
+    // Into the joint as it is now: a live man's limb goes where he moves it.
+    memset(isFolded, 0, sizeof(isFolded));
+    for (p = 0; p < GP_NUM; p++) {
+        int   part = order[p];
+        float m[4][3];
+
+        if (!(body->severed & (1u << part)) || rig->cut[part] < 0 || isFolded[rig->cut[part]]) {
+            continue;
+        }
+
+        if (CG_GoreBoneFrame(model, rig->cut[part], m, NULL)) {
+            VectorCopy(m[3], body->stumpCut[part]);
+        }
+
+        for (i = 0; i < (int)rig->bones[part].size(); i++) {
+            int bone = rig->bones[part][i];
+
+            if (bone >= 0 && bone < TIKI_MAX_BONES && !isFolded[bone]) {
+                isFolded[bone] = qtrue;
+                VectorCopy(body->stumpCut[part], folded[bone]);
+            }
+        }
+    }
+
+    n = 0;
+    for (i = 0; i < model->num_bone_overrides && model->bone_override && n < GORE_MAX_OVERRIDES; i++) {
+        int bone = model->bone_override[i].boneIndex;
+
+        if (bone >= 0 && bone < TIKI_MAX_BONES && isFolded[bone]) {
+            continue;
+        }
+        body->ovr[n++] = model->bone_override[i];
+    }
+    for (k = 0; k < TIKI_MAX_BONES && n < GORE_MAX_OVERRIDES; k++) {
+        if (isFolded[k]) {
+            CG_GoreFoldInto(&body->ovr[n++], k, folded[k]);
+        }
+    }
+
+    body->numOvr              = n;
+    model->bone_override      = body->ovr;
+    model->num_bone_overrides = n;
+    model->renderfx |= RF_GORE_DENTS; // the folded triangles left out
+    cgi.ForceUpdatePose(model);
+}
+
+qboolean CG_GoreHidesAttachment(int parentEntity, int tag)
+{
+    const goreBody_t *body;
+    const goreRig_t  *rig;
+    int               p;
+
+    if (!CG_GoreEnabled() || parentEntity < 0 || parentEntity >= ENTITYNUM_NONE) {
+        return qfalse;
+    }
+
+    body = CG_GoreFindBody(parentEntity);
+    if (!body || !body->severed || !(rig = CG_GoreRig(body->tiki))) {
+        return qfalse;
+    }
+
+    for (p = 0; p < GP_NUM; p++) {
+        if ((body->severed & (1u << p))
+            && std::find(rig->bones[p].begin(), rig->bones[p].end(), tag) != rig->bones[p].end()) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
+//
+// Dents
+//
+
+// A hollow in the head where a round went in or out: centred a little outside
+// the skin, at out, so the sphere carves into it.
+static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius)
+{
+    const goreRig_t *rig = CG_GoreRig(model->tiki);
+    float            m[4][3];
+    float            scale = CG_GoreModelScale(model);
+    vec3_t           centre, local, raw, outLocal, outModel;
+    goreDent_t      *dent;
+    int              k;
+
+    if (!rig || !cg_gore_dismember->integer || body->numDents >= MAX_GORE_DENTS || (body->severed & (1u << GP_HEAD))) {
+        return;
+    }
+
+    if (!CG_GoreBoneFrame(model, rig->cut[GP_HEAD], m, NULL) || scale <= 0) {
+        return;
+    }
+
+    // world to model space before the scale, then into the head bone's frame
+    VectorMA(at, radius * 0.45f, out, centre);
+    VectorSubtract(centre, model->origin, centre);
+    for (k = 0; k < 3; k++) {
+        raw[k] = DotProduct(centre, model->axis[k]) / scale - model->tiki->load_origin[k];
+    }
+    VectorSubtract(raw, m[3], raw);
+    for (k = 0; k < 3; k++) {
+        outModel[k] = DotProduct(out, model->axis[k]);
+    }
+    for (k = 0; k < 3; k++) {
+        local[k]    = DotProduct(raw, m[k]);
+        outLocal[k] = DotProduct(outModel, m[k]);
+    }
+
+    dent            = &body->dents[body->numDents];
+    dent->boneIndex = rig->cut[GP_HEAD];
+    VectorCopy(local, dent->offset);
+    dent->radius = radius / scale;
+    VectorCopy(outLocal, body->dentOut[body->numDents]);
+    body->dentPending |= 1u << body->numDents;
+    body->numDents++;
+    body->dirty = qtrue;
+}
+
+// What a round did that a man had his last of.
+static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model)
+{
+    float  r = random();
+    vec3_t back;
+
+    VectorNegate(body->lastHitDir, back);
+
+    switch (body->lastHitZone) {
+    case GP_HEAD:
+        if (body->lastHitLarge) {
+            if (r < 0.4f) {
+                CG_GoreSever(body, GP_HEAD, qtrue);
+            } else {
+                CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(2.5f, 3.2f));
+                if (body->lastHitExit) {
+                    CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(3.5f, 4.5f));
+                }
+            }
+        } else if (r < 0.6f) {
+            CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(1.8f, 2.4f));
+        }
+        break;
+    case GORE_ZONE_NECK:
+        if (body->lastHitLarge && r < 0.35f) {
+            CG_GoreSever(body, GP_HEAD, qfalse);
+        }
+        break;
+    case GORE_ZONE_NONE:
+        break;
+    default:
+        if ((body->lastHitLarge && r < 0.3f) || (!body->lastHitLarge && r < 0.05f)) {
+            CG_GoreSever(body, body->lastHitZone, qfalse);
+        }
+        break;
+    }
+}
+
+// A blast close by that killed him, or found him dead.
+static void CG_GoreBlastBody(goreBody_t *body)
+{
+    int   order[GP_NUM], p, cuts = 0;
+    float chance = 0.6f * body->blastNear;
+
+    for (p = 0; p < GP_NUM; p++) {
+        order[p] = p;
+    }
+    for (p = GP_NUM - 1; p > 0; p--) {
+        int j = rand() % (p + 1), t = order[p];
+
+        order[p] = order[j];
+        order[j] = t;
+    }
+
+    if (body->blastNear > 0.6f && random() < 0.4f) {
+        CG_GoreSever(body, GP_HEAD, qtrue);
+        cuts++;
+    }
+
+    for (p = 0; p < GP_NUM && cuts < 2; p++) {
+        if (order[p] != GP_HEAD && random() < chance) {
+            CG_GoreSever(body, order[p], qfalse);
+            cuts++;
+        }
+    }
+
+    body->blastTime = 0;
+}
+
+// Rounds into a corpse: a limb shot often enough comes off, and a head is
+// opened further each time a heavy round goes through it.
+static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model)
+{
+    int zone = body->lastHitZone;
+
+    if (zone < 0 || zone >= GP_NUM) {
+        return;
+    }
+
+    body->partHits[zone] += body->lastHitLarge ? 3 : 1;
+
+    if (zone == GP_HEAD) {
+        vec3_t back;
+
+        if (body->partHits[zone] >= 10) {
+            CG_GoreSever(body, GP_HEAD, qtrue);
+        } else if (body->lastHitLarge) {
+            VectorNegate(body->lastHitDir, back);
+            CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(2.2f, 3.0f));
+            if (body->lastHitExit) {
+                CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(3.0f, 4.0f));
+            }
+        }
+        return;
+    }
+
+    if (body->partHits[zone] >= 6) {
+        CG_GoreSever(body, zone, qfalse);
+    }
+}
+
+// Every entity, just before it is drawn.
+void CG_GoreModifyEntity(centity_t *cent, refEntity_t *model, qboolean dead)
+{
+    goreBody_t *body;
+
+    if (!CG_GoreEnabled() || !model->tiki || !model->tiki->a || !model->tiki->a->bIsCharacter
+        || (model->renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))) {
+        return;
+    }
+
+    body = CG_GoreBodyFor(cent->currentState.number, model, dead);
+    if (body) {
+        CG_GoreApply(body, model);
+    }
+}
+
+void CG_GoreSever_f(void)
+{
+    static const char *names[GP_NUM] = {
+        "head", "larm", "lforearm", "lhand", "rarm", "rforearm", "rhand", "lleg", "lshin", "rleg", "rshin"
+    };
+    goreDrawn_t *best     = NULL;
+    float        bestDot  = 0.5f;
+    const char  *which    = cgi.Argc() > 1 ? cgi.Argv(1) : "";
+    qboolean     toPieces = cgi.Argc() > 2 && !Q_stricmp(cgi.Argv(2), "explode") ? qtrue : qfalse;
+    goreBody_t  *body;
+    int          i, p;
+
+    // The drawn list is emptied each frame, so the body is found among the
+    // entities in front of the view instead.
+    for (i = 0; i < MAX_GENTITIES; i++) {
+        centity_t *cent = &cg_entities[i];
+        vec3_t     to;
+        float      d;
+
+        if (!cent->currentValid || i == cg.snap->ps.clientNum) {
+            continue;
+        }
+        VectorSubtract(cent->lerpOrigin, cg.refdef.vieworg, to);
+        to[2] += 40;
+        if (VectorNormalize(to) > 1500) {
+            continue;
+        }
+        d = DotProduct(to, cg.refdef.viewaxis[0]);
+        if (d > bestDot) {
+            static goreDrawn_t pick;
+            dtiki_t           *tiki = cgi.R_Model_GetHandle(cgs.model_draw[cent->currentState.modelindex]);
+
+            if (!tiki || !tiki->a || !tiki->a->bIsCharacter) {
+                continue;
+            }
+            memset(&pick, 0, sizeof(pick));
+            pick.entityNum = i;
+            pick.ref.tiki  = tiki;
+            pick.dead      = (cent->currentState.eFlags & EF_DEAD) ? qtrue : qfalse;
+            best           = &pick;
+            bestDot        = d;
+        }
+    }
+
+    if (!best) {
+        Com_Printf("gore_sever: no one in front of you\n");
+        return;
+    }
+
+    body = CG_GoreBody(best);
+    for (p = 0; p < GP_NUM; p++) {
+        if (!Q_stricmp(which, "all") || !Q_stricmp(which, names[p])) {
+            body->lastHitTime = 0;
+            VectorCopy(cg.refdef.viewaxis[0], body->lastHitDir);
+            CG_GoreSever(body, p, toPieces);
+            if (Q_stricmp(which, "all")) {
+                break;
+            }
+        }
+    }
+
+    if (p == GP_NUM && Q_stricmp(which, "all")) {
+        Com_Printf("gore_sever <head|larm|lforearm|lhand|rarm|rforearm|rhand|lleg|lshin|rleg|rshin|all> [explode]\n");
+    }
+}
+
+// Where a part's stump is now, on the body as drawn, and which way it faces.
+static qboolean CG_GoreStumpFrame(goreBody_t *body, const goreRig_t *rig, refEntity_t *ref, int part, vec3_t at, vec3_t dir)
+{
+    float  pm[4][3];
+    float  scale = CG_GoreModelScale(ref);
+    vec3_t local, dirModel;
+    int    k;
+
+    if (!CG_GoreBoneFrame(ref, rig->parent[part], pm, NULL)) {
+        return qfalse;
+    }
+
+    for (k = 0; k < 3; k++) {
+        local[k] = (pm[3][k] + body->capAt[part][0] * pm[0][k] + body->capAt[part][1] * pm[1][k]
+                    + body->capAt[part][2] * pm[2][k] + ref->tiki->load_origin[k])
+                 * scale;
+        dirModel[k] = body->capDir[part][0] * pm[0][k] + body->capDir[part][1] * pm[1][k] + body->capDir[part][2] * pm[2][k];
+    }
+
+    VectorCopy(ref->origin, at);
+    for (k = 0; k < 3; k++) {
+        VectorMA(at, local[k], ref->axis[k], at);
+    }
+    CG_GoreModelToWorldDir(ref, dirModel, dir);
+    VectorNormalize(dir);
+    return qtrue;
+}
+
+// The stumps and hollows still to be given their decals, on the body as drawn.
+static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
+{
+    const goreRig_t *rig;
+    int              p;
+
+    if (!(body->stumpPending | body->dentPending)) {
+        return;
+    }
+
+    for (p = 0; p < GP_NUM; p++) {
+        if (body->stumpPending & (1u << p)) {
+            vec3_t at, dir;
+
+            VectorCopy(body->stumpAt[p], at);
+            VectorCopy(body->stumpDir[p], dir);
+            rig = CG_GoreRig(drawn->ref.tiki);
+            if (!body->gib && rig) {
+                CG_GoreStumpFrame(body, rig, &drawn->ref, p, at, dir);
+            }
+            qboolean laid = CG_GoreLayNear(body, drawn, GK_STUMP, at, dir, body->gib ? gore_stumpRadius[p] * cg_gore_scale->value : body->capRadius[p]);
+
+            if (cg_gore_debug->integer) {
+                Com_Printf(
+                    "gore: stump of the %s on entity %d at %.0f %.0f %.0f facing %.2f %.2f %.2f, %.1f wide: %s\n",
+                    gore_partNames[p], body->entityNum, at[0], at[1], at[2], dir[0], dir[1], dir[2],
+                    body->gib ? gore_stumpRadius[p] : body->capRadius[p],
+                    laid ? va("%d pieces", (int)body->decals.back().frags.size()) : "not laid"
+                );
+            }
+            if (laid) {
+                goreDecal_t &decal = body->decals.back();
+
+                // it pumps for a while, from a man; it drips, from a part
+                decal.bleedUntil = cg.time + (body->gib ? 3000 : 9000);
+                decal.nextDrop   = cg.time;
+                if (!body->gib) {
+                    decal.spurtUntil = cg.time + (int)GoreRand(2500, 4000);
+                    decal.nextSpurt  = cg.time;
+                }
+            }
+        }
+    }
+    body->stumpPending = 0;
+
+    rig = CG_GoreRig(drawn->ref.tiki);
+    for (p = 0; p < body->numDents && rig; p++) {
+        refEntity_t ref = drawn->ref;
+        float       m[4][3];
+        vec3_t      centre, out;
+        float       scale = CG_GoreModelScale(&ref);
+        int         k;
+
+        if (!(body->dentPending & (1u << p)) || !CG_GoreBoneFrame(&ref, body->dents[p].boneIndex, m, NULL)) {
+            continue;
+        }
+
+        for (k = 0; k < 3; k++) {
+            centre[k] = (m[3][k] + body->dents[p].offset[0] * m[0][k] + body->dents[p].offset[1] * m[1][k]
+                         + body->dents[p].offset[2] * m[2][k] + ref.tiki->load_origin[k])
+                      * scale;
+            out[k] = body->dentOut[p][0] * m[0][k] + body->dentOut[p][1] * m[1][k] + body->dentOut[p][2] * m[2][k];
+        }
+        {
+            vec3_t w, wout;
+
+            VectorCopy(ref.origin, w);
+            for (k = 0; k < 3; k++) {
+                VectorMA(w, centre[k], ref.axis[k], w);
+            }
+            CG_GoreModelToWorldDir(&ref, out, wout);
+            VectorNormalize(wout);
+            CG_GoreLayNear(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.4f);
+        }
+    }
+    body->dentPending = 0;
 }
 
 // Shrapnel from a blast close by, on the side of each body facing it, and soot
@@ -1240,6 +2574,20 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
         lay = CG_GoreLayout(&d->ref);
         if (!lay || !CG_GoreSkin(&d->ref, lay, CG_GoreVisibleMask(&d->ref, lay))) {
             continue;
+        }
+
+        // close enough to take him apart, if it kills him or he is dead
+        if (dist < range * 0.5f) {
+            body            = CG_GoreBody(d);
+            body->dead      = d->dead;
+            body->blastTime = cg.time;
+            body->blastKind = blast->kind;
+            body->blastNear = 1.0f - dist / (range * 0.5f);
+            VectorCopy(blast->pos, body->blastPos);
+            if (d->dead && !body->gib) {
+                CG_GoreBlastBody(body);
+                body->blastTime = cg.time; // for which way the parts fly
+            }
         }
 
         frags = (int)((1.0f - dist / range) * 7.0f + random());
@@ -1332,6 +2680,7 @@ static void CG_GoreSpawnDrop(const vec3_t pos, const vec3_t vel, float size, con
     gore_nextDrop = (gore_nextDrop + 1) % GORE_MAX_DROPS;
 
     drop->active = qtrue;
+    drop->chunk  = qfalse;
     VectorCopy(pos, drop->p);
     VectorCopy(vel, drop->v);
     VectorCopy(light, drop->light);
@@ -1391,7 +2740,7 @@ static void CG_GoreStartPool(goreBody_t *body)
         VectorCopy(tr.endpos, pool->pos);
         VectorCopy(tr.plane.normal, pool->normal);
         pool->rot    = GoreRand(0, 360);
-        pool->radius = (12.0f + 3.0f * Q_min(wounds, 8)) * cg_gore_scale->value;
+        pool->radius = (body->gib ? 5.0f + Q_min(wounds, 4) : 12.0f + 3.0f * Q_min(wounds, 8)) * cg_gore_scale->value;
         pool->born   = cg.time;
         pool->grow   = (int)GoreRand(9000, 15000);
         return;
@@ -1471,9 +2820,11 @@ static void CG_GoreUpdateDrops(void)
 
             if (!tr.startsolid && !(tr.contents & MASK_WATER) && gore_splatTokens >= 1.0f) {
                 gore_splatTokens -= 1.0f;
+                float size = drop->size * (drop->chunk ? 2.5f : 1.0f);
+
                 CG_ImpactMark(
-                    gore_splatShader, tr.endpos, tr.plane.normal, GoreRand(0, 360), drop->size * GoreRand(1.5f, 2.6f),
-                    drop->size * GoreRand(1.5f, 2.6f), GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, 1, qfalse, qfalse, qtrue, qfalse, 0.5f, 0.5f
+                    gore_splatShader, tr.endpos, tr.plane.normal, GoreRand(0, 360), size * GoreRand(1.5f, 2.6f),
+                    size * GoreRand(1.5f, 2.6f), GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, 1, qfalse, qfalse, qtrue, qfalse, 0.5f, 0.5f
                 );
             }
             continue;
@@ -1492,7 +2843,7 @@ static void CG_GoreUpdateDrops(void)
         }
         CrossProduct(along, toView, side);
         VectorNormalize(side);
-        len = drop->size * (1.0f + speed * 0.012f);
+        len = drop->size * (1.0f + speed * (drop->chunk ? 0.002f : 0.012f));
 
         for (k = 0; k < 4; k++) {
             float a = (k == 0 || k == 3) ? -len : len;
@@ -1509,7 +2860,7 @@ static void CG_GoreUpdateDrops(void)
             verts[k].modulate[3] = 255;
         }
 
-        cgi.R_AddPolyToScene(gore_dropShader, 4, verts, 0);
+        cgi.R_AddPolyToScene(drop->chunk ? gore_chunkShader : gore_dropShader, 4, verts, 0);
     }
 }
 
@@ -1655,6 +3006,23 @@ static qboolean CG_GorePose(goreBody_t *body, const goreDrawn_t *drawn)
             }
         }
 
+        // On a part that is gone, folded to a point: nothing to draw, and no
+        // blood comes out of it.
+        if (!decal.frags.empty()) {
+            vec3_t mins, maxs;
+
+            ClearBounds(mins, maxs);
+            for (t = 0; t < (int)decal.frags.size(); t++) {
+                for (k = 0; k < decal.frags[t].numPts; k++) {
+                    AddPointToBounds(&decal.xyz[(t * GORE_FRAG_PTS + k) * 3], mins, maxs);
+                }
+            }
+            if (Distance(mins, maxs) < 0.3f) {
+                decal.hidden = qtrue;
+                continue;
+            }
+        }
+
         {
             const float *a = CG_GoreVert(&decal.anchor, 0);
             const float *b = CG_GoreVert(&decal.anchor, 1);
@@ -1755,6 +3123,9 @@ void CG_GoreAddToScene(void)
         return;
     }
 
+    // the parts that came off, among the bodies a round can find
+    CG_GoreAddGibs();
+
     // New wounds, on the bodies as they are this frame. A hit waits a little
     // for its body, which may not have been drawn yet.
     for (i = 0, j = 0; i < gore_numHits; i++) {
@@ -1777,7 +3148,7 @@ void CG_GoreAddToScene(void)
         vec3_t       toBody;
         float        d;
 
-        if (!body || body->decals.empty() || drawn->noDraw) {
+        if (!body || (body->decals.empty() && !(body->stumpPending | body->dentPending)) || drawn->noDraw) {
             continue;
         }
 
@@ -1803,6 +3174,12 @@ void CG_GoreAddToScene(void)
 
         if (!CG_GorePose(body, drawn)) {
             continue;
+        }
+
+        if (body->stumpPending | body->dentPending) {
+            CG_GoreLayPending(body, drawn);
+            body->dirty = qtrue;
+            CG_GorePose(body, drawn);
         }
 
         CG_GoreBleedBody(body);

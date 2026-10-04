@@ -1938,6 +1938,10 @@ typedef struct usercmd_s {
 // first person: fold a skeletal model's head and arms away, leaving the
 // torso and legs.
 #define RF_FIRST_PERSON_BODY		(1<<29)
+// OPM: set by cgame only, never sent by a server. The gore system has been at
+// a skeletal model: refEntity_t gore_dents holds dents to push into it
+// (goreDent_t), and triangles a cut part has folded to nothing are left out.
+#define RF_GORE_DENTS			(1<<27)
 //
 // use this mask when propagating renderfx from one entity to another
 //
@@ -1985,6 +1989,21 @@ typedef struct boneOverride_s {
     int   boneIndex; // local channel index for the entity's tiki, -1 when unused
     float matrix[4][3];
 } boneOverride_t;
+
+// Added in OPM
+//  A dent pushed into a skeletal model: the gore system's craters (a head a
+//  heavy round has gone through, cg_gore.cpp). Every vertex closer than radius
+//  to a point is pushed out to radius from it. The point is given in the frame
+//  of one bone, so the dent goes where that bone goes, and it sits about the
+//  skin: the part of the sphere inside the model becomes a hollow.
+//  Read by the renderer only from a refEntity with RF_GORE_DENTS.
+typedef struct goreDent_s {
+    int   boneIndex; // local channel index for the entity's tiki
+    float offset[3]; // in the bone's frame, model units (before the model's scale)
+    float radius;    // model units
+} goreDent_t;
+
+#define MAX_GORE_DENTS 8
 
 typedef enum {
 	TR_STATIONARY,

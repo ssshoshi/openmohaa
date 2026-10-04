@@ -1701,7 +1701,13 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     }
 
     model.reType = RT_MODEL;
-    if (!(s1->renderfx & RF_DONTDRAW)) {
+    // Added in OPM
+    //  A rifle in a hand that is gone goes with it.
+    if (!(s1->renderfx & RF_DONTDRAW) && s1->parent != ENTITYNUM_NONE
+        && CG_GoreHidesAttachment(s1->parent, s1->tag_num & TAG_MASK)) {
+        model.renderfx |= RF_DONTDRAW;
+    }
+    if (!(s1->renderfx & RF_DONTDRAW) && !(model.renderfx & RF_DONTDRAW)) {
         cgi.R_Model_GetHandle(model.hModel);
         if (VectorCompare(model.origin, vec3_origin)) {
             VectorCopy(s1->origin, model.origin);
@@ -1713,6 +1719,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         // Added in OPM
         //  A hot MG42 barrel glows: a pass over the model
         CG_MG42BarrelGlow(&model, s1);
+        // Added in OPM
+        //  The parts he has lost folded away, and his head dented.
+        CG_GoreModifyEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse);
         cgi.R_AddRefEntityToScene(&model, s1->parent);
         // Added in OPM
         CG_GoreAddEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse);

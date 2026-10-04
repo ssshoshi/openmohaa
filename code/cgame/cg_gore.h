@@ -41,6 +41,11 @@ extern "C" {
     // Every character handed to the renderer, as it was handed over. dead is
     // whether it is a corpse.
     void CG_GoreAddEntity(centity_t *cent, const refEntity_t *model, qboolean dead);
+    // Just before: folds away the parts he has lost and dents his head.
+    void CG_GoreModifyEntity(centity_t *cent, refEntity_t *model, qboolean dead);
+    // Whether an entity on parentEntity's tag goes with a part he has lost (a
+    // rifle in a hand that is gone).
+    qboolean CG_GoreHidesAttachment(int parentEntity, int tag);
 
     // A round into flesh: where, and the way it was going.
     void CG_GoreNoteHit(const vec3_t pos, const vec3_t dir, int large);
@@ -48,6 +53,10 @@ extern "C" {
 
     // A corpse taken over by another entity (CG_RagdollAdopt) keeps its wounds.
     void CG_GoreTransfer(int fromEntity, int toEntity);
+
+    // gore_sever <part|all> [explode]: cuts a part off the body nearest the
+    // middle of the view, for trying it out.
+    void CG_GoreSever_f(void);
 
     // Once a frame, after every entity: places new wounds and draws them all.
     void CG_GoreAddToScene(void);
