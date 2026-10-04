@@ -103,14 +103,14 @@ void Player::StartProne(usercmd_t *ucmd)
     m_bHoldUpmove = ucmd->upmove != 0;
 
     if (speed > run * 0.6f && (ucmd->buttons & BUTTON_RUN)) {
-        // a dive: farther from a sprint than from a run
-        bool  sprint = m_bSprinting || speed > run * 1.15f;
-        float launch = sprint ? g_dive_sprint->value : g_dive_run->value;
+        // a dive: about twice as far from a sprint as from a run
+        bool sprint = m_bSprinting || speed > run * 1.15f;
 
-        hvel *= Q_max(speed, launch) / speed;
+        hvel *= (sprint ? g_dive_sprint->value : g_dive_run->value) / speed;
 
         velocity   = hvel;
-        velocity.z = g_dive_up->value * (sprint ? 1.15f : 1.0f);
+        // Pmove keeps the player on the ground at 150 or less (PM_GroundTrace)
+        velocity.z = Q_max(sprint ? g_dive_sprint_up->value : g_dive_run_up->value, 155.0f);
 
         // make sure the player leaves the ground (as Player::Jump)
         client->ps.walking = qfalse;
@@ -241,11 +241,19 @@ void Player::UpdateStance(usercmd_t *ucmd)
         ucmd->upmove = 0;
     }
 
+    if (m_bDiving) {
+        // the dive goes where it was launched, steering would only add to it
+        ucmd->forwardmove = 0;
+        ucmd->rightmove   = 0;
+    }
+
     if (m_bProne) {
         ucmd->buttons &= ~(BUTTON_LEAN_LEFT | BUTTON_LEAN_RIGHT | BUTTON_SPRINT);
     }
 
-    wantSprint = allowed && g_sprint->integer && !m_bProne && (ucmd->buttons & BUTTON_SPRINT)
+    UpdateSprintStamina(ucmd);
+
+    wantSprint = allowed && g_sprint->integer && !m_bProne && !m_bSprintExhausted && (ucmd->buttons & BUTTON_SPRINT)
               && (ucmd->buttons & BUTTON_RUN) && !(ucmd->buttons & (BUTTON_ATTACKLEFT | BUTTON_ATTACKRIGHT | BUTTON_AIM))
               && ucmd->forwardmove > 0 && !(m_iMovePosFlags & MPF_POSITION_CROUCHING) && !IsZoomed();
 
@@ -256,6 +264,48 @@ void Player::UpdateStance(usercmd_t *ucmd)
         client->ps.pm_flags |= PMF_SPRINTING;
     } else {
         client->ps.pm_flags &= ~PMF_SPRINTING;
+    }
+}
+
+/*
+====================
+UpdateSprintStamina
+
+How long the player can sprint depends on his health: g_sprint_time seconds
+at full health, less as he is hurt, none at all below g_sprint_minhealth
+percent. Run out and he cannot sprint again until half of it has come back
+(g_sprint_recover seconds of sprint a second, while not sprinting) and the
+sprint key has been let go.
+====================
+*/
+void Player::UpdateSprintStamina(usercmd_t *ucmd)
+{
+    float dt, healthFrac, endurance;
+
+    dt = Q_clamp_float((ucmd->serverTime - client->ps.commandTime) / 1000.0f, 0.0f, 0.2f);
+
+    healthFrac = max_health > 0 ? health / max_health : 1.0f;
+    endurance  = g_sprint_time->value > 0 ? g_sprint_time->value * Q_min(1.0f, healthFrac) : 0;
+
+    if (m_bSprinting) {
+        m_fSprintUsed += dt;
+    } else {
+        m_fSprintUsed = Q_max(0.0f, m_fSprintUsed - dt * g_sprint_recover->value);
+    }
+
+    if (healthFrac * 100.0f < g_sprint_minhealth->value) {
+        // too badly hurt to sprint at all
+        m_bSprintExhausted = true;
+    } else if (g_sprint_time->value <= 0) {
+        // no limit
+        m_bSprintExhausted = false;
+        m_fSprintUsed      = 0;
+    } else if (m_fSprintUsed >= endurance) {
+        m_bSprintExhausted = true;
+    } else if (m_bSprintExhausted && m_fSprintUsed <= endurance * 0.5f && !(ucmd->buttons & BUTTON_SPRINT)) {
+        // back once half has come back and the key has been let go, so that
+        // holding it does not stutter in and out of a sprint
+        m_bSprintExhausted = false;
     }
 }
 

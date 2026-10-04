@@ -345,10 +345,14 @@ cvar_t *g_blastpush;
 cvar_t *g_prone;
 cvar_t *g_prone_speed;
 cvar_t *g_dive_run;
+cvar_t *g_dive_run_up;
 cvar_t *g_dive_sprint;
-cvar_t *g_dive_up;
+cvar_t *g_dive_sprint_up;
 cvar_t *g_sprint;
 cvar_t *g_sprint_speed;
+cvar_t *g_sprint_time;
+cvar_t *g_sprint_recover;
+cvar_t *g_sprint_minhealth;
 
 // A grenade on the ground throws its fragments up and out (RadiusDamage)
 cvar_t *g_grenade_cone;
@@ -825,14 +829,18 @@ void CVAR_Init(void)
     g_blastpush = gi.Cvar_Get("g_blastpush", "1", CVAR_ARCHIVE);
 
     g_prone            = gi.Cvar_Get("g_prone", "1", CVAR_ARCHIVE);
-    g_prone_speed      = gi.Cvar_Get("g_prone_speed", "0.3", CVAR_ARCHIVE);
-    g_dive_run         = gi.Cvar_Get("g_dive_run", "320", CVAR_ARCHIVE);
-    g_dive_sprint      = gi.Cvar_Get("g_dive_sprint", "460", CVAR_ARCHIVE);
-    g_dive_up          = gi.Cvar_Get("g_dive_up", "180", CVAR_ARCHIVE);
+    g_prone_speed      = gi.Cvar_Get("g_prone_speed", "0.3", 0);
+    g_dive_run         = gi.Cvar_Get("g_dive_run", "190", 0);
+    g_dive_run_up      = gi.Cvar_Get("g_dive_run_up", "155", 0);
+    g_dive_sprint      = gi.Cvar_Get("g_dive_sprint", "320", 0);
+    g_dive_sprint_up   = gi.Cvar_Get("g_dive_sprint_up", "180", 0);
     g_sprint           = gi.Cvar_Get("g_sprint", "1", CVAR_ARCHIVE);
-    g_sprint_speed     = gi.Cvar_Get("g_sprint_speed", "1.4", CVAR_ARCHIVE);
+    g_sprint_speed     = gi.Cvar_Get("g_sprint_speed", "1.4", 0);
+    g_sprint_time      = gi.Cvar_Get("g_sprint_time", "8", 0);
+    g_sprint_recover   = gi.Cvar_Get("g_sprint_recover", "1", 0);
+    g_sprint_minhealth = gi.Cvar_Get("g_sprint_minhealth", "25", 0);
     g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
-    g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", CVAR_ARCHIVE);
+    g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
 
     ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);

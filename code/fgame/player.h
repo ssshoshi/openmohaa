@@ -362,6 +362,8 @@ public:
     float m_fDiveTime;
     bool  m_bSprinting;
     bool  m_bHoldUpmove;
+    float m_fSprintUsed;
+    bool  m_bSprintExhausted;
     float m_fLastInvulnerableTime;
     int   m_iInvulnerableTimeRemaining;
     float m_fInvulnerableTimeElapsed;
@@ -926,6 +928,7 @@ public:
     bool        HasRoomFor(float height);
     void        UpdateStance(usercmd_t *ucmd);
     void        StartProne(usercmd_t *ucmd);
+    void        UpdateSprintStamina(usercmd_t *ucmd);
     bool        LeaveProne(bool crouch, bool force);
     void        SetProneHeight();
     float       StanceSpeed(float speed) const;
@@ -1218,6 +1221,8 @@ inline void Player::Archive(Archiver& arc)
         m_fDiveTime     = 0;
         m_bSprinting    = false;
         m_bHoldUpmove   = false;
+        m_fSprintUsed      = 0;
+        m_bSprintExhausted = false;
     }
 
     if (arc.Saving()) {

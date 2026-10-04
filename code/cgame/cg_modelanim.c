@@ -810,6 +810,32 @@ static void CG_LeanViewModelArms(refEntity_t *model, const entityState_t *s1)
 
 /*
 ======================
+CG_FirstPersonBodyHidden
+
+Added in OPM
+  The first person body is left out lying prone, where the camera sits down
+  in it, and on a mounted gun, where it gets in the way of the sights. The
+  shadow body still goes in.
+======================
+*/
+static qboolean CG_FirstPersonBodyHidden(void)
+{
+    int flags = cg.predicted_player_state.pm_flags;
+
+    if (flags & PMF_TURRET) {
+        return qtrue;
+    }
+
+    // prone alone (with PMF_DUCKED it is a crouch); a different flag in later protocols
+    if (cg_protocol < PROTOCOL_MOHTA_MIN && (flags & (PMF_DUCKED | PMF_VIEW_PRONE)) == PMF_VIEW_PRONE) {
+        return qtrue;
+    }
+
+    return qfalse;
+}
+
+/*
+======================
 CG_SprintViewModel
 
 Added in OPM
@@ -1621,7 +1647,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
                     cg.iPlayerShadowBodyTime = cg.time;
                 }
 
-                if (cg_firstPersonBody->integer) {
+                if (cg_firstPersonBody->integer && !CG_FirstPersonBodyHidden()) {
                     // drawn only through the eyes, without the head the camera
                     // sits in or the arms the view model already draws
                     refEntity_t fpsBody = body;
