@@ -79,8 +79,20 @@ typedef enum {
 } goreKind_t;
 
 // Wounds come in a few textures each, of different blood and flesh, picked at
-// random (tools/content/gore_textures.py draws them).
-#define GORE_VARIANTS 4
+// random (tools/content/gore_textures.py draws them). With the HRRTM Blood
+// Effects addon, its two blood splats make two more.
+#define GORE_VARIANTS     6
+#define GORE_OWN_VARIANTS 4
+
+static int gore_numVariants;
+
+// A round through cloth: the blood comes through it from underneath, so the
+// stain spreads out from the hole over a second or two, and only then runs.
+#define GORE_SOAK_DELAY_MIN 100
+#define GORE_SOAK_DELAY_MAX 300
+#define GORE_SOAK_MIN       1200
+#define GORE_SOAK_MAX       2200
+#define GORE_SKIN_FADE      120 // on skin it is there at once
 
 static const char *gore_shaderNames[GK_NUM] = {
     "gore/wound_entry%d", "gore/wound_exit%d", "gore/wound_frag%d", "gore/wound_run", "gore/burn"
@@ -109,6 +121,8 @@ typedef struct {
 typedef struct {
     int                     kind;
     int                     variant;
+    qboolean                cloth;
+    int                     soakStart, soakTime; // spreading out (a run: running down)
     float                   tint[3]; // each wound a little different
     int                     born;
     unsigned int            surfMask;
@@ -258,6 +272,10 @@ void CG_GoreClear(void)
             gore_shaders[i][v] = cgi.R_RegisterShader(va(gore_shaderNames[i], v + 1));
         }
     }
+    gore_numVariants = cgi.FS_ReadFile("textures/effects/blood_splat.tga", NULL, qtrue) > 0
+                         && cgi.FS_ReadFile("textures/effects/blood_splat2.tga", NULL, qtrue) > 0
+                         ? GORE_VARIANTS
+                         : GORE_OWN_VARIANTS;
     gore_dropShader  = cgi.R_RegisterShader("gore/drop");
     gore_splatShader = cgi.R_RegisterShader("gore/splat");
     gore_poolShader  = cgi.R_RegisterShader("gore/pool");
@@ -699,6 +717,27 @@ static float CG_GoreRayTri(const vec3_t start, const vec3_t dir, const float *a,
     return t;
 }
 
+// Whether a surface of the model is clothing rather than skin, by its name.
+static qboolean CG_GoreIsCloth(dtiki_t *tiki, int surf)
+{
+    static const char *skin[] = {"head", "face", "hand", "skin", "neck", "eye", "arm"};
+    const char        *name;
+    int                i;
+
+    if (!tiki || surf < 0 || surf >= tiki->num_surfaces) {
+        return qtrue;
+    }
+
+    name = tiki->surfaces[surf].name;
+    for (i = 0; i < (int)ARRAY_LEN(skin); i++) {
+        if (Q_stristr(name, skin[i])) {
+            return qfalse;
+        }
+    }
+
+    return qtrue;
+}
+
 // Cuts a fragment to the texture's square. Returns qfalse if nothing is left.
 static qboolean CG_GoreClipFrag(goreFrag_t *frag)
 {
@@ -797,7 +836,19 @@ static void CG_GoreLay(
     }
 
     decal.kind     = kind;
-    decal.variant  = rand() % GORE_VARIANTS;
+    decal.variant  = rand() % gore_numVariants;
+    decal.cloth    = CG_GoreIsCloth(body->tiki, decal.anchor.surf);
+    if (kind == GK_RUN) {
+        // after the wound it comes from (CG_GoreLayRun), down the body
+        decal.soakStart = cg.time;
+        decal.soakTime  = (int)GoreRand(1500, 3000);
+    } else if (decal.cloth && kind != GK_BURN) {
+        decal.soakStart = cg.time + (int)GoreRand(GORE_SOAK_DELAY_MIN, GORE_SOAK_DELAY_MAX);
+        decal.soakTime  = (int)GoreRand(GORE_SOAK_MIN, GORE_SOAK_MAX);
+    } else {
+        decal.soakStart = cg.time;
+        decal.soakTime  = GORE_SKIN_FADE;
+    }
     decal.born     = cg.time;
     {
         // darker or brighter, redder or browner
@@ -940,7 +991,8 @@ static void CG_GoreBleed(goreBody_t *body, const refEntity_t *ref, int anchorTri
     default:
         return;
     }
-    decal.nextDrop = cg.time + (int)GoreRand(50, 300);
+    // not before the blood has come through
+    decal.nextDrop = decal.soakStart + decal.soakTime + (int)GoreRand(50, 300);
 
     if (bone && Q_stristr(bone, "neck") && (!body->dead || cg.time - body->deathTime < 2000)) {
         decal.spurtUntil = cg.time + (int)GoreRand(4000, 6000);
@@ -951,8 +1003,9 @@ static void CG_GoreBleed(goreBody_t *body, const refEntity_t *ref, int anchorTri
     if (cg_gore_debug->integer) {
         Com_Printf("gore: centre %.1f %.1f %.1f normal %.2f %.2f %.2f, %d tris\n", decal.centre[0], decal.centre[1],
             decal.centre[2], decal.normal[0], decal.normal[1], decal.normal[2], (int)decal.frags.size());
-        Com_Printf("gore: %s wound on entity %d, bone %s%s\n",
-            kind == GK_EXIT ? "exit" : (kind == GK_FRAG ? "shrapnel" : "entry"),
+        Com_Printf("gore: %s wound on %s (surface %s), entity %d, bone %s%s\n",
+            kind == GK_EXIT ? "exit" : (kind == GK_FRAG ? "shrapnel" : "entry"), decal.cloth ? "cloth" : "skin",
+            decal.anchor.surf < body->tiki->num_surfaces ? body->tiki->surfaces[decal.anchor.surf].name : "?",
             body->entityNum,
             bone ? bone : "?",
             decal.spurtUntil ? ", pumping" : "");
@@ -968,7 +1021,19 @@ static void CG_GoreLayRun(goreBody_t *body, const goreLayout_t *lay, const vec3_
         return;
     }
 
-    CG_GoreLay(body, lay, GK_RUN, centre, normal, worldUp, tri, bary, radius, GoreRand(10, 24) * cg_gore_scale->value);
+    if (body->decals.empty()) {
+        return;
+    }
+
+    {
+        // runs once the wound it comes from has soaked through
+        int from = body->decals.back().soakStart + body->decals.back().soakTime;
+
+        CG_GoreLay(body, lay, GK_RUN, centre, normal, worldUp, tri, bary, radius, GoreRand(10, 24) * cg_gore_scale->value);
+        if (body->decals.back().kind == GK_RUN && body->decals.back().born == cg.time) {
+            body->decals.back().soakStart = from;
+        }
+    }
 }
 
 typedef struct {
@@ -1619,25 +1684,47 @@ static int CG_GoreDrawBody(goreBody_t *body, int budget)
     for (i = 0; i < (int)body->decals.size() && used < budget; i++) {
         goreDecal_t &decal = body->decals[i];
         byte         rgba[4];
-        float        fade = Q_min((cg.time - decal.born) / 120.0f, 1.0f);
+        float        f    = (float)(cg.time - decal.soakStart) / Q_max(decal.soakTime, 1);
+        float        grow, fade;
 
-        if (decal.hidden || decal.xyz.size() != decal.frags.size() * GORE_FRAG_PTS * 3) {
+        if (decal.hidden || decal.xyz.size() != decal.frags.size() * GORE_FRAG_PTS * 3 || f <= 0) {
             continue;
+        }
+
+        // Spreading, quickly and then slowing: the texture is drawn smaller
+        // about its middle (a run: from its top) and grows to its size. It is
+        // clamped and fades out inside its edge, so the stain simply spreads.
+        f = Q_min(f, 1.0f);
+        f = 1.0f - (1.0f - f) * (1.0f - f);
+        if (decal.kind == GK_RUN) {
+            grow = 0.05f + 0.95f * f;
+            fade = Q_min(f * 4.0f, 1.0f);
+        } else if (decal.soakTime > GORE_SKIN_FADE) {
+            grow = 0.15f + 0.85f * f;
+            fade = 0.4f + 0.6f * f;
+        } else {
+            grow = 1.0f;
+            fade = f;
         }
 
         for (k = 0; k < 3; k++) {
             rgba[k] = cg_gore_debug->integer > 2 ? 255
                                                   : (byte)Q_min(decal.light[k] * GORE_LIGHT_SCALE * decal.tint[k], 255.f);
         }
-        rgba[3] = (byte)(255 * Q_max(fade, 0.f));
+        rgba[3] = (byte)(255 * fade);
 
         for (t = 0; t < (int)decal.frags.size() && used < budget; t++) {
             const goreFrag_t &frag = decal.frags[t];
 
             for (k = 0; k < frag.numPts; k++) {
                 VectorCopy(&decal.xyz[(t * GORE_FRAG_PTS + k) * 3], verts[k].xyz);
-                verts[k].st[0] = frag.st[k][0];
-                verts[k].st[1] = frag.st[k][1];
+                if (decal.kind == GK_RUN) {
+                    verts[k].st[0] = frag.st[k][0];
+                    verts[k].st[1] = frag.st[k][1] / grow;
+                } else {
+                    verts[k].st[0] = 0.5f + (frag.st[k][0] - 0.5f) / grow;
+                    verts[k].st[1] = 0.5f + (frag.st[k][1] - 0.5f) / grow;
+                }
                 memcpy(verts[k].modulate, rgba, 4);
             }
 

@@ -18,10 +18,10 @@ from PIL import Image
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "content", "opm-gore", "textures", "opm_gore")
 
-HOLE = np.array([10, 1, 1], float)
-DRIED = np.array([46, 4, 3], float)
-FRESH = np.array([96, 7, 5], float)
-FLESH = np.array([120, 36, 30], float)
+# Dark, as blood is: near HRRTM's blood (about 21 2 0), a little lighter so a
+# wound still reads.
+DRIED = np.array([30, 3, 2], float)
+FRESH = np.array([58, 5, 4], float)
 SOOT = np.array([16, 13, 11], float)
 
 
@@ -100,10 +100,10 @@ def mix(a, b, t):
 # Blood and flesh, a few ways: fresh and bright, dark, clotted brown, torn pink.
 # (wet blood, dried blood, raw flesh, pale tissue)
 PALETTES = [
-    ([140, 12, 10], [70, 6, 5], [165, 45, 40], [205, 120, 105]),
-    ([92, 6, 6], [44, 4, 4], [128, 28, 26], [175, 95, 85]),
-    ([108, 22, 12], [56, 15, 8], [150, 58, 44], [200, 150, 120]),
-    ([128, 14, 16], [66, 8, 9], [185, 82, 74], [225, 160, 145]),
+    ([66, 6, 5], [34, 3, 2], [84, 22, 18], [112, 62, 54]),
+    ([46, 4, 4], [24, 2, 2], [66, 15, 13], [92, 50, 44]),
+    ([54, 12, 7], [30, 8, 4], [78, 30, 22], [108, 76, 60]),
+    ([60, 7, 8], [32, 4, 5], [92, 38, 34], [120, 82, 74]),
 ]
 
 

@@ -159,6 +159,88 @@ gore/wound_frag4
 	}
 }
 
+// With the HRRTM Blood Effects addon installed, its two blood splats are used
+// as wounds too (variants 5 and 6). They are the addon's textures, not ours:
+// the cgame uses these only when textures/effects/blood_splat.tga exists.
+
+gore/wound_entry5
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/wound_entry6
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat2.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/wound_exit5
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/wound_exit6
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat2.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/wound_frag5
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/wound_frag6
+{
+	polygonOffset
+	cull none
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat2.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
 gore/wound_run
 {
 	polygonOffset
