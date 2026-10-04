@@ -738,7 +738,8 @@ CG_PlaceFirstPersonBody
 Crouching, jumping and leaning carry the model's neck ahead of the eyes,
 which would put the camera inside the chest. The body is moved across the
 ground so its neck sits cg_firstPersonBodyOffset behind the camera, whatever
-the pose; its height is left alone so the feet stay on the ground.
+the pose; its height is left alone so the feet stay on the ground, unless the
+neck comes up to the camera (see below).
 ======================
 */
 static void CG_PlaceFirstPersonBody(refEntity_t *body)
@@ -746,6 +747,7 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
     orientation_t or;
     vec3_t        neck, forward, target, angles;
     int           tagnum, i;
+    float         drop;
 
     tagnum = cgi.Tag_NumForName(body->tiki, "Bip01 Neck");
     if (tagnum < 0) {
@@ -766,6 +768,19 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
         body->origin[i] += target[i] - neck[i];
         body->oldorigin[i] += target[i] - neck[i];
         body->lightingOrigin[i] += target[i] - neck[i];
+    }
+
+    // Added in OPM
+    //  Jumping and falling lower the eyes (jump start and duck heights) more
+    //  than the animation lowers the neck, and on stairs the smoothed view
+    //  height trails the body as it steps up: either way the camera ends up
+    //  in the chest and pieces of the body flicker into view. The body goes
+    //  down until its neck is cg_firstPersonBodyNeckGap below the camera,
+    //  about where it is standing, and is left alone otherwise.
+    drop = neck[2] - (cg.refdef.vieworg[2] - cg_firstPersonBodyNeckGap->value);
+    if (drop > 0) {
+        body->origin[2] -= drop;
+        body->oldorigin[2] -= drop;
     }
 }
 

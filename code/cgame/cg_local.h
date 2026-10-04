@@ -488,6 +488,7 @@ extern "C" {
     extern cvar_t *cg_firstPersonShadow;
     extern cvar_t *cg_firstPersonBody;
     extern cvar_t *cg_firstPersonBodyOffset;
+    extern cvar_t *cg_firstPersonBodyNeckGap;
     extern cvar_t *cg_hitmessages;
     extern cvar_t *cg_acidtrip;
     extern cvar_t *cg_hud;

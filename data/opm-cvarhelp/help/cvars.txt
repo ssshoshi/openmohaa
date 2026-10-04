@@ -76,6 +76,7 @@ cg_effect_physicsrate			code/cgame/cg_tempmodels.cpp:237	How many times per seco
 cg_effectdetail	0.2	1	code/cgame/cg_tempmodels.cpp:234	Scales how many particles effects spawn: 1 is full detail, lower values thin out smoke, sparks and debris for performance.
 cg_errordecay			code/cgame/cg_main.c:148	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
 cg_firstPersonBody	0	1	code/cgame/cg_main.c:180	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
+cg_firstPersonBodyNeckGap	-100	40	code/cgame/cg_main.c:193	How far below the camera the first person body's neck is kept: the body goes down when jumping, falling or climbing stairs would bring it up into view.
 cg_firstPersonBodyOffset			code/cgame/cg_main.c:181	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
 cg_firstPersonShadow	0	1	code/cgame/cg_main.c:179	Let your own player model cast a shadow in first person, while the model itself stays hidden.
 cg_forceModel	0	1	code/cgame/cg_main.c:177	Multiplayer: draw every player with your chosen player models (dm_playermodel / dm_playergermanmodel) instead of their own.
