@@ -21,6 +21,7 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_ghost.cpp
     ${SOURCE_DIR}/renderergl2/tr_glsl.c
     ${SOURCE_DIR}/renderergl2/tr_gputimer.c
+    ${SOURCE_DIR}/renderergl2/tr_groundcover.c
     ${SOURCE_DIR}/renderergl2/tr_image.c
     ${SOURCE_DIR}/renderergl2/tr_image_dds.c
     ${SOURCE_DIR}/renderergl2/tr_init.c

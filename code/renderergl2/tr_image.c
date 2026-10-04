@@ -2557,6 +2557,19 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 	}
 }
 
+// Added in OPM
+//  An image's pixels for the CPU, never the compressed DDS that a texture
+//  would prefer (tr_groundcover.c reads the ground's colours).
+void R_LoadImageUncompressed( const char *name, byte **pic, int *width, int *height, GLenum *picFormat )
+{
+	int numMips;
+	int saved = r_ext_compressed_textures->integer;
+
+	r_ext_compressed_textures->integer = 0;
+	R_LoadImage( name, pic, width, height, picFormat, &numMips );
+	r_ext_compressed_textures->integer = saved;
+}
+
 
 /*
 ===============

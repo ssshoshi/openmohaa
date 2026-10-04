@@ -3964,6 +3964,10 @@ void RE_LoadWorldMap( const char *name ) {
 		R_RenderMissingCubemaps();
 	}
 
+	// Added in OPM
+	//  From the file as it is, before the lightmaps went into atlases.
+	R_GroundCoverLoadWorld(fileBase, header);
+
     ri.FS_FreeFile( buffer.v );
 
 	//
@@ -4046,6 +4050,7 @@ freed world data
 void R_ClearWorld(void) {
     // Added in OPM
     R_RtFreeWorld();
+    R_GroundCoverFree();
 
     if (tr.world) {
         if (tr.world->shaders) {
