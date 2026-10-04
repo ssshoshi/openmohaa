@@ -582,6 +582,16 @@ Event EV_Player_Holster
     "Holsters all wielded weapons, or unholsters previously put away weapons",
     EV_NORMAL
 );
+// Added in OPM
+Event EV_Player_Prone
+(
+    "prone",
+    EV_CONSOLE,
+    NULL,
+    NULL,
+    "Lies down, or gets up. Moving at a run it is a dive. Single player.",
+    EV_NORMAL
+);
 Event EV_Player_SafeHolster
 (
     "safeholster",
@@ -1856,6 +1866,7 @@ CLASS_DECLARATION(Sentient, Player, "player") {
     {&EV_Player_ResetHaveItem,            &Player::ResetHaveItem                },
     {&EV_Show,                            &Player::PlayerShowModel              },
     {&EV_Player_ModifyHeight,             &Player::ModifyHeight                 },
+    {&EV_Player_Prone,                    &Player::EventProne                   },
 
     // Added in 2.40
     {&EV_Player_ModifyHeightFloat,        &Player::ModifyHeightFloat            },
@@ -2256,6 +2267,14 @@ static qboolean logfile_started = qfalse;
 
 void Player::Init(void)
 {
+    // Added in OPM
+    m_bProne        = false;
+    m_bProneRequest = false;
+    m_bDiving       = false;
+    m_fDiveTime     = 0;
+    m_bSprinting    = false;
+    m_bHoldUpmove   = false;
+
     InitClient();
     InitPhysics();
     InitPowerups();
@@ -4126,6 +4145,11 @@ void Player::ClientMove(usercmd_t *ucmd)
     for (int i = 0; i < MAX_SPEED_MULTIPLIERS; i++) {
         client->ps.speed = (int)((float)client->ps.speed * speed_multiplier[i]);
     }
+
+    // Added in OPM: crawling and sprinting
+    if (movetype != MOVETYPE_NOCLIP) {
+        client->ps.speed = (int)StanceSpeed(client->ps.speed);
+    }
     //====
 
     client->ps.gravity = sv_gravity->value * gravity;
@@ -4489,6 +4513,8 @@ usually be a couple times for each server frame.
 */
 void Player::ClientThink(void)
 {
+    bool aim_released;
+
     // sanity check the command time to prevent speedup cheating
     if (current_ucmd->serverTime > level.svsTime) {
         //
@@ -4510,6 +4536,12 @@ void Player::ClientThink(void)
     if (g_gametype->integer != GT_SINGLE_PLAYER && dm_team == TEAM_SPECTATOR && !IsSpectator()) {
         Spectator();
     }
+
+    // Added in OPM
+    //  Prone, diving and sprinting, before the command is seen by anything else
+    UpdateStance(current_ucmd);
+
+    aim_released = (buttons & BUTTON_AIM) && !(current_ucmd->buttons & BUTTON_AIM);
 
     last_ucmd = *current_ucmd;
 
@@ -4542,6 +4574,16 @@ void Player::ClientThink(void)
 
     if (!level.intermissiontime) {
         if (new_buttons & BUTTON_ATTACKRIGHT) {
+            Weapon *weapon = GetActiveWeapon(WEAPON_MAIN);
+
+            if (weapon && (weapon->GetZoom())) {
+                ToggleZoom(weapon->GetZoom());
+            }
+        }
+
+        // Added in OPM
+        //  +aim looks through a scope for as long as it is held
+        if (((new_buttons & BUTTON_AIM) && !IsZoomed()) || (aim_released && IsZoomed())) {
             Weapon *weapon = GetActiveWeapon(WEAPON_MAIN);
 
             if (weapon && (weapon->GetZoom())) {
@@ -8388,6 +8430,12 @@ void Player::ModifyHeight(Event *ev)
 {
     str height = ev->GetString(1);
 
+    if (m_bProne) {
+        // Added in OPM
+        //  Lying down: the states' heights wait until the player gets up
+        return;
+    }
+
     if (!height.icmp("stand")) {
         viewheight   = DEFAULT_VIEWHEIGHT;
         maxs.z       = MAXS_Z;
@@ -8425,6 +8473,11 @@ void Player::ModifyHeightFloat(Event *ev)
 
     height = ev->GetInteger(1);
     max_z  = ev->GetFloat(2);
+
+    // Added in OPM
+    //  A script setting the height takes over from prone
+    m_bProne  = false;
+    m_bDiving = false;
 
     viewheight = height;
 
@@ -8486,6 +8539,13 @@ void Player::SetMovePosFlags(Event *ev)
         } else if (!sParm.icmp("falling")) {
             m_iMovePosFlags |= MPF_MOVEMENT_FALLING;
         }
+    }
+
+    if (m_bProne) {
+        // Added in OPM
+        //  Lying down, whatever the legs state says
+        m_iMovePosFlags = (m_iMovePosFlags & ~(MPF_POSITION_STANDING | MPF_POSITION_CROUCHING | MPF_POSITION_OFFGROUND))
+                        | MPF_POSITION_PRONE;
     }
 }
 

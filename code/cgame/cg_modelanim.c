@@ -810,6 +810,62 @@ static void CG_LeanViewModelArms(refEntity_t *model, const entityState_t *s1)
 
 /*
 ======================
+CG_SprintViewModel
+
+Added in OPM
+  While sprinting (PMF_SPRINTING, single player only) the view weapon eases
+  down and across the body, and back up when the sprint ends. The pose is
+  vm_sprint_pitch/yaw/roll (degrees) and vm_sprint_front/side/up (units),
+  turned about a point vm_sprint_pivot units out, and reached at vm_sprint_speed.
+======================
+*/
+static void CG_SprintViewModel(refEntity_t *model)
+{
+    static float frac;
+    float        target, step;
+    vec3_t       angles, rot[3], axis[3], pivot;
+    int          i;
+
+    target = 0;
+    if (vm_sprint->integer && cgs.gametype == GT_SINGLE_PLAYER
+        && (cg.predicted_player_state.pm_flags & PMF_SPRINTING) && !cg.snap->ps.stats[STAT_INZOOM]) {
+        target = 1;
+    }
+
+    step = cg.frametime / 1000.0f * vm_sprint_speed->value;
+    if (frac < target) {
+        frac = Q_min(target, frac + step);
+    } else if (frac > target) {
+        frac = Q_max(target, frac - step);
+    }
+
+    if (frac <= 0) {
+        return;
+    }
+
+    // smooth in and out
+    step = frac * frac * (3.0f - 2.0f * frac);
+
+    VectorSet(angles, vm_sprint_pitch->value * step, vm_sprint_yaw->value * step, vm_sprint_roll->value * step);
+    AnglesToAxis(angles, rot);
+    MatrixMultiply(rot, model->axis, axis);
+
+    // turn it about where the weapon is held, not about the eye, which would
+    // swing it out of sight
+    VectorSet(pivot, vm_sprint_pivot->value, -vm_sprint_pivot->value * 0.4f, -vm_sprint_pivot->value * 0.5f);
+    for (i = 0; i < 3; i++) {
+        VectorMA(model->origin, pivot[i], model->axis[i], model->origin);
+        VectorMA(model->origin, -pivot[i], axis[i], model->origin);
+    }
+
+    VectorMA(model->origin, vm_sprint_front->value * step, model->axis[0], model->origin);
+    VectorMA(model->origin, vm_sprint_side->value * step, model->axis[1], model->origin);
+    VectorMA(model->origin, vm_sprint_up->value * step, model->axis[2], model->origin);
+    AxisCopy(axis, model->axis);
+}
+
+/*
+======================
 CG_AttachEntity
 
 Modifies the entities position and axis by the given
@@ -1689,6 +1745,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
             if (!(cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW)) {
                 if (cg.snap->ps.stats[STAT_HEALTH] > 0 && !cg_animationviewmodel->integer) {
                     CG_OffsetFirstPersonView(&model, qfalse);
+                    CG_SprintViewModel(&model);
                 }
 
                 AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);

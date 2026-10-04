@@ -1826,6 +1826,10 @@ typedef struct playerState_s {
 #define BUTTON_LEAN_LEFT_BITINDEX		4
 #define BUTTON_LEAN_RIGHT_BITINDEX		5
 #define BUTTON_TALK_BITINDEX			6			// displays talk balloon and disables actions
+// Added in OPM
+//  Bits 7 to 11 carry the weapon commands, these two are the free ones above them
+#define BUTTON_SPRINT_BITINDEX			12			// +sprint: run faster, weapon lowered
+#define BUTTON_AIM_BITINDEX				13			// +aim: down the sights (the client also clears BUTTON_RUN)
 #define BUTTON_ANY_BITINDEX				14			// any key whatsoever
 #define BUTTON_MOUSE_BITINDEX			15			// mouse move
 
@@ -1836,6 +1840,8 @@ typedef struct playerState_s {
 #define BUTTON_LEAN_LEFT       (1 << BUTTON_LEAN_LEFT_BITINDEX)
 #define BUTTON_LEAN_RIGHT      (1 << BUTTON_LEAN_RIGHT_BITINDEX)
 #define	BUTTON_TALK			   (1 << BUTTON_TALK_BITINDEX)			// displays talk balloon and disables actions
+#define BUTTON_SPRINT          (1 << BUTTON_SPRINT_BITINDEX)
+#define BUTTON_AIM             (1 << BUTTON_AIM_BITINDEX)
 #define	BUTTON_ANY			   (1 << BUTTON_ANY_BITINDEX)		   // any key whatsoever
 #define BUTTON_MOUSE           (1 << BUTTON_MOUSE_BITINDEX)
 

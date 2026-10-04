@@ -3095,6 +3095,56 @@ static void BlastPushPlayer(Player *player, const Vector& origin, float damage, 
     player->velocity += push * speed + Vector(0, 0, speed * 0.35f + 60.0f * closeness);
 }
 
+/*
+====================
+GrenadeConeScale
+
+Added in OPM
+  A grenade lying on the ground throws its fragments up and out in a cone,
+  so what is flat on the ground beside it is mostly missed: the lower the
+  target's top looks from the blast, the less it takes. Close in, even a man
+  lying down is in the cone. Airbursts hit all round.
+====================
+*/
+static float GrenadeConeScale(const Vector& origin, Entity *ent)
+{
+    // the cone's lower edge: full damage above the high angle, the least below the low one
+    static const float CONE_LOW  = 6.0f;
+    static const float CONE_HIGH = 20.0f;
+
+    trace_t trace;
+    Vector  end;
+    float   minScale;
+    float   top, dist, elevation, frac;
+
+    if (!g_grenade_cone->integer) {
+        return 1.0f;
+    }
+
+    end = origin - Vector(0, 0, 32);
+    trace = G_Trace(origin, vec_zero, vec_zero, end, (Entity *)NULL, MASK_SOLID, false, "GrenadeConeScale");
+    if (trace.fraction >= 1.0f || trace.startsolid) {
+        // in the air: no ground to shape the burst
+        return 1.0f;
+    }
+
+    top  = ent->absmax.z - trace.endpos[2];
+    dist = Vector(ent->centroid.x - origin.x, ent->centroid.y - origin.y, 0).length();
+    if (dist < 1.0f) {
+        return 1.0f;
+    }
+
+    elevation = RAD2DEG(atan2(top, dist));
+    if (elevation >= CONE_HIGH) {
+        return 1.0f;
+    }
+
+    minScale = Q_clamp_float(g_grenade_cone_min->value, 0.0f, 1.0f);
+    frac     = Q_clamp_float((elevation - CONE_LOW) / (CONE_HIGH - CONE_LOW), 0.0f, 1.0f);
+
+    return minScale + (1.0f - minScale) * frac;
+}
+
 void RadiusDamage(
     Vector   origin,
     Entity  *inflictor,
@@ -3117,6 +3167,7 @@ void RadiusDamage(
     int                 i;
     Container<Entity *> ents;
     float               entKnockback;
+    float               coneScale;
 
     if (g_showdamage->integer) {
         Com_Printf("radiusdamage");
@@ -3233,6 +3284,26 @@ void RadiusDamage(
                 points *= 0.9f;
             }
 
+            // Added in OPM
+            //  Lying flat by a grenade on the ground saves you from most of it
+            if (mod == MOD_GRENADE && ent->IsSubclassOfSentient()) {
+                coneScale = GrenadeConeScale(origin, ent);
+                points *= coneScale;
+                entKnockback *= coneScale;
+            } else {
+                coneScale = 1.0f;
+            }
+
+            if (g_showdamage->integer) {
+                Com_Printf(
+                    "radiusdamage: %s (entnum %d) %.1f points, cone %.2f\n",
+                    ent->getClassname(),
+                    ent->entnum,
+                    points,
+                    coneScale
+                );
+            }
+
             if (points > 0 && !ent->takedamage) {
                 G_PhysicsDamaged(ent, points, org, dir);
             } else if (points > 0) {
@@ -3240,7 +3311,7 @@ void RadiusDamage(
 
                 // Added in OPM
                 if (ent->IsSubclassOfPlayer()) {
-                    BlastPushPlayer(static_cast<Player *>(ent), origin, damage, radius, mod);
+                    BlastPushPlayer(static_cast<Player *>(ent), origin, damage * coneScale, radius, mod);
                 }
 
                 if (g_gametype->integer == GT_SINGLE_PLAYER && weap) {

@@ -116,6 +116,15 @@ cvar_t *vm_offset_vel_side;
 cvar_t *vm_offset_vel_up;
 cvar_t *vm_offset_upvel;
 cvar_t *vm_lean_lower;
+cvar_t *vm_sprint;
+cvar_t *vm_sprint_pitch;
+cvar_t *vm_sprint_yaw;
+cvar_t *vm_sprint_roll;
+cvar_t *vm_sprint_front;
+cvar_t *vm_sprint_side;
+cvar_t *vm_sprint_up;
+cvar_t *vm_sprint_speed;
+cvar_t *vm_sprint_pivot;
 cvar_t *voiceChat;
 cvar_t *cg_shadowscount;
 cvar_t *cg_shadowdebug;
@@ -214,6 +223,16 @@ void CG_RegisterCvars(void)
     vm_offset_vel_up              = cgi.Cvar_Get("vm_offset_vel_up", "-4.0", 0);
     vm_offset_upvel               = cgi.Cvar_Get("vm_offset_upvel", "0.0025", 0);
     vm_lean_lower                 = cgi.Cvar_Get("vm_lean_lower", "0.1", 0);
+    // Added in OPM: the view weapon's pose while sprinting (CG_SprintViewModel)
+    vm_sprint                     = cgi.Cvar_Get("vm_sprint", "1", CVAR_ARCHIVE);
+    vm_sprint_pitch               = cgi.Cvar_Get("vm_sprint_pitch", "0", 0);
+    vm_sprint_yaw                 = cgi.Cvar_Get("vm_sprint_yaw", "20", 0);
+    vm_sprint_roll                = cgi.Cvar_Get("vm_sprint_roll", "-15", 0);
+    vm_sprint_front               = cgi.Cvar_Get("vm_sprint_front", "0", 0);
+    vm_sprint_side                = cgi.Cvar_Get("vm_sprint_side", "0", 0);
+    vm_sprint_up                  = cgi.Cvar_Get("vm_sprint_up", "-1", 0);
+    vm_sprint_speed               = cgi.Cvar_Get("vm_sprint_speed", "7", 0);
+    vm_sprint_pivot               = cgi.Cvar_Get("vm_sprint_pivot", "16", 0);
     voiceChat                     = cgi.Cvar_Get("cg_voicechat", "1", 0);
 
     ui_timemessage = cgi.Cvar_Get("ui_timemessage", "", 0);

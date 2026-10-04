@@ -352,6 +352,16 @@ public:
 
     float m_fLastSprintTime;
     bool  m_bHasJumped;
+
+    // Added in OPM
+    //  Prone, diving and sprinting (player_stance.cpp). Not archived: a save
+    //  made lying down comes back prone from the height it kept.
+    bool  m_bProne;
+    bool  m_bProneRequest;
+    bool  m_bDiving;
+    float m_fDiveTime;
+    bool  m_bSprinting;
+    bool  m_bHoldUpmove;
     float m_fLastInvulnerableTime;
     int   m_iInvulnerableTimeRemaining;
     float m_fInvulnerableTimeElapsed;
@@ -908,6 +918,20 @@ public:
     // Added in 2.0
     void  TickSprint();
     float GetRunSpeed() const;
+
+    //====
+    // Added in OPM (player_stance.cpp)
+    void        EventProne(Event *ev);
+    bool        StanceAllowed() const;
+    bool        HasRoomFor(float height);
+    void        UpdateStance(usercmd_t *ucmd);
+    void        StartProne(usercmd_t *ucmd);
+    bool        LeaveProne(bool crouch, bool force);
+    void        SetProneHeight();
+    float       StanceSpeed(float speed) const;
+    const char *ProneLegAnim(const char *anim) const;
+    bool        IsProne() const;
+    //====
     void  FireWeapon(int number, firemode_t mode) override;
     void  SetInvulnerable();
     void  TickInvulnerable();
@@ -1184,6 +1208,17 @@ inline void Player::Archive(Archiver& arc)
     arc.ArchiveFloat(&m_fLastSprintTime);
     arc.ArchiveBool(&m_bHasJumped);
     //====
+
+    // Added in OPM
+    //  Prone is not archived (old saves still load), the height says it
+    if (arc.Loading()) {
+        m_bProne        = maxs.z == PRONE_MAXS_Z;
+        m_bProneRequest = false;
+        m_bDiving       = false;
+        m_fDiveTime     = 0;
+        m_bSprinting    = false;
+        m_bHoldUpmove   = false;
+    }
 
     if (arc.Saving()) {
         if (currentState_Legs) {

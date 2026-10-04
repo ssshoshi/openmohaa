@@ -519,6 +519,15 @@ extern "C" {
     extern cvar_t *vm_offset_vel_up;
     extern cvar_t *vm_offset_upvel;
     extern cvar_t *vm_lean_lower;
+    extern cvar_t *vm_sprint;
+    extern cvar_t *vm_sprint_pitch;
+    extern cvar_t *vm_sprint_yaw;
+    extern cvar_t *vm_sprint_roll;
+    extern cvar_t *vm_sprint_front;
+    extern cvar_t *vm_sprint_side;
+    extern cvar_t *vm_sprint_up;
+    extern cvar_t *vm_sprint_speed;
+    extern cvar_t *vm_sprint_pivot;
     extern cvar_t *voiceChat;
     extern cvar_t *cg_shadowscount;
     extern cvar_t *cg_shadowdebug;

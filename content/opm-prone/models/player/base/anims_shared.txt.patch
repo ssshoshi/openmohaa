@@ -1,0 +1,16 @@
+--- a/models/player/base/anims_shared.txt
++++ b/models/player/base/anims_shared.txt
+@@ -411,4 +411,13 @@
+ 	}
+ 
+ 
++
++	//========================
++	// Prone (Added in OPM: player_stance.cpp plays these on the legs)
++	//========================
++	opm_prone_idle			weapon_rifle/prone/rifle_prone_idle.skc		crossblend 0.3
++	opm_prone_forward		weapon_rifle/prone/rifle_prone_walk.skc		crossblend 0.3
++	opm_prone_back			weapon_rifle/prone/rifle_prone_walk_back.skc	crossblend 0.3
++	opm_prone_left			weapon_rifle/prone/rifle_prone_walk_left.skc	crossblend 0.3
++	opm_prone_right			weapon_rifle/prone/rifle_prone_walk_right.skc	crossblend 0.3
+ }

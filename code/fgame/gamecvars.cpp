@@ -341,6 +341,19 @@ cvar_t *g_mapaddons;
 // How hard an explosion pushes the player (RadiusDamage); 0 for not at all
 cvar_t *g_blastpush;
 
+// Prone, diving and sprinting in single player (player_stance.cpp)
+cvar_t *g_prone;
+cvar_t *g_prone_speed;
+cvar_t *g_dive_run;
+cvar_t *g_dive_sprint;
+cvar_t *g_dive_up;
+cvar_t *g_sprint;
+cvar_t *g_sprint_speed;
+
+// A grenade on the ground throws its fragments up and out (RadiusDamage)
+cvar_t *g_grenade_cone;
+cvar_t *g_grenade_cone_min;
+
 // Enemy AI improvements (see ai_enhance.h)
 cvar_t *ai_enhanced;
 cvar_t *ai_debug;
@@ -810,6 +823,16 @@ void CVAR_Init(void)
     g_mapaddons = gi.Cvar_Get("g_mapaddons", "1", CVAR_ARCHIVE);
 
     g_blastpush = gi.Cvar_Get("g_blastpush", "1", CVAR_ARCHIVE);
+
+    g_prone            = gi.Cvar_Get("g_prone", "1", CVAR_ARCHIVE);
+    g_prone_speed      = gi.Cvar_Get("g_prone_speed", "0.3", CVAR_ARCHIVE);
+    g_dive_run         = gi.Cvar_Get("g_dive_run", "320", CVAR_ARCHIVE);
+    g_dive_sprint      = gi.Cvar_Get("g_dive_sprint", "460", CVAR_ARCHIVE);
+    g_dive_up          = gi.Cvar_Get("g_dive_up", "180", CVAR_ARCHIVE);
+    g_sprint           = gi.Cvar_Get("g_sprint", "1", CVAR_ARCHIVE);
+    g_sprint_speed     = gi.Cvar_Get("g_sprint_speed", "1.4", CVAR_ARCHIVE);
+    g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
+    g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", CVAR_ARCHIVE);
 
     ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);
