@@ -148,6 +148,10 @@ typedef enum {
     SFX_OPM_EXPLOSION_SMALL,
     SFX_OPM_EXPLOSION_MEDIUM,
     SFX_OPM_EXPLOSION_LARGE,
+    //  The earth a grenade or a bazooka round throws up from soft ground
+    //  (CG_MakeExplosionEffect).
+    SFX_OPM_EARTH_GREN,
+    SFX_OPM_EARTH_BAZOOKA,
     SFX_TEST_EFFECT,
     SFX_COUNT
 } SpecialEffects;

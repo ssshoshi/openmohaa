@@ -1224,6 +1224,30 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
     VectorMA(trace.endpos, 32.0, trace.plane.normal, vEnd);
 
     iSurfType = trace.surfaceFlags & MASK_SURF_TYPE;
+
+    // OPM: earth thrown up only outdoors, never from a floor inside a
+    //  building (opm-explosions: the bases no longer carry it). Maps tag
+    //  floors and ground alike (m3l2: "rock" both), so what tells is the sky
+    //  above; built surfaces (wood, metal, carpet...) never throw earth.
+    if (!(iSurfType
+          & (SURF_WOOD | SURF_METAL | SURF_CARPET | SURF_PAPER | SURF_GRILL | SURF_GLASS | SURF_PUDDLE | SURF_FOLIAGE))
+        && (iBaseEffect == SFX_EXP_GREN_BASE || iBaseEffect == SFX_EXP_BAZOOKA_BASE)) {
+        trace_t sky;
+        vec3_t  vUp, vTop;
+
+        VectorMA(trace.endpos, 8.0, trace.plane.normal, vUp);
+        VectorCopy(vUp, vTop);
+        vTop[2] += 4096;
+        CG_Trace(&sky, vUp, vec_zero, vec_zero, vTop, ENTITYNUM_NONE, MASK_SOLID, qfalse, qtrue, "CG_MakeExplosionEffect sky");
+
+        if (sky.fraction == 1.0 || (sky.surfaceFlags & SURF_SKY)) {
+            if (iBaseEffect == SFX_EXP_GREN_BASE) {
+                sfxManager.MakeEffect_Normal(SFX_OPM_EARTH_GREN, trace.endpos, trace.plane.normal);
+            } else {
+                sfxManager.MakeEffect_Normal(SFX_OPM_EARTH_BAZOOKA, trace.endpos, trace.plane.normal);
+            }
+        }
+    }
     switch (iSurfType) {
     case SURF_FOLIAGE:
         iSurfEffect = SFX_EXP_GREN_FOLIAGE;
