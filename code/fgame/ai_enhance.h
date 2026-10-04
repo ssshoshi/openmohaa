@@ -37,3 +37,9 @@ inline bool AI_Enhanced(const cvar_t *feature)
 
 // Logs an AI decision when ai_debug is set (for testing).
 void AI_Debug(const char *fmt, ...);
+
+class Entity;
+
+// A grenade (or other explosive) thrown by owner went off at pos, for
+// ai_rush (actor_maneuver.cpp).
+void AI_GrenadeWentOff(Entity *owner, const float *pos);

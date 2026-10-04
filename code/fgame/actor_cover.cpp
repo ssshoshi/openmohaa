@@ -649,6 +649,15 @@ void Actor::Think_Cover(void)
             }
         }
 
+        // OPM: a flank, rush or advance of his own (actor_maneuver.cpp)
+        if (Maneuver_Think()) {
+            if (!CheckForTransition(THINKSTATE_GRENADE, THINKLEVEL_IDLE)) {
+                CheckForTransition(THINKSTATE_BADPLACE, THINKLEVEL_IDLE);
+            }
+            PostThink(true);
+            return;
+        }
+
         switch (m_State) {
         case ACTOR_STATE_COVER_START:
             m_pszDebugState = "NewEnemy";

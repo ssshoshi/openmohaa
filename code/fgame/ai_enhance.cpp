@@ -39,5 +39,44 @@ void AI_Debug(const char *fmt, ...)
     Q_vsnprintf(text, sizeof(text), fmt, args);
     va_end(args);
 
-    gi.Printf("ai t=%.2f: %s\n", level.time, text);
+    // The same line (numbers aside) again within 2 s is counted, not
+    // printed: some checks run every frame.
+    {
+        static struct {
+            unsigned hash;
+            int      time;
+            int      skipped;
+        } recent[256];
+        unsigned    hash = 5381;
+        const char *p;
+        int         slot;
+
+        // Numbers are left out, but not digits in a name ("probe2", "ai1_0").
+        bool inName = false;
+        for (p = text; *p; p++) {
+            bool digit = (*p >= '0' && *p <= '9');
+
+            if (!inName && (digit || *p == '.' || *p == '-')) {
+                continue;
+            }
+            inName = Q_isalpha(*p) || *p == '_' || (inName && digit);
+            hash   = hash * 33 + (unsigned char)*p;
+        }
+
+        slot = hash & 255;
+        if (recent[slot].hash == hash && level.inttime >= recent[slot].time
+            && level.inttime < recent[slot].time + 2000) {
+            recent[slot].skipped++;
+            return;
+        }
+
+        if (recent[slot].hash == hash && recent[slot].skipped) {
+            gi.Printf("ai t=%.2f: %s (x%d more)\n", level.time, text, recent[slot].skipped);
+        } else {
+            gi.Printf("ai t=%.2f: %s\n", level.time, text);
+        }
+        recent[slot].hash    = hash;
+        recent[slot].time    = level.inttime;
+        recent[slot].skipped = 0;
+    }
 }

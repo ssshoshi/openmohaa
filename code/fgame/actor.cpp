@@ -2776,6 +2776,27 @@ Actor::Actor()
     m_pFallPath     = NULL;
     m_iOriginTime   = -1;
 
+    // OPM: the enemy AI's own state is not saved, so it starts afresh on a
+    //  load too (the rest is read from the save).
+    m_iOPMLastGrenadeTime      = 0;
+    m_bOPMGrenadeAmmoSet       = false;
+    m_iOPMDefaultGrenades      = 0;
+    m_iOPMNextArcSearchTime    = 0;
+    m_iOPMHoldGrenadeTime      = 0;
+    m_bOPMGrenadeTarget        = false;
+    m_bOPMSmokeThrow           = false;
+    m_iOPMLastSmokeTime        = 0;
+    m_iOPMNextSmokeCheck       = 0;
+    m_eOPMManeuver             = 0;
+    m_bOPMManeuverDirect       = false;
+    m_iOPMManeuverStart        = 0;
+    m_iOPMManeuverEnd          = 0;
+    m_iOPMManeuverProgressTime = 0;
+    m_iOPMNextFlankCheck       = 0;
+    m_iOPMLastFlankTime        = 0;
+    m_iOPMNextRushTime         = 0;
+    m_iOPMSmokeAdvanceTime     = 0;
+
     if (LoadingSavegame) {
         return;
     }
@@ -2969,15 +2990,6 @@ Actor::Actor()
     m_fMaxShareDistSquared = 0;
     m_iRunHomeTime         = 0;
     m_iSuppressChance      = AI_Enhanced(ai_suppress) ? ai_suppress_chance->integer : 50;
-    m_iOPMLastGrenadeTime  = 0;
-    m_bOPMGrenadeAmmoSet   = false;
-    m_iOPMDefaultGrenades   = 0;
-    m_iOPMNextArcSearchTime = 0;
-    m_iOPMHoldGrenadeTime   = 0;
-    m_bOPMGrenadeTarget     = false;
-    m_bOPMSmokeThrow        = false;
-    m_iOPMLastSmokeTime     = 0;
-    m_iOPMNextSmokeCheck    = 0;
 
     m_bBreathSteam = false;
 
@@ -3240,7 +3252,10 @@ void Actor::GetMoveInfo(mmove_t *mm)
 
     switch (m_eAnimMode) {
     case ANIM_MODE_DEST:
-        if (!mm->hit_temp_obstacle && mm->hit_obstacle) {
+        if (!mm->hit_temp_obstacle && mm->hit_obstacle && Maneuver_BlockedDirect()) {
+            // OPM: his own straight run (actor_maneuver.cpp) gives up instead
+            AI_Debug("%s is blocked on his straight run", TargetName().c_str());
+        } else if (!mm->hit_temp_obstacle && mm->hit_obstacle) {
             trace = G_Trace(
                 m_Dest,
                 PLAYER_BASE_MIN,
@@ -10692,6 +10707,12 @@ void Actor::HoldGrenade(void)
         return;
     }
 
+    // The squad's cooldown starts now, not when it leaves his hand: a squad
+    // that sees the enemy at the same moment would otherwise all throw.
+    if (!m_bOPMSmokeThrow) {
+        m_iOPMLastGrenadeTime = level.inttime;
+    }
+
     ev = new Event(EV_AttachModel);
     ev->AddString(OPM_HELD_GRENADE_MODEL);
     ev->AddString(OPM_HELD_GRENADE_TAG);
@@ -11091,6 +11112,8 @@ void Actor::Grenade_EventFire(Event *ev)
         m_bOPMSmokeThrow = false;
         ProjectileAttack(pos, dir, this, OPM_SMOKE_GRENADE_MODEL, 0, speed);
         AI_Debug("%s lets go of the smoke grenade", TargetName().c_str());
+        // ... and his squad moves up under it (ai_smoke_advance)
+        Maneuver_SquadSmokeThrown(m_vOPMGrenadeTarget);
         return;
     }
 
@@ -12179,6 +12202,12 @@ void Actor::EventMoveDir(Event *ev)
             vDir[2] = 0;
         } else if (PathExists() && !PathComplete()) {
             VectorCopy2D(PathDelta(), vDir);
+            VectorNormalize2D(vDir);
+            vDir[2] = 0;
+        } else if (m_eOPMManeuver && m_bOPMManeuverDirect && m_eAnimMode == ANIM_MODE_DEST) {
+            // OPM: his own straight run (actor_maneuver.cpp) has no path:
+            //  the run scripts that blend by direction would not start.
+            VectorSub2D(m_Dest, origin, vDir);
             VectorNormalize2D(vDir);
             vDir[2] = 0;
         }

@@ -814,6 +814,21 @@ public:
     bool m_bOPMSmokeThrow;
     int  m_iOPMLastSmokeTime;
     int  m_iOPMNextSmokeCheck;
+    // OPM: a move of his own in the middle of a fight (ai_flank, ai_rush,
+    //  ai_smoke_advance; see actor_maneuver.cpp). Not saved: a load ends it.
+    int    m_eOPMManeuver;
+    Vector m_vOPMManeuverDest;
+    bool   m_bOPMManeuverDirect;
+    int    m_iOPMManeuverStart;
+    int    m_iOPMManeuverEnd;
+    Vector m_vOPMManeuverLastPos;
+    int    m_iOPMManeuverProgressTime;
+    int    m_iOPMNextFlankCheck;
+    int    m_iOPMLastFlankTime;
+    int    m_iOPMNextRushTime;
+    // OPM: when he is to advance under his squad's smoke, and where it is.
+    int    m_iOPMSmokeAdvanceTime;
+    Vector m_vOPMSmokeAdvancePos;
     /* used for turret actot to run back to home Turret_SelectState() */
     int m_iRunHomeTime;
     /* no cover path for initial turret state */
@@ -1038,6 +1053,20 @@ public:
     void          State_Turret_Shoot(void);             // Added in 2.0
     void          State_Turret_Retarget_Suppress(void); // Added in 2.0
     bool          CanSuppressEnemy(void);               // OPM: shared by turret and cover
+    // OPM: flanking, rushing and advancing under smoke (actor_maneuver.cpp)
+    bool          Maneuver_Think(void);
+    void          Maneuver_End(const char *reason);
+    bool          Maneuver_Start(int eManeuver, const Vector& vDest, int iMaxTime);
+    bool          Maneuver_Route(const Vector& vDest, bool *pbDirect);
+    bool          Maneuver_DirectRouteClear(const Vector& vFrom, const Vector& vTo);
+    bool          Maneuver_GroundAt(const Vector& vPos, Vector *pvGround);
+    bool          Maneuver_InLeash(const Vector& vPos) const;
+    bool          Maneuver_CanStart(void);
+    bool          Maneuver_DecideToFlank(void);
+    bool          Maneuver_DecideToRush(void);
+    bool          Maneuver_DecideToAdvance(void);
+    void          Maneuver_SquadSmokeThrown(const Vector& vSmoke);
+    bool          Maneuver_BlockedDirect(void);
     void          State_Turret_Retarget_Sniper_Node(void);
     void          State_Turret_Retarget_Step_Side_Small(void);
     void          State_Turret_Retarget_Path_Exact(void);
