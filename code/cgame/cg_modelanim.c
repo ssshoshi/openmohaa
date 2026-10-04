@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_gore.h"
 #include "cg_orch.h"
 #include "../corepp/tiki.h"
 
@@ -1713,6 +1714,8 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         //  A hot MG42 barrel glows: a pass over the model
         CG_MG42BarrelGlow(&model, s1);
         cgi.R_AddRefEntityToScene(&model, s1->parent);
+        // Added in OPM
+        CG_GoreAddEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse);
 
         if (bShadowAttach) {
             refEntity_t shadowModel = model;
