@@ -78,8 +78,12 @@ typedef enum {
     GK_NUM
 } goreKind_t;
 
+// Wounds come in a few textures each, of different blood and flesh, picked at
+// random (tools/content/gore_textures.py draws them).
+#define GORE_VARIANTS 4
+
 static const char *gore_shaderNames[GK_NUM] = {
-    "gore/wound_entry", "gore/wound_exit", "gore/wound_frag", "gore/wound_run", "gore/burn"
+    "gore/wound_entry%d", "gore/wound_exit%d", "gore/wound_frag%d", "gore/wound_run", "gore/burn"
 };
 
 // A triangle of the body: which surface, and which of its vertices.
@@ -104,6 +108,8 @@ typedef struct {
 
 typedef struct {
     int                     kind;
+    int                     variant;
+    float                   tint[3]; // each wound a little different
     int                     born;
     unsigned int            surfMask;
     std::vector<goreFrag_t> frags;
@@ -187,7 +193,7 @@ static cvar_t *cg_gore_scale;
 static cvar_t *cg_gore_debug;
 static cvar_t *com_blood_gore;
 
-static qhandle_t gore_shaders[GK_NUM];
+static qhandle_t gore_shaders[GK_NUM][GORE_VARIANTS];
 static qhandle_t gore_dropShader, gore_splatShader, gore_poolShader;
 
 static goreBody_t  gore_bodies[GORE_MAX_BODIES];
@@ -246,7 +252,11 @@ void CG_GoreClear(void)
     }
 
     for (i = 0; i < GK_NUM; i++) {
-        gore_shaders[i] = cgi.R_RegisterShader(gore_shaderNames[i]);
+        int v;
+
+        for (v = 0; v < GORE_VARIANTS; v++) {
+            gore_shaders[i][v] = cgi.R_RegisterShader(va(gore_shaderNames[i], v + 1));
+        }
     }
     gore_dropShader  = cgi.R_RegisterShader("gore/drop");
     gore_splatShader = cgi.R_RegisterShader("gore/splat");
@@ -787,7 +797,16 @@ static void CG_GoreLay(
     }
 
     decal.kind     = kind;
+    decal.variant  = rand() % GORE_VARIANTS;
     decal.born     = cg.time;
+    {
+        // darker or brighter, redder or browner
+        float shade = GoreRand(0.8f, 1.15f);
+
+        decal.tint[0] = shade;
+        decal.tint[1] = shade * GoreRand(0.85f, 1.15f);
+        decal.tint[2] = shade * GoreRand(0.85f, 1.1f);
+    }
     decal.surfMask = 0;
     decal.hidden   = qfalse;
     VectorCopy(bary, decal.bary);
@@ -1607,7 +1626,8 @@ static int CG_GoreDrawBody(goreBody_t *body, int budget)
         }
 
         for (k = 0; k < 3; k++) {
-            rgba[k] = cg_gore_debug->integer > 2 ? 255 : (byte)Q_min(decal.light[k] * GORE_LIGHT_SCALE, 255.f);
+            rgba[k] = cg_gore_debug->integer > 2 ? 255
+                                                  : (byte)Q_min(decal.light[k] * GORE_LIGHT_SCALE * decal.tint[k], 255.f);
         }
         rgba[3] = (byte)(255 * Q_max(fade, 0.f));
 
@@ -1621,7 +1641,7 @@ static int CG_GoreDrawBody(goreBody_t *body, int budget)
                 memcpy(verts[k].modulate, rgba, 4);
             }
 
-            cgi.R_AddPolyToScene(gore_shaders[decal.kind], frag.numPts, verts, 0);
+            cgi.R_AddPolyToScene(gore_shaders[decal.kind][decal.variant], frag.numPts, verts, 0);
             used++;
         }
     }

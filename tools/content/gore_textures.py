@@ -97,20 +97,39 @@ def mix(a, b, t):
     return a * (1 - t) + b * t
 
 
-def wound(rng, size, hole, rim, stain, jag, spatter, flesh):
-    """A bullet wound: a dark hole, a raw rim and the cloth soaked round it."""
+# Blood and flesh, a few ways: fresh and bright, dark, clotted brown, torn pink.
+# (wet blood, dried blood, raw flesh, pale tissue)
+PALETTES = [
+    ([140, 12, 10], [70, 6, 5], [165, 45, 40], [205, 120, 105]),
+    ([92, 6, 6], [44, 4, 4], [128, 28, 26], [175, 95, 85]),
+    ([108, 22, 12], [56, 15, 8], [150, 58, 44], [200, 150, 120]),
+    ([128, 14, 16], [66, 8, 9], [185, 82, 74], [225, 160, 145]),
+]
+
+
+def wound(rng, size, palette, meat, stain, jag, spatter, tissue):
+    """A bullet wound: torn, wet flesh in the middle, no hole to see into, and
+    the cloth soaked round it."""
+    wet, dried, flesh, pale = (np.array(c, float)[None, None] for c in palette)
     r, ang = polar((size, size))
     n = noise(rng, (size, size), 4)
+    fine = noise(rng, (size, size), 12, 3)
     rr = r / ragged(rng, ang, 9, jag)
     soak = rr / (stain * (0.75 + 0.5 * n))
 
     alpha = smooth(1.0, 0.55, soak) * 0.92
-    alpha = np.maximum(alpha, smooth(rim * 1.1, rim * 0.9, rr))
+    alpha = np.maximum(alpha, smooth(meat * 1.15, meat * 0.85, rr))
     alpha = np.maximum(alpha, dots(rng, (size, size), spatter, 0.02, 0.06, (stain * 0.9, 0.9)) * 0.9)
 
-    rgb = mix(FRESH[None, None], DRIED[None, None], soak * 1.1 - 0.15 + (n - 0.5) * 0.6)
-    rgb = mix(rgb, FLESH[None, None], smooth(rim, hole, rr) * flesh * (0.6 + 0.6 * n))
-    rgb = mix(rgb, HOLE[None, None], smooth(hole * 1.15, hole * 0.8, rr))
+    rgb = mix(wet, dried, soak * 1.1 - 0.15 + (n - 0.5) * 0.6)
+    # the torn middle: mottled flesh, wet blood pooled in its folds, and a
+    # little pale tissue showing
+    inside = smooth(meat, meat * 0.6, rr)
+    torn = mix(flesh, wet * 0.8, smooth(0.45, 0.65, fine))
+    torn = mix(torn, pale, smooth(0.78, 0.9, fine) * tissue)
+    rgb = mix(rgb, torn, inside)
+    # the edge of the tear, darker and glistening by turns
+    rgb = mix(rgb, wet * 0.6, smooth(meat * 0.7, meat, rr) * smooth(meat * 1.3, meat, rr) * 0.7)
     return rgb, alpha
 
 
@@ -139,17 +158,25 @@ def run(rng, w, h):
     return rgb, alpha
 
 
+VARIANTS = 4
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=1944)
     rng = np.random.default_rng(ap.parse_args().seed)
 
-    # entry: a neat hole, little torn
-    save("wound_entry.tga", *wound(rng, 128, hole=0.17, rim=0.27, stain=0.62, jag=0.18, spatter=5, flesh=0.5))
-    # exit: torn open, flesh showing, and more thrown about it
-    save("wound_exit.tga", *wound(rng, 128, hole=0.24, rim=0.4, stain=0.8, jag=0.55, spatter=12, flesh=1.0))
-    # shrapnel: small, ragged
-    save("wound_frag.tga", *wound(rng, 64, hole=0.16, rim=0.3, stain=0.7, jag=0.6, spatter=3, flesh=0.8))
+    # Several of each, the cgame picks one at random (cg_gore.cpp GORE_VARIANTS).
+    for v in range(VARIANTS):
+        pal = PALETTES[v % len(PALETTES)]
+        # entry: small and fairly neat
+        save(f"wound_entry{v + 1}.tga", *wound(rng, 128, pal, meat=0.2 + 0.05 * rng.random(), stain=0.55 + 0.15 * rng.random(),
+                                              jag=0.15 + 0.2 * rng.random(), spatter=int(3 + 5 * rng.random()), tissue=0.3))
+        # exit: torn open, more flesh, more thrown about it
+        save(f"wound_exit{v + 1}.tga", *wound(rng, 128, pal, meat=0.32 + 0.1 * rng.random(), stain=0.75 + 0.15 * rng.random(),
+                                             jag=0.45 + 0.25 * rng.random(), spatter=int(8 + 8 * rng.random()), tissue=1.0))
+        # shrapnel: small, ragged
+        save(f"wound_frag{v + 1}.tga", *wound(rng, 64, pal, meat=0.25, stain=0.7, jag=0.6, spatter=3, tissue=0.6))
     save("wound_run.tga", *run(rng, 64, 256), round_=False)
 
     # soot from a blast close by
