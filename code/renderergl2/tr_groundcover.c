@@ -1023,13 +1023,15 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
     gcBuildTuft_t tufts[GC_MAX_TUFTS_CELL];
     int           numTufts = 0;
     int           r, n, attempts;
+    int           numAccepted = 0;
+    unsigned int  pick = GC_Hash(cellIndex * 2654435761u + 7u);
 
     cell->built     = qtrue;
     cell->nextBuilt = gc.builtList;
     gc.builtList    = cell;
     gc.numBuilt++;
 
-    for (r = 0; r < cell->numRefs && numTufts < GC_MAX_TUFTS_CELL; r++) {
+    for (r = 0; r < cell->numRefs; r++) {
         int          ref  = gc.refs[cell->firstRef + r];
         int          type = ref >> 28;
         int          index = ref & 0x0fffffff;
@@ -1051,7 +1053,7 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
         w        = (x1 - x0) * (y1 - y0) * density * 2.0f;
         attempts = (int)w + (GC_Rand(&rnd) < w - (int)w ? 1 : 0);
 
-        for (n = 0; n < attempts && numTufts < GC_MAX_TUFTS_CELL; n++) {
+        for (n = 0; n < attempts; n++) {
             gcSample_t     sample;
             gcBuildTuft_t *bt;
             gcTuft_t      *tuft;
@@ -1076,7 +1078,19 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
             }
             gc_kept++;
 
-            bt   = &tufts[numTufts];
+            // A cell holds GC_MAX_TUFTS_CELL. Past that, each tuft that
+            // stands replaces a kept one by chance, so every source keeps
+            // its share however many come before it.
+            numAccepted++;
+            if (numTufts < GC_MAX_TUFTS_CELL) {
+                bt = &tufts[numTufts++];
+            } else {
+                int slot = (int)(GC_Rand(&pick) * numAccepted);
+                if (slot >= GC_MAX_TUFTS_CELL) {
+                    continue;
+                }
+                bt = &tufts[slot];
+            }
             tuft = &bt->tuft;
             VectorCopy(sample.xyz, tuft->root);
             tuft->root[2] -= 1.5f; // into the ground, so no gap shows on a slope
@@ -1089,7 +1103,6 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
             bt->color[0] *= sample.tint[0];
             bt->color[1] *= sample.tint[1];
             bt->color[2] *= sample.tint[2];
-            numTufts++;
         }
     }
 
