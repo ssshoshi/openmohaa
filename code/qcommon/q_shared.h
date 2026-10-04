@@ -1992,14 +1992,16 @@ typedef struct boneOverride_s {
 
 // Added in OPM
 //  A dent pushed into a skeletal model: the gore system's craters (a head a
-//  heavy round has gone through, cg_gore.cpp). Every vertex closer than radius
-//  to a point is pushed out to radius from it. The point is given in the frame
-//  of one bone, so the dent goes where that bone goes, and it sits about the
-//  skin: the part of the sphere inside the model becomes a hollow.
+//  heavy round has gone through, cg_gore.cpp). A sphere sits about the skin,
+//  its middle just outside, and every vertex inside it is pushed straight in,
+//  against dir, to its far side: the part of the sphere inside the model
+//  becomes a hollow, and nothing about it is pushed out sideways. The sphere
+//  is given in the frame of one bone, so the dent goes where that bone goes.
 //  Read by the renderer only from a refEntity with RF_GORE_DENTS.
 typedef struct goreDent_s {
     int   boneIndex; // local channel index for the entity's tiki
     float offset[3]; // in the bone's frame, model units (before the model's scale)
+    float dir[3];    // out of the hollow, in the bone's frame
     float radius;    // model units
 } goreDent_t;
 

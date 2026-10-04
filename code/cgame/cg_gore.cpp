@@ -173,7 +173,13 @@ typedef struct {
     int   numSurfs;
     int   numVerts[MAX_MODEL_SURFACES];
     int   numTris[MAX_MODEL_SURFACES];
+    int   firstVert[MAX_MODEL_SURFACES]; // in the whole mesh
     float winding; // turns a triangle's (b - a) x (c - a) outward
+
+    // The vertex each one is welded to, in the whole mesh: the skin is cut
+    // along texture seams into vertices that sit on one another, and they
+    // must share a normal or a decal parts along the seam.
+    std::vector<int> weld;
 } goreLayout_t;
 
 typedef struct {
@@ -297,6 +303,7 @@ static goreDrop_t  gore_drops[GORE_MAX_DROPS];
 static int         gore_nextDrop;
 static gorePool_t  gore_pools[GORE_MAX_POOLS];
 static goreGib_t   gore_gibs[GORE_MAX_GIBS];
+static int         gore_testHeadshots; // gore_sever headshot: the next round into a head dents it
 static float       gore_splatTokens;
 
 static std::map<dtiki_t *, goreLayout_t> gore_layouts;
@@ -321,6 +328,7 @@ static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model);
 static void CG_GoreBlastBody(goreBody_t *body);
 static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model);
 static int  CG_GoreZone(const char *bone);
+static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius);
 
 static skinnedVert_t gore_verts[GORE_SKIN_VERTS];
 static int           gore_tris[GORE_SKIN_TRIS * 3];
@@ -582,7 +590,12 @@ static const goreLayout_t *CG_GoreLayout(const refEntity_t *model)
     }
 
     lay = &gore_layouts[model->tiki];
-    memset(lay, 0, sizeof(*lay));
+    lay->numSurfs = 0;
+    lay->winding  = 1.0f;
+    lay->weld.clear();
+    memset(lay->numVerts, 0, sizeof(lay->numVerts));
+    memset(lay->numTris, 0, sizeof(lay->numTris));
+    memset(lay->firstVert, 0, sizeof(lay->firstVert));
 
     ent   = *model;
     total = 0;
@@ -608,6 +621,31 @@ static const goreLayout_t *CG_GoreLayout(const refEntity_t *model)
     if (!n || n != total) {
         lay->numSurfs = 0;
         return NULL;
+    }
+
+    {
+        std::map<long long, int> seen;
+        int                      first = 0, surf;
+
+        for (surf = 0; surf < MAX_MODEL_SURFACES; surf++) {
+            lay->firstVert[surf] = first;
+            first += lay->numVerts[surf];
+        }
+
+        lay->weld.resize(n);
+        for (k = 0; k < n; k++) {
+            const float *v   = gore_verts[k].xyz;
+            long long    key = ((long long)floorf(v[0] * 100.0f) * 73856093LL) ^ ((long long)floorf(v[1] * 100.0f) * 19349663LL)
+                          ^ ((long long)floorf(v[2] * 100.0f) * 83492791LL);
+            std::map<long long, int>::iterator found = seen.find(key);
+
+            if (found == seen.end()) {
+                seen[key]    = k;
+                lay->weld[k] = k;
+            } else {
+                lay->weld[k] = found->second;
+            }
+        }
     }
 
     // Outward is the way most of the surface faces away from the middle.
@@ -718,6 +756,20 @@ static const float *CG_GoreVert(const goreTri_t *tri, int k)
     return gore_verts[gore_vertOfs[tri->surf] + tri->v[k]].xyz;
 }
 
+// The surface a vertex of the whole mesh is on.
+static int CG_GoreSurfaceOf(const goreLayout_t *lay, int vert)
+{
+    int surf;
+
+    for (surf = 0; surf < lay->numSurfs; surf++) {
+        if (vert >= lay->firstVert[surf] && vert < lay->firstVert[surf] + lay->numVerts[surf]) {
+            return surf;
+        }
+    }
+
+    return -1;
+}
+
 // A normal for every vertex in the scratch buffer, the average of the
 // triangles about it. A decal is lifted off the skin along these: lifted along
 // each triangle's own, neighbouring pieces part at every crease.
@@ -738,6 +790,50 @@ static void CG_GoreSmoothNormals(const goreLayout_t *lay)
 
         for (k = 0; k < 3; k++) {
             VectorAdd(gore_normals[t[k]], n, gore_normals[t[k]]);
+        }
+    }
+
+    // Seam vertices take the sum of their welded group: gathered on the one
+    // they are welded to (when its surface was skinned too), then handed back.
+    {
+        int surf, l;
+
+        for (surf = 0; surf < lay->numSurfs; surf++) {
+            if (gore_vertOfs[surf] < 0) {
+                continue;
+            }
+            for (l = 0; l < lay->numVerts[surf]; l++) {
+                int full = lay->firstVert[surf] + l;
+                int to, toSurf, sub;
+
+                if (full >= (int)lay->weld.size() || (to = lay->weld[full]) == full) {
+                    continue;
+                }
+                toSurf = CG_GoreSurfaceOf(lay, to);
+                if (toSurf < 0 || gore_vertOfs[toSurf] < 0) {
+                    continue;
+                }
+                sub = gore_vertOfs[toSurf] + (to - lay->firstVert[toSurf]);
+                VectorAdd(gore_normals[sub], gore_normals[gore_vertOfs[surf] + l], gore_normals[sub]);
+            }
+        }
+
+        for (surf = 0; surf < lay->numSurfs; surf++) {
+            if (gore_vertOfs[surf] < 0) {
+                continue;
+            }
+            for (l = 0; l < lay->numVerts[surf]; l++) {
+                int full = lay->firstVert[surf] + l;
+                int to, toSurf;
+
+                if (full >= (int)lay->weld.size() || (to = lay->weld[full]) == full) {
+                    continue;
+                }
+                toSurf = CG_GoreSurfaceOf(lay, to);
+                if (toSurf >= 0 && gore_vertOfs[toSurf] >= 0) {
+                    VectorCopy(gore_normals[gore_vertOfs[toSurf] + (to - lay->firstVert[toSurf])], gore_normals[gore_vertOfs[surf] + l]);
+                }
+            }
         }
     }
 
@@ -1381,6 +1477,16 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
             refEntity_t ref = best->ref;
 
             CG_GoreCorpseHit(body, &ref);
+        } else if (gore_testHeadshots > 0 && body->lastHitZone == GP_HEAD) {
+            refEntity_t ref = best->ref;
+            vec3_t      back;
+
+            gore_testHeadshots--;
+            VectorNegate(body->lastHitDir, back);
+            CG_GoreDent(body, &ref, body->lastHitPos, back, GoreRand(2.0f, 2.6f));
+            if (body->lastHitExit) {
+                CG_GoreDent(body, &ref, body->lastHitExitPos, body->lastHitDir, GoreRand(2.8f, 3.4f));
+            }
         }
     }
 
@@ -2255,6 +2361,8 @@ static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, c
     dent            = &body->dents[body->numDents];
     dent->boneIndex = rig->cut[GP_HEAD];
     VectorCopy(local, dent->offset);
+    VectorCopy(outLocal, dent->dir);
+    VectorNormalize(dent->dir);
     dent->radius = radius / scale;
     VectorCopy(outLocal, body->dentOut[body->numDents]);
     body->dentPending |= 1u << body->numDents;
@@ -2276,9 +2384,9 @@ static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model)
             if (r < 0.4f) {
                 CG_GoreSever(body, GP_HEAD, qtrue);
             } else {
-                CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(2.5f, 3.2f));
+                CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(2.0f, 2.6f));
                 if (body->lastHitExit) {
-                    CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(3.5f, 4.5f));
+                    CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(2.8f, 3.4f));
                 }
             }
         } else if (r < 0.6f) {
@@ -2350,9 +2458,9 @@ static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model)
             CG_GoreSever(body, GP_HEAD, qtrue);
         } else if (body->lastHitLarge) {
             VectorNegate(body->lastHitDir, back);
-            CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(2.2f, 3.0f));
+            CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(1.9f, 2.5f));
             if (body->lastHitExit) {
-                CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(3.0f, 4.0f));
+                CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(2.6f, 3.2f));
             }
         }
         return;
@@ -2428,6 +2536,21 @@ void CG_GoreSever_f(void)
         return;
     }
 
+    if (!Q_stricmp(which, "headshot")) {
+        // a heavy round through the head, along the view, as if it killed him
+        centity_t *cent = &cg_entities[best->entityNum];
+        vec3_t     pos, dir;
+
+        VectorCopy(cent->lerpOrigin, pos);
+        pos[2] += 86; // about the middle of a standing man's head
+        VectorSubtract(pos, cg.refdef.vieworg, dir);
+        VectorNormalize(dir);
+        VectorMA(pos, -4, dir, pos);
+        gore_testHeadshots++;
+        CG_GoreNoteHit(pos, dir, 1);
+        return;
+    }
+
     body = CG_GoreBody(best);
     for (p = 0; p < GP_NUM; p++) {
         if (!Q_stricmp(which, "all") || !Q_stricmp(which, names[p])) {
@@ -2441,7 +2564,7 @@ void CG_GoreSever_f(void)
     }
 
     if (p == GP_NUM && Q_stricmp(which, "all")) {
-        Com_Printf("gore_sever <head|larm|lforearm|lhand|rarm|rforearm|rhand|lleg|lshin|rleg|rshin|all> [explode]\n");
+        Com_Printf("gore_sever <head|larm|lforearm|lhand|rarm|rforearm|rhand|lleg|lshin|rleg|rshin|all> [explode], or headshot\n");
     }
 }
 
@@ -2545,7 +2668,7 @@ static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
             }
             CG_GoreModelToWorldDir(&ref, out, wout);
             VectorNormalize(wout);
-            CG_GoreLayNear(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.4f);
+            CG_GoreLayNear(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.15f);
         }
     }
     body->dentPending = 0;

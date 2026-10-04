@@ -1133,14 +1133,15 @@ inline static void SkelWeightMorphGetXyz(skelWeight_t *weight, skelBoneCache_t *
 // Added in OPM
 //  The dents of RF_GORE_DENTS (R_GoreDents), pushed into one vertex in model
 //  space before the scale, for RE_GetSkinnedMesh to hand over the mesh as drawn.
+static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, float *xyz, vec3_t normal);
+
 static void R_GoreDentSkinned(const refEntity_t *model, const skelAnimFrame_t *frame, int numBones, vec3_t local)
 {
     int i, k;
 
     for (i = 0; i < model->num_gore_dents && i < MAX_GORE_DENTS; i++) {
         const goreDent_t *dent = &model->gore_dents[i];
-        vec3_t            centre, d;
-        float             dist;
+        vec3_t            centre, dir, normal;
 
         if (dent->boneIndex < 0 || dent->boneIndex >= numBones || dent->radius <= 0) {
             continue;
@@ -1150,13 +1151,12 @@ static void R_GoreDentSkinned(const refEntity_t *model, const skelAnimFrame_t *f
             centre[k] = dent->offset[0] * frame->bones[dent->boneIndex][0][k]
                       + dent->offset[1] * frame->bones[dent->boneIndex][1][k]
                       + dent->offset[2] * frame->bones[dent->boneIndex][2][k] + frame->bones[dent->boneIndex][3][k];
+            dir[k] = dent->dir[0] * frame->bones[dent->boneIndex][0][k] + dent->dir[1] * frame->bones[dent->boneIndex][1][k]
+                   + dent->dir[2] * frame->bones[dent->boneIndex][2][k];
         }
+        VectorNormalize(dir);
 
-        VectorSubtract(local, centre, d);
-        dist = VectorLength(d);
-        if (dist < dent->radius && dist > 0.0001f) {
-            VectorMA(centre, dent->radius / dist, d, local);
-        }
+        R_GoreDentVertex(centre, dir, dent->radius, local, normal);
     }
 }
 
@@ -1311,7 +1311,7 @@ dent's middle than its radius goes out to the radius, and faces back towards
 the middle, the inside of the hollow. See goreDent_t.
 =============
 */
-static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones, int numBones, float scale, int i, vec3_t centre, float *radius)
+static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones, int numBones, float scale, int i, vec3_t centre, vec3_t dir, float *radius)
 {
     const goreDent_t      *dent = &e->gore_dents[i];
     const skelBoneCache_t *bone;
@@ -1327,24 +1327,34 @@ static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones,
         centre[k] = (dent->offset[0] * bone->matrix[0][k] + dent->offset[1] * bone->matrix[1][k]
                      + dent->offset[2] * bone->matrix[2][k] + bone->offset[k])
                   * scale;
+        dir[k] = dent->dir[0] * bone->matrix[0][k] + dent->dir[1] * bone->matrix[1][k] + dent->dir[2] * bone->matrix[2][k];
     }
+    VectorNormalize(dir);
     *radius = dent->radius * scale;
 }
 
-static qboolean R_GoreDentVertex(const vec3_t centre, float radius, float *xyz, vec3_t normal)
+// Pushes a vertex inside the sphere straight in, against dir, to the sphere's
+// far side; the normal there faces back out of the hollow.
+static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, float *xyz, vec3_t normal)
 {
     vec3_t d;
-    float  dist;
+    float  along, across2, floor;
 
     VectorSubtract(xyz, centre, d);
-    dist = VectorLength(d);
-    if (dist >= radius || dist < 0.0001f) {
+    along   = DotProduct(d, dir);
+    across2 = DotProduct(d, d) - along * along;
+    if (across2 >= radius * radius) {
         return qfalse;
     }
 
-    VectorScale(d, 1.0f / dist, d);
-    VectorMA(centre, radius, d, xyz);
-    VectorNegate(d, normal);
+    floor = -sqrt(radius * radius - across2);
+    if (along <= floor) {
+        return qfalse; // behind the hollow already
+    }
+
+    VectorMA(xyz, floor - along, dir, xyz);
+    VectorSubtract(centre, xyz, normal);
+    VectorNormalize(normal);
     return qtrue;
 }
 
@@ -1358,16 +1368,16 @@ static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, floa
 
     numBones = ri.TIKI_GetNumChannels(e->tiki);
     for (i = 0; i < e->num_gore_dents && i < MAX_GORE_DENTS; i++) {
-        vec3_t centre, normal;
+        vec3_t centre, dir, normal;
         float  radius;
 
-        R_GoreDentCentre(e, bones, numBones, scale, i, centre, &radius);
+        R_GoreDentCentre(e, bones, numBones, scale, i, centre, dir, &radius);
         if (radius <= 0) {
             continue;
         }
 
         for (v = first; v < first + count; v++) {
-            if (R_GoreDentVertex(centre, radius, tess.xyz[v], normal)) {
+            if (R_GoreDentVertex(centre, dir, radius, tess.xyz[v], normal)) {
                 VectorCopy(normal, tess.normal[v]);
             }
         }

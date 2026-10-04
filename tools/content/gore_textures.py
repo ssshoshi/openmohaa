@@ -191,17 +191,19 @@ def main():
     rgb = mix(rgb, np.array([40, 30, 22], float)[None, None], bone * smooth(0.12, 0.06, r))  # the marrow
     save("stump.tga", rgb, smooth(1.0, 0.75, rr) * 0.97)
 
-    # the inside of a head: grey-pink folds, bits of skull, and blood
+    # the inside of a head: grey-pink matter in lumps, dark blood in between,
+    # and the broken edge of the skull about the rim
     r, ang = polar((128, 128))
-    folds = noise(rng, (128, 128), 10, 2)
-    folds = np.abs(np.sin(folds * 18.0))
-    n = noise(rng, (128, 128), 5)
-    rr = r / ragged(rng, ang, 10, 0.5)
-    rgb = mix(np.array([96, 62, 60], float)[None, None], np.array([54, 22, 22], float)[None, None], smooth(0.3, 0.9, folds))
-    rgb = mix(rgb, np.array([44, 4, 3], float)[None, None], smooth(0.35, 0.75, n) * 0.7 + smooth(0.6, 0.9, rr))
-    skull = smooth(0.82, 0.88, noise(rng, (128, 128), 16, 2)) * smooth(0.5, 0.75, rr)
-    rgb = mix(rgb, np.array([150, 138, 116], float)[None, None], skull)
-    save("brain.tga", rgb, smooth(1.0, 0.8, rr) * 0.97)
+    lumps = noise(rng, (128, 128), 9, 3)
+    n = noise(rng, (128, 128), 4)
+    rr = r / ragged(rng, ang, 12, 0.45)
+    rgb = mix(np.array([92, 58, 56], float)[None, None], np.array([110, 74, 70], float)[None, None], smooth(0.4, 0.7, lumps))
+    rgb = mix(rgb, np.array([40, 4, 3], float)[None, None], smooth(0.5, 0.35, lumps) * 0.9)
+    rgb = mix(rgb, np.array([36, 3, 2], float)[None, None], smooth(0.4, 0.8, n) * 0.5)
+    rim = smooth(0.62, 0.72, rr) * smooth(0.86, 0.76, rr) * smooth(0.45, 0.6, noise(rng, (128, 128), 12, 2))
+    rgb = mix(rgb, np.array([150, 136, 112], float)[None, None], rim)
+    rgb = mix(rgb, np.array([40, 4, 3], float)[None, None], smooth(0.78, 0.95, rr))
+    save("brain.tga", rgb, smooth(1.0, 0.82, rr) * 0.97)
 
     # a bit of a head in the air
     r, ang = polar((32, 32))
