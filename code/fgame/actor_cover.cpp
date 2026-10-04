@@ -161,6 +161,57 @@ void Actor::Cover_FindCover(bool bCheckAll)
     m_iPotentialCoverCount = 0;
 }
 
+/*
+===============
+Actor::Cover_BurstDone
+
+OPM (ai_cover): after a burst from his cover node, he ducks back for a
+second or two instead of firing on; after two or three bursts from the same
+node he moves to another. Returns whether it chose his next state.
+===============
+*/
+bool Actor::Cover_BurstDone(void)
+{
+    if (!AI_Enhanced(ai_cover) || m_Team == TEAM_AMERICAN || !m_pCoverNode) {
+        return false;
+    }
+    if ((m_pCoverNode->origin - origin).lengthXYSquared() > Square(48)) {
+        // Shooting from somewhere else than his node.
+        return false;
+    }
+
+    if (m_pCoverNode != m_pOPMExposureNode) {
+        m_pOPMExposureNode  = m_pCoverNode;
+        m_iOPMExposures     = 0;
+        m_iOPMExposureLimit = 2 + (rand() % 2);
+    }
+
+    m_iOPMExposures++;
+    if (m_iOPMExposures >= m_iOPMExposureLimit) {
+        AI_Debug(
+            "%s moves to other cover after %d bursts from this one", TargetName().c_str(), m_iOPMExposures
+        );
+        m_pCoverNode->Relinquish();
+        m_pCoverNode->MarkTemporarilyBad();
+        m_pCoverNode       = NULL;
+        m_pOPMExposureNode = NULL;
+        TransitionState(ACTOR_STATE_COVER_FIND_COVER, 0);
+        return true;
+    }
+
+    // Down for longer while bullets are coming his way.
+    m_iOPMDuckUntil = level.inttime + 1000 + (rand() % 1000) + (UnderFire() ? 1000 : 0);
+    AI_Debug(
+        "%s ducks back after a burst (%d of %d from this cover)%s",
+        TargetName().c_str(),
+        m_iOPMExposures,
+        m_iOPMExposureLimit,
+        UnderFire() ? ", under fire" : ""
+    );
+    TransitionState(ACTOR_STATE_COVER_HIDE, Cover_HideTime(m_Team));
+    return true;
+}
+
 void Actor::InitCover(GlobalFuncs_t *func)
 {
     func->ThinkState                 = &Actor::Think_Cover;
@@ -368,6 +419,18 @@ void Actor::State_Cover_Hide(void)
         SafeSetOrigin(m_pCoverNode->origin);
         DesiredAnimation(ANIM_MODE_NORMAL, m_csSpecialAttack);
         TransitionState(ACTOR_STATE_COVER_SPECIAL_ATTACK, 0);
+        return;
+    }
+
+    // OPM: down for a moment after a burst (Cover_BurstDone): crouched
+    //  behind a low cover, holding fire behind any other
+    if (level.inttime < m_iOPMDuckUntil) {
+        if (m_pCoverNode->nodeflags & AI_DUCK) {
+            Anim_Crouch();
+        } else {
+            Anim_Aim();
+        }
+        AimAtTargetPos();
         return;
     }
 
@@ -733,7 +796,9 @@ void Actor::Think_Cover(void)
 void Actor::FinishedAnimation_Cover(void)
 {
     if (m_State == ACTOR_STATE_COVER_SHOOT) {
-        if (m_Enemy && !m_Enemy->IsDead() && CanSeeEnemy(500) && CanShootEnemy(500)) {
+        if (m_Enemy && !m_Enemy->IsDead() && Cover_BurstDone()) {
+            // OPM: ducks back, or moves to other cover
+        } else if (m_Enemy && !m_Enemy->IsDead() && CanSeeEnemy(500) && CanShootEnemy(500)) {
             TransitionState(ACTOR_STATE_COVER_SHOOT, 0);
         } else {
             TransitionState(ACTOR_STATE_COVER_FIND_COVER, 0);

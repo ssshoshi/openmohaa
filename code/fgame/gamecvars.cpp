@@ -361,6 +361,9 @@ cvar_t *ai_flank_cooldown;
 cvar_t *ai_rush;
 cvar_t *ai_rush_chance;
 cvar_t *ai_smoke_advance;
+cvar_t *ai_accuracy_model;
+cvar_t *ai_accuracy_acquire;
+cvar_t *ai_cover;
 
 void CVAR_Init(void)
 {
@@ -829,6 +832,9 @@ void CVAR_Init(void)
     ai_rush             = gi.Cvar_Get("ai_rush", "1", CVAR_ARCHIVE);
     ai_rush_chance      = gi.Cvar_Get("ai_rush_chance", "50", CVAR_ARCHIVE);
     ai_smoke_advance    = gi.Cvar_Get("ai_smoke_advance", "1", CVAR_ARCHIVE);
+    ai_accuracy_model   = gi.Cvar_Get("ai_accuracy_model", "1", CVAR_ARCHIVE);
+    ai_accuracy_acquire = gi.Cvar_Get("ai_accuracy_acquire", "2.0", CVAR_ARCHIVE);
+    ai_cover            = gi.Cvar_Get("ai_cover", "1", CVAR_ARCHIVE);
 
     cl_running = gi.Cvar_Get("cl_running", "", 0);
 }

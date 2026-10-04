@@ -829,6 +829,15 @@ public:
     // OPM: when he is to advance under his squad's smoke, and where it is.
     int    m_iOPMSmokeAdvanceTime;
     Vector m_vOPMSmokeAdvancePos;
+    // OPM: when one of the player's bullets last passed close to him
+    //  (AI_BulletPassed, actor_accuracy.cpp).
+    int m_iOPMUnderFireTime;
+    // OPM: bursts from cover (ai_cover): how often he has shown himself at
+    //  this node, after how many he moves on, and until when he stays down.
+    PathNode *m_pOPMExposureNode;
+    int       m_iOPMExposures;
+    int       m_iOPMExposureLimit;
+    int       m_iOPMDuckUntil;
     /* used for turret actot to run back to home Turret_SelectState() */
     int m_iRunHomeTime;
     /* no cover path for initial turret state */
@@ -1067,6 +1076,10 @@ public:
     bool          Maneuver_DecideToAdvance(void);
     void          Maneuver_SquadSmokeThrown(const Vector& vSmoke);
     bool          Maneuver_BlockedDirect(void);
+    // OPM: aim error against the player, and being shot at (actor_accuracy.cpp)
+    float         Accuracy_ScatterMult(Player *player);
+    bool          UnderFire(void) const;
+    bool          Cover_BurstDone(void);
     void          State_Turret_Retarget_Sniper_Node(void);
     void          State_Turret_Retarget_Step_Side_Small(void);
     void          State_Turret_Retarget_Path_Exact(void);
