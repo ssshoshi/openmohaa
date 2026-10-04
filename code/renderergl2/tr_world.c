@@ -931,6 +931,13 @@ void R_AddWorldSurfaces (void) {
 		tr.pc.t_staticModels += R_MicroSeconds() - tStart;
 	}
 
+	// Added in OPM
+	if (r_drawterrain->integer) {
+		double tStart = R_MicroSeconds();
+		R_AddGroundCoverSurfaces();
+		tr.pc.t_groundCover += R_MicroSeconds() - tStart;
+	}
+
 	if (g_bInfostaticmodels) {
 		g_bInfostaticmodels = 0;
 		R_PrintInfoStaticModels();
