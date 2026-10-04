@@ -117,6 +117,7 @@ cvar_t *vm_offset_vel_up;
 cvar_t *vm_offset_upvel;
 cvar_t *vm_lean_lower;
 cvar_t *vm_sprint;
+cvar_t *cg_sprintbar;
 cvar_t *vm_sprint_pitch;
 cvar_t *vm_sprint_yaw;
 cvar_t *vm_sprint_roll;
@@ -225,6 +226,7 @@ void CG_RegisterCvars(void)
     vm_lean_lower                 = cgi.Cvar_Get("vm_lean_lower", "0.1", 0);
     // Added in OPM: the view weapon's pose while sprinting (CG_SprintViewModel)
     vm_sprint                     = cgi.Cvar_Get("vm_sprint", "1", CVAR_ARCHIVE);
+    cg_sprintbar                  = cgi.Cvar_Get("cg_sprintbar", "1", CVAR_ARCHIVE);
     vm_sprint_pitch               = cgi.Cvar_Get("vm_sprint_pitch", "0", 0);
     vm_sprint_yaw                 = cgi.Cvar_Get("vm_sprint_yaw", "20", 0);
     vm_sprint_roll                = cgi.Cvar_Get("vm_sprint_roll", "-15", 0);

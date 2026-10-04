@@ -520,6 +520,7 @@ extern "C" {
     extern cvar_t *vm_offset_upvel;
     extern cvar_t *vm_lean_lower;
     extern cvar_t *vm_sprint;
+    extern cvar_t *cg_sprintbar;
     extern cvar_t *vm_sprint_pitch;
     extern cvar_t *vm_sprint_yaw;
     extern cvar_t *vm_sprint_roll;

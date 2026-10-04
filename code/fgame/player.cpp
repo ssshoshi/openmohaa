@@ -2276,6 +2276,7 @@ void Player::Init(void)
     m_bHoldUpmove   = false;
     m_fSprintUsed      = 0;
     m_bSprintExhausted = false;
+    m_fTiredStart      = 0;
 
     InitClient();
     InitPhysics();

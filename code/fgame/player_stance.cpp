@@ -265,6 +265,45 @@ void Player::UpdateStance(usercmd_t *ucmd)
     } else {
         client->ps.pm_flags &= ~PMF_SPRINTING;
     }
+
+    SetStanceStat();
+}
+
+/*
+====================
+SetStanceStat
+
+The sprint bar and the dive for cgame, in STAT_OPM_STANCE.
+====================
+*/
+void Player::SetStanceStat()
+{
+    float healthFrac, endurance, left;
+    int   stat;
+
+    healthFrac = max_health > 0 ? health / max_health : 1.0f;
+    endurance  = g_sprint_time->value * Q_min(1.0f, healthFrac);
+
+    if (g_sprint_time->value <= 0) {
+        left = 1.0f;
+    } else if (endurance <= 0 || healthFrac * 100.0f < g_sprint_minhealth->value) {
+        left = 0;
+    } else {
+        left = Q_clamp_float(1.0f - m_fSprintUsed / endurance, 0.0f, 1.0f);
+    }
+
+    stat = (int)(left * 100.0f + 0.5f) & STANCE_STAT_STAMINA;
+    if (m_bDiving) {
+        stat |= STANCE_STAT_DIVING;
+    }
+    if (m_bSprintExhausted) {
+        stat |= STANCE_STAT_EXHAUSTED;
+    }
+    if (level.time < m_fTiredStart + g_sprint_tired_time->value && m_fTiredStart > 0) {
+        stat |= STANCE_STAT_TIRED;
+    }
+
+    client->ps.stats[STAT_OPM_STANCE] = stat;
 }
 
 /*
@@ -273,7 +312,9 @@ UpdateSprintStamina
 
 How long the player can sprint depends on his health: g_sprint_time seconds
 at full health, less as he is hurt, none at all below g_sprint_minhealth
-percent. Run out and he cannot sprint again until half of it has come back
+percent. Run out below half health and he is tired: slowed to
+g_sprint_tired_speed, easing back over g_sprint_tired_time seconds.
+Run out and he cannot sprint again until half of it has come back
 (g_sprint_recover seconds of sprint a second, while not sprinting) and the
 sprint key has been let go.
 ====================
@@ -301,6 +342,10 @@ void Player::UpdateSprintStamina(usercmd_t *ucmd)
         m_bSprintExhausted = false;
         m_fSprintUsed      = 0;
     } else if (m_fSprintUsed >= endurance) {
+        if (!m_bSprintExhausted && healthFrac < 0.5f) {
+            // hurt and run out: tired, slowed down for a while
+            m_fTiredStart = level.time;
+        }
         m_bSprintExhausted = true;
     } else if (m_bSprintExhausted && m_fSprintUsed <= endurance * 0.5f && !(ucmd->buttons & BUTTON_SPRINT)) {
         // back once half has come back and the key has been let go, so that
@@ -321,11 +366,20 @@ float Player::StanceSpeed(float speed) const
         if (!(last_ucmd.buttons & BUTTON_RUN)) {
             speed *= 0.6f;
         }
-        return speed;
     }
 
-    if (m_bSprinting) {
+    if (m_bSprinting && !m_bProne) {
         return speed * g_sprint_speed->value;
+    }
+
+    if (m_fTiredStart > 0 && g_sprint_tired_time->value > 0) {
+        float frac = (level.time - m_fTiredStart) / g_sprint_tired_time->value;
+
+        if (frac < 1.0f) {
+            // tired out: slowest at first, back to normal by the end
+            float slow = Q_clamp_float(g_sprint_tired_speed->value, 0.1f, 1.0f);
+            speed *= slow + (1.0f - slow) * Q_max(0.0f, frac);
+        }
     }
 
     return speed;

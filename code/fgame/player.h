@@ -364,6 +364,7 @@ public:
     bool  m_bHoldUpmove;
     float m_fSprintUsed;
     bool  m_bSprintExhausted;
+    float m_fTiredStart;
     float m_fLastInvulnerableTime;
     int   m_iInvulnerableTimeRemaining;
     float m_fInvulnerableTimeElapsed;
@@ -929,6 +930,7 @@ public:
     void        UpdateStance(usercmd_t *ucmd);
     void        StartProne(usercmd_t *ucmd);
     void        UpdateSprintStamina(usercmd_t *ucmd);
+    void        SetStanceStat();
     bool        LeaveProne(bool crouch, bool force);
     void        SetProneHeight();
     float       StanceSpeed(float speed) const;
@@ -1223,6 +1225,7 @@ inline void Player::Archive(Archiver& arc)
         m_bHoldUpmove   = false;
         m_fSprintUsed      = 0;
         m_bSprintExhausted = false;
+        m_fTiredStart      = 0;
     }
 
     if (arc.Saving()) {

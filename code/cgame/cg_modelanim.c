@@ -813,8 +813,8 @@ static void CG_LeanViewModelArms(refEntity_t *model, const entityState_t *s1)
 CG_FirstPersonBodyHidden
 
 Added in OPM
-  The first person body is left out lying prone, where the camera sits down
-  in it, and on a mounted gun, where it gets in the way of the sights. The
+  The first person body is left out diving and lying prone, where the camera
+  sits down in it, and on a mounted gun, where it gets in the way of the sights. The
   shadow body still goes in.
 ======================
 */
@@ -823,6 +823,11 @@ static qboolean CG_FirstPersonBodyHidden(void)
     int flags = cg.predicted_player_state.pm_flags;
 
     if (flags & PMF_TURRET) {
+        return qtrue;
+    }
+
+    // diving, on the way down to prone
+    if (cg.snap && (cg.snap->ps.stats[STAT_OPM_STANCE] & STANCE_STAT_DIVING)) {
         return qtrue;
     }
 

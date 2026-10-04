@@ -557,6 +557,15 @@ movement on the server game.
         STAT_LAST_STAT
     } playerstat_t;
 
+// Added in OPM
+//  The last stat slot, which no stat above reaches: the sprint bar and stance
+//  for cgame (player_stance.cpp). The low byte is the sprint left, 0 to 100.
+#define STAT_OPM_STANCE        (MAX_STATS - 1)
+#define STANCE_STAT_STAMINA    0xff
+#define STANCE_STAT_DIVING     0x100 // in the air in a dive
+#define STANCE_STAT_EXHAUSTED  0x200 // out of sprint, or too hurt to sprint
+#define STANCE_STAT_TIRED      0x400 // slowed down, tired out
+
     extern const char *means_of_death_strings[];
 
     typedef enum {
