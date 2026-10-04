@@ -126,13 +126,18 @@ end
 
 scene2_sniper_blood:
 	if (level.opm_s2_blood == 1)
+	{
+		println "m3l2_opm: scene 2 blood already done"
 		end
+	}
+	println "m3l2_opm: scene 2 blood waits for Paulsen"
 
 	while (level.paulsen == NIL || level.paulsen == NULL)
 		wait 0.5
 	// a save from after he died: not seen to die, no blood
 	if (!(isalive level.paulsen))
 	{
+		println "m3l2_opm: scene 2 blood skipped (Paulsen already dead)"
 		level.opm_s2_blood = 1
 		end
 	}
@@ -153,6 +158,7 @@ scene2_sniper_blood:
 			local.dir = vector_normalize (local.door - local.head)
 	}
 
+	println ("m3l2_opm: t=" + level.time + " scene 2 blood toward " + local.dir)
 	// a few, as a rifle round through the head would leave more than one
 	for (local.i = 1; local.i <= 3; local.i++)
 	{
