@@ -84,7 +84,7 @@ cg_frameTimers	0		code/cgame/cg_view.c:983	Profiling: print a breakdown of where
 cg_gametype	0		code/tiki/tiki_parse.cpp:329	The current game type as seen by the client (0 single player; 1 free-for-all, 2 team match, 3 round-based, 4 objective, and higher for later modes). Set by the server; latched.
 cg_gore	0	1	code/cgame/cg_gore.cpp:210	Gore after Soldier of Fortune II: wounds that stay on a body where rounds went in and out, alive or dead, bleeding, neck wounds that pump, shrapnel and soot from blasts, and pools under the dead. Client side only. Off with com_blood 0 too.
 cg_gore_bleed	0	1	code/cgame/cg_gore.cpp:214	Wounds drip, and neck wounds pump, blood that splashes where it lands.
-cg_gore_debug	0	1	code/cgame/cg_gore.cpp:217	Logs each wound laid: entry or exit, the bone it is on.
+cg_gore_debug	0	4	code/cgame/cg_gore.cpp:217	Logs each wound laid: entry or exit, the bone it is on. 2 adds a report a second (wounds, polys, drops, time a frame), 3 draws wounds unlit, 4 logs every re-skinning.
 cg_gore_drawDist	0	10000	code/cgame/cg_gore.cpp:213	Farthest a body is drawn with its wounds, and a blood pool still spreads in view.
 cg_gore_maxPolys	0	8000	code/cgame/cg_gore.cpp:212	Most wound triangles drawn in a frame, nearest bodies first.
 cg_gore_maxWounds	1	200	code/cgame/cg_gore.cpp:211	Most wounds kept on one body; the oldest goes first.

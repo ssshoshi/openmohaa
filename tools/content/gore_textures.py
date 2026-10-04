@@ -173,7 +173,7 @@ def main():
     r, ang = polar((256, 256))
     n = noise(rng, (256, 256), 3)
     rr = r / ragged(rng, ang, 10, 0.35) / (0.85 + 0.25 * n)
-    rgb = mix(np.array([88, 6, 5], float)[None, None], np.array([40, 3, 3], float)[None, None], smooth(0.9, 0.3, rr) + (n - 0.5) * 0.4)
+    rgb = mix(np.array([62, 5, 4], float)[None, None], np.array([26, 2, 2], float)[None, None], smooth(0.9, 0.3, rr) + (n - 0.5) * 0.6)
     save("pool.tga", rgb, smooth(0.9, 0.78, rr) * 0.94)
 
 
