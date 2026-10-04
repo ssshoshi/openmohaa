@@ -1362,7 +1362,8 @@ static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, floa
 {
     int numBones, i, v;
 
-    if (!(e->renderfx & RF_GORE_DENTS) || !e->gore_dents || e->num_gore_dents <= 0 || !e->tiki) {
+    if (!(e->renderfx & RF_GORE_DENTS) || (e->renderfx & RF_GORE_CHUNK) || !e->gore_dents || e->num_gore_dents <= 0
+        || !e->tiki) {
         return;
     }
 
@@ -1388,12 +1389,19 @@ static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, floa
 //  A model the gore system has cut a part off (RF_GORE_DENTS): the part's
 //  triangles are folded into its joint, and drawn as they are they would come
 //  out with no area and tangents of nothing over nothing. They are left out.
-static void R_GoreDropFolded(const refEntity_t *e, int firstIndex)
+static void R_GoreDropFolded(const refEntity_t *e, const skelBoneCache_t *bones, float scale, int firstIndex)
 {
-    int i, kept = firstIndex;
+    vec3_t chunkCentre, chunkDir;
+    float  chunkRadius = 0;
+    int    i, kept = firstIndex;
 
     if (!(e->renderfx & RF_GORE_DENTS)) {
         return;
+    }
+
+    // a piece broken off: only what is inside its sphere
+    if ((e->renderfx & RF_GORE_CHUNK) && e->gore_dents && e->num_gore_dents > 0 && e->tiki) {
+        R_GoreDentCentre(e, bones, ri.TIKI_GetNumChannels(e->tiki), scale, 0, chunkCentre, chunkDir, &chunkRadius);
     }
 
     for (i = firstIndex; i + 2 < tess.numIndexes; i += 3) {
@@ -1407,6 +1415,16 @@ static void R_GoreDropFolded(const refEntity_t *e, int firstIndex)
         CrossProduct(e1, e2, n);
         if (VectorLengthSquared(n) < 0.0001f) {
             continue;
+        }
+        if (chunkRadius > 0) {
+            vec3_t mid;
+
+            VectorAdd(a, b, mid);
+            VectorAdd(mid, c, mid);
+            VectorScale(mid, 1.0f / 3, mid);
+            if (Distance(mid, chunkCentre) > chunkRadius) {
+                continue;
+            }
         }
 
         tess.indexes[kept]     = tess.indexes[i];
@@ -1799,7 +1817,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 
     // Added in OPM
     R_GoreDents(&backEnd.currentEntity->e, bones, scale, baseVertex, render_count);
-    R_GoreDropFolded(&backEnd.currentEntity->e, baseIndex);
+    R_GoreDropFolded(&backEnd.currentEntity->e, bones, scale, baseIndex);
 
 #if 0
 	if( backEnd.currentEntity->e.staticModelIndex ) {

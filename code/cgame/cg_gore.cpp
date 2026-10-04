@@ -256,18 +256,42 @@ typedef struct {
 
 // A part cut off, flying and then lying where it fell: a copy of the body with
 // every bone but the part's folded into the joint it came away at.
+//
+// It is a ragdoll of its own: a point at each joint down the part and one at
+// its end, kept their lengths apart, falling and catching on the world. Each
+// bone of that chain is posed between its two points; every other bone of the
+// part rides on the nearest of them, as it was when it came off.
+//
+// A piece broken off a head is one too (chunk), but rigid: a copy of the body
+// as it was, drawn only inside the dent the round made (RF_GORE_CHUNK).
+#define GORE_CHAIN_PTS 4
+
 typedef struct {
     qboolean       active;
+    qboolean       chunk;
     int            key; // its body's entity number, GORE_GIB_KEY and up
     int            part;
     refEntity_t    ref;
     boneOverride_t ovr[GORE_MAX_OVERRIDES];
+    int            numOvr, numFolded; // the first numFolded are folded into the cut
     goreDent_t     dents[MAX_GORE_DENTS];
     vec3_t         centre; // the middle of the part, in the world
     vec3_t         vel;
     vec3_t         spin; // axis, at its length in degrees a second
     int            born;
     qboolean       resting;
+
+    // the chain
+    int    numPts;
+    vec3_t pt[GORE_CHAIN_PTS], old[GORE_CHAIN_PTS];
+    float  len[GORE_CHAIN_PTS];
+    int    carrierOvr[GORE_CHAIN_PTS]; // the bone from each point, in ovr
+    vec3_t carrierDir[GORE_CHAIN_PTS]; // which way it pointed, model space
+    int    numRiders;
+    int    riderOvr[GORE_MAX_OVERRIDES], riderOf[GORE_MAX_OVERRIDES];
+    float  riderLocal[GORE_MAX_OVERRIDES][4][3];
+    float  stepLeft;
+    int    still;
 } goreGib_t;
 
 typedef struct {
@@ -303,7 +327,6 @@ static goreDrop_t  gore_drops[GORE_MAX_DROPS];
 static int         gore_nextDrop;
 static gorePool_t  gore_pools[GORE_MAX_POOLS];
 static goreGib_t   gore_gibs[GORE_MAX_GIBS];
-static int         gore_testHeadshots; // gore_sever headshot: the next round into a head dents it
 static float       gore_splatTokens;
 
 static std::map<dtiki_t *, goreLayout_t> gore_layouts;
@@ -329,6 +352,8 @@ static void CG_GoreBlastBody(goreBody_t *body);
 static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model);
 static int  CG_GoreZone(const char *bone);
 static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius);
+static void CG_GoreHeadHit(goreBody_t *body, refEntity_t *model);
+static void CG_GoreChainStart(goreGib_t *gib, const goreRig_t *rig);
 
 static skinnedVert_t gore_verts[GORE_SKIN_VERTS];
 static int           gore_tris[GORE_SKIN_TRIS * 3];
@@ -1473,19 +1498,15 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
             VectorMA(ray, tr.tExit, hit->dir, body->lastHitExitPos);
         }
 
-        if (body->dead && !body->gib) {
+        if (!body->gib) {
             refEntity_t ref = best->ref;
 
-            CG_GoreCorpseHit(body, &ref);
-        } else if (gore_testHeadshots > 0 && body->lastHitZone == GP_HEAD) {
-            refEntity_t ref = best->ref;
-            vec3_t      back;
-
-            gore_testHeadshots--;
-            VectorNegate(body->lastHitDir, back);
-            CG_GoreDent(body, &ref, body->lastHitPos, back, GoreRand(2.0f, 2.6f));
-            if (body->lastHitExit) {
-                CG_GoreDent(body, &ref, body->lastHitExitPos, body->lastHitDir, GoreRand(2.8f, 3.4f));
+            // Every round into a head breaks it, alive or dead.
+            if (body->lastHitZone == GP_HEAD) {
+                CG_GoreHeadHit(body, &ref);
+            }
+            if (body->dead) {
+                CG_GoreCorpseHit(body, &ref);
             }
         }
     }
@@ -1783,7 +1804,7 @@ static void CG_GoreFoldInto(boneOverride_t *ovr, int bone, const float point[3])
 
 static void CG_GoreFreeGib(goreGib_t *gib)
 {
-    goreBody_t *body = CG_GoreFindBody(gib->key);
+    goreBody_t *body = gib->key >= 0 ? CG_GoreFindBody(gib->key) : NULL;
 
     if (body) {
         CG_GoreFreeBody(body);
@@ -1894,7 +1915,10 @@ static void CG_GoreSpawnGib(goreBody_t *from, const goreRig_t *rig, refEntity_t 
     gib->spin[2] = crandom();
     VectorNormalize(gib->spin);
     VectorScale(gib->spin, GoreRand(250, 700), gib->spin);
-    gib->active = qtrue;
+    gib->numFolded = used;
+    gib->numOvr    = n;
+    gib->active    = qtrue;
+    CG_GoreChainStart(gib, rig);
 
     // Its own body, with the wounds it had and a stump where it came off.
     body = CG_GoreFindBody(gib->key);
@@ -1925,6 +1949,474 @@ static void CG_GoreSpawnGib(goreBody_t *from, const goreRig_t *rig, refEntity_t 
     VectorCopy(from->stumpAt[part], body->stumpAt[part]);
     VectorNegate(from->stumpDir[part], body->stumpDir[part]);
     body->stumpPending = 1u << part;
+}
+
+//
+// A part's own ragdoll
+//
+
+#define GORE_CHAIN_STEP 0.0166667f // fixed, as the ragdolls step
+#define GORE_CHAIN_PAD  1.5f       // how thick a point is against the world
+
+// Model space before the scale (bone_override's) from the world, and back, on
+// a gib's own frame: it keeps the body's, and only its bones move.
+static void CG_GoreWorldToRaw(const refEntity_t *ref, const vec3_t world, float raw[3])
+{
+    float  scale = CG_GoreModelScale(ref);
+    vec3_t d;
+    int    k;
+
+    VectorSubtract(world, ref->origin, d);
+    for (k = 0; k < 3; k++) {
+        raw[k] = DotProduct(d, ref->axis[k]) / scale - ref->tiki->load_origin[k];
+    }
+}
+
+static void CG_GoreRawToWorld(const refEntity_t *ref, const float raw[3], vec3_t world)
+{
+    float scale = CG_GoreModelScale(ref);
+    int   k;
+
+    VectorCopy(ref->origin, world);
+    for (k = 0; k < 3; k++) {
+        VectorMA(world, (raw[k] + ref->tiki->load_origin[k]) * scale, ref->axis[k], world);
+    }
+}
+
+static void CG_GoreWorldToModelDir(const refEntity_t *ref, const vec3_t in, vec3_t out)
+{
+    int k;
+
+    for (k = 0; k < 3; k++) {
+        out[k] = DotProduct(in, ref->axis[k]);
+    }
+}
+
+// The bones the chain runs through, and its end, for a part.
+static int CG_GoreChainBones(const goreRig_t *rig, int part, int bones[GORE_CHAIN_PTS])
+{
+    static const char *arm[] = {"Bip01 %c UpperArm", "Bip01 %c Forearm", "Bip01 %c Hand", NULL};
+    static const char *leg[] = {"Bip01 %c Thigh", "Bip01 %c Calf", "Bip01 %c Foot", NULL};
+    const char       **names;
+    char               side;
+    int                first, i, n = 0;
+
+    switch (part) {
+    case GP_HEAD:
+        bones[0] = rig->cut[GP_HEAD];
+        return bones[0] >= 0 ? 1 : 0;
+    case GP_L_UPPERARM:
+    case GP_L_FOREARM:
+    case GP_L_HAND:
+    case GP_R_UPPERARM:
+    case GP_R_FOREARM:
+    case GP_R_HAND:
+        names = arm;
+        side  = part >= GP_R_UPPERARM ? 'R' : 'L';
+        first = part - (side == 'R' ? GP_R_UPPERARM : GP_L_UPPERARM);
+        break;
+    default:
+        names = leg;
+        side  = part >= GP_R_THIGH ? 'R' : 'L';
+        first = part - (side == 'R' ? GP_R_THIGH : GP_L_THIGH);
+        break;
+    }
+
+    for (i = first; names[i] && n < GORE_CHAIN_PTS - 1; i++) {
+        int bone = cgi.Tag_NumForName(rig->tiki, va(names[i], side));
+
+        if (bone >= 0) {
+            bones[n++] = bone;
+        }
+    }
+
+    return n;
+}
+
+// Sets a gib up as a chain, from the overrides it was given (the part as it
+// was when it came off).
+static void CG_GoreChainStart(goreGib_t *gib, const goreRig_t *rig)
+{
+    int    bones[GORE_CHAIN_PTS];
+    int    n = CG_GoreChainBones(rig, gib->part, bones);
+    int    i, j, k;
+    vec3_t tip, end;
+
+    gib->numPts = 0;
+    if (n <= 0) {
+        return;
+    }
+
+    for (i = 0; i < n; i++) {
+        gib->carrierOvr[i] = -1;
+        for (j = gib->numFolded; j < gib->numOvr; j++) {
+            if (gib->ovr[j].boneIndex == bones[i]) {
+                gib->carrierOvr[i] = j;
+            }
+        }
+        if (gib->carrierOvr[i] < 0) {
+            return;
+        }
+        CG_GoreRawToWorld(&gib->ref, gib->ovr[gib->carrierOvr[i]].matrix[3], gib->pt[i]);
+    }
+
+    // The end: past the last joint, as far as the part's farthest bone goes
+    // (the fingers, the toes), or a hand's length along it.
+    {
+        const float(*m)[3] = gib->ovr[gib->carrierOvr[n - 1]].matrix;
+        float far          = 0;
+
+        VectorClear(tip);
+        for (j = gib->numFolded; j < gib->numOvr; j++) {
+            vec3_t w;
+            float  d;
+
+            CG_GoreRawToWorld(&gib->ref, gib->ovr[j].matrix[3], w);
+            d = Distance(w, gib->pt[n - 1]);
+            if (d > far && (n < 2 || Distance(w, gib->pt[n - 2]) > Distance(gib->pt[n - 1], gib->pt[n - 2]))) {
+                far = d;
+                VectorCopy(w, tip);
+            }
+        }
+        if (far < 2.0f) {
+            vec3_t along;
+
+            CG_GoreModelToWorldDir(&gib->ref, m[0], along);
+            VectorNormalize(along);
+            VectorMA(gib->pt[n - 1], gib->part == GP_HEAD ? 8.0f : 5.0f, along, tip);
+        }
+        VectorCopy(tip, gib->pt[n]);
+    }
+    gib->numPts = n + 1;
+
+    for (i = 0; i < gib->numPts - 1; i++) {
+        vec3_t d;
+
+        gib->len[i] = Q_max(Distance(gib->pt[i], gib->pt[i + 1]), 1.0f);
+        VectorSubtract(gib->pt[i + 1], gib->pt[i], d);
+        CG_GoreWorldToModelDir(&gib->ref, d, gib->carrierDir[i]);
+        VectorNormalize(gib->carrierDir[i]);
+    }
+
+    // Every other bone of the part rides on the nearest bone of the chain.
+    gib->numRiders = 0;
+    for (j = 0; j < gib->numOvr; j++) {
+        float(*rm)[3] = gib->ovr[j].matrix;
+        vec3_t w;
+        float  best = 0;
+        int    of = -1;
+
+        for (i = 0; i < n; i++) {
+            if (gib->carrierOvr[i] == j) {
+                break;
+            }
+        }
+        if (i < n) {
+            continue;
+        }
+
+        // the folded bones ride on the first point, where the cut is
+        if (j < gib->numFolded) {
+            of = 0;
+        } else {
+            CG_GoreRawToWorld(&gib->ref, rm[3], w);
+            for (i = 0; i < n; i++) {
+                vec3_t seg, rel;
+                float  t, d;
+
+                VectorSubtract(gib->pt[i + 1], gib->pt[i], seg);
+                VectorSubtract(w, gib->pt[i], rel);
+                t = Q_bound(0.0f, DotProduct(rel, seg) / Q_max(DotProduct(seg, seg), 0.01f), 1.0f);
+                VectorMA(gib->pt[i], t, seg, end);
+                d = Distance(end, w);
+                if (of < 0 || d < best) {
+                    of   = i;
+                    best = d;
+                }
+            }
+        }
+
+        {
+            const float(*cm)[3] = gib->ovr[gib->carrierOvr[of]].matrix;
+            vec3_t rel;
+
+            for (k = 0; k < 3; k++) {
+                gib->riderLocal[gib->numRiders][k][0] = DotProduct(rm[k], cm[0]);
+                gib->riderLocal[gib->numRiders][k][1] = DotProduct(rm[k], cm[1]);
+                gib->riderLocal[gib->numRiders][k][2] = DotProduct(rm[k], cm[2]);
+            }
+            VectorSubtract(rm[3], cm[3], rel);
+            for (k = 0; k < 3; k++) {
+                gib->riderLocal[gib->numRiders][3][k] = DotProduct(rel, cm[k]);
+            }
+        }
+        gib->riderOvr[gib->numRiders] = j;
+        gib->riderOf[gib->numRiders]  = of;
+        gib->numRiders++;
+    }
+
+    // Thrown: all of it at vel, and turning about its middle.
+    VectorClear(gib->centre);
+    for (i = 0; i < gib->numPts; i++) {
+        VectorAdd(gib->centre, gib->pt[i], gib->centre);
+    }
+    VectorScale(gib->centre, 1.0f / gib->numPts, gib->centre);
+    for (i = 0; i < gib->numPts; i++) {
+        vec3_t rel, turn, v;
+
+        VectorSubtract(gib->pt[i], gib->centre, rel);
+        CrossProduct(gib->spin, rel, turn);
+        VectorScale(turn, M_PI / 180.0f, turn);
+        VectorAdd(gib->vel, turn, v);
+        VectorMA(gib->pt[i], -GORE_CHAIN_STEP, v, gib->old[i]);
+    }
+}
+
+// One step of the chain.
+static void CG_GoreChainStep(goreGib_t *gib)
+{
+    static const vec3_t mins = {-GORE_CHAIN_PAD, -GORE_CHAIN_PAD, -GORE_CHAIN_PAD};
+    static const vec3_t maxs = {GORE_CHAIN_PAD, GORE_CHAIN_PAD, GORE_CHAIN_PAD};
+    vec3_t              before[GORE_CHAIN_PTS];
+    float               moved = 0;
+    int                 i, it;
+
+    for (i = 0; i < gib->numPts; i++) {
+        vec3_t v;
+
+        VectorCopy(gib->pt[i], before[i]);
+        VectorSubtract(gib->pt[i], gib->old[i], v);
+        VectorCopy(gib->pt[i], gib->old[i]);
+        VectorMA(gib->pt[i], 0.995f, v, gib->pt[i]);
+        gib->pt[i][2] -= GORE_GRAVITY * GORE_CHAIN_STEP * GORE_CHAIN_STEP;
+        // never quite still: a leg landing on its foot topples, as it would
+        gib->pt[i][0] += crandom() * 0.004f;
+        gib->pt[i][1] += crandom() * 0.004f;
+    }
+
+    for (it = 0; it < 6; it++) {
+        for (i = 0; i < gib->numPts - 1; i++) {
+            vec3_t d;
+            float  l;
+
+            VectorSubtract(gib->pt[i + 1], gib->pt[i], d);
+            l = VectorNormalize(d);
+            if (l < 0.001f) {
+                continue;
+            }
+            l = (l - gib->len[i]) * 0.5f;
+            VectorMA(gib->pt[i], l, d, gib->pt[i]);
+            VectorMA(gib->pt[i + 1], -l, d, gib->pt[i + 1]);
+        }
+    }
+
+    // Caught on the world: stopped where it meets it, a little of the way it
+    // was going kept along the surface.
+    for (i = 0; i < gib->numPts; i++) {
+        trace_t tr;
+        vec3_t  v;
+
+        CG_Trace(&tr, before[i], mins, maxs, gib->pt[i], ENTITYNUM_NONE, MASK_SOLID, qfalse, qfalse, "gore gib");
+        if (tr.startsolid || tr.fraction >= 1.0f) {
+            continue;
+        }
+
+        VectorSubtract(gib->pt[i], gib->old[i], v);
+        VectorMA(v, -1.2f * DotProduct(v, tr.plane.normal), tr.plane.normal, v);
+        VectorScale(v, 0.5f, v);
+        VectorCopy(tr.endpos, gib->pt[i]);
+        VectorSubtract(gib->pt[i], v, gib->old[i]);
+    }
+
+    for (i = 0; i < gib->numPts; i++) {
+        moved = Q_max(moved, Distance(gib->pt[i], gib->old[i]));
+    }
+    gib->still = moved < 0.03f ? gib->still + 1 : 0;
+    if (gib->still > 45) {
+        gib->resting = qtrue;
+        if (cg_gore_debug->integer) {
+            Com_Printf("gore: the %s comes to rest at %.0f %.0f %.0f\n", gore_partNames[gib->part], gib->pt[0][0], gib->pt[0][1], gib->pt[0][2]);
+        }
+    }
+}
+
+// Poses the part from its chain: each bone of the chain turned the least way
+// from where it pointed to where its points are now, the rest carried along.
+static void CG_GoreChainPose(goreGib_t *gib)
+{
+    int i, j, k;
+
+    for (i = 0; i < gib->numPts - 1; i++) {
+        float(*m)[3] = gib->ovr[gib->carrierOvr[i]].matrix;
+        vec3_t d, now, axis;
+        float  c;
+
+        VectorSubtract(gib->pt[i + 1], gib->pt[i], d);
+        CG_GoreWorldToModelDir(&gib->ref, d, now);
+        if (VectorNormalize(now) < 0.001f) {
+            continue;
+        }
+
+        CrossProduct(gib->carrierDir[i], now, axis);
+        c = DotProduct(gib->carrierDir[i], now);
+        if (VectorNormalize(axis) > 0.0001f) {
+            float deg = acos(Q_bound(-1.0f, c, 1.0f)) * (180.0f / M_PI);
+
+            for (k = 0; k < 3; k++) {
+                vec3_t out;
+
+                RotatePointAroundVector(out, axis, m[k], deg);
+                VectorCopy(out, m[k]);
+            }
+        }
+        VectorCopy(now, gib->carrierDir[i]);
+        CG_GoreWorldToRaw(&gib->ref, gib->pt[i], m[3]);
+    }
+
+    for (j = 0; j < gib->numRiders; j++) {
+        float(*rm)[3]       = gib->ovr[gib->riderOvr[j]].matrix;
+        const float(*cm)[3] = gib->ovr[gib->carrierOvr[gib->riderOf[j]]].matrix;
+        const float(*l)[3]  = gib->riderLocal[j];
+
+        for (k = 0; k < 3; k++) {
+            int c;
+
+            for (c = 0; c < 3; c++) {
+                rm[k][c] = l[k][0] * cm[0][c] + l[k][1] * cm[1][c] + l[k][2] * cm[2][c];
+            }
+        }
+        for (k = 0; k < 3; k++) {
+            rm[3][k] = cm[3][k] + l[3][0] * cm[0][k] + l[3][1] * cm[1][k] + l[3][2] * cm[2][k];
+        }
+    }
+
+    VectorClear(gib->centre);
+    for (i = 0; i < gib->numPts; i++) {
+        VectorAdd(gib->centre, gib->pt[i], gib->centre);
+    }
+    VectorScale(gib->centre, 1.0f / gib->numPts, gib->centre);
+    VectorCopy(gib->centre, gib->ref.lightingOrigin);
+    gib->ref.lightingOrigin[2] += GORE_GIB_LIGHT_UP;
+}
+
+static void CG_GoreUpdateChain(goreGib_t *gib, float dt)
+{
+    int steps = 0;
+
+    if (gib->resting) {
+        return;
+    }
+
+    gib->stepLeft += dt;
+    while (gib->stepLeft >= GORE_CHAIN_STEP && steps < 6 && !gib->resting) {
+        CG_GoreChainStep(gib);
+        gib->stepLeft -= GORE_CHAIN_STEP;
+        steps++;
+    }
+    if (steps == 6) {
+        gib->stepLeft = 0;
+    }
+
+    CG_GoreChainPose(gib);
+}
+
+//
+// Pieces of a head
+//
+
+// The skin a dent pushed in, broken off and thrown out of it: the head as it
+// was, every bone held where it is, drawn only inside the dent's sphere.
+static void CG_GoreSpawnChunk(goreBody_t *from, refEntity_t *model, int dent)
+{
+    const goreRig_t *rig = CG_GoreRig(model->tiki);
+    goreGib_t       *gib = NULL, *oldest = NULL;
+    float            m[4][3];
+    vec3_t           out, centre;
+    int              i, n = 0, k;
+
+    if (!rig || dent < 0 || dent >= from->numDents) {
+        return;
+    }
+
+    for (i = 0; i < GORE_MAX_GIBS && i < Q_max(cg_gore_maxGibs->integer, 1); i++) {
+        if (!gore_gibs[i].active) {
+            gib = &gore_gibs[i];
+            break;
+        }
+        // a chunk goes before a limb
+        if (!oldest || (gore_gibs[i].chunk && !oldest->chunk)
+            || (gore_gibs[i].chunk == oldest->chunk && gore_gibs[i].born < oldest->born)) {
+            oldest = &gore_gibs[i];
+        }
+    }
+    if (!gib) {
+        if (!oldest) {
+            return;
+        }
+        CG_GoreFreeGib(oldest);
+        gib = oldest;
+    }
+
+    memset(gib, 0, sizeof(*gib));
+    gib->chunk = qtrue;
+    gib->key   = -1;
+    gib->part  = GP_HEAD;
+    gib->born  = cg.time;
+    gib->ref   = *model;
+
+    for (i = 0; i < rig->numBones && n < GORE_MAX_OVERRIDES; i++) {
+        if (CG_GoreBoneFrame(model, i, m, NULL)) {
+            gib->ovr[n].boneIndex = i;
+            memcpy(gib->ovr[n].matrix, m, sizeof(m));
+            n++;
+        }
+    }
+    if (!n) {
+        return;
+    }
+
+    // a little more than was pushed in, so the piece reads at a distance
+    gib->dents[0]        = from->dents[dent];
+    gib->dents[0].radius = from->dents[dent].radius * 1.6f;
+    gib->ref.bone_override      = gib->ovr;
+    gib->ref.num_bone_overrides = n;
+    gib->ref.entityNumber       = ENTITYNUM_NONE;
+    gib->ref.bone_tag           = NULL;
+    gib->ref.bone_quat          = NULL;
+    gib->ref.gore_dents         = gib->dents;
+    gib->ref.num_gore_dents     = 1;
+    gib->ref.renderfx &= ~(RF_THIRD_PERSON | RF_FIRST_PERSON | RF_DEPTHHACK | RF_FIRST_PERSON_BODY);
+    gib->ref.renderfx |= RF_GORE_DENTS | RF_GORE_CHUNK | RF_LIGHTING_ORIGIN;
+
+    // where the dent is, and which way it opens
+    if (!CG_GoreBoneFrame(model, from->dents[dent].boneIndex, m, NULL)) {
+        gib->active = qfalse;
+        return;
+    }
+    for (k = 0; k < 3; k++) {
+        centre[k] = m[3][k] + from->dents[dent].offset[0] * m[0][k] + from->dents[dent].offset[1] * m[1][k]
+                  + from->dents[dent].offset[2] * m[2][k];
+        out[k] = from->dents[dent].dir[0] * m[0][k] + from->dents[dent].dir[1] * m[1][k] + from->dents[dent].dir[2] * m[2][k];
+    }
+    CG_GoreRawToWorld(model, centre, gib->centre);
+    {
+        vec3_t w;
+
+        CG_GoreModelToWorldDir(model, out, w);
+        VectorNormalize(w);
+        VectorScale(w, GoreRand(90, 180), gib->vel);
+    }
+    gib->vel[0] += crandom() * 40;
+    gib->vel[1] += crandom() * 40;
+    gib->vel[2] += GoreRand(60, 140);
+    gib->spin[0] = crandom();
+    gib->spin[1] = crandom();
+    gib->spin[2] = crandom();
+    VectorNormalize(gib->spin);
+    VectorScale(gib->spin, GoreRand(400, 900), gib->spin);
+    VectorCopy(gib->centre, gib->ref.lightingOrigin);
+    gib->ref.lightingOrigin[2] += GORE_GIB_LIGHT_UP;
+    gib->active = qtrue;
 }
 
 static void CG_GoreSpinAxis(vec3_t axis[3], const vec3_t spin, float dt)
@@ -2018,14 +2510,26 @@ static void CG_GoreAddGibs(void)
             continue;
         }
 
-        CG_GoreUpdateGib(gib, Q_min(dt, 0.05f));
+        // a piece of a head lies a while, then goes
+        if (gib->chunk && cg.time - gib->born > 20000) {
+            CG_GoreFreeGib(gib);
+            continue;
+        }
+
+        if (gib->numPts) {
+            CG_GoreUpdateChain(gib, Q_min(dt, 0.1f));
+        } else {
+            CG_GoreUpdateGib(gib, Q_min(dt, 0.05f));
+        }
 
         if (Distance(gib->centre, cg.refdef.vieworg) > cg_gore_drawDist->value) {
             continue;
         }
 
         cgi.R_AddRefEntityToScene(&gib->ref, ENTITYNUM_NONE);
-        CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue);
+        if (!gib->chunk) {
+            CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue);
+        }
     }
 }
 
@@ -2370,6 +2874,38 @@ static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, c
     body->dirty = qtrue;
 }
 
+// A round into a head: a hollow where it went in and a bigger one where it
+// came out, and the skin of each broken off and thrown. A head broken often
+// enough comes apart.
+static void CG_GoreHeadHit(goreBody_t *body, refEntity_t *model)
+{
+    vec3_t back;
+    int    before = body->numDents;
+
+    if (!cg_gore_dismember->integer || (body->severed & (1u << GP_HEAD))) {
+        return;
+    }
+
+    if (body->numDents >= 10) {
+        CG_GoreSever(body, GP_HEAD, qtrue);
+        return;
+    }
+
+    VectorNegate(body->lastHitDir, back);
+    CG_GoreDent(body, model, body->lastHitPos, back, body->lastHitLarge ? GoreRand(2.0f, 2.6f) : GoreRand(1.5f, 1.9f));
+    if (body->numDents > before && (body->lastHitLarge || random() < 0.5f)) {
+        CG_GoreSpawnChunk(body, model, body->numDents - 1);
+    }
+
+    if (body->lastHitExit) {
+        before = body->numDents;
+        CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, body->lastHitLarge ? GoreRand(2.6f, 3.2f) : GoreRand(1.9f, 2.4f));
+        if (body->numDents > before) {
+            CG_GoreSpawnChunk(body, model, body->numDents - 1);
+        }
+    }
+}
+
 // What a round did that a man had his last of.
 static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model)
 {
@@ -2380,17 +2916,10 @@ static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model)
 
     switch (body->lastHitZone) {
     case GP_HEAD:
-        if (body->lastHitLarge) {
-            if (r < 0.4f) {
-                CG_GoreSever(body, GP_HEAD, qtrue);
-            } else {
-                CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(2.0f, 2.6f));
-                if (body->lastHitExit) {
-                    CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(2.8f, 3.4f));
-                }
-            }
-        } else if (r < 0.6f) {
-            CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(1.8f, 2.4f));
+        // broken where it was hit already (CG_GoreHeadHit); a heavy round
+        // that kills may take the rest of it
+        if (body->lastHitLarge && r < 0.25f) {
+            CG_GoreSever(body, GP_HEAD, qtrue);
         }
         break;
     case GORE_ZONE_NECK:
@@ -2452,18 +2981,7 @@ static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model)
     body->partHits[zone] += body->lastHitLarge ? 3 : 1;
 
     if (zone == GP_HEAD) {
-        vec3_t back;
-
-        if (body->partHits[zone] >= 10) {
-            CG_GoreSever(body, GP_HEAD, qtrue);
-        } else if (body->lastHitLarge) {
-            VectorNegate(body->lastHitDir, back);
-            CG_GoreDent(body, model, body->lastHitPos, back, GoreRand(1.9f, 2.5f));
-            if (body->lastHitExit) {
-                CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, GoreRand(2.6f, 3.2f));
-            }
-        }
-        return;
+        return; // CG_GoreHeadHit
     }
 
     if (body->partHits[zone] >= 6) {
@@ -2546,7 +3064,6 @@ void CG_GoreSever_f(void)
         VectorSubtract(pos, cg.refdef.vieworg, dir);
         VectorNormalize(dir);
         VectorMA(pos, -4, dir, pos);
-        gore_testHeadshots++;
         CG_GoreNoteHit(pos, dir, 1);
         return;
     }
@@ -3345,6 +3862,17 @@ void CG_GoreAddToScene(void)
             );
             gore_usTotal  = 0;
             gore_usFrames = 0;
+            for (i = 0; i < GORE_MAX_GIBS; i++) {
+                const goreGib_t *g = &gore_gibs[i];
+
+                if (g->active && !g->chunk) {
+                    Com_Printf(
+                        "gore:   %s: %d points, from %.0f %.0f %.0f to %.0f %.0f %.0f%s\n", gore_partNames[g->part], g->numPts,
+                        g->pt[0][0], g->pt[0][1], g->pt[0][2], g->pt[Q_max(g->numPts - 1, 0)][0], g->pt[Q_max(g->numPts - 1, 0)][1],
+                        g->pt[Q_max(g->numPts - 1, 0)][2], g->resting ? ", resting" : ""
+                    );
+                }
+            }
         }
     }
 

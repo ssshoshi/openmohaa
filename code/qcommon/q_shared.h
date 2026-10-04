@@ -1942,6 +1942,10 @@ typedef struct usercmd_s {
 // a skeletal model: refEntity_t gore_dents holds dents to push into it
 // (goreDent_t), and triangles a cut part has folded to nothing are left out.
 #define RF_GORE_DENTS			(1<<27)
+// OPM: set by cgame only. A piece broken off a model: only the triangles with
+// their middle inside the sphere of its first gore dent are drawn (with
+// RF_GORE_DENTS, which then pushes nothing in).
+#define RF_GORE_CHUNK			(1<<30)
 //
 // use this mask when propagating renderfx from one entity to another
 //
@@ -2005,7 +2009,7 @@ typedef struct goreDent_s {
     float radius;    // model units
 } goreDent_t;
 
-#define MAX_GORE_DENTS 8
+#define MAX_GORE_DENTS 16
 
 typedef enum {
 	TR_STATIONARY,
