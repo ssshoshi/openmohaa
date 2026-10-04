@@ -702,6 +702,15 @@ void Actor::Think_Turret(void)
         }
     }
 
+    // OPM: a flank, rush or advance of his own (actor_maneuver.cpp)
+    if (Maneuver_Think()) {
+        if (!CheckForTransition(THINKSTATE_GRENADE, THINKLEVEL_IDLE)) {
+            CheckForTransition(THINKSTATE_BADPLACE, THINKLEVEL_IDLE);
+        }
+        PostThink(true);
+        return;
+    }
+
     if (level.inttime > m_iStateTime + 3000) {
         Turret_SelectState();
     }

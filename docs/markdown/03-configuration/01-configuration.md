@@ -296,7 +296,12 @@ Single-player enemies get behaviour the original game's AI lacks. Each part has 
 |ai_smoke           |1      |A German in a firefight now and then throws smoke about half way to his enemy, to screen his squad. Needs Spearhead's smoke grenade: `tools/ai-assets/build.py` builds `zzzzzzzzz-opm-ai.pk3` from your Spearhead install (without it there is no smoke)
 |ai_smoke_cooldown  |30     |Seconds a squad waits after one of them throws smoke before another does
 |ai_smoke_chance    |25     |Percent chance, at most every three seconds, that a German who could throws smoke
-|ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown
+|ai_flank           |1      |Now and then one German of a squad (two, if it is four or more) works round to the enemy's side, 45 to 90 degrees round at about the same range, to a spot he can see him from, while the rest keep firing. He follows the path nodes, or runs straight where there are none and the ground is clear, and stays inside his leash
+|ai_flank_cooldown  |12     |Seconds before the same German flanks again (a squad sends one at a time)
+|ai_rush            |1      |When the player reloads, or just after a German grenade went off by him, a German or two within about 1000 units who can see (or hear) it rush closer
+|ai_rush_chance     |50     |Percent chance that a German who could rush does
+|ai_smoke_advance   |1      |When a German throws smoke, his squad moves up into it a few seconds later
+|ai_debug           |0      |1 logs each AI decision to the console, 2 also why a grenade is not thrown and why a German does not flank, rush or advance. A line repeated within 2 s is counted, not printed
 
 ### Map add-ons
 

@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "decals.h"
 #include "weapon.h"
 #include "player.h"
+#include "ai_enhance.h"
 #include "VehicleCollisionEntity.h"
 #include "weapturret.h"
 #include "vehicleturret.h"
@@ -909,6 +910,12 @@ void Projectile::Explode(Event *ev)
         v = origin;
 
         ExplosionAttack(v, owner, explosionmodel, dir, ignoreEnt, 1.0f, weap, m_bHurtOwnerOnly);
+
+        // OPM: the enemy may rush the player it went off by (ai_rush), unless
+        //  it was only smoke
+        if (!strstr(model.c_str(), "nebel") && !strstr(model.c_str(), "smoke")) {
+            AI_GrenadeWentOff(owner, v);
+        }
     }
 
     CancelEventsOfType(EV_Projectile_UpdateBeam);

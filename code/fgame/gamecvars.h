@@ -386,6 +386,11 @@ extern cvar_t *ai_grenade_drop;
 extern cvar_t *ai_smoke;
 extern cvar_t *ai_smoke_cooldown;
 extern cvar_t *ai_smoke_chance;
+extern cvar_t *ai_flank;
+extern cvar_t *ai_flank_cooldown;
+extern cvar_t *ai_rush;
+extern cvar_t *ai_rush_chance;
+extern cvar_t *ai_smoke_advance;
 
 void CVAR_Init(void);
 

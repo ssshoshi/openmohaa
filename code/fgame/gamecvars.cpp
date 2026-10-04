@@ -356,6 +356,11 @@ cvar_t *ai_grenade_drop;
 cvar_t *ai_smoke;
 cvar_t *ai_smoke_cooldown;
 cvar_t *ai_smoke_chance;
+cvar_t *ai_flank;
+cvar_t *ai_flank_cooldown;
+cvar_t *ai_rush;
+cvar_t *ai_rush_chance;
+cvar_t *ai_smoke_advance;
 
 void CVAR_Init(void)
 {
@@ -819,6 +824,11 @@ void CVAR_Init(void)
     ai_smoke            = gi.Cvar_Get("ai_smoke", "1", CVAR_ARCHIVE);
     ai_smoke_cooldown   = gi.Cvar_Get("ai_smoke_cooldown", "30", CVAR_ARCHIVE);
     ai_smoke_chance     = gi.Cvar_Get("ai_smoke_chance", "25", CVAR_ARCHIVE);
+    ai_flank            = gi.Cvar_Get("ai_flank", "1", CVAR_ARCHIVE);
+    ai_flank_cooldown   = gi.Cvar_Get("ai_flank_cooldown", "12", CVAR_ARCHIVE);
+    ai_rush             = gi.Cvar_Get("ai_rush", "1", CVAR_ARCHIVE);
+    ai_rush_chance      = gi.Cvar_Get("ai_rush_chance", "50", CVAR_ARCHIVE);
+    ai_smoke_advance    = gi.Cvar_Get("ai_smoke_advance", "1", CVAR_ARCHIVE);
 
     cl_running = gi.Cvar_Get("cl_running", "", 0);
 }
