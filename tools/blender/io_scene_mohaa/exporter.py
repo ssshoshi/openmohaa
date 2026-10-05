@@ -57,6 +57,7 @@ def find_objects(context, arm_obj=None):
                 raise ExportError("select an armature or the meshes to export")
             return None, meshes
     meshes = [o for o in bpy.data.objects if o.type == "MESH" and (o.parent == arm_obj or o.find_armature() == arm_obj)]
+    bpy.context.view_layer.update()  # objects linked since the last update are not listed before it
     meshes = [o for o in meshes if o.name in bpy.context.view_layer.objects]
     if not meshes:
         raise ExportError("armature %s has no meshes" % arm_obj.name)
@@ -76,7 +77,7 @@ class _Bone:
 
 class Exporter:
     def __init__(self, context, filepath, arm_obj=None, meshes=None, skd_version=5, anim_mode="ALL",
-                 write_textures=True, apply_modifiers=True, pk3_path=None, scale=None):
+                 write_textures=True, apply_modifiers=True, pk3_path=None, scale=None, split_same_name=False):
         self.context = context
         self.filepath = os.path.abspath(filepath)
         self.skd_version = skd_version
@@ -84,6 +85,9 @@ class Exporter:
         self.write_textures = write_textures
         self.apply_modifiers = apply_modifiers
         self.pk3_path = pk3_path
+        # pieces of a surface over the engine's limits keep its name (the game's own .tik
+        # then shades them all) instead of getting _1, _2... suffixes
+        self.split_same_name = split_same_name
         self.warnings = []
         self.written = []
         if meshes is None:
@@ -419,7 +423,8 @@ class Exporter:
         out = []
         for n, (tris, mapping) in enumerate(pieces):
             inv = sorted(mapping, key=mapping.get)
-            out.append(("%s_%d" % (name[:60], n) if n else name, [verts[i] for i in inv], tris, None, None))
+            piece = name if (n == 0 or self.split_same_name) else "%s_%d" % (name[:60], n)
+            out.append((piece, [verts[i] for i in inv], tris, None, None))
         return out
 
     # ------------------------------------------------------------------ animations

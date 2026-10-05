@@ -4,6 +4,8 @@ Commands:
   import IN.tik|.skd|.skb OUT.blend|.glb|.gltf|.fbx|.obj [options]
   export IN.blend|.glb|.gltf|.fbx|.obj OUT.tik [options]
   preview IN.tik|.skd|.blend OUT.png [options]
+  remaster-prepare IN.tik WORK_DIR [options]
+  remaster-build WORK_DIR OUT_ROOT --candidates A.obj;B.glb [options]
 """
 
 import argparse
@@ -126,7 +128,7 @@ def preview(path, out, args):
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     ap = argparse.ArgumentParser(prog="blender_run.py")
-    ap.add_argument("command", choices=("import", "export", "preview"))
+    ap.add_argument("command", choices=("import", "export", "preview", "remaster-prepare", "remaster-build"))
     ap.add_argument("input")
     ap.add_argument("output")
     ap.add_argument("--folders", default="", help="game folders separated by ;")
@@ -148,6 +150,10 @@ def main():
     ap.add_argument("--yaw", type=float, default=-60.0)
     ap.add_argument("--size", type=int, default=768)
     ap.add_argument("--focus", default="", help="preview: frame the objects whose name starts with this")
+    ap.add_argument("--spread", type=float, default=30.0, help="remaster: degrees the arms are lifted")
+    ap.add_argument("--check-anims", default="auto", help="remaster: animations for the stretch check")
+    ap.add_argument("--candidates", default="", help="remaster-build: generated meshes, ; separated")
+    ap.add_argument("--options", default="{}", help="remaster-build: JSON of remaster.Options")
     args = ap.parse_args(argv)
     args.folders = [f for f in args.folders.split(";") if f]
     io_scene_mohaa.register()
@@ -171,6 +177,23 @@ def main():
             anim_mode=args.export_anims, pk3_path=args.pk3, scale=args.scale)
         result["warnings"] = warnings
         result["written"] = written
+    elif args.command == "remaster-prepare":
+        from io_scene_mohaa import remaster
+        clear_scene()
+        r = remaster.prepare(bpy.context, args.input, args.folders, args.output, spread=args.spread,
+                             check_anims=args.check_anims, size=args.size)
+        result["warnings"] = r["warnings"]
+        result["written"] = r["views"] + [r["blend"]]
+        result["report"] = r
+    elif args.command == "remaster-build":
+        from io_scene_mohaa import remaster
+        opts = remaster.Options(**json.loads(args.options))
+        cands = [c for c in args.candidates.split(";") if c]
+        r = remaster.build_from_blend(bpy.context, os.path.join(args.input, "source.blend"), cands, args.output,
+                                      args.input, opts)
+        result["warnings"] = r["warnings"]
+        result["written"] = r["written"] + [r["sheet"]]
+        result["report"] = r
     else:
         result["warnings"] = preview(args.input, args.output, args)
         result["written"] = [args.output]
