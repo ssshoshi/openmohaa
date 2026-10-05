@@ -1,7 +1,7 @@
 """Checks the add-on inside Blender against the engine's own maths.
 
     blender -b --factory-startup --python tools/blender/tests/test_blender.py -- \
-        --folders "D:\\Medal of Honor\\main" --work <scratch folder> [--model models/...tik --anim run*]
+        [--folders "D:\\Medal of Honor\\main"] --work <scratch folder> [--model models/...tik --anim run*]
 
 For each model:
   1. import it with an animation, and compare every vertex Blender's armature puts on
@@ -9,6 +9,9 @@ For each model:
   2. export it, read the written .skd/.skc back with the format library, and compare the
      skinned vertices of the original and the exported files at the same frames (the
      exporter's job: what the game would draw from the new files).
+Then models built in Blender (a textured prop, a rigged and animated mesh) are exported,
+skinned with the engine's maths and imported back. Without --folders only those run (no
+game data needed; the bpy module from pip works as well as a Blender install).
 Exit status 1 when any distance passes the tolerance.
 """
 
@@ -153,7 +156,6 @@ def check_made_in_blender(work, tolerance):
     """A textured static prop and a rigged, animated mesh built here, exported, and read
     back: the engine-side skinning of the files must match what Blender shows."""
     results = []
-    from mathutils import Matrix
     k = 1.0 / (0.52 * importer.UNIT_METERS)  # Blender metres -> raw model units
 
     # 1. static prop: a 1 m cube with an image texture and no armature
@@ -174,8 +176,11 @@ def check_made_in_blender(work, tolerance):
     m = skd.read(open(os.path.join(work, "made", "models", "props", "crate", "crate.skd"), "rb").read())
     xs = [v.weights[0][2] for s in m.surfaces for v in s.verts]
     size = max(p[0] for p in xs) - min(p[0] for p in xs)
-    tik = open(out).read()
-    ok = (len(m.bones) == 1 and abs(size - k) < 0.01 and "crate_test.tga" in tik
+    # the texture is named in the .tik, or in a shader script when the material needs one
+    # (Blender materials draw both sides unless backface culling is on: that writes "cull none")
+    shader_file = os.path.join(work, "made", "scripts", "crate.shader")
+    refs = open(out).read() + (open(shader_file).read() if os.path.exists(shader_file) else "")
+    ok = (len(m.bones) == 1 and abs(size - k) < 0.01 and "models/props/crate/crate_test" in refs
           and os.path.exists(os.path.join(work, "made", "models", "props", "crate", "crate_test.tga"))
           and len(m.surfaces[0].verts) == 24 and len(m.surfaces[0].triangles) == 12)
     results.append(("static prop", ok, "cube width %.2f units (want %.2f), %d verts, %d files"
@@ -234,7 +239,7 @@ def check_made_in_blender(work, tolerance):
         scene.frame_set(int(t), subframe=t - int(t))
         world = eskel.evaluate(pose.frame_channels(ea, f))
         names = [b.name for b in em.bones]
-        engine = sorted(tuple(round(c, 1) for c in pose.skin_vertex(v, names, world)) for v in em.surfaces[0].verts)
+        engine = [pose.skin_vertex(v, names, world) for v in em.surfaces[0].verts]
         dg = bpy.context.evaluated_depsgraph_get()
         ev = cyl.evaluated_get(dg)
         me = ev.to_mesh()
@@ -244,16 +249,48 @@ def check_made_in_blender(work, tolerance):
         for p in engine:
             worst_d_p = min(sum((p[i] - q[i]) ** 2 for i in range(3)) for q in blender) ** 0.5
             worst_d = max(worst_d, worst_d_p)
-    ok = worst_d < max(tolerance, 0.1) and ea.num_frames == 21
+    ok = worst_d < tolerance and ea.num_frames == 21
     results.append(("rigged + animated", ok, "worst vertex distance %.4f units over %d frames, bones %s"
                     % (worst_d, ea.num_frames, [skd.BONE_TYPE_NAMES[b.type] for b in em.bones])))
+
+    # 3. the exported files back into Blender: the re-imported rig must play the bend as the
+    # one it was made from (both in raw model units, compared as point sets)
+    made = {}
+    for f in range(ea.num_frames):
+        t = 1.0 + f * ea.frame_time * fps
+        scene.frame_set(int(t), subframe=t - int(t))
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = cyl.evaluated_get(dg)
+        me = ev.to_mesh()
+        made[f] = [tuple(c * k for c in (cyl.matrix_world @ v.co)) for v in me.vertices]
+        ev.to_mesh_clear()
+    clear()
+    arm2, warns2 = importer.import_model(bpy.context, out, [], anim_mode="ALL", load_textures=False)
+    meshes2 = [o for o in arm2.children if o.type == "MESH"]
+    actions2 = [a for a in bpy.data.actions if a.get("mohaa_armature") == arm2.name and a.name == "bend"]
+    worst_back = float("inf")
+    if len(meshes2) == 1 and actions2:
+        from io_scene_mohaa import anim as animutil
+        animutil.assign(arm2, actions2[0])
+        worst_back = 0.0
+        for f in range(ea.num_frames):
+            t = 1.0 + f * ea.frame_time * fps
+            scene.frame_set(int(t), subframe=t - int(t))
+            back = blender_positions(arm2, meshes2)[0]  # armature space: raw model units
+            for p in back:
+                d = min(sum((p[i] - q[i]) ** 2 for i in range(3)) for q in made[f]) ** 0.5
+                worst_back = max(worst_back, d)
+    ok = worst_back < tolerance
+    results.append(("exported files imported back", ok, "worst vertex distance %.4f units over %d frames%s"
+                    % (worst_back, ea.num_frames, "".join(", warning: " + w for w in warns2))))
     return results
 
 
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     ap = argparse.ArgumentParser()
-    ap.add_argument("--folders", required=True)
+    ap.add_argument("--folders", default="", help="game folders, ';' separated; without them only "
+                    "the made-in-Blender checks run")
     ap.add_argument("--work", required=True)
     ap.add_argument("--model", action="append")
     ap.add_argument("--anim", action="append")
@@ -262,6 +299,8 @@ def main():
     io_scene_mohaa.register()
     folders = [f for f in args.folders.split(";") if f]
     models = list(zip(args.model, args.anim or ["*"] * len(args.model))) if args.model else DEFAULT_MODELS
+    if not folders:
+        models = []
     failed = 0
     for path, pattern in models:
         r = check_model(path, pattern, folders, args.work, args.tolerance)
