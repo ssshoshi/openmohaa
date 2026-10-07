@@ -514,8 +514,10 @@ enum
 #define TMU_RTSHADOW_BAKED   10
 #define NUM_TEXTURE_UNITS    16
 
-#define RT_MAX_LIGHTS   48
+#define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
+#define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
+#define RT_CULL_MARGIN  8.0f // past a surface's bounds a light is still counted in, for vertexes they miss
 #define RT_ATLAS_TILES  16 // a side, so 256 faces: 42 lights
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
@@ -819,7 +821,8 @@ enum
 	GLSL_VEC4,
 	GLSL_MAT16,
 	GLSL_MAT16_BONEMATRIX,
-	GLSL_VEC4_RTLIGHTS  // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
+	GLSL_VEC4_RTLIGHTS, // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
+	GLSL_VEC4_RTLIST    // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
 };
 
 typedef enum
@@ -952,6 +955,7 @@ typedef enum
 	UNIFORM_RTSUNSHADOW,
 	UNIFORM_RTSHADOWBAKED,
 	UNIFORM_RTCAPSULES,
+	UNIFORM_RTLIST,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 
 	UNIFORM_COUNT
@@ -972,6 +976,9 @@ typedef struct shaderProgram_s
 	GLint uniforms[UNIFORM_COUNT];
 	short uniformBufferOffsets[UNIFORM_COUNT]; // max 32767/64=511 uniforms
 	char  *uniformBuffer;
+
+	int   rtLightsGeneration; // Added in OPM: the realtime lights it was last sent (tr.rtLightGeneration)
+	int   rtLightsCount;
 } shaderProgram_t;
 
 // trRefdef_t holds everything that comes in refdef_t,
@@ -1209,6 +1216,7 @@ typedef struct drawSurf_s {
 	unsigned int		sort;			// bit combination for fast compares
 	int                 cubemapIndex;
 	surfaceType_t		*surface;		// any of surface*_t
+	uint64_t            rtMask;         // Added in OPM: the realtime lights that may reach it, a bit each (RT_MASK_ALL: all)
 } drawSurf_t;
 
 #define	MAX_FACE_POINTS		64
@@ -1761,6 +1769,7 @@ typedef struct {
 	int         *surfacesViewCount;
 	int         *surfacesDlightBits;
 	int			*surfacesPshadowBits;
+	uint64_t    *surfacesRtBits; // Added in OPM: the realtime lights that may reach each, this view
 
 	int			nummarksurfaces;
 	int         *marksurfaces;
@@ -2276,6 +2285,7 @@ typedef struct {
 	FBO_t *last2DFBO;
 	qboolean    colorMask[4];
 	qboolean    depthFill;
+	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	float       greyscale;
 
@@ -2300,6 +2310,11 @@ typedef struct {
     float		globalFogInvRange;
     float shaderStartTime;
     int dsStreamVert;
+
+    // Added in OPM: the realtime lights the surface being added to tess
+    // cannot take, so that a batch begun again when it is full takes those
+    // of the surface that filled it (0 outside the draw surface lists: all)
+    uint64_t rtSurfaceCulled;
 } backEndState_t;
 
 /*
@@ -2521,6 +2536,8 @@ typedef struct {
     FBO_t   *rtShadowFbo[3];
     int      rtNumActive;      // lights in rtLightData this frame
     vec4_t   rtLightData[RT_MAX_LIGHTS * RT_LIGHT_VEC4S];
+    int      rtLightGeneration; // a new one each time rtLightData is written
+    uint64_t rtDrawCulled;     // the lights that cannot reach the surfaces being added (R_AddDrawSurf), 0: none
     vec4_t   rtParams;         // lights, atlas tiles a side, mode, scale
     vec4_t   rtSunDir;         // w: 1 with a sun
     vec4_t   rtSunColor;
@@ -2647,6 +2664,7 @@ extern  cvar_t  *r_forceAutoExposureMax;
 extern  cvar_t  *r_cameraExposure;
 
 extern  cvar_t  *r_depthPrepass;
+extern  cvar_t  *r_earlyZ;
 extern  cvar_t  *r_ssao;
 
 extern  cvar_t  *r_normalMapping;
@@ -2894,6 +2912,10 @@ void R_RtFreeWorld(void);
 void R_RtRenderShadows(const refdef_t *fd);
 void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs);
 void R_RtSetUniforms(shaderProgram_t *sp, int stage);
+uint64_t R_RtViewMask(void);
+uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates);
+uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates);
+uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *back);
 int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean lightall);
 qboolean R_RtVertexParticles(void);
 qboolean R_RtIsCharacter(const refEntity_t *ent);
@@ -3149,6 +3171,7 @@ typedef struct shaderCommands_s
 
 	int			dlightBits;	// or together of all vertexDlightBits
 	int         pshadowBits;
+	uint64_t    rtMask;     // Added in OPM: or together of its surfaces' (drawSurf_t)
 
 	int			firstIndex;
 	int			numIndexes;
@@ -3350,7 +3373,8 @@ void GLSL_SetUniformVec3(shaderProgram_t *program, int uniformNum, const vec3_t 
 void GLSL_SetUniformVec4(shaderProgram_t *program, int uniformNum, const vec4_t v);
 void GLSL_SetUniformMat4(shaderProgram_t *program, int uniformNum, const mat4_t matrix);
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies);
-void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation);
+void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 

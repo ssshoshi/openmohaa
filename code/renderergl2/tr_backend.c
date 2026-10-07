@@ -506,6 +506,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				continue;
 
 			// fast path, same as previous sort
+			tess.rtMask |= drawSurf->rtMask;
+			backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
 			rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
 			continue;
 		}
@@ -538,6 +540,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			}
 			RB_BeginSurface( shader, fogNum, cubemapIndex );
 			backEnd.pc.c_surfBatches++;
+			// Added in OPM: the realtime lights its surfaces may take
+			tess.rtMask = 0;
 			oldShader = shader;
 			oldFogNum = fogNum;
 			oldDlighted = dlighted;
@@ -735,8 +739,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
         }
 
 		// add the triangles for this surface
+		tess.rtMask |= drawSurf->rtMask;
+		backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
 		rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
 	}
+	backEnd.rtSurfaceCulled = 0;
 
 	backEnd.refdef.floatTime = originalTime;
 
@@ -1207,6 +1214,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	backEnd.depthPrepassed = qfalse;
 
 	// clear the z buffer, set the modelview, etc
 	RB_BeginDrawingView ();
@@ -1242,6 +1250,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		R_GpuTimerEnd(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
 		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 		backEnd.depthFill = qfalse;
+		backEnd.depthPrepassed = !isShadowView;
 
 		if (sunLevel >= 0 && sunLevel <= 3)
 			backEnd.pc.c_sunCascadeSurfs[sunLevel] += cmd->numDrawSurfs;
@@ -1472,6 +1481,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		R_GpuTimerBegin(GPUTIMER_MAIN3D);
 		R_CpuTimerBegin(CPUTIMER_MAIN3D);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+		backEnd.depthPrepassed = qfalse;
 
 		if (r_drawSun->integer)
 		{

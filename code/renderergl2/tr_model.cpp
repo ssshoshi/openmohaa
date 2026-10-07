@@ -849,17 +849,36 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
 
     // Nothing here ever skipped a model outside the view: it was posed,
     // skinned and drawn regardless, and every sun cascade that takes entities
-    // is a view of its own. A model is left out of a cascade only when both
-    // the animation's own sphere and its bones are outside that cascade: a
-    // ragdoll's bones can lie well away from the sphere, which follows the
-    // entity and not the body. The main view is left as it was.
+    // is a view of its own. A model is left out of a view only when both
+    // the animation's own sphere and its bones are outside it: a ragdoll's
+    // bones can lie well away from the sphere, which follows the entity and
+    // not the body. The main view, which had been left as it was, culls
+    // them too: the people behind the camera were drawn into every frame.
+    // It is posed above whether drawn or not, for the views that do. The
+    // view's own model, which hangs off the eye, is always drawn.
     if (r_skelCull->integer && !lod_tool->integer && iRadiusCull == CULL_OUT
-        && (tr.viewParms.flags & VPF_DEPTHSHADOW)) {
+        && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))) {
         vec3_t centre;
 
         R_LocalPointToWorld(ent->boneCentre, centre);
         if (R_CullPointAndRadius(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN) == CULL_OUT) {
             return;
+        }
+    }
+
+    // Added in OPM
+    //  The realtime lights that reach the animation's sphere, or its bones.
+    {
+        const uint64_t candidates = R_RtViewMask();
+
+        if (candidates != RT_MASK_ALL) {
+            vec3_t   centre;
+            uint64_t mask;
+
+            R_LocalPointToWorld(ent->boneCentre, centre);
+            mask = R_RtSphereMask(tiki_worldorigin, radius, candidates);
+            mask |= R_RtSphereMask(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN, candidates);
+            tr.rtDrawCulled = ~mask;
         }
     }
 

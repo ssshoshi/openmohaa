@@ -126,6 +126,7 @@ cvar_t  *r_forceAutoExposureMin;
 cvar_t  *r_forceAutoExposureMax;
 
 cvar_t  *r_depthPrepass;
+cvar_t  *r_earlyZ;
 cvar_t  *r_ssao;
 
 cvar_t  *r_normalMapping;
@@ -1589,6 +1590,14 @@ void R_Register( void )
 	r_cameraExposure = ri.Cvar_Get( "r_cameraExposure", "1", CVAR_CHEAT );
 
 	r_depthPrepass = ri.Cvar_Get( "r_depthPrepass", "1", CVAR_ARCHIVE );
+	// Added in OPM
+	//  Once the prepass has laid the depth down, writing it again is what
+	//  keeps the card from rejecting hidden pixels before it shades them: a
+	//  shader that can discard (every one that can alpha test) and writes
+	//  depth is depth tested after it runs, so each layer of the world behind
+	//  the nearest went through the realtime lights' loop for nothing.
+	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "1", 0 );
+	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
 
 	r_normalMapping = ri.Cvar_Get( "r_normalMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1663,6 +1672,7 @@ void R_Register( void )
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.
 	r_skelCull = ri.Cvar_Get( "r_skelCull", "1", 0 );
+	ri.Cvar_SetDescription( r_skelCull, "Skeletal models wholly outside a view (their animation's sphere and their bones both) are not drawn in it" );
 	// Pose each skeletal model once per scene and skin each of its surfaces
 	// once per pose, rather than again in every view that draws it (prepass,
 	// sun cascades, the realtime lights' shadows). Not archived: an A/B switch.

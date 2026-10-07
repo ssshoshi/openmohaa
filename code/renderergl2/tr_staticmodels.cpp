@@ -308,11 +308,17 @@ void R_AddStaticModelSurfaces(void)
     vec3_t                  tiki_localorigin;
     vec3_t                  tiki_worldorigin;
 
+    uint64_t                rtCandidates;
+
     if (!tr.world->numStaticModels) {
         return;
     }
 
     tr.shiftedIsStatic = (1 << QSORT_STATICMODEL_SHIFT);
+
+    // Added in OPM: the realtime lights there are, for each model to take
+    // those that reach it
+    rtCandidates = R_RtViewMask();
 
     for (i = 0; i < tr.world->numStaticModels; i++) {
         SM = &tr.world->staticModels[i];
@@ -368,6 +374,8 @@ void R_AddStaticModelSurfaces(void)
         if (iRadiusCull != CULL_OUT
             && (iRadiusCull != CULL_CLIP || R_CullStaticModel(SM->tiki, tiki_scale, tiki_localorigin) != CULL_OUT)) {
             dtikisurface_t *dsurf;
+
+            tr.rtDrawCulled = ~R_RtSphereMask(tiki_worldorigin, SM->cull_radius, rtCandidates);
 
             if (tr.viewParms.isPortal) {
                 SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
@@ -481,6 +489,7 @@ void R_AddStaticModelSurfaces(void)
         }
     }
 
+    tr.rtDrawCulled    = 0;
     tr.shiftedIsStatic = 0;
 }
 

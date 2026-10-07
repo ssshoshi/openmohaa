@@ -188,6 +188,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSunShadow",     GLSL_INT },
 	{ "u_RtShadowBaked",   GLSL_INT },
 	{ "u_RtCapsules",      GLSL_INT },
+	{ "u_RtList",          GLSL_VEC4_RTLIST },
 	{ "u_SoftParticle",    GLSL_VEC4 }
 };
 
@@ -297,6 +298,8 @@ static const char *rt_glsl =
 	"#define RT_STAGE_PARTICLE  5\n"
 	"#define RT_STAGE_PARTICLE_LIT 6\n"
 	"uniform vec4 u_RtLights[RT_MAX_LIGHTS * 4];\n"
+	// the lights this draw may take, four indexes a vec4; u_RtParams.x of them
+	"uniform vec4 u_RtList[RT_MAX_LIGHTS / 4];\n"
 	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
 	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
 	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
@@ -309,6 +312,13 @@ static const char *rt_glsl =
 	"#if defined(RT_CAPSULES)\n"
 	"uniform sampler2D u_RtCapsules;\n"
 	"#endif\n"
+	"\n"
+	"int RtListed(int k)\n"
+	"{\n"
+	"	vec4 q = u_RtList[k / 4];\n"
+	"	int  c = k - (k / 4) * 4;\n"
+	"	return int(c == 0 ? q.x : c == 1 ? q.y : c == 2 ? q.z : q.w);\n"
+	"}\n"
 	"\n"
 	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth)\n"
 	"{\n"
@@ -423,9 +433,10 @@ static const char *rt_glsl =
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
-	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
-	"		if (i >= count) break;\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -486,9 +497,10 @@ static const char *rt_glsl =
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
-	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
-	"		if (i >= count) break;\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -1033,6 +1045,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_RTLIGHTS:
 				size += sizeof(vec4_t) * RT_MAX_LIGHTS * RT_LIGHT_VEC4S;
 				break;
+			case GLSL_VEC4_RTLIST:
+				size += sizeof(vec4_t) * (RT_MAX_LIGHTS / 4);
+				break;
 			default:
 				break;
 		}
@@ -1221,11 +1236,9 @@ Added in OPM
 The realtime lights, RT_LIGHT_VEC4S vec4s each (tr_rtlight.c). Only the first
 count are sent; the shader reads no further than u_RtParams.x.
 */
-void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation)
 {
 	GLint *uniforms = program->uniforms;
-	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
-	int    floats   = count * RT_LIGHT_VEC4S * 4;
 
 	if (uniforms[uniformNum] == -1 || count <= 0) {
 		return;
@@ -1238,16 +1251,51 @@ void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec
 	}
 
 	if (count > RT_MAX_LIGHTS) {
-		count  = RT_MAX_LIGHTS;
-		floats = count * RT_LIGHT_VEC4S * 4;
+		count = RT_MAX_LIGHTS;
 	}
 
-	if (!memcmp(v, compare, floats * sizeof(float))) {
+	// written once a frame (R_RtRenderShadows): comparing the whole of them
+	// at each draw was kilobytes a draw for nothing
+	if (program->rtLightsGeneration == generation && program->rtLightsCount == count) {
 		return;
 	}
 
-	Com_Memcpy(compare, v, floats * sizeof(float));
+	program->rtLightsGeneration = generation;
+	program->rtLightsCount      = count;
 	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], count * RT_LIGHT_VEC4S, &v[0][0]);
+}
+
+/*
+Added in OPM
+The realtime lights a draw may take (R_RtSetUniforms), count indexes, four a
+vec4. Only the vec4s that hold them are sent.
+*/
+void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+	int    vec4s    = (count + 3) / 4;
+
+	if (uniforms[uniformNum] == -1 || count <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_RTLIST)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformRtList: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > RT_MAX_LIGHTS / 4) {
+		vec4s = RT_MAX_LIGHTS / 4;
+	}
+
+	if (!memcmp(v, compare, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
 }
 
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies)

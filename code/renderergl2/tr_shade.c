@@ -308,6 +308,9 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.cubemapIndex = cubemapIndex;
 	tess.dlightBits = 0;		// will be OR'd in by surface functions
 	tess.pshadowBits = 0;       // will be OR'd in by surface functions
+	// Added in OPM: the realtime lights its surfaces may take, as the draw
+	// surface list adds them (RB_RenderDrawSurfList); outside it all of them
+	tess.rtMask = ~backEnd.rtSurfaceCulled;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
 	tess.currentStageIteratorFunc = state->optimalStageIteratorFunc;
@@ -1452,6 +1455,25 @@ static void RB_SetSecondBundle( shaderProgram_t *sp, shaderStage_t *pStage, qboo
 }
 
 
+/*
+Added in OPM
+Whether the depth prepass of this view left this batch's depth: it draws the
+first stage of the opaque shaders (RB_RenderDrawSurfList), so where that stage
+writes depth the depth buffer already holds what any stage of it would write.
+*/
+static qboolean RB_DepthPrepassed( const shaderCommands_t *input )
+{
+	const shaderStage_t *first = input->xstages[0];
+
+	if ( !backEnd.depthPrepassed || backEnd.depthFill || !r_earlyZ->integer || !first ) {
+		return qfalse;
+	}
+	if ( input->shader->sort != SS_OPAQUE && input->shader->sort != SS_PORTAL ) {
+		return qfalse;
+	}
+	return ( first->stateBits & GLS_DEPTHMASK_TRUE ) ? qtrue : qfalse;
+}
+
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
@@ -1637,6 +1659,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		// cut away wherever the gun was last drawn.
 		if (backEnd.projection2D)
 			GL_State( pStage->stateBits | GLS_DEPTHTEST_DISABLE );
+		else if (RB_DepthPrepassed(input))
+			// Added in OPM: the prepass wrote this depth already (r_earlyZ)
+			GL_State( pStage->stateBits & ~GLS_DEPTHMASK_TRUE );
 		else
 			GL_State( pStage->stateBits );
 		if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GT_0)

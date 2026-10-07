@@ -1557,6 +1557,8 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 		| tr.shiftedIsStatic;
 	tr.refdef.drawSurfs[index].cubemapIndex = cubemap;
 	tr.refdef.drawSurfs[index].surface = surface;
+	// Added in OPM: the realtime lights that may reach it (R_RtViewMask)
+	tr.refdef.drawSurfs[index].rtMask = ~tr.rtDrawCulled;
 	tr.refdef.numDrawSurfs++;
 }
 
@@ -1664,6 +1666,10 @@ static void R_AddEntitySurface (int entityNum)
 	ent = tr.currentEntity = &tr.refdef.entities[tr.currentEntityNum];
 
 	ent->needDlights = qfalse;
+
+	// Added in OPM: all the realtime lights, unless the model's own code
+	// finds which reach it (R_AddSkelSurfaces, R_AddBrushModelSurfaces)
+	tr.rtDrawCulled = 0;
 
 	// preshift the value we are going to OR into the drawsurf sort
 	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
@@ -1802,6 +1808,7 @@ void R_AddEntitySurfaces (void) {
 
 			R_AddEntitySurface(i);
 		}
+		tr.rtDrawCulled = 0;
 
 		tr.pc.t_entitySurfaces += R_MicroSeconds() - tStart;
 		tr.pc.c_entitySubmissions += tr.refdef.num_entities;
@@ -3175,6 +3182,7 @@ void R_AddSpriteSurf(surfaceType_t* surface, shader_t* shader, float zDistance)
 	index = tr.refdef.numSpriteSurfs % MAX_SPRITES;
     tr.refdef.spriteSurfs[index].sort = (int)(MAX_SPRITE_DIST_SQUARED - zDistance) | (shader->sortedIndex << QSORT_SHADERNUM_SHIFT);
     tr.refdef.spriteSurfs[index].surface = surface;
+    tr.refdef.spriteSurfs[index].rtMask = RT_MASK_ALL;
     tr.refdef.numSpriteSurfs++;
 }
 
