@@ -62,6 +62,7 @@ cvar_t *r_rtLightsAtFixtures;
 cvar_t *r_rtCapsules;
 cvar_t *r_rtParticles;
 cvar_t *r_rtDebug;
+cvar_t *r_rtLightLists;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
 // sent four indexes a vec4 (u_RtList)
@@ -192,6 +193,8 @@ void R_RtRegister(void)
 	r_rtParticles = ri.Cvar_Get("r_rtParticles", "1", 0);
 	ri.Cvar_SetDescription(r_rtParticles, "Dust and smoke sprites take the realtime lights at their corners, not per pixel (0: per pixel, which piles of them make very slow). Not archived: an A/B switch");
 	r_rtDebug = ri.Cvar_Get("r_rtDebug", "0", 0);
+	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
+	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
 }
 
 /*
@@ -1438,7 +1441,8 @@ out of a list is one that would have given the surface nothing.
 // they take no part in (a shadow), so that nothing is culled there for none.
 uint64_t R_RtViewMask(void)
 {
-	if (!R_RtActive() || (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) || (tr.refdef.rdflags & RDF_NOWORLDMODEL)) {
+	if (!R_RtActive() || !r_rtLightLists->integer || (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+		|| (tr.refdef.rdflags & RDF_NOWORLDMODEL)) {
 		return RT_MASK_ALL;
 	}
 	return ((uint64_t)1 << tr.rtNumActive) - 1;

@@ -1598,8 +1598,15 @@ void R_Register( void )
 	//  shader that can discard (every one that can alpha test) and writes
 	//  depth is depth tested after it runs, so each layer of the world behind
 	//  the nearest went through the realtime lights' loop for nothing.
-	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "1", 0 );
-	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Not archived: an A/B switch" );
+	//
+	//  Off: it measured no faster on a GTX-class card, and it made a shader's
+	//  later stages (lightmaps, detail, "depthFunc equal" layers) test against
+	//  the prepass's depth rather than the depth their own first stage wrote.
+	//  The prepass draws with other programs, whose depth can differ by the
+	//  last bit, and the layers flickered on the ground and on models as the
+	//  view moved. Writing the depth again hides that difference.
+	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "0", 0 );
+	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Can make layers flicker where the prepass's depth differs by a bit. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
 
 	r_normalMapping = ri.Cvar_Get( "r_normalMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
