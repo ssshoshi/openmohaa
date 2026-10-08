@@ -8,25 +8,30 @@
 #endif
 
 attribute vec4 attr_TexCoord0;
-#if defined(USE_LIGHTMAP) || defined(USE_TCGEN) || defined(USE_GROUNDCOVER)
+#if defined(USE_LIGHTMAP) || defined(USE_TCGEN) || defined(USE_GROUNDCOVER) || defined(USE_SKEL_GPU)
 attribute vec4 attr_TexCoord1;
 #endif
 attribute vec4 attr_Color;
 
 #if defined(USE_SKEL_GPU)
-// Added in OPM: a skeletal model's vertex, posed here (tr_skelgpu.c): up to
-// four weights, each the vertex's place by its bone (xyz) and how much of it
-// that bone has (w); the bones, and the normal as the first bone holds it
+// Added in OPM: a skeletal model's vertex, posed here (tr_skelgpu.cpp): up
+// to eight weights, each the vertex's place by its bone (xyz) and how much of
+// it that bone has (w), in attr_Position, attr_Position2, attr_Normal2,
+// attr_Tangent2, attr_Tangent, attr_TexCoord1, attr_PaintColor and
+// attr_Color; their bones, four in attr_BoneIndexes and four in
+// attr_BoneWeights; and the normal as the first bone holds it
 attribute vec4 attr_Position;
 attribute vec4 attr_Position2;
 attribute vec4 attr_Normal2;
 attribute vec4 attr_Tangent2;
+attribute vec4 attr_PaintColor;
 attribute vec4 attr_BoneIndexes;
+attribute vec4 attr_BoneWeights;
 #else
 attribute vec3 attr_Position;
 #endif
 attribute vec3 attr_Normal;
-#if defined(USE_TANGENT_FRAME) || defined(USE_GROUNDCOVER)
+#if defined(USE_TANGENT_FRAME) || defined(USE_GROUNDCOVER) || defined(USE_SKEL_GPU)
 attribute vec4 attr_Tangent;
 #endif
 
@@ -319,6 +324,10 @@ void main()
 	if (attr_Position2.w != 0.0) position += SkelWeight(attr_Position2, attr_BoneIndexes.y);
 	if (attr_Normal2.w != 0.0)   position += SkelWeight(attr_Normal2, attr_BoneIndexes.z);
 	if (attr_Tangent2.w != 0.0)  position += SkelWeight(attr_Tangent2, attr_BoneIndexes.w);
+	if (attr_Tangent.w != 0.0)   position += SkelWeight(attr_Tangent, attr_BoneWeights.x);
+	if (attr_TexCoord1.w != 0.0) position += SkelWeight(attr_TexCoord1, attr_BoneWeights.y);
+	if (attr_PaintColor.w != 0.0) position += SkelWeight(attr_PaintColor, attr_BoneWeights.z);
+	if (attr_Color.w != 0.0)     position += SkelWeight(attr_Color, attr_BoneWeights.w);
 	position *= u_SkelParams.y;
 	int  nb = int(attr_BoneIndexes.x + 0.5);
 	vec3 normal = attr_Normal.x * SkelTexel(nb, 1).xyz + attr_Normal.y * SkelTexel(nb, 2).xyz + attr_Normal.z * SkelTexel(nb, 3).xyz;

@@ -34,7 +34,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // on the CPU but the indexes the level of detail keeps.
 //
 // What the program cannot do exactly as the CPU does is left to it: a vertex
-// with more than four weights, a model whose face moves (morphs), shaders that
+// with more than eight weights, a model whose face moves (morphs), shaders that
 // are not one lightall stage after another or that the CPU deforms or lights
 // per vertex, fog, the debug views.
 
@@ -43,11 +43,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 static cvar_t *r_skelGpu;
 
+#define SKEL_GPU_WEIGHTS 8
+
 // a vertex as the model has it
 typedef struct {
-    vec4_t weights[4]; // where it is by each bone, how much of it the bone has
-    vec4_t bones;      // the model's bones, the normal's first
-    vec3_t normal;     // as the first bone holds it
+    vec4_t weights[SKEL_GPU_WEIGHTS]; // where it is by each bone, how much of it the bone has
+    float  bones[SKEL_GPU_WEIGHTS];   // the model's bones, the normal's first
+    vec3_t normal;                    // as the first bone holds it
     vec2_t st;
 } skelGpuVert_t;
 
@@ -56,8 +58,31 @@ typedef struct {
     const skelSurfaceGame_t *sf;
     qboolean                 ok;        // the vertex program can pose it
     qboolean                 hasMorphs; // a vertex of it moves with the face
+    const char              *why;       // not ok: why not
+    int                      maxWeights;
     vao_t                    vao;
 } skelGpuMesh_t;
+
+// why a surface was left to the CPU (backEnd.pc.c_skelGpuCpu)
+typedef enum {
+    SKEL_CPU_OFF,      // r_skelGpu 0, or the card cannot
+    SKEL_CPU_VIEW,     // fog, dynamic or personal shadow passes, debug views
+    SKEL_CPU_SHADER,
+    SKEL_CPU_MESH,
+    SKEL_CPU_MORPHS,
+    SKEL_CPU_LIGHTING,
+    SKEL_CPU_COUNT
+} skelGpuWhy_t;
+
+static const char *const skelCpuNames[SKEL_CPU_COUNT] = { "off", "view", "shader", "mesh", "morphs", "lighting" };
+
+// the shaders it was not for, and why, for skelgpuinfo
+#define SKEL_GPU_REFUSED 64
+static struct {
+    const shader_t *shader;
+    char            why[96];
+} skelRefused[SKEL_GPU_REFUSED];
+static int skelNumRefused;
 
 #define SKEL_GPU_MESHES 4096 // a power of two
 
@@ -188,7 +213,8 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     vao_t            *vao = &m->vao;
     int               i, k;
 
-    m->ok = qfalse;
+    m->ok  = qfalse;
+    m->why = "no vertexes";
     if (sf->numVerts <= 0) {
         return;
     }
@@ -200,7 +226,9 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
         skelGpuVert_t      *out    = &verts[i];
         const skelWeight_t *weight = (const skelWeight_t *)((byte *)v + sizeof(skeletorVertex_t) + sizeof(skeletorMorph_t) * v->numMorphs);
 
-        if (v->numWeights < 1 || v->numWeights > 4) {
+        m->maxWeights = Q_max(m->maxWeights, v->numWeights);
+        if (v->numWeights < 1 || v->numWeights > SKEL_GPU_WEIGHTS) {
+            m->why = v->numWeights < 1 ? "a vertex with no weights" : "a vertex with more than eight weights";
             ri.Free(verts);
             return;
         }
@@ -214,12 +242,14 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
             // a mesh past the model's first names its bones by channel (RB_SkelMesh)
             if (mesh > 0) {
                 if (bone < 0 || bone >= skelmodel->numBones) {
+                    m->why = "a bone past the mesh's";
                     ri.Free(verts);
                     return;
                 }
                 bone = ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[bone].channel);
             }
             if (bone < 0) {
+                m->why = "a bone the model does not have";
                 ri.Free(verts);
                 return;
             }
@@ -227,7 +257,7 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
             out->weights[k][3] = weight[k].boneWeight;
             out->bones[k]      = bone;
         }
-        for (; k < 4; k++) {
+        for (; k < SKEL_GPU_WEIGHTS; k++) {
             out->bones[k] = out->bones[0];
         }
         VectorCopy(v->normal, out->normal);
@@ -249,17 +279,24 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     qglBufferData(GL_ARRAY_BUFFER, vao->vertexesSize, verts, GL_STATIC_DRAW);
     ri.Free(verts);
 
+    // the arrays the vertex program reads the weights from (lightall_vp.glsl)
     R_SkelGpuAttrib(vao, ATTR_INDEX_POSITION, 4, offsetof(skelGpuVert_t, weights[0]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_POSITION2, 4, offsetof(skelGpuVert_t, weights[1]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_NORMAL2, 4, offsetof(skelGpuVert_t, weights[2]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_TANGENT2, 4, offsetof(skelGpuVert_t, weights[3]));
-    R_SkelGpuAttrib(vao, ATTR_INDEX_BONE_INDEXES, 4, offsetof(skelGpuVert_t, bones));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_TANGENT, 4, offsetof(skelGpuVert_t, weights[4]));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_LIGHTCOORD, 4, offsetof(skelGpuVert_t, weights[5]));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_PAINTCOLOR, 4, offsetof(skelGpuVert_t, weights[6]));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_COLOR, 4, offsetof(skelGpuVert_t, weights[7]));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_BONE_INDEXES, 4, offsetof(skelGpuVert_t, bones[0]));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_BONE_WEIGHTS, 4, offsetof(skelGpuVert_t, bones[4]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_NORMAL, 3, offsetof(skelGpuVert_t, normal));
     R_SkelGpuAttrib(vao, ATTR_INDEX_TEXCOORD, 2, offsetof(skelGpuVert_t, st));
     Vao_SetVertexPointers(vao);
     GL_CheckErrors();
 
-    m->ok = qtrue;
+    m->ok  = qtrue;
+    m->why = NULL;
 }
 
 void R_SkelGpuFree(void)
@@ -284,6 +321,7 @@ void R_SkelGpuFree(void)
     }
     skelGpuNumMeshes = 0;
     skelBonesScene   = -1;
+    skelNumRefused   = 0;
 }
 
 /*
@@ -295,17 +333,18 @@ Shaders and lighting
 // Every stage the lightall program, none with a map that needs a tangent
 // frame or the lightmap's coordinates, and nothing worked out per vertex on
 // the CPU.
-static qboolean R_SkelGpuShader(shader_t *shader)
+static const char *R_SkelGpuShaderWhyNot(const shader_t *shader)
 {
     int i, n = 0;
 
-    if (shader->skelGpu) {
-        return shader->skelGpu > 0;
+    if (shader->numDeforms) {
+        return "deformVertexes";
     }
-
-    shader->skelGpu = -1;
-    if (shader->numDeforms || shader->needsCPUVertexAlpha || shader->isSky || shader->isPortal) {
-        return qfalse;
+    if (shader->needsCPUVertexAlpha) {
+        return "an alpha worked out per vertex";
+    }
+    if (shader->isSky || shader->isPortal) {
+        return "a sky or portal";
     }
     for (i = 0; i < MAX_SHADER_STAGES; i++) {
         const shaderStage_t *stage = shader->stages[i];
@@ -315,22 +354,36 @@ static qboolean R_SkelGpuShader(shader_t *shader)
             break;
         }
         if (stage->glslShaderGroup != tr.lightallShader) {
-            return qfalse;
+            return va("stage %d is not drawn by lightall", i);
         }
         index = stage->glslShaderIndex;
-        if ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP) {
-            return qfalse;
+        if ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP || stage->bundle[0].tcGen == TCGEN_LIGHTMAP) {
+            return va("stage %d is lightmapped", i);
         }
         if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)) {
-            return qfalse;
+            return va("stage %d has a normal, specular or deluxe map", i);
         }
         n++;
     }
-    if (!n) {
-        return qfalse;
+    return n ? NULL : "no stages";
+}
+
+static qboolean R_SkelGpuShader(shader_t *shader)
+{
+    const char *why;
+
+    if (shader->skelGpu) {
+        return shader->skelGpu > 0;
     }
-    shader->skelGpu = 1;
-    return qtrue;
+
+    why = R_SkelGpuShaderWhyNot(shader);
+    shader->skelGpu = why ? -1 : 1;
+    if (why && skelNumRefused < SKEL_GPU_REFUSED) {
+        skelRefused[skelNumRefused].shader = shader;
+        Q_strncpyz(skelRefused[skelNumRefused].why, why, sizeof(skelRefused[skelNumRefused].why));
+        skelNumRefused++;
+    }
+    return !why;
 }
 
 static void R_SkelGpuColour(vec4_t out, const byte *rgba)
@@ -411,26 +464,27 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
     skelGpuMesh_t **slot;
     skelGpuMesh_t  *m;
 
-    if (!R_SkelGpuAvailable() || r_showtris->integer || r_shownormals->integer) {
-        return NULL;
-    }
-    if (!ent || ent == &tr.worldEntity || tess.currentStageIteratorFunc != RB_StageIteratorGeneric) {
+    if (!R_SkelGpuAvailable()) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_OFF]++;
         return NULL;
     }
     // what reads tess's vertexes after the stages: the fog, dynamic light and
-    // personal shadow passes, the shadow map views drawn in colour
-    if (tess.fogNum || tess.dlightBits || tess.pshadowBits) {
-        return NULL;
-    }
-    if ((backEnd.viewParms.flags & VPF_SHADOWMAP) && !backEnd.depthFill) {
+    // personal shadow passes, the shadow map views drawn in colour; the debug
+    // views
+    if (!ent || ent == &tr.worldEntity || tess.currentStageIteratorFunc != RB_StageIteratorGeneric
+        || tess.fogNum || tess.dlightBits || tess.pshadowBits || ((backEnd.viewParms.flags & VPF_SHADOWMAP) && !backEnd.depthFill)
+        || r_showtris->integer || r_shownormals->integer) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_VIEW]++;
         return NULL;
     }
     if (!R_SkelGpuShader(tess.shader)) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_SHADER]++;
         return NULL;
     }
 
     slot = R_SkelGpuSlot(tiki, sf);
     if (!slot) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_MESH]++;
         return NULL;
     }
     if (!*slot) {
@@ -443,11 +497,17 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
         R_SkelGpuBuild(m, tiki, sf, mesh, skelmodel);
     }
     m = *slot;
-    if (!m->ok || (ent->e.hasMorph && m->hasMorphs)) {
+    if (!m->ok) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_MESH]++;
+        return NULL;
+    }
+    if (ent->e.hasMorph && m->hasMorphs) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_MORPHS]++;
         return NULL;
     }
 
     if (!RB_SkelGpuLighting()) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_LIGHTING]++;
         return NULL;
     }
     tess.skelGpu.params[0] = ent->e.bonestart;
@@ -499,4 +559,61 @@ void RB_SkelGpuBind(void)
     tess.streamBaseVertex = 0;
     tess.streamFirstIndex = first;
     backEnd.pc.c_skelGpuDraws++;
+}
+
+/*
+================
+R_SkelGpuReport
+
+With the GPU timers' report (r_gpuTimers): the skeletal surfaces of the
+last frame left to the CPU, by why.
+================
+*/
+void R_SkelGpuReport(void)
+{
+    char line[256];
+    int  i, total = 0;
+
+    Com_sprintf(line, sizeof(line), "gpu skeletal surfaces posed on the CPU:");
+    for (i = 0; i < SKEL_CPU_COUNT; i++) {
+        total += backEnd.pc.c_skelGpuCpu[i];
+        Q_strcat(line, sizeof(line), va(" %s %d", skelCpuNames[i], backEnd.pc.c_skelGpuCpu[i]));
+    }
+    ri.Printf(PRINT_ALL, "%s (%d; skelgpuinfo says which)\n", line, total);
+}
+
+/*
+================
+R_SkelGpuInfo_f
+
+The surfaces and shaders the vertex program could not pose, and why.
+================
+*/
+void R_SkelGpuInfo_f(void)
+{
+    int i, ok = 0, refused = 0;
+
+    ri.Printf(PRINT_ALL, "Skeletal models posed by the vertex program: %s\n",
+        R_SkelGpuAvailable() ? "on" : (r_skelGpu && r_skelGpu->integer ? "not available (needs GLSL 1.30, buffer storage and r_tessStream)" : "off (r_skelGpu 0)"));
+
+    for (i = 0; i < SKEL_GPU_MESHES; i++) {
+        const skelGpuMesh_t *m = skelGpuMeshes[i];
+
+        if (!m) {
+            continue;
+        }
+        if (m->ok) {
+            ok++;
+            continue;
+        }
+        refused++;
+        ri.Printf(PRINT_ALL, "  surface %s of %s: %s (%d weights at most)\n",
+            m->sf->name, m->tiki->name ? m->tiki->name : "?", m->why ? m->why : "?", m->maxWeights);
+    }
+    ri.Printf(PRINT_ALL, "  %d surfaces on the card, %d left to the CPU\n", ok, refused);
+
+    for (i = 0; i < skelNumRefused; i++) {
+        ri.Printf(PRINT_ALL, "  shader %s: %s\n", skelRefused[i].shader->name, skelRefused[i].why);
+    }
+    ri.Printf(PRINT_ALL, "  %d shaders left to the CPU%s\n", skelNumRefused, skelNumRefused == SKEL_GPU_REFUSED ? " (the first ones)" : "");
 }

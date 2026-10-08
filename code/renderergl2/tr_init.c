@@ -1887,6 +1887,7 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
 	// Added in OPM
 	ri.Cmd_AddCommand( "groundcoverinfo", R_GroundCoverInfo_f );
+	ri.Cmd_AddCommand( "skelgpuinfo", R_SkelGpuInfo_f );
 	R_RtTestCommands( qtrue );
 
 	//
@@ -2162,6 +2163,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
 	// Added in OPM
 	ri.Cmd_RemoveCommand( "groundcoverinfo" );
+	ri.Cmd_RemoveCommand( "skelgpuinfo" );
 	R_RtTestCommands( qfalse );
 
 

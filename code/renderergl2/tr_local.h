@@ -2278,7 +2278,8 @@ typedef struct {
 	int     c_streamBatches; // Added in OPM: batches copied into the tess ring (r_tessStream)
 	int     c_streamWaits;   // and the times it had to wait for the card to be done with a part of it
 	int     c_skinArenaDraws; // batches drawn from a posed surface's copy, nothing copied
-	int     c_skelGpuDraws;   // Added in OPM: surfaces the vertex program posed (tr_skelgpu.c)
+	int     c_skelGpuDraws;   // Added in OPM: surfaces the vertex program posed (tr_skelgpu.cpp)
+	int     c_skelGpuCpu[8];  // and those left to the CPU, by why (skelGpuWhy_t)
 	float	c_overDraw;
 	
 	int		c_vaoBinds;
@@ -3754,6 +3755,8 @@ void     RB_SkelGpuBind(void);
 void     R_SkelGpuFree(void);
 void     R_SkelGpuInitImage(void);
 void     R_SkelGpuRegisterCvars(void);
+void     R_SkelGpuInfo_f(void);
+void     R_SkelGpuReport(void);
 int      RB_StreamIndexes(const glIndex_t *indexes, int numIndexes, GLuint *buffer);
 void R_SwapTerraPatch(cTerraPatch_t* pPatch);
 

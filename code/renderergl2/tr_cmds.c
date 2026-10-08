@@ -90,6 +90,9 @@ static void R_ReportGpuTimers( int interval )
 		backEnd.pc.c_drawCalls, backEnd.pc.c_bufferUploads,
 		backEnd.pc.c_streamBatches, backEnd.pc.c_streamWaits, backEnd.pc.c_skinArenaDraws, backEnd.pc.c_skelGpuDraws );
 
+	// Added in OPM: skeletal surfaces the vertex program could not pose, by why
+	R_SkelGpuReport();
+
 	ri.Printf( PRINT_ALL, "gpu cascade surfs: %i %i %i %i\n",
 		backEnd.pc.c_sunCascadeSurfs[0], backEnd.pc.c_sunCascadeSurfs[1],
 		backEnd.pc.c_sunCascadeSurfs[2], backEnd.pc.c_sunCascadeSurfs[3] );
