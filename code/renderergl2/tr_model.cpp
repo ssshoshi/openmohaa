@@ -976,6 +976,9 @@ void R_SkelPosesClear(void)
 {
     int i;
 
+    // the surfaces the vertex program poses, of the models that go with them
+    R_SkelGpuFree();
+
     for (i = 0; i < MAX_GENTITIES; i++) {
         if (skelPoseRecords[i].data) {
             ri.Free(skelPoseRecords[i].data);
@@ -1704,6 +1707,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 {
     int                boneMap[TIKI_MAX_BONES];
     qboolean           boneMapped = qfalse;
+    void              *skelGpu;
     qboolean           tangents;
     int                kept;
     unsigned int       baseIndex, baseVertex;
@@ -1822,6 +1826,15 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
         render_count = sf->numVerts;
     }
 
+    // Added in OPM
+    //  Posed by the vertex program from the frame's bones, if it can be
+    //  (tr_skelgpu.cpp): a batch of its own, which holds its indexes alone.
+    skelGpu = RB_SkelGpuUsable(tiki, sf, mesh, skelmodel);
+    if (skelGpu && tess.numIndexes) {
+        RB_EndSurface();
+        RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+    }
+
     indexes = sf->numTriangles * 3;
     RB_CHECKOVERFLOW(render_count, indexes);
 
@@ -1874,6 +1887,11 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     }
 
     tangents = (tess.shader->vertexAttribs & ATTR_TANGENT) ? qtrue : qfalse;
+
+    if (skelGpu) {
+        RB_SkelGpuSubmit(skelGpu);
+        return;
+    }
 
     // Added in OPM
     //  The batch's first surface, on the card already this frame, in a view

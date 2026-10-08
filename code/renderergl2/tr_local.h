@@ -525,6 +525,9 @@ enum
 #define RT_MAX_RUN      1023 // of those, for one light
 #define TMU_RTCAPSULES  11
 #define TMU_SOFTDEPTH   12 // Added in OPM: the view's depth, for soft particles
+#define TMU_SKELBONES   13 // Added in OPM: the frame's bones, for the models the vertex program poses
+#define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
+#define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 
 typedef enum
 {
@@ -693,6 +696,9 @@ typedef struct shader_s {
     int needsLSpherical;
     // Set when a stage's alpha is worked out per vertex on the CPU each frame
     qboolean needsCPUVertexAlpha;
+    // Added in OPM: 1 a skeletal model with it can be posed by the vertex
+    // program, -1 not, 0 not looked at yet (tr_skelgpu.c)
+    int skelGpu;
     // Set when any stage uses animMap. As in GL1, such a shader's animation
     // on a sprite starts when the sprite was spawned, not at an arbitrary
     // point in the level's clock.
@@ -803,8 +809,11 @@ enum
 	// Added in OPM: ground cover tufts, swayed and sunk in the vertex program
 	// (tr_groundcover.c); built the first time it is asked for
 	LIGHTDEF_GROUNDCOVER         = 0x0400,
-	LIGHTDEF_ALL                 = 0x07FF,
-	LIGHTDEF_COUNT               = 0x0800
+	// Added in OPM: a skeletal model posed by the vertex program from the
+	// frame's bones (tr_skelgpu.c); built the first time it is asked for
+	LIGHTDEF_SKEL_GPU            = 0x0800,
+	LIGHTDEF_ALL                 = 0x0FFF,
+	LIGHTDEF_COUNT               = 0x1000
 };
 
 enum
@@ -826,7 +835,8 @@ enum
 	GLSL_MAT16,
 	GLSL_MAT16_BONEMATRIX,
 	GLSL_VEC4_RTLIGHTS, // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
-	GLSL_VEC4_RTLIST    // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
+	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
+	GLSL_VEC4_SKELLIGHTS // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 };
 
 typedef enum
@@ -962,6 +972,10 @@ typedef enum
 	UNIFORM_RTLIST,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
+	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
+	UNIFORM_SKELPARAMS,
+	UNIFORM_SKELAMBIENT,
+	UNIFORM_SKELLIGHTS,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2264,6 +2278,7 @@ typedef struct {
 	int     c_streamBatches; // Added in OPM: batches copied into the tess ring (r_tessStream)
 	int     c_streamWaits;   // and the times it had to wait for the card to be done with a part of it
 	int     c_skinArenaDraws; // batches drawn from a posed surface's copy, nothing copied
+	int     c_skelGpuDraws;   // Added in OPM: surfaces the vertex program posed (tr_skelgpu.c)
 	float	c_overDraw;
 	
 	int		c_vaoBinds;
@@ -2578,6 +2593,7 @@ typedef struct {
     vec4_t   rtSunColor;
     vec4_t   rtAmbient;
     image_t *rtCapsuleImage;   // two texels a capsule: (a, radius), (b, 0)
+    image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
     int rendererhandle;
     qboolean shadersParsed;
     int frame_skel_index;
@@ -3243,6 +3259,17 @@ typedef struct shaderCommands_s
 	qboolean    groundCover;
 	vec4_t      groundCoverParams;
 
+	// Added in OPM: the batch is a skeletal surface the vertex program poses
+	// from the frame's bones (tr_skelgpu.c); tess holds its indexes alone
+	struct {
+		qboolean active;
+		void    *mesh;         // the surface on the card
+		vec4_t   params;       // first bone, scale, lighting (0 none, 1 one colour, 2 lights), lights
+		vec4_t   ambient;      // 0 to 255
+		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
+		int      numBones;     // the model's, from params[0]
+	} skelGpu;
+
 	int			firstIndex;
 	int			numIndexes;
 	int			numVertexes;
@@ -3459,6 +3486,7 @@ void GLSL_SetUniformMat4(shaderProgram_t *program, int uniformNum, const mat4_t 
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies);
 void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation);
 void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
+void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 
@@ -3716,6 +3744,17 @@ void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
 void RB_GroundCoverBindVao(void);
 void RB_GroundCoverDrawElements(void);
+
+// tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
+struct skelSurfaceGame_s;
+struct skelHeaderGame_s;
+void    *RB_SkelGpuUsable(dtiki_t *tiki, struct skelSurfaceGame_s *sf, int mesh, struct skelHeaderGame_s *skelmodel);
+void     RB_SkelGpuSubmit(void *mesh);
+void     RB_SkelGpuBind(void);
+void     R_SkelGpuFree(void);
+void     R_SkelGpuInitImage(void);
+void     R_SkelGpuRegisterCvars(void);
+int      RB_StreamIndexes(const glIndex_t *indexes, int numIndexes, GLuint *buffer);
 void R_SwapTerraPatch(cTerraPatch_t* pPatch);
 
 void R_TerrainCrater_f(void);

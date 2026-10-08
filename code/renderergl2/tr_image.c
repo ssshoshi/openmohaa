@@ -3069,6 +3069,9 @@ void R_CreateBuiltinImages( void ) {
 			tr.renderCubeImage = R_CreateImage("*renderCube", NULL, r_cubemapSize->integer, r_cubemapSize->integer, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_MIPMAP | IMGFLAG_CUBEMAP, rgbFormat);
 		}
 	}
+
+	// Added in OPM: the bones of the models the vertex program poses
+	R_SkelGpuInitImage();
 }
 
 

@@ -13,7 +13,18 @@ attribute vec4 attr_TexCoord1;
 #endif
 attribute vec4 attr_Color;
 
+#if defined(USE_SKEL_GPU)
+// Added in OPM: a skeletal model's vertex, posed here (tr_skelgpu.c): up to
+// four weights, each the vertex's place by its bone (xyz) and how much of it
+// that bone has (w); the bones, and the normal as the first bone holds it
+attribute vec4 attr_Position;
+attribute vec4 attr_Position2;
+attribute vec4 attr_Normal2;
+attribute vec4 attr_Tangent2;
+attribute vec4 attr_BoneIndexes;
+#else
 attribute vec3 attr_Position;
+#endif
 attribute vec3 attr_Normal;
 #if defined(USE_TANGENT_FRAME) || defined(USE_GROUNDCOVER)
 attribute vec4 attr_Tangent;
@@ -90,6 +101,80 @@ uniform vec4   u_GroundCover; // time, draw distance, wind
 uniform float  u_VertexLerp;
 #elif defined(USE_BONE_ANIMATION)
 uniform mat4 u_BoneMatrix[MAX_GLSL_BONES];
+#endif
+
+#if defined(USE_SKEL_GPU)
+// the frame's bones, four texels each: where the bone is, then its axes
+uniform sampler2D u_SkelBones;
+uniform vec4      u_SkelParams;  // the model's first bone, its scale, its lighting (0 none, 1 one colour, 2 lights), lights
+uniform vec4      u_SkelAmbient; // 0 to 255
+uniform vec4      u_SkelLights[SKEL_MAX_LIGHTS * 3];
+
+vec4 SkelTexel(int bone, int k)
+{
+	int t = (int(u_SkelParams.x) + bone) * 4 + k;
+	return texelFetch(u_SkelBones, ivec2(t - (t / SKEL_BONE_ROW) * SKEL_BONE_ROW, t / SKEL_BONE_ROW), 0);
+}
+
+// a weight's place, by its bone (SkelWeightGetXyz)
+vec3 SkelWeight(vec4 w, float bone)
+{
+	int b = int(bone + 0.5);
+	return (w.x * SkelTexel(b, 1).xyz + w.y * SkelTexel(b, 2).xyz + w.z * SkelTexel(b, 3).xyz + SkelTexel(b, 0).xyz) * w.w;
+}
+
+// MOH:AA's lighting of a model, at a vertex as the model has it (RB_Light_Real,
+// RB_CalcLightGridColor, RB_Light_Fullbright)
+vec4 SkelLight(vec3 P, vec3 N)
+{
+	if (u_SkelParams.z < 0.5)
+		return vec4(1.0);
+	if (u_SkelParams.z < 1.5)
+		return u_SkelAmbient / 255.0;
+
+	vec3 c = vec3(0.0);
+	int  n = int(u_SkelParams.w);
+	for (int k = 0; k < SKEL_MAX_LIGHTS; k++)
+	{
+		if (k >= n) break;
+		vec4 l0 = u_SkelLights[k * 3];     // colour, type
+		vec4 l1 = u_SkelLights[k * 3 + 1]; // origin, spot constant
+		vec4 l2 = u_SkelLights[k * 3 + 2]; // direction, spot scale
+		int  type = int(l0.w + 0.5);
+		if (type == 0) // a point
+		{
+			vec3  v = l1.xyz - P;
+			float d = dot(v, N);
+			if (d > 0.0) c += l0.rgb * (d / dot(v, v));
+		}
+		else if (type == 1) // the sun
+		{
+			float d = dot(l2.xyz, N);
+			if (d > 0.0) c += l0.rgb * d;
+		}
+		else
+		{
+			float d = dot(l2.xyz, N);
+			if (d > 0.0)
+			{
+				vec3  v  = l1.xyz - P;
+				float d2 = dot(v, v);
+				if (type == 3) // a spot, near
+				{
+					c += l0.rgb * (d / d2);
+				}
+				else
+				{
+					float along = dot(v, l2.xyz);
+					float most  = (l1.w - d2 / (along * along)) * l2.w;
+					if (most > 0.0)
+						c += l0.rgb * (d / d2 * min(most, 1.0));
+				}
+			}
+		}
+	}
+	return vec4(clamp(floor(c) + u_SkelAmbient.rgb, 0.0, 255.0) / 255.0, 1.0);
+}
 #endif
 
 #if defined(USE_LIGHT_VECTOR)
@@ -229,6 +314,15 @@ void main()
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = normalize(nrmMat * attr_Tangent.xyz);
   #endif
+#elif defined(USE_SKEL_GPU)
+	vec3 position = SkelWeight(attr_Position, attr_BoneIndexes.x);
+	if (attr_Position2.w != 0.0) position += SkelWeight(attr_Position2, attr_BoneIndexes.y);
+	if (attr_Normal2.w != 0.0)   position += SkelWeight(attr_Normal2, attr_BoneIndexes.z);
+	if (attr_Tangent2.w != 0.0)  position += SkelWeight(attr_Tangent2, attr_BoneIndexes.w);
+	position *= u_SkelParams.y;
+	int  nb = int(attr_BoneIndexes.x + 0.5);
+	vec3 normal = attr_Normal.x * SkelTexel(nb, 1).xyz + attr_Normal.y * SkelTexel(nb, 2).xyz + attr_Normal.z * SkelTexel(nb, 3).xyz;
+	vec4 skelColor = SkelLight(position, normal);
 #else
 	vec3 position  = attr_Position;
 	vec3 normal    = attr_Normal;
@@ -318,7 +412,11 @@ void main()
 	var_TexCoords.zw = attr_TexCoord1.st;
 #endif
 
+#if defined(USE_SKEL_GPU)
+	var_Color = u_VertColor * skelColor + u_BaseColor;
+#else
 	var_Color = u_VertColor * attr_Color + u_BaseColor;
+#endif
 
 #if defined(USE_LIGHT_VECTOR)
   #if defined(USE_FAST_LIGHT)

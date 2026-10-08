@@ -326,6 +326,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.skin.valid = qfalse;
 	tess.skin.deferred = qfalse;
 	tess.groundCover = qfalse;
+	tess.skelGpu.active = qfalse;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
 	tess.currentStageIteratorFunc = state->optimalStageIteratorFunc;
@@ -1544,6 +1545,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 					index |= LIGHTDEF_GROUNDCOVER;
 				}
 
+				if (tess.skelGpu.active)
+				{
+					index &= ~(LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION);
+					index |= LIGHTDEF_SKEL_GPU;
+				}
+
 				sp = GLSL_GetLightallShader(index);
 			}
 			else
@@ -1601,6 +1608,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			if (tess.groundCover)
 			{
 				index |= LIGHTDEF_GROUNDCOVER;
+			}
+
+			if (tess.skelGpu.active)
+			{
+				index &= ~(LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION);
+				index |= LIGHTDEF_SKEL_GPU;
 			}
 
 			sp = GLSL_GetLightallShader(index);
@@ -1669,6 +1682,15 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		if (tess.groundCover)
 		{
 			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDCOVER, tess.groundCoverParams);
+		}
+
+		// Added in OPM: the model the vertex program poses (tr_skelgpu.cpp)
+		if (tess.skelGpu.active)
+		{
+			GLSL_SetUniformVec4(sp, UNIFORM_SKELPARAMS, tess.skelGpu.params);
+			GLSL_SetUniformVec4(sp, UNIFORM_SKELAMBIENT, tess.skelGpu.ambient);
+			if (tess.skelGpu.params[3] > 0)
+				GLSL_SetUniformSkelLights(sp, UNIFORM_SKELLIGHTS, tess.skelGpu.lights, (int)tess.skelGpu.params[3] * 3);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
@@ -2373,6 +2395,11 @@ void RB_StageIteratorGeneric( void )
 		// Added in OPM: a ground cover cell, drawn from where it is kept
 		RB_GroundCoverBindVao();
 	}
+	else if (tess.skelGpu.active)
+	{
+		// Added in OPM: a skeletal surface the vertex program poses
+		RB_SkelGpuBind();
+	}
 	else if (tess.useInternalVao && tess.skin.valid && backEnd.depthFill && !RB_ShaderAlphaTests(tess.shader)
 		&& RB_SkinArenaDraw(vertexAttribs & ~(ATTR_COLOR | ATTR_LIGHTCOORD | ATTR_LIGHTDIRECTION)))
 	{
@@ -2583,10 +2610,10 @@ void RB_EndSurface( void ) {
 	// draw debugging stuff
 	//
 	// (a ground cover cell drawn from the card left nothing in tess to show)
-	if ( r_showtris->integer && !tess.groundCover ) {
+	if ( r_showtris->integer && !tess.groundCover && !tess.skelGpu.active ) {
 		DrawTris (input);
 	}
-	if ( r_shownormals->integer && !tess.groundCover ) {
+	if ( r_shownormals->integer && !tess.groundCover && !tess.skelGpu.active ) {
 		DrawNormals (input);
 	}
 	RB_SurfProfSwitch(surfProfPrev);
@@ -2597,6 +2624,7 @@ void RB_EndSurface( void ) {
 	tess.useCacheVao = qfalse;
 	tess.useInternalVao = qfalse;
 	tess.groundCover = qfalse;
+	tess.skelGpu.active = qfalse;
 
 	GLimp_LogComment( "----------\n" );
 }

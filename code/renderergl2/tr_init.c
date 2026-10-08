@@ -1816,6 +1816,7 @@ void R_Register( void )
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
+	R_SkelGpuRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
 	// precisely when a benchmark wants this.
@@ -2168,6 +2169,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 		R_IssuePendingRenderCommands();
 		// Added in OPM
 		R_GroundCoverFree();
+		R_SkelGpuFree();
 		R_ShutDownQueries();
 		if (glRefConfig.framebufferObject)
 			FBO_Shutdown();

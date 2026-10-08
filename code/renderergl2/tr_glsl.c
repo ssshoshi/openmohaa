@@ -190,7 +190,11 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtCapsules",      GLSL_INT },
 	{ "u_RtList",          GLSL_VEC4_RTLIST },
 	{ "u_SoftParticle",    GLSL_VEC4 },
-	{ "u_GroundCover",     GLSL_VEC4 }
+	{ "u_GroundCover",     GLSL_VEC4 },
+	{ "u_SkelBones",       GLSL_INT },
+	{ "u_SkelParams",      GLSL_VEC4 },
+	{ "u_SkelAmbient",     GLSL_VEC4 },
+	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS }
 };
 
 typedef enum
@@ -1065,6 +1069,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_RTLIST:
 				size += sizeof(vec4_t) * (RT_MAX_LIGHTS / 4);
 				break;
+			case GLSL_VEC4_SKELLIGHTS:
+				size += sizeof(vec4_t) * SKEL_GPU_MAX_LIGHTS * 3;
+				break;
 			default:
 				break;
 		}
@@ -1284,6 +1291,36 @@ void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec
 
 /*
 Added in OPM
+The lights of a model the vertex program poses (tr_skelgpu.c), vec4s of them;
+sent when they are not what the program has.
+*/
+void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELLIGHTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelLights: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_LIGHTS * 3) {
+		vec4s = SKEL_GPU_MAX_LIGHTS * 3;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
 The realtime lights a draw may take (R_RtSetUniforms), count indexes, four a
 vec4. Only the vec4s that hold them are sent.
 */
@@ -1435,6 +1472,15 @@ static qboolean GLSL_InitLightallShader(int i)
 	if ((i & LIGHTDEF_GROUNDCOVER) && (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX))
 		return qfalse;
 
+	// Added in OPM: a skeletal model posed from the frame's bones, which
+	// brings its own vertexes, and nothing that reads others
+	if ((i & LIGHTDEF_SKEL_GPU) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_GROUNDCOVER
+		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
+		return qfalse;
+
+	if ((i & LIGHTDEF_SKEL_GPU) && lightType == LIGHTDEF_USE_LIGHTMAP)
+		return qfalse;
+
 	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
 
 	extradefines[0] = '\0';
@@ -1552,6 +1598,12 @@ static qboolean GLSL_InitLightallShader(int i)
 		attribs |= ATTR_TANGENT | ATTR_LIGHTCOORD;
 	}
 
+	if (i & LIGHTDEF_SKEL_GPU)
+	{
+		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW));
+		attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES;
+	}
+
 	if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)
 	{
 		Q_strcat(extradefines, 1024, "#define USE_MODELMATRIX\n");
@@ -1593,6 +1645,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 
@@ -1808,7 +1861,7 @@ void GLSL_InitGPUShaders(void)
 		// Pre-build every permutation a surface with no material maps can
 		// need, which covers all of stock MOH:AA. Anything carrying a normal,
 		// specular or deluxe map is left to GLSL_GetLightallShader.
-		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER))
+		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER | LIGHTDEF_SKEL_GPU))
 			continue;
 
 		if (!GLSL_InitLightallShader(i))

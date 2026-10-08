@@ -640,6 +640,24 @@ static void RB_StreamTessVao(unsigned int attribBits)
 }
 
 /*
+============
+RB_StreamIndexes
+
+Added in OPM: indexes into the next free stretch of the tess ring, for a batch
+drawn from vertexes of its own (RB_SkelGpuBind); where they start, and the
+buffer they are in.
+============
+*/
+int RB_StreamIndexes(const glIndex_t *indexes, int numIndexes, GLuint *buffer)
+{
+	const int first = R_TessRingAlloc(&tessIndexRing, numIndexes);
+
+	Com_Memcpy(tessIndexRing.base + (size_t)first * sizeof(glIndex_t), indexes, numIndexes * sizeof(glIndex_t));
+	*buffer = tessIndexRing.buffer;
+	return first;
+}
+
+/*
 =============================================================================
 
 Added in OPM
