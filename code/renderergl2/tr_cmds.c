@@ -86,8 +86,9 @@ static void R_ReportGpuTimers( int interval )
 	// re-rendered regardless of the cache.
 	// Draw calls and buffer uploads are counts, not times, so unlike the ms
 	// figures they are immune to the card's clock drifting between runs.
-	ri.Printf( PRINT_ALL, "gpu submission: %i draws %i uploads\n",
-		backEnd.pc.c_drawCalls, backEnd.pc.c_bufferUploads );
+	ri.Printf( PRINT_ALL, "gpu submission: %i draws %i uploads %i streamed (%i waits)\n",
+		backEnd.pc.c_drawCalls, backEnd.pc.c_bufferUploads,
+		backEnd.pc.c_streamBatches, backEnd.pc.c_streamWaits );
 
 	ri.Printf( PRINT_ALL, "gpu cascade surfs: %i %i %i %i\n",
 		backEnd.pc.c_sunCascadeSurfs[0], backEnd.pc.c_sunCascadeSurfs[1],
@@ -210,11 +211,11 @@ static void R_ReportCpuHitch( void )
 		return;
 
 	ri.Printf( PRINT_ALL,
-		"cpu HITCH %.2fms = backend %.2f (drawsurfs %.2f: sunshadow %.2f prepass %.2f"
+		"cpu HITCH %.2fms = backend %.2f (drawsurfs %.2f: sunshadow %.2f rtshadow %.2f prepass %.2f"
 		" shadowmask %.2f main3d %.2f; tessbuild %.2f tessupload %.2f)"
 		" post %.2f sprites %.2f 2d %.2f present %.2f swap %.2f | other %.2f\n",
 		cpu[CPUTIMER_FRAME], cpu[CPUTIMER_BACKEND], cpu[CPUTIMER_DRAWSURFS],
-		cpu[CPUTIMER_SUNSHADOW], cpu[CPUTIMER_DEPTHPREPASS],
+		cpu[CPUTIMER_SUNSHADOW], cpu[CPUTIMER_RTSHADOW], cpu[CPUTIMER_DEPTHPREPASS],
 		cpu[CPUTIMER_SHADOWMASK], cpu[CPUTIMER_MAIN3D],
 		cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD],
 		cpu[CPUTIMER_POSTPROCESS], cpu[CPUTIMER_SPRITES], cpu[CPUTIMER_2D],

@@ -49,6 +49,7 @@ QGL_2_0_PROCS;
 QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
 QGL_ARB_timer_query_PROCS;
+QGL_ARB_buffer_storage_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;
@@ -2087,8 +2088,12 @@ typedef enum {
 // + 2 (prepass) + 2 (shadowmask) + 2 (main3d) + 2 (post) + 2 (present) = 28.
 // Any extra view -- a portal sky or a mirror -- adds its own prepass and
 // main3d pair on top, which is what pushed 32 over the edge and started
-// dropping marks on exactly the busiest frames.
-#define GPUTIMER_MAX_MARKS  64
+// dropping marks on exactly the busiest frames. The realtime lights' shadow
+// faces are views of their own too, one or two hundred of them a frame;
+// back to back spans of one timer are kept as one (R_GpuTimerMark), so they
+// take a pair, but a frame that interleaves them with other timed work can
+// still take more.
+#define GPUTIMER_MAX_MARKS  256
 
 typedef enum {
 	GPUTIMER_FRAME,
@@ -2097,6 +2102,7 @@ typedef enum {
 	GPUTIMER_SUN1,
 	GPUTIMER_SUN2,
 	GPUTIMER_SUN3,
+	GPUTIMER_RTSHADOW, // Added in OPM: the realtime lights' shadow faces (tr_rtlight.c)
 	GPUTIMER_DEPTHPREPASS,
 	GPUTIMER_SHADOWMASK,
 	GPUTIMER_MAIN3D,
@@ -2142,6 +2148,7 @@ typedef enum {
 	// Nested inside DRAWSURFS. Reported on their own line and left out of
 	// the sibling sum rather than double counted.
 	CPUTIMER_SUNSHADOW,
+	CPUTIMER_RTSHADOW,		// Added in OPM: the realtime lights' shadow faces
 	CPUTIMER_DEPTHPREPASS,
 	CPUTIMER_SHADOWMASK,
 	CPUTIMER_MAIN3D,
@@ -2186,6 +2193,7 @@ typedef struct {
 	GLenum		occlusionQueryTarget;
 
 	qboolean	timerQuery;
+	qboolean	bufferStorage; // Added in OPM: QGL_ARB_buffer_storage_PROCS, for r_tessStream
 
 	int glslMajorVersion;
 	int glslMinorVersion;
@@ -2230,6 +2238,8 @@ typedef struct {
 	int     c_sunCascadeSurfs[4];
 	int     c_drawCalls;
 	int     c_bufferUploads;
+	int     c_streamBatches; // Added in OPM: batches copied into the tess ring (r_tessStream)
+	int     c_streamWaits;   // and the times it had to wait for the card to be done with a part of it
 	float	c_overDraw;
 	
 	int		c_vaoBinds;
@@ -2860,6 +2870,7 @@ extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
 extern cvar_t *r_frameHitchMsec;
 extern cvar_t *r_tessOrphan;
+extern cvar_t *r_tessStream;
 
 //====================================================================
 
@@ -3172,6 +3183,12 @@ typedef struct shaderCommands_s
 	int			dlightBits;	// or together of all vertexDlightBits
 	int         pshadowBits;
 	uint64_t    rtMask;     // Added in OPM: or together of its surfaces' (drawSurf_t)
+
+	// Added in OPM: the tess buffers as a ring (r_tessStream). Where the batch
+	// last written to it starts, which its draws take as their base.
+	qboolean    stream;
+	int         streamBaseVertex;
+	int         streamFirstIndex;
 
 	int			firstIndex;
 	int			numIndexes;

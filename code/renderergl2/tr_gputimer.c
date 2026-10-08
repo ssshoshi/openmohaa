@@ -67,6 +67,7 @@ const char *const gpuTimerNames[GPUTIMER_COUNT] = {
 	"sun1",
 	"sun2",
 	"sun3",
+	"rtshadow",
 	"prepass",
 	"shadowmask",
 	"main3d",
@@ -167,6 +168,22 @@ void R_GpuTimerMark(int id, qboolean isEnd)
 	// execute first.
 	if (!frame->numMarks && !(id == GPUTIMER_FRAME && !isEnd))
 		R_GpuTimerMark(GPUTIMER_FRAME, qfalse);
+
+	// Added in OPM
+	//  A span that starts where the last one of the same timer ended is the
+	//  same span, kept open: the realtime lights' shadow faces are drawn back
+	//  to back, a hundred views and more, and took a pair of marks each. The
+	//  little between them (binding and clearing their tiles) is theirs too.
+	if (!isEnd && frame->numMarks > 0)
+	{
+		const gpuMark_t *last = &frame->marks[frame->numMarks - 1];
+
+		if (last->isEnd && last->id == id)
+		{
+			frame->numMarks--;
+			return;
+		}
+	}
 
 	if (frame->numMarks >= GPUTIMER_MAX_MARKS)
 	{
@@ -351,6 +368,7 @@ const char *const cpuTimerNames[CPUTIMER_COUNT] = {
 	"present",
 	"swapbuffers",
 	"sunshadow",
+	"rtshadow",
 	"prepass",
 	"shadowmask",
 	"main3d",

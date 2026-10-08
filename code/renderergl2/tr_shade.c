@@ -46,6 +46,12 @@ void R_DrawElements( int numIndexes, int firstIndex )
 	{
 		VaoCache_DrawElements(numIndexes, firstIndex);
 	}
+	else if (tess.stream && glState.currentVao == tess.vao)
+	{
+		// Added in OPM: where RB_UpdateTessVao copied the batch into the ring
+		qglDrawElementsBaseVertex(GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
+			BUFFER_OFFSET((tess.streamFirstIndex + firstIndex) * sizeof(glIndex_t)), tess.streamBaseVertex);
+	}
 	else
 	{
 		qglDrawElements(GL_TRIANGLES, numIndexes, GL_INDEX_TYPE, BUFFER_OFFSET(firstIndex * sizeof(glIndex_t)));

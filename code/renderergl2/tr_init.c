@@ -241,6 +241,7 @@ cvar_t	*r_gpuTimerSync;
 cvar_t	*r_gpuTimers;
 cvar_t	*r_frameHitchMsec;
 cvar_t	*r_tessOrphan;
+cvar_t	*r_tessStream;
 
 cvar_t	*r_aviMotionJpegQuality;
 cvar_t	*r_screenshotJpegQuality;
@@ -1818,6 +1819,18 @@ void R_Register( void )
 	// glBufferSubData is specified to behave as if synchronised either way.
 	// Set to 1 if some driver turns out to stall rather than rename internally.
 	r_tessOrphan = ri.Cvar_Get("r_tessOrphan", "0", CVAR_ARCHIVE);
+	// Added in OPM
+	//  Every batch drawn through tess (characters, effects, and the world
+	//  without r_vaoCache) uploaded each of its vertex arrays and its indexes
+	//  with a call of its own, into the one small buffer every batch shares:
+	//  some six calls a batch, close to 19000 a frame with the realtime
+	//  lights' shadow faces, and a third of the frame. With this the tess
+	//  buffers are a large ring, mapped for good: a batch is copied into the
+	//  next free part of it and drawn from there, with no call to upload it,
+	//  and a fence on each part keeps it from being written again before the
+	//  card has drawn from it. Needs OpenGL 4.4 (GL_ARB_buffer_storage).
+	r_tessStream = ri.Cvar_Get("r_tessStream", "1", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_tessStream, "Batches built on the CPU are copied into one large buffer mapped for good, instead of uploaded with a call per array (needs OpenGL 4.4; vid_restart)");
 	// see tr_gputimer.c -- forces a pipeline drain at each scope boundary
 	r_gpuTimerSync = ri.Cvar_Get("r_gpuTimerSync", "0", CVAR_CHEAT);
 	// Wall frame time in ms above which a frame prints its own CPU breakdown.

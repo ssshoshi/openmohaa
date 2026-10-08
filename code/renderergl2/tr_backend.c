@@ -1236,18 +1236,22 @@ const void	*RB_DrawSurfs( const void *data ) {
 		// at whatever the viewParms memset produced).
 		int sunLevel = (isShadowView && (backEnd.viewParms.flags & VPF_ORTHOGRAPHIC))
 			? backEnd.viewParms.sunCascade : -1;
+		// Added in OPM: a realtime light's shadow face, timed apart from the sun's
+		const qboolean rtShadow = !!(backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED));
+		const int gpuTimer = rtShadow ? GPUTIMER_RTSHADOW : isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS;
+		const int cpuTimer = rtShadow ? CPUTIMER_RTSHADOW : isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS;
 
 		backEnd.depthFill = qtrue;
 		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-		R_GpuTimerBegin(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
-		R_CpuTimerBegin(isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS);
+		R_GpuTimerBegin(gpuTimer);
+		R_CpuTimerBegin(cpuTimer);
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerBegin(GPUTIMER_SUN0 + sunLevel);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerEnd(GPUTIMER_SUN0 + sunLevel);
-		R_CpuTimerEnd(isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS);
-		R_GpuTimerEnd(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
+		R_CpuTimerEnd(cpuTimer);
+		R_GpuTimerEnd(gpuTimer);
 		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 		backEnd.depthFill = qfalse;
 		backEnd.depthPrepassed = !isShadowView;
