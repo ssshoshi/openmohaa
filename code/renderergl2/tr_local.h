@@ -49,6 +49,7 @@ QGL_2_0_PROCS;
 QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
 QGL_ARB_timer_query_PROCS;
+QGL_ARB_buffer_storage_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;
@@ -514,14 +515,19 @@ enum
 #define TMU_RTSHADOW_BAKED   10
 #define NUM_TEXTURE_UNITS    16
 
-#define RT_MAX_LIGHTS   48
+#define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
+#define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
+#define RT_CULL_MARGIN  8.0f // past a surface's bounds a light is still counted in, for vertexes they miss
 #define RT_ATLAS_TILES  16 // a side, so 256 faces: 42 lights
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
 #define RT_MAX_RUN      1023 // of those, for one light
 #define TMU_RTCAPSULES  11
 #define TMU_SOFTDEPTH   12 // Added in OPM: the view's depth, for soft particles
+#define TMU_SKELBONES   13 // Added in OPM: the frame's bones, for the models the vertex program poses
+#define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
+#define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 
 typedef enum
 {
@@ -690,6 +696,9 @@ typedef struct shader_s {
     int needsLSpherical;
     // Set when a stage's alpha is worked out per vertex on the CPU each frame
     qboolean needsCPUVertexAlpha;
+    // Added in OPM: 1 a skeletal model with it can be posed by the vertex
+    // program, -1 not, 0 not looked at yet (tr_skelgpu.c)
+    int skelGpu;
     // Set when any stage uses animMap. As in GL1, such a shader's animation
     // on a sprite starts when the sprite was spawned, not at an arbitrary
     // point in the level's clock.
@@ -797,8 +806,14 @@ enum
 	LIGHTDEF_USE_NORMALMAP       = 0x0080,
 	LIGHTDEF_USE_SPECULARMAP     = 0x0100,
 	LIGHTDEF_USE_DELUXEMAP       = 0x0200,
-	LIGHTDEF_ALL                 = 0x03FF,
-	LIGHTDEF_COUNT               = 0x0400
+	// Added in OPM: ground cover tufts, swayed and sunk in the vertex program
+	// (tr_groundcover.c); built the first time it is asked for
+	LIGHTDEF_GROUNDCOVER         = 0x0400,
+	// Added in OPM: a skeletal model posed by the vertex program from the
+	// frame's bones (tr_skelgpu.c); built the first time it is asked for
+	LIGHTDEF_SKEL_GPU            = 0x0800,
+	LIGHTDEF_ALL                 = 0x0FFF,
+	LIGHTDEF_COUNT               = 0x1000
 };
 
 enum
@@ -819,7 +834,9 @@ enum
 	GLSL_VEC4,
 	GLSL_MAT16,
 	GLSL_MAT16_BONEMATRIX,
-	GLSL_VEC4_RTLIGHTS  // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
+	GLSL_VEC4_RTLIGHTS, // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
+	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
+	GLSL_VEC4_SKELLIGHTS // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 };
 
 typedef enum
@@ -952,7 +969,13 @@ typedef enum
 	UNIFORM_RTSUNSHADOW,
 	UNIFORM_RTSHADOWBAKED,
 	UNIFORM_RTCAPSULES,
+	UNIFORM_RTLIST,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
+	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
+	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
+	UNIFORM_SKELPARAMS,
+	UNIFORM_SKELAMBIENT,
+	UNIFORM_SKELLIGHTS,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -972,6 +995,9 @@ typedef struct shaderProgram_s
 	GLint uniforms[UNIFORM_COUNT];
 	short uniformBufferOffsets[UNIFORM_COUNT]; // max 32767/64=511 uniforms
 	char  *uniformBuffer;
+
+	int   rtLightsGeneration; // Added in OPM: the realtime lights it was last sent (tr.rtLightGeneration)
+	int   rtLightsCount;
 } shaderProgram_t;
 
 // trRefdef_t holds everything that comes in refdef_t,
@@ -1209,6 +1235,7 @@ typedef struct drawSurf_s {
 	unsigned int		sort;			// bit combination for fast compares
 	int                 cubemapIndex;
 	surfaceType_t		*surface;		// any of surface*_t
+	uint64_t            rtMask;         // Added in OPM: the realtime lights that may reach it, a bit each (RT_MASK_ALL: all)
 } drawSurf_t;
 
 #define	MAX_FACE_POINTS		64
@@ -1761,6 +1788,7 @@ typedef struct {
 	int         *surfacesViewCount;
 	int         *surfacesDlightBits;
 	int			*surfacesPshadowBits;
+	uint64_t    *surfacesRtBits; // Added in OPM: the realtime lights that may reach each, this view
 
 	int			nummarksurfaces;
 	int         *marksurfaces;
@@ -2078,8 +2106,12 @@ typedef enum {
 // + 2 (prepass) + 2 (shadowmask) + 2 (main3d) + 2 (post) + 2 (present) = 28.
 // Any extra view -- a portal sky or a mirror -- adds its own prepass and
 // main3d pair on top, which is what pushed 32 over the edge and started
-// dropping marks on exactly the busiest frames.
-#define GPUTIMER_MAX_MARKS  64
+// dropping marks on exactly the busiest frames. The realtime lights' shadow
+// faces are views of their own too, one or two hundred of them a frame;
+// back to back spans of one timer are kept as one (R_GpuTimerMark), so they
+// take a pair, but a frame that interleaves them with other timed work can
+// still take more.
+#define GPUTIMER_MAX_MARKS  256
 
 typedef enum {
 	GPUTIMER_FRAME,
@@ -2088,6 +2120,7 @@ typedef enum {
 	GPUTIMER_SUN1,
 	GPUTIMER_SUN2,
 	GPUTIMER_SUN3,
+	GPUTIMER_RTSHADOW, // Added in OPM: the realtime lights' shadow faces (tr_rtlight.c)
 	GPUTIMER_DEPTHPREPASS,
 	GPUTIMER_SHADOWMASK,
 	GPUTIMER_MAIN3D,
@@ -2133,6 +2166,7 @@ typedef enum {
 	// Nested inside DRAWSURFS. Reported on their own line and left out of
 	// the sibling sum rather than double counted.
 	CPUTIMER_SUNSHADOW,
+	CPUTIMER_RTSHADOW,		// Added in OPM: the realtime lights' shadow faces
 	CPUTIMER_DEPTHPREPASS,
 	CPUTIMER_SHADOWMASK,
 	CPUTIMER_MAIN3D,
@@ -2159,6 +2193,25 @@ qboolean R_CpuTimerReport(double *out, int *numFrames, int minFrames);
 #define R_CpuTimerBegin(id) R_CpuTimerMark((id), qfalse)
 #define R_CpuTimerEnd(id)   R_CpuTimerMark((id), qtrue)
 
+// Added in OPM: where a pass's CPU time goes, by what it draws. Exclusive:
+// time is charged to one kind at a time, so a pass's kinds sum to it.
+typedef enum {
+	SURFPROF_LIST,		// the list itself: batches, entities and their lighting set up
+	SURFPROF_WORLD,		// brush faces, patches, triangle soups, brush models
+	SURFPROF_TERRAIN,
+	SURFPROF_STATIC,	// static models
+	SURFPROF_SKEL,		// skeletal models
+	SURFPROF_OTHER,		// sprites, marks, polys, ground cover...
+	SURFPROF_DRAW,		// RB_EndSurface: a batch's stages set up and drawn
+	SURFPROF_COUNT
+} surfProfKind_t;
+
+void RB_SurfProfBegin(void);	// at the start of a draw surface list
+void RB_SurfProfEnd(void);
+int  RB_SurfProfSwitch(int kind);	// charge the time so far, then to kind; the kind before
+void RB_SurfProfSurface(surfaceType_t type);	// a surface of the list is next
+void R_SurfProfReport(int numFrames);
+
 void R_GpuTimerInit(void);
 void R_GpuTimerShutdown(void);
 void R_GpuTimerFrameEnd(void);
@@ -2177,6 +2230,7 @@ typedef struct {
 	GLenum		occlusionQueryTarget;
 
 	qboolean	timerQuery;
+	qboolean	bufferStorage; // Added in OPM: QGL_ARB_buffer_storage_PROCS, for r_tessStream
 
 	int glslMajorVersion;
 	int glslMinorVersion;
@@ -2221,6 +2275,11 @@ typedef struct {
 	int     c_sunCascadeSurfs[4];
 	int     c_drawCalls;
 	int     c_bufferUploads;
+	int     c_streamBatches; // Added in OPM: batches copied into the tess ring (r_tessStream)
+	int     c_streamWaits;   // and the times it had to wait for the card to be done with a part of it
+	int     c_skinArenaDraws; // batches drawn from a posed surface's copy, nothing copied
+	int     c_skelGpuDraws;   // Added in OPM: surfaces the vertex program posed (tr_skelgpu.cpp)
+	int     c_skelGpuCpu[8];  // and those left to the CPU, by why (skelGpuWhy_t)
 	float	c_overDraw;
 	
 	int		c_vaoBinds;
@@ -2276,6 +2335,7 @@ typedef struct {
 	FBO_t *last2DFBO;
 	qboolean    colorMask[4];
 	qboolean    depthFill;
+	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	float       greyscale;
 
@@ -2300,6 +2360,11 @@ typedef struct {
     float		globalFogInvRange;
     float shaderStartTime;
     int dsStreamVert;
+
+    // Added in OPM: the realtime lights the surface being added to tess
+    // cannot take, so that a batch begun again when it is full takes those
+    // of the surface that filled it (0 outside the draw surface lists: all)
+    uint64_t rtSurfaceCulled;
 } backEndState_t;
 
 /*
@@ -2521,11 +2586,15 @@ typedef struct {
     FBO_t   *rtShadowFbo[3];
     int      rtNumActive;      // lights in rtLightData this frame
     vec4_t   rtLightData[RT_MAX_LIGHTS * RT_LIGHT_VEC4S];
+    int      rtLightGeneration; // a new one each time rtLightData is written
+    float    rtLightReach[RT_MAX_LIGHTS]; // how far each gives more than r_rtCutoff, < 0: nowhere
+    uint64_t rtDrawCulled;     // the lights that cannot reach the surfaces being added (R_AddDrawSurf), 0: none
     vec4_t   rtParams;         // lights, atlas tiles a side, mode, scale
     vec4_t   rtSunDir;         // w: 1 with a sun
     vec4_t   rtSunColor;
     vec4_t   rtAmbient;
     image_t *rtCapsuleImage;   // two texels a capsule: (a, radius), (b, 0)
+    image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
     int rendererhandle;
     qboolean shadersParsed;
     int frame_skel_index;
@@ -2647,6 +2716,7 @@ extern  cvar_t  *r_forceAutoExposureMax;
 extern  cvar_t  *r_cameraExposure;
 
 extern  cvar_t  *r_depthPrepass;
+extern  cvar_t  *r_earlyZ;
 extern  cvar_t  *r_ssao;
 
 extern  cvar_t  *r_normalMapping;
@@ -2842,6 +2912,9 @@ extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
 extern cvar_t *r_frameHitchMsec;
 extern cvar_t *r_tessOrphan;
+extern cvar_t *r_tessStream;
+extern cvar_t *r_skinArena;
+extern cvar_t *r_occlusionCull;
 
 //====================================================================
 
@@ -2894,6 +2967,10 @@ void R_RtFreeWorld(void);
 void R_RtRenderShadows(const refdef_t *fd);
 void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs);
 void R_RtSetUniforms(shaderProgram_t *sp, int stage);
+uint64_t R_RtViewMask(void);
+uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates);
+uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates);
+uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *back);
 int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean lightall);
 qboolean R_RtVertexParticles(void);
 qboolean R_RtIsCharacter(const refEntity_t *ent);
@@ -2903,6 +2980,7 @@ void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);
+qboolean R_SunCasterCulled(const vec3_t centre, float radius); // Added in OPM
 void R_RenderCubemapSide( int cubemapIndex, int cubemapSide, qboolean subscene );
 
 void R_AddMD3Surfaces( trRefEntity_t *e );
@@ -3149,6 +3227,49 @@ typedef struct shaderCommands_s
 
 	int			dlightBits;	// or together of all vertexDlightBits
 	int         pshadowBits;
+	uint64_t    rtMask;     // Added in OPM: or together of its surfaces' (drawSurf_t)
+
+	// Added in OPM: the tess buffers as a ring (r_tessStream). Where the batch
+	// last written to it starts, which its draws take as their base.
+	qboolean    stream;
+	vao_t      *streamVao;  // the VAO those are in: tess.vao, or the posed copies' (RB_SkinArenaDraw)
+	int         streamBaseVertex;
+	int         streamFirstIndex;
+
+	// Added in OPM: a posed skeletal surface that is the whole batch, which
+	// the frame keeps a copy of on the card (RB_SkinArenaStore); deferred, its
+	// vertexes were not copied into tess, which RB_SkinMaterialize does if
+	// the batch cannot be drawn from the copy after all (RB_SkelMesh)
+	struct {
+		qboolean valid;
+		qboolean deferred;
+		qboolean tangents;    // the copy has them
+		qboolean cacheTangents;
+		int      frame;       // the frame the copy is of (RB_SkinArenaFrame)
+		int      numVertexes;
+		int      numIndexes;
+		int      arenaBase;
+		int      arenaFirstIndex;
+		int      cacheFirst;  // where the CPU skin cache has it
+	} skin;
+
+	// Added in OPM: the batch is ground cover cells drawn from where they
+	// are kept on the card (RB_SurfaceGroundCover); tess holds none of them,
+	// only their counts, and the vertex program sways them (time, draw
+	// distance, wind)
+	qboolean    groundCover;
+	vec4_t      groundCoverParams;
+
+	// Added in OPM: the batch is a skeletal surface the vertex program poses
+	// from the frame's bones (tr_skelgpu.c); tess holds its indexes alone
+	struct {
+		qboolean active;
+		void    *mesh;         // the surface on the card
+		vec4_t   params;       // first bone, scale, lighting (0 none, 1 one colour, 2 lights), lights
+		vec4_t   ambient;      // 0 to 255
+		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
+		int      numBones;     // the model's, from params[0]
+	} skelGpu;
 
 	int			firstIndex;
 	int			numIndexes;
@@ -3318,6 +3439,20 @@ void            R_VaoList_f(void);
 
 void            RB_UpdateTessVao(unsigned int attribBits);
 
+// Added in OPM: models hidden behind what the depth prepass drew (tr_backend.c)
+qboolean R_OcclusionCulled(int entityNum, const vec3_t mins, const vec3_t maxs);
+void     RB_OcclusionTests(void);
+void     R_OcclusionShutdown(void);
+
+// Added in OPM: posed skeletal surfaces kept on the card for the frame (tr_vbo.c)
+int      RB_SkinArenaFrame(void);
+qboolean RB_SkinArenaStore(int baseVertex, int numVertexes, int baseIndex, int numIndexes, qboolean tangents, int *arenaBase, int *arenaFirstIndex);
+void     RB_SkinArenaAddTangents(int arenaBase, int baseVertex, int numVertexes);
+qboolean RB_SkinArenaDraw(unsigned int attribBits);
+void     RB_SkinArenaFrameEnd(void);
+void     RB_SkinMaterialize(void);
+void     R_SkelPosesClear(void); // Added in OPM: the poses kept from frame to frame (R_SkelPoseId)
+
 void VaoCache_Commit(void);
 void VaoCache_DrawElements(int numIndexes, int firstIndex);
 void VaoCache_Init(void);
@@ -3350,7 +3485,9 @@ void GLSL_SetUniformVec3(shaderProgram_t *program, int uniformNum, const vec3_t 
 void GLSL_SetUniformVec4(shaderProgram_t *program, int uniformNum, const vec4_t v);
 void GLSL_SetUniformMat4(shaderProgram_t *program, int uniformNum, const mat4_t matrix);
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies);
-void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation);
+void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
+void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 
@@ -3606,6 +3743,21 @@ void R_AddGroundCoverSurfaces(void);
 void R_GroundCoverInfo_f(void);
 void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
+void RB_GroundCoverBindVao(void);
+void RB_GroundCoverDrawElements(void);
+
+// tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
+struct skelSurfaceGame_s;
+struct skelHeaderGame_s;
+void    *RB_SkelGpuUsable(dtiki_t *tiki, struct skelSurfaceGame_s *sf, int mesh, struct skelHeaderGame_s *skelmodel);
+void     RB_SkelGpuSubmit(void *mesh);
+void     RB_SkelGpuBind(void);
+void     R_SkelGpuFree(void);
+void     R_SkelGpuInitImage(void);
+void     R_SkelGpuRegisterCvars(void);
+void     R_SkelGpuInfo_f(void);
+void     R_SkelGpuReport(void);
+int      RB_StreamIndexes(const glIndex_t *indexes, int numIndexes, GLuint *buffer);
 void R_SwapTerraPatch(cTerraPatch_t* pPatch);
 
 void R_TerrainCrater_f(void);

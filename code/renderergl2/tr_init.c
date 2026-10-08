@@ -126,6 +126,7 @@ cvar_t  *r_forceAutoExposureMin;
 cvar_t  *r_forceAutoExposureMax;
 
 cvar_t  *r_depthPrepass;
+cvar_t  *r_earlyZ;
 cvar_t  *r_ssao;
 
 cvar_t  *r_normalMapping;
@@ -240,6 +241,9 @@ cvar_t	*r_gpuTimerSync;
 cvar_t	*r_gpuTimers;
 cvar_t	*r_frameHitchMsec;
 cvar_t	*r_tessOrphan;
+cvar_t	*r_tessStream;
+cvar_t	*r_skinArena;
+cvar_t	*r_occlusionCull;
 
 cvar_t	*r_aviMotionJpegQuality;
 cvar_t	*r_screenshotJpegQuality;
@@ -1589,6 +1593,21 @@ void R_Register( void )
 	r_cameraExposure = ri.Cvar_Get( "r_cameraExposure", "1", CVAR_CHEAT );
 
 	r_depthPrepass = ri.Cvar_Get( "r_depthPrepass", "1", CVAR_ARCHIVE );
+	// Added in OPM
+	//  Once the prepass has laid the depth down, writing it again is what
+	//  keeps the card from rejecting hidden pixels before it shades them: a
+	//  shader that can discard (every one that can alpha test) and writes
+	//  depth is depth tested after it runs, so each layer of the world behind
+	//  the nearest went through the realtime lights' loop for nothing.
+	//
+	//  Off: it measured no faster on a GTX-class card, and it made a shader's
+	//  later stages (lightmaps, detail, "depthFunc equal" layers) test against
+	//  the prepass's depth rather than the depth their own first stage wrote.
+	//  The prepass draws with other programs, whose depth can differ by the
+	//  last bit, and the layers flickered on the ground and on models as the
+	//  view moved. Writing the depth again hides that difference.
+	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "0", 0 );
+	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Can make layers flicker where the prepass's depth differs by a bit. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
 
 	r_normalMapping = ri.Cvar_Get( "r_normalMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1663,6 +1682,7 @@ void R_Register( void )
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.
 	r_skelCull = ri.Cvar_Get( "r_skelCull", "1", 0 );
+	ri.Cvar_SetDescription( r_skelCull, "Skeletal models wholly outside a view (their animation's sphere and their bones both) are not drawn in it" );
 	// Pose each skeletal model once per scene and skin each of its surfaces
 	// once per pose, rather than again in every view that draws it (prepass,
 	// sun cascades, the realtime lights' shadows). Not archived: an A/B switch.
@@ -1796,6 +1816,7 @@ void R_Register( void )
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
+	R_SkelGpuRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
 	// precisely when a benchmark wants this.
@@ -1808,6 +1829,35 @@ void R_Register( void )
 	// glBufferSubData is specified to behave as if synchronised either way.
 	// Set to 1 if some driver turns out to stall rather than rename internally.
 	r_tessOrphan = ri.Cvar_Get("r_tessOrphan", "0", CVAR_ARCHIVE);
+	// Added in OPM
+	//  Every batch drawn through tess (characters, effects, and the world
+	//  without r_vaoCache) uploaded each of its vertex arrays and its indexes
+	//  with a call of its own, into the one small buffer every batch shares:
+	//  some six calls a batch, close to 19000 a frame with the realtime
+	//  lights' shadow faces, and a third of the frame. With this the tess
+	//  buffers are a large ring, mapped for good: a batch is copied into the
+	//  next free part of it and drawn from there, with no call to upload it,
+	//  and a fence on each part keeps it from being written again before the
+	//  card has drawn from it. Needs OpenGL 4.4 (GL_ARB_buffer_storage).
+	r_tessStream = ri.Cvar_Get("r_tessStream", "1", CVAR_ARCHIVE | CVAR_LATCH);
+	// Added in OPM
+	//  With r_tessStream: a skeletal model posed once a scene and skinned once
+	//  a pose (r_skinCache) was still copied into tess, and from there into
+	//  the ring, for every view it was drawn in -- the prepass, each sun
+	//  cascade, each realtime light's shadow face. Each posed surface is now
+	//  copied to the card once a frame, and the views that draw depth alone
+	//  draw it from there.
+	// Added in OPM
+	//  Nothing hid a model behind a wall: in the view's cone, it was posed,
+	//  lit and drawn into the prepass and the main pass all the same. Each is
+	//  now tested, after the prepass, against the depth it left (a box round
+	//  it, by an occlusion query, read a frame or two later), and one wholly
+	//  hidden is left out of the main view until a test finds it again.
+	r_occlusionCull = ri.Cvar_Get("r_occlusionCull", "1", 0);
+	ri.Cvar_SetDescription(r_occlusionCull, "Skeletal models wholly hidden behind what the depth prepass drew are left out of the main view, tested each frame by an occlusion query. Not archived: an A/B switch");
+	r_skinArena = ri.Cvar_Get("r_skinArena", "1", 0);
+	ri.Cvar_SetDescription(r_skinArena, "With r_tessStream, each posed skeletal surface is copied to the card once a frame and drawn from there in the depth and shadow views. Not archived: an A/B switch");
+	ri.Cvar_SetDescription(r_tessStream, "Batches built on the CPU are copied into one large buffer mapped for good, instead of uploaded with a call per array (needs OpenGL 4.4; vid_restart)");
 	// see tr_gputimer.c -- forces a pipeline drain at each scope boundary
 	r_gpuTimerSync = ri.Cvar_Get("r_gpuTimerSync", "0", CVAR_CHEAT);
 	// Wall frame time in ms above which a frame prints its own CPU breakdown.
@@ -1837,6 +1887,7 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
 	// Added in OPM
 	ri.Cmd_AddCommand( "groundcoverinfo", R_GroundCoverInfo_f );
+	ri.Cmd_AddCommand( "skelgpuinfo", R_SkelGpuInfo_f );
 	R_RtTestCommands( qtrue );
 
 	//
@@ -1960,6 +2011,7 @@ void R_InitQueries(void)
 void R_ShutDownQueries(void)
 {
 	R_GpuTimerShutdown();
+	R_OcclusionShutdown();
 
 	if (!glRefConfig.occlusionQuery)
 		return;
@@ -2111,6 +2163,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
 	// Added in OPM
 	ri.Cmd_RemoveCommand( "groundcoverinfo" );
+	ri.Cmd_RemoveCommand( "skelgpuinfo" );
 	R_RtTestCommands( qfalse );
 
 
@@ -2118,6 +2171,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 		R_IssuePendingRenderCommands();
 		// Added in OPM
 		R_GroundCoverFree();
+		R_SkelGpuFree();
 		R_ShutDownQueries();
 		if (glRefConfig.framebufferObject)
 			FBO_Shutdown();

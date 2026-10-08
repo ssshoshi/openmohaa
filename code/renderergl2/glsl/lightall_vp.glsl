@@ -8,14 +8,31 @@
 #endif
 
 attribute vec4 attr_TexCoord0;
-#if defined(USE_LIGHTMAP) || defined(USE_TCGEN)
+#if defined(USE_LIGHTMAP) || defined(USE_TCGEN) || defined(USE_GROUNDCOVER) || defined(USE_SKEL_GPU)
 attribute vec4 attr_TexCoord1;
 #endif
 attribute vec4 attr_Color;
 
+#if defined(USE_SKEL_GPU)
+// Added in OPM: a skeletal model's vertex, posed here (tr_skelgpu.cpp): up
+// to eight weights, each the vertex's place by its bone (xyz) and how much of
+// it that bone has (w), in attr_Position, attr_Position2, attr_Normal2,
+// attr_Tangent2, attr_LightDirection, attr_TexCoord1, attr_PaintColor and
+// attr_Color; their bones, four in attr_BoneIndexes and four in
+// attr_BoneWeights; and the normal and the tangent (attr_Tangent) as the
+// first bone holds them
+attribute vec4 attr_Position;
+attribute vec4 attr_Position2;
+attribute vec4 attr_Normal2;
+attribute vec4 attr_Tangent2;
+attribute vec4 attr_PaintColor;
+attribute vec4 attr_BoneIndexes;
+attribute vec4 attr_BoneWeights;
+#else
 attribute vec3 attr_Position;
+#endif
 attribute vec3 attr_Normal;
-#if defined(USE_TANGENT_FRAME)
+#if defined(USE_TANGENT_FRAME) || defined(USE_GROUNDCOVER) || defined(USE_SKEL_GPU)
 attribute vec4 attr_Tangent;
 #endif
 
@@ -30,7 +47,9 @@ attribute vec4 attr_BoneIndexes;
 attribute vec4 attr_BoneWeights;
 #endif
 
-#if defined(USE_LIGHT) && !defined(USE_LIGHT_VECTOR)
+#if defined(USE_SKEL_GPU)
+attribute vec4 attr_LightDirection; // a weight
+#elif defined(USE_LIGHT) && !defined(USE_LIGHT_VECTOR)
 attribute vec3 attr_LightDirection;
 #endif
 
@@ -79,10 +98,91 @@ varying vec3   var_RtPos;
 varying vec3   var_RtNormal;
 #endif
 
+// Added in OPM: ground cover tufts (tr_groundcover.c). attr_Tangent is where
+// the tuft stands, and in w how far this vertex sways (0 on the ground);
+// attr_TexCoord1 its phase, and the fraction of the draw distance it reaches
+#if defined(USE_GROUNDCOVER)
+uniform vec4   u_GroundCover; // time, draw distance, wind
+#endif
+
 #if defined(USE_VERTEX_ANIMATION)
 uniform float  u_VertexLerp;
 #elif defined(USE_BONE_ANIMATION)
 uniform mat4 u_BoneMatrix[MAX_GLSL_BONES];
+#endif
+
+#if defined(USE_SKEL_GPU)
+// the frame's bones, four texels each: where the bone is, then its axes
+uniform sampler2D u_SkelBones;
+uniform vec4      u_SkelParams;  // the model's first bone, its scale, its lighting (0 none, 1 one colour, 2 lights), lights
+uniform vec4      u_SkelAmbient; // 0 to 255
+uniform vec4      u_SkelLights[SKEL_MAX_LIGHTS * 3];
+
+vec4 SkelTexel(int bone, int k)
+{
+	int t = (int(u_SkelParams.x) + bone) * 4 + k;
+	return texelFetch(u_SkelBones, ivec2(t - (t / SKEL_BONE_ROW) * SKEL_BONE_ROW, t / SKEL_BONE_ROW), 0);
+}
+
+// a weight's place, by its bone (SkelWeightGetXyz)
+vec3 SkelWeight(vec4 w, float bone)
+{
+	int b = int(bone + 0.5);
+	return (w.x * SkelTexel(b, 1).xyz + w.y * SkelTexel(b, 2).xyz + w.z * SkelTexel(b, 3).xyz + SkelTexel(b, 0).xyz) * w.w;
+}
+
+// MOH:AA's lighting of a model, at a vertex as the model has it (RB_Light_Real,
+// RB_CalcLightGridColor, RB_Light_Fullbright)
+vec4 SkelLight(vec3 P, vec3 N)
+{
+	if (u_SkelParams.z < 0.5)
+		return vec4(1.0);
+	if (u_SkelParams.z < 1.5)
+		return u_SkelAmbient / 255.0;
+
+	vec3 c = vec3(0.0);
+	int  n = int(u_SkelParams.w);
+	for (int k = 0; k < SKEL_MAX_LIGHTS; k++)
+	{
+		if (k >= n) break;
+		vec4 l0 = u_SkelLights[k * 3];     // colour, type
+		vec4 l1 = u_SkelLights[k * 3 + 1]; // origin, spot constant
+		vec4 l2 = u_SkelLights[k * 3 + 2]; // direction, spot scale
+		int  type = int(l0.w + 0.5);
+		if (type == 0) // a point
+		{
+			vec3  v = l1.xyz - P;
+			float d = dot(v, N);
+			if (d > 0.0) c += l0.rgb * (d / dot(v, v));
+		}
+		else if (type == 1) // the sun
+		{
+			float d = dot(l2.xyz, N);
+			if (d > 0.0) c += l0.rgb * d;
+		}
+		else
+		{
+			float d = dot(l2.xyz, N);
+			if (d > 0.0)
+			{
+				vec3  v  = l1.xyz - P;
+				float d2 = dot(v, v);
+				if (type == 3) // a spot, near
+				{
+					c += l0.rgb * (d / d2);
+				}
+				else
+				{
+					float along = dot(v, l2.xyz);
+					float most  = (l1.w - d2 / (along * along)) * l2.w;
+					if (most > 0.0)
+						c += l0.rgb * (d / d2 * min(most, 1.0));
+				}
+			}
+		}
+	}
+	return vec4(clamp(floor(c) + u_SkelAmbient.rgb, 0.0, 255.0) / 255.0, 1.0);
+}
 #endif
 
 #if defined(USE_LIGHT_VECTOR)
@@ -222,12 +322,46 @@ void main()
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = normalize(nrmMat * attr_Tangent.xyz);
   #endif
+#elif defined(USE_SKEL_GPU)
+	vec3 position = SkelWeight(attr_Position, attr_BoneIndexes.x);
+	if (attr_Position2.w != 0.0) position += SkelWeight(attr_Position2, attr_BoneIndexes.y);
+	if (attr_Normal2.w != 0.0)   position += SkelWeight(attr_Normal2, attr_BoneIndexes.z);
+	if (attr_Tangent2.w != 0.0)  position += SkelWeight(attr_Tangent2, attr_BoneIndexes.w);
+	if (attr_LightDirection.w != 0.0) position += SkelWeight(attr_LightDirection, attr_BoneWeights.x);
+	if (attr_TexCoord1.w != 0.0) position += SkelWeight(attr_TexCoord1, attr_BoneWeights.y);
+	if (attr_PaintColor.w != 0.0) position += SkelWeight(attr_PaintColor, attr_BoneWeights.z);
+	if (attr_Color.w != 0.0)     position += SkelWeight(attr_Color, attr_BoneWeights.w);
+	position *= u_SkelParams.y;
+	int  nb = int(attr_BoneIndexes.x + 0.5);
+	vec3 normal = attr_Normal.x * SkelTexel(nb, 1).xyz + attr_Normal.y * SkelTexel(nb, 2).xyz + attr_Normal.z * SkelTexel(nb, 3).xyz;
+  #if defined(USE_TANGENT_FRAME)
+	vec3 tangent = attr_Tangent.x * SkelTexel(nb, 1).xyz + attr_Tangent.y * SkelTexel(nb, 2).xyz + attr_Tangent.z * SkelTexel(nb, 3).xyz;
+  #endif
+	vec4 skelColor = SkelLight(position, normal);
 #else
 	vec3 position  = attr_Position;
 	vec3 normal    = attr_Normal;
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = attr_Tangent.xyz;
   #endif
+#endif
+
+#if defined(USE_GROUNDCOVER)
+	{
+		vec3  root  = attr_Tangent.xyz;
+		float t     = u_GroundCover.x;
+		float phase = attr_TexCoord1.x;
+		float end   = attr_TexCoord1.y * u_GroundCover.y;
+
+		// sinks into the ground over the last fifth of its distance
+		float sink = clamp((end - distance(root, u_ViewOrigin)) / (end * 0.2), 0.0, 1.0);
+		float gust = 0.6 + 0.4 * sin(t * 0.31 + root.x * 0.0021 + root.y * 0.0013);
+		float sway = sin(t * 1.9 + phase + (root.x + root.y) * 0.011) * 0.65
+		           + sin(t * 3.7 + phase * 1.7) * 0.35;
+
+		position = root + (position - root) * sink;
+		position += vec3(0.8, 0.6, 0.0) * ((sway * 2.2 + 1.2) * gust * attr_Tangent.w * u_GroundCover.z * sink);
+	}
 #endif
 
 #if defined(USE_TCGEN)
@@ -282,6 +416,11 @@ void main()
 
 #if defined(USE_LIGHT_VECTOR)
 	vec3 L = u_LightOrigin.xyz - (position * u_LightOrigin.w);
+#elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT) && defined(USE_SKEL_GPU)
+	// a model lit per vertex keeps no direction its light came from, as the
+	// CPU's skinning leaves it none: its light is the vertex colour as it is,
+	// and the normal map shades the realtime lights alone (lightall_fp.glsl)
+	vec3 L = vec3(0.0);
 #elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	vec3 L = attr_LightDirection;
   #if defined(USE_MODELMATRIX)
@@ -293,7 +432,11 @@ void main()
 	var_TexCoords.zw = attr_TexCoord1.st;
 #endif
 
+#if defined(USE_SKEL_GPU)
+	var_Color = u_VertColor * skelColor + u_BaseColor;
+#else
 	var_Color = u_VertColor * attr_Color + u_BaseColor;
+#endif
 
 #if defined(USE_LIGHT_VECTOR)
   #if defined(USE_FAST_LIGHT)

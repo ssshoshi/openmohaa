@@ -35,6 +35,7 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_postprocess.c
     ${SOURCE_DIR}/renderergl2/tr_scene.c
     ${SOURCE_DIR}/renderergl2/tr_shade_calc.c
+    ${SOURCE_DIR}/renderergl2/tr_skelgpu.cpp
     ${SOURCE_DIR}/renderergl2/tr_shade.c
     ${SOURCE_DIR}/renderergl2/tr_shader.c
     ${SOURCE_DIR}/renderergl2/tr_shadows.c

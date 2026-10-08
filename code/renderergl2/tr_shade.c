@@ -42,9 +42,21 @@ void R_DrawElements( int numIndexes, int firstIndex )
 {
 	backEnd.pc.c_drawCalls++;
 
-	if (tess.useCacheVao)
+	if (tess.groundCover)
+	{
+		// Added in OPM: ground cover cells, from where they are kept
+		RB_GroundCoverDrawElements();
+	}
+	else if (tess.useCacheVao)
 	{
 		VaoCache_DrawElements(numIndexes, firstIndex);
+	}
+	else if (tess.streamVao && glState.currentVao == tess.streamVao)
+	{
+		// Added in OPM: where RB_UpdateTessVao copied the batch into the ring,
+		// or where the frame keeps the posed surface it is (RB_SkinArenaDraw)
+		qglDrawElementsBaseVertex(GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
+			BUFFER_OFFSET((tess.streamFirstIndex + firstIndex) * sizeof(glIndex_t)), tess.streamBaseVertex);
 	}
 	else
 	{
@@ -308,6 +320,13 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.cubemapIndex = cubemapIndex;
 	tess.dlightBits = 0;		// will be OR'd in by surface functions
 	tess.pshadowBits = 0;       // will be OR'd in by surface functions
+	// Added in OPM: the realtime lights its surfaces may take, as the draw
+	// surface list adds them (RB_RenderDrawSurfList); outside it all of them
+	tess.rtMask = ~backEnd.rtSurfaceCulled;
+	tess.skin.valid = qfalse;
+	tess.skin.deferred = qfalse;
+	tess.groundCover = qfalse;
+	tess.skelGpu.active = qfalse;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
 	tess.currentStageIteratorFunc = state->optimalStageIteratorFunc;
@@ -1452,6 +1471,25 @@ static void RB_SetSecondBundle( shaderProgram_t *sp, shaderStage_t *pStage, qboo
 }
 
 
+/*
+Added in OPM
+Whether the depth prepass of this view left this batch's depth: it draws the
+first stage of the opaque shaders (RB_RenderDrawSurfList), so where that stage
+writes depth the depth buffer already holds what any stage of it would write.
+*/
+static qboolean RB_DepthPrepassed( const shaderCommands_t *input )
+{
+	const shaderStage_t *first = input->xstages[0];
+
+	if ( !backEnd.depthPrepassed || backEnd.depthFill || !r_earlyZ->integer || !first ) {
+		return qfalse;
+	}
+	if ( input->shader->sort != SS_OPAQUE && input->shader->sort != SS_PORTAL ) {
+		return qfalse;
+	}
+	return ( first->stateBits & GLS_DEPTHMASK_TRUE ) ? qtrue : qfalse;
+}
+
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
@@ -1500,6 +1538,17 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				if (pStage->stateBits & GLS_ATEST_BITS)
 				{
 					index |= LIGHTDEF_USE_TCGEN_AND_TCMOD;
+				}
+
+				if (tess.groundCover)
+				{
+					index |= LIGHTDEF_GROUNDCOVER;
+				}
+
+				if (tess.skelGpu.active)
+				{
+					index &= ~(LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION);
+					index |= LIGHTDEF_SKEL_GPU;
 				}
 
 				sp = GLSL_GetLightallShader(index);
@@ -1554,6 +1603,17 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			if (r_lightmap->integer && ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP))
 			{
 				index = LIGHTDEF_USE_TCGEN_AND_TCMOD;
+			}
+
+			if (tess.groundCover)
+			{
+				index |= LIGHTDEF_GROUNDCOVER;
+			}
+
+			if (tess.skelGpu.active)
+			{
+				index &= ~(LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION);
+				index |= LIGHTDEF_SKEL_GPU;
 			}
 
 			sp = GLSL_GetLightallShader(index);
@@ -1617,6 +1677,21 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		{
 			GLSL_SetUniformMat4BoneMatrix(sp, UNIFORM_BONEMATRIX, glState.boneMatrix, glState.boneAnimation);
 		}
+
+		// Added in OPM: how a ground cover cell sways (RB_SurfaceGroundCover)
+		if (tess.groundCover)
+		{
+			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDCOVER, tess.groundCoverParams);
+		}
+
+		// Added in OPM: the model the vertex program poses (tr_skelgpu.cpp)
+		if (tess.skelGpu.active)
+		{
+			GLSL_SetUniformVec4(sp, UNIFORM_SKELPARAMS, tess.skelGpu.params);
+			GLSL_SetUniformVec4(sp, UNIFORM_SKELAMBIENT, tess.skelGpu.ambient);
+			if (tess.skelGpu.params[3] > 0)
+				GLSL_SetUniformSkelLights(sp, UNIFORM_SKELLIGHTS, tess.skelGpu.lights, (int)tess.skelGpu.params[3] * 3);
+		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
 		if (deformGen != DGEN_NONE)
@@ -1637,6 +1712,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		// cut away wherever the gun was last drawn.
 		if (backEnd.projection2D)
 			GL_State( pStage->stateBits | GLS_DEPTHTEST_DISABLE );
+		else if (RB_DepthPrepassed(input))
+			// Added in OPM: the prepass wrote this depth already (r_earlyZ)
+			GL_State( pStage->stateBits & ~GLS_DEPTHMASK_TRUE );
 		else
 			GL_State( pStage->stateBits );
 		if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GT_0)
@@ -2305,18 +2383,32 @@ void RB_StageIteratorGeneric( void )
 	// build is CPU work this renderer chose to do, the upload is what it then
 	// costs to hand to the driver. r_vaoCache 0 routes static world geometry
 	// through both of them, once per batch, once per pass, every frame.
-	if (tess.useInternalVao)
-	{
-		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
-		RB_DeformTessGeometry();
-		R_CpuTimerEnd(CPUTIMER_TESSBUILD);
-	}
-
 	vertexAttribs = RB_CalcShaderVertexAttribs( input );
 
-	if (tess.useInternalVao)
+	// Added in OPM
+	//  A posed surface that is the whole batch, in a view that draws depth
+	//  alone (and so takes no vertex colour unless it alpha tests), is drawn
+	//  from the copy of it the frame keeps on the card: nothing built or
+	//  copied (RB_SkinArenaDraw). Otherwise it is in tess, as anything else.
+	if (tess.groundCover)
+	{
+		// Added in OPM: a ground cover cell, drawn from where it is kept
+		RB_GroundCoverBindVao();
+	}
+	else if (tess.skelGpu.active)
+	{
+		// Added in OPM: a skeletal surface the vertex program poses
+		RB_SkelGpuBind();
+	}
+	else if (tess.useInternalVao && tess.skin.valid && backEnd.depthFill && !RB_ShaderAlphaTests(tess.shader)
+		&& RB_SkinArenaDraw(vertexAttribs & ~(ATTR_COLOR | ATTR_LIGHTCOORD | ATTR_LIGHTDIRECTION)))
+	{
+	}
+	else if (tess.useInternalVao)
 	{
 		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
+		RB_SkinMaterialize();
+		RB_DeformTessGeometry();
 		// A depth only pass (the prepass and every sun cascade) reads the
 		// vertex colour for nothing but an alpha test, so a model is only lit
 		// again there if its shader alpha tests. Lighting it is per vertex per
@@ -2468,6 +2560,7 @@ void RB_StageIteratorGeneric( void )
 */
 void RB_EndSurface( void ) {
 	shaderCommands_t *input;
+	int surfProfPrev;
 
 	input = &tess;
 
@@ -2509,23 +2602,29 @@ void RB_EndSurface( void ) {
 	//
 	// call off to shader specific tess end function
 	//
+	// Added in OPM: timed apart from the surfaces that filled it (r_gpuTimers)
+	surfProfPrev = RB_SurfProfSwitch(SURFPROF_DRAW);
 	tess.currentStageIteratorFunc();
 
 	//
 	// draw debugging stuff
 	//
-	if ( r_showtris->integer ) {
+	// (a ground cover cell drawn from the card left nothing in tess to show)
+	if ( r_showtris->integer && !tess.groundCover && !tess.skelGpu.active ) {
 		DrawTris (input);
 	}
-	if ( r_shownormals->integer ) {
+	if ( r_shownormals->integer && !tess.groundCover && !tess.skelGpu.active ) {
 		DrawNormals (input);
 	}
+	RB_SurfProfSwitch(surfProfPrev);
 	// clear shader so we can tell we don't have any unclosed surfaces
 	tess.numIndexes = 0;
 	tess.numVertexes = 0;
 	tess.firstIndex = 0;
 	tess.useCacheVao = qfalse;
 	tess.useInternalVao = qfalse;
+	tess.groundCover = qfalse;
+	tess.skelGpu.active = qfalse;
 
 	GLimp_LogComment( "----------\n" );
 }
