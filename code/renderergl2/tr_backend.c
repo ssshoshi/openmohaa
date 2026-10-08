@@ -483,6 +483,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
 
+	// Added in OPM: what the pass's time goes to (r_gpuTimers)
+	RB_SurfProfBegin();
+
 	// OPENMOHAA-specific stuff
 	//=========================
 	// A light sphere depends on the entity and the lights, not on the view,
@@ -508,7 +511,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			// fast path, same as previous sort
 			tess.rtMask |= drawSurf->rtMask;
 			backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
+			RB_SurfProfSurface( *drawSurf->surface );
 			rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
+			RB_SurfProfSwitch( SURFPROF_LIST );
 			continue;
 		}
 		oldSort = (int)drawSurf->sort;
@@ -741,7 +746,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		// add the triangles for this surface
 		tess.rtMask |= drawSurf->rtMask;
 		backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
+		RB_SurfProfSurface( *drawSurf->surface );
 		rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
+		RB_SurfProfSwitch( SURFPROF_LIST );
 	}
 	backEnd.rtSurfaceCulled = 0;
 
@@ -751,6 +758,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	if (oldShader != NULL) {
 		RB_EndSurface();
 	}
+	RB_SurfProfEnd();
 
 	if (glRefConfig.framebufferObject)
 		FBO_Bind(fbo);

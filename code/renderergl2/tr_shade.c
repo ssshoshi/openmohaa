@@ -2533,6 +2533,7 @@ void RB_StageIteratorGeneric( void )
 */
 void RB_EndSurface( void ) {
 	shaderCommands_t *input;
+	int surfProfPrev;
 
 	input = &tess;
 
@@ -2574,6 +2575,8 @@ void RB_EndSurface( void ) {
 	//
 	// call off to shader specific tess end function
 	//
+	// Added in OPM: timed apart from the surfaces that filled it (r_gpuTimers)
+	surfProfPrev = RB_SurfProfSwitch(SURFPROF_DRAW);
 	tess.currentStageIteratorFunc();
 
 	//
@@ -2586,6 +2589,7 @@ void RB_EndSurface( void ) {
 	if ( r_shownormals->integer && !tess.groundCover ) {
 		DrawNormals (input);
 	}
+	RB_SurfProfSwitch(surfProfPrev);
 	// clear shader so we can tell we don't have any unclosed surfaces
 	tess.numIndexes = 0;
 	tess.numVertexes = 0;

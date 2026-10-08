@@ -556,6 +556,142 @@ qboolean R_CpuTimerPercentiles(double *p50, double *p95, double *p99, double *ma
 
 /*
 ================
+Surface profile (RB_SurfProfBegin)
+
+Which kind of surface a pass's CPU time went to. The pass timers say the sun
+cascades cost so much; this says whether that was the characters, the static
+models, the terrain or setting up and drawing the batches. A surface function
+is timed with whatever it does, and RB_EndSurface apart from whichever kind
+was being added when the batch filled.
+================
+*/
+#define SURFPROF_PASSES 4
+
+static const char *const surfProfPassNames[SURFPROF_PASSES] = { "sunshadow", "rtshadow", "prepass", "main3d" };
+static const char *const surfProfKindNames[SURFPROF_COUNT] = { "list", "world", "terrain", "static", "skel", "other", "draw" };
+
+static int    spPass = -1;
+static int    spKind;
+static double spStamp;
+static double spTime[SURFPROF_PASSES][SURFPROF_COUNT];
+static int    spCount[SURFPROF_PASSES][SURFPROF_COUNT];
+
+void RB_SurfProfBegin(void)
+{
+	if (!cpuActive)
+	{
+		spPass = -1;
+		return;
+	}
+
+	if (backEnd.depthFill)
+	{
+		if (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED))
+			spPass = 1;
+		else if (backEnd.viewParms.flags & VPF_DEPTHSHADOW)
+			spPass = 0;
+		else
+			spPass = 2;
+	}
+	else
+	{
+		spPass = 3;
+	}
+
+	spKind  = SURFPROF_LIST;
+	spStamp = R_MicroSeconds();
+}
+
+int RB_SurfProfSwitch(int kind)
+{
+	const int prev = spKind;
+	double    now;
+
+	if (spPass < 0)
+		return prev;
+
+	now = R_MicroSeconds();
+	spTime[spPass][spKind] += now - spStamp;
+	spStamp = now;
+	spKind  = kind;
+	return prev;
+}
+
+void RB_SurfProfSurface(surfaceType_t type)
+{
+	int kind;
+
+	if (spPass < 0)
+		return;
+
+	switch (type)
+	{
+	case SF_FACE:
+	case SF_GRID:
+	case SF_TRIANGLES:
+		kind = SURFPROF_WORLD;
+		break;
+	case SF_TERRAIN_PATCH:
+		kind = SURFPROF_TERRAIN;
+		break;
+	case SF_TIKI_STATIC:
+		kind = SURFPROF_STATIC;
+		break;
+	case SF_TIKI_SKEL:
+		kind = SURFPROF_SKEL;
+		break;
+	default:
+		kind = SURFPROF_OTHER;
+		break;
+	}
+
+	spCount[spPass][kind]++;
+	RB_SurfProfSwitch(kind);
+}
+
+void RB_SurfProfEnd(void)
+{
+	if (spPass < 0)
+		return;
+
+	RB_SurfProfSwitch(SURFPROF_LIST);
+	spPass = -1;
+}
+
+// ms a frame for each kind, and how many surfaces of it, for each pass that ran
+void R_SurfProfReport(int numFrames)
+{
+	char line[512];
+	int  p, k;
+
+	for (p = 0; p < SURFPROF_PASSES; p++)
+	{
+		double total = 0.0;
+
+		for (k = 0; k < SURFPROF_COUNT; k++)
+			total += spTime[p][k];
+
+		if (total > 0.0 && numFrames > 0)
+		{
+			Com_sprintf(line, sizeof(line), "cpu   %s by kind:", surfProfPassNames[p]);
+			for (k = 0; k < SURFPROF_COUNT; k++)
+			{
+				if (k == SURFPROF_LIST || k == SURFPROF_DRAW)
+					Q_strcat(line, sizeof(line), va(" %s %.2f", surfProfKindNames[k], spTime[p][k] / numFrames / 1000.0));
+				else
+					Q_strcat(line, sizeof(line), va(" %s %.2f (%d)", surfProfKindNames[k],
+						spTime[p][k] / numFrames / 1000.0, spCount[p][k] / numFrames));
+			}
+			ri.Printf(PRINT_ALL, "%s\n", line);
+		}
+	}
+
+	Com_Memset(spTime, 0, sizeof(spTime));
+	Com_Memset(spCount, 0, sizeof(spCount));
+}
+
+/*
+================
 R_CpuTimerReport
 
 Average in milliseconds over every world frame since the last call. Mirrors

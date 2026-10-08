@@ -185,6 +185,9 @@ static void R_ReportCpuTimers( int interval )
 	// through both, once per batch, per pass, every frame.
 	ri.Printf( PRINT_ALL, "%s | per batch: tessbuild %.2f tessupload %.2f\n",
 		line, cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD] );
+
+	// Added in OPM: each pass by what it drew (surfaces a frame in brackets)
+	R_SurfProfReport( numFrames );
 }
 
 /*

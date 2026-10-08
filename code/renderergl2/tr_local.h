@@ -2179,6 +2179,25 @@ qboolean R_CpuTimerReport(double *out, int *numFrames, int minFrames);
 #define R_CpuTimerBegin(id) R_CpuTimerMark((id), qfalse)
 #define R_CpuTimerEnd(id)   R_CpuTimerMark((id), qtrue)
 
+// Added in OPM: where a pass's CPU time goes, by what it draws. Exclusive:
+// time is charged to one kind at a time, so a pass's kinds sum to it.
+typedef enum {
+	SURFPROF_LIST,		// the list itself: batches, entities and their lighting set up
+	SURFPROF_WORLD,		// brush faces, patches, triangle soups, brush models
+	SURFPROF_TERRAIN,
+	SURFPROF_STATIC,	// static models
+	SURFPROF_SKEL,		// skeletal models
+	SURFPROF_OTHER,		// sprites, marks, polys, ground cover...
+	SURFPROF_DRAW,		// RB_EndSurface: a batch's stages set up and drawn
+	SURFPROF_COUNT
+} surfProfKind_t;
+
+void RB_SurfProfBegin(void);	// at the start of a draw surface list
+void RB_SurfProfEnd(void);
+int  RB_SurfProfSwitch(int kind);	// charge the time so far, then to kind; the kind before
+void RB_SurfProfSurface(surfaceType_t type);	// a surface of the list is next
+void R_SurfProfReport(int numFrames);
+
 void R_GpuTimerInit(void);
 void R_GpuTimerShutdown(void);
 void R_GpuTimerFrameEnd(void);
