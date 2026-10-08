@@ -1694,8 +1694,16 @@ void RB_SkinMaterialize(void)
     }
 }
 
+// A mesh's bone among the model's (RB_SkelMesh): from the surface's table, or
+// asked of the client for a bone past it
+#define SKEL_LOCAL_BONE(index) \
+    ((boneMapped && (unsigned int)(index) < (unsigned int)skelmodel->numBones) \
+        ? boneMap[(index)] : ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[(index)].channel))
+
 void RB_SkelMesh(skelSurfaceGame_t *sf)
 {
+    int                boneMap[TIKI_MAX_BONES];
+    qboolean           boneMapped = qfalse;
     qboolean           tangents;
     int                kept;
     unsigned int       baseIndex, baseVertex;
@@ -1910,13 +1918,24 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     bones  = &TIKI_Skel_Bones[backEnd.currentEntity->e.bonestart];
     morphs = &skeletorMorphCache[backEnd.currentEntity->e.morphstart];
 
+    // Added in OPM
+    //  A mesh past the model's first names its bones by channel, and each
+    //  weight looked its bone up among the model's with a call into the
+    //  client: thousands of them a surface, a character's every frame. Each
+    //  of the mesh's bones is looked up once a surface instead.
+    if (mesh > 0 && skelmodel->numBones <= TIKI_MAX_BONES) {
+        for (i = 0; i < skelmodel->numBones; i++) {
+            boneMap[i] = ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[i].channel);
+        }
+        boneMapped = qtrue;
+    }
+
     if (backEnd.currentEntity->e.hasMorph) {
         if (mesh > 0) {
             for (vertNum = 0; vertNum < render_count; vertNum++) {
                 vec3_t normal;
                 vec3_t out;
                 vec3_t totalmorph;
-                int    channelNum;
                 int    boneNum;
 
                 VectorClear(out);
@@ -1938,19 +1957,17 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
                 }
 
                 if (newVerts->numMorphs) {
-                    channelNum = skelmodel->pBones[morph->morphIndex].channel;
+                    boneNum = SKEL_LOCAL_BONE(morph->morphIndex);
                 } else {
-                    channelNum = skelmodel->pBones[weight->boneIndex].channel;
+                    boneNum = SKEL_LOCAL_BONE(weight->boneIndex);
                 }
 
-                boneNum = ri.TIKI_GetLocalChannel(tiki, channelNum);
                 bone    = &bones[boneNum];
 
                 SkelVertGetNormal(newVerts, bone, normal);
 
                 for (weightNum = 0; weightNum < newVerts->numWeights; weightNum++) {
-                    channelNum = skelmodel->pBones[weight->boneIndex].channel;
-                    boneNum    = ri.TIKI_GetLocalChannel(tiki, channelNum);
+                    boneNum    = SKEL_LOCAL_BONE(weight->boneIndex);
                     bone       = &bones[boneNum];
 
                     if (!weightNum) {
@@ -2038,7 +2055,6 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
             for (vertNum = 0; vertNum < render_count; vertNum++) {
                 vec3_t normal;
                 vec3_t out;
-                int    channelNum;
                 int    boneNum;
 
                 VectorClear(out);
@@ -2047,15 +2063,13 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
                 weight = (skelWeight_t *)((byte *)newVerts + sizeof(skeletorVertex_t)
                                           + sizeof(skeletorMorph_t) * newVerts->numMorphs);
 
-                channelNum = skelmodel->pBones[weight->boneIndex].channel;
-                boneNum    = ri.TIKI_GetLocalChannel(tiki, channelNum);
+                boneNum    = SKEL_LOCAL_BONE(weight->boneIndex);
                 bone       = &bones[boneNum];
 
                 SkelVertGetNormal(newVerts, bone, normal);
 
                 for (weightNum = 0; weightNum < newVerts->numWeights; weightNum++) {
-                    channelNum = skelmodel->pBones[weight->boneIndex].channel;
-                    boneNum    = ri.TIKI_GetLocalChannel(tiki, channelNum);
+                    boneNum    = SKEL_LOCAL_BONE(weight->boneIndex);
                     bone       = &bones[boneNum];
 
                     SkelWeightGetXyz(weight, bone, out);
