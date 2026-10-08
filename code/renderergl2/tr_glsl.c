@@ -1474,8 +1474,7 @@ static qboolean GLSL_InitLightallShader(int i)
 
 	// Added in OPM: a skeletal model posed from the frame's bones, which
 	// brings its own vertexes, and nothing that reads others
-	if ((i & LIGHTDEF_SKEL_GPU) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_GROUNDCOVER
-		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_PARALLAXMAP)))
+	if ((i & LIGHTDEF_SKEL_GPU) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_GROUNDCOVER)))
 		return qfalse;
 
 	if ((i & LIGHTDEF_SKEL_GPU) && lightType == LIGHTDEF_USE_LIGHTMAP)
@@ -1602,7 +1601,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	{
 		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW));
 		attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES
-			| ATTR_TANGENT | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR | ATTR_BONE_WEIGHTS;
+			| ATTR_TANGENT | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR | ATTR_BONE_WEIGHTS | ATTR_LIGHTDIRECTION;
 	}
 
 	if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)

@@ -51,6 +51,7 @@ typedef struct {
     float  bones[SKEL_GPU_WEIGHTS];   // the model's bones, the normal's first
     vec3_t normal;                    // as the first bone holds it
     vec2_t st;
+    vec4_t tangent;                   // as the first bone holds it; w the bitangent's side
 } skelGpuVert_t;
 
 typedef struct {
@@ -206,7 +207,94 @@ static void R_SkelGpuAttrib(vao_t *vao, int attribIndex, int count, int offset)
 
 // A surface as the model has it, to the card: not if a vertex of it has more
 // than four weights, or a bone the model does not.
-static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeaderGame_t *skelmodel)
+// (M^T)^-1 v: what a bone's axes take to v (the vertex program's
+// x * axis0 + y * axis1 + z * axis2), for a bone that may not be a rotation
+static void R_SkelGpuUnrotate(const skelBoneCache_t *bone, const vec3_t v, vec3_t out)
+{
+    const float(*m)[4] = bone->matrix;
+    vec3_t      c0, c1, c2;
+    float       det;
+
+    // the columns of M^T are M's rows
+    CrossProduct(m[1], m[2], c0);
+    CrossProduct(m[2], m[0], c1);
+    CrossProduct(m[0], m[1], c2);
+    det = DotProduct(m[0], c0);
+    if (fabs(det) < 1e-8f) {
+        VectorCopy(v, out);
+        return;
+    }
+    // (M^T)^-1 = adj(M^T) / det, whose rows are c0, c1, c2
+    out[0] = DotProduct(c0, v) / det;
+    out[1] = DotProduct(c1, v) / det;
+    out[2] = DotProduct(c2, v) / det;
+}
+
+// The tangents, as RB_CalcTangentsForRange works them out from the surface
+// posed as the model is now, held by each vertex's first bone as its normal
+// is: the vertex program turns them with it.
+static void R_SkelGpuTangents(skelGpuVert_t *verts, const skelSurfaceGame_t *sf, const skelBoneCache_t *bones)
+{
+    vec3_t *xyz   = (vec3_t *)ri.Malloc(sf->numVerts * sizeof(vec3_t));
+    vec3_t *nrm   = (vec3_t *)ri.Malloc(sf->numVerts * sizeof(vec3_t));
+    vec3_t *sdirs = (vec3_t *)ri.Malloc(sf->numVerts * sizeof(vec3_t));
+    vec3_t *tdirs = (vec3_t *)ri.Malloc(sf->numVerts * sizeof(vec3_t));
+    int     i, k;
+
+    for (i = 0; i < sf->numVerts; i++) {
+        const skelGpuVert_t   *v  = &verts[i];
+        const skelBoneCache_t *b0 = &bones[(int)v->bones[0]];
+
+        VectorClear(xyz[i]);
+        for (k = 0; k < SKEL_GPU_WEIGHTS && v->weights[k][3] != 0; k++) {
+            const skelBoneCache_t *b = &bones[(int)v->bones[k]];
+            int                    j;
+
+            for (j = 0; j < 3; j++) {
+                xyz[i][j] += (v->weights[k][0] * b->matrix[0][j] + v->weights[k][1] * b->matrix[1][j]
+                              + v->weights[k][2] * b->matrix[2][j] + b->offset[j])
+                           * v->weights[k][3];
+            }
+        }
+        for (k = 0; k < 3; k++) {
+            nrm[i][k] = v->normal[0] * b0->matrix[0][k] + v->normal[1] * b0->matrix[1][k] + v->normal[2] * b0->matrix[2][k];
+        }
+        VectorNormalize(nrm[i]);
+        VectorClear(sdirs[i]);
+        VectorClear(tdirs[i]);
+    }
+
+    for (i = 0; i + 2 < sf->numTriangles * 3; i += 3) {
+        const int i0 = sf->pTriangles[i], i1 = sf->pTriangles[i + 1], i2 = sf->pTriangles[i + 2];
+        vec3_t    sdir, tdir;
+
+        if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= sf->numVerts || i1 >= sf->numVerts || i2 >= sf->numVerts) {
+            continue;
+        }
+        R_CalcTexDirs(sdir, tdir, xyz[i0], xyz[i1], xyz[i2], verts[i0].st, verts[i1].st, verts[i2].st);
+        VectorAdd(sdirs[i0], sdir, sdirs[i0]);
+        VectorAdd(sdirs[i1], sdir, sdirs[i1]);
+        VectorAdd(sdirs[i2], sdir, sdirs[i2]);
+        VectorAdd(tdirs[i0], tdir, tdirs[i0]);
+        VectorAdd(tdirs[i1], tdir, tdirs[i1]);
+        VectorAdd(tdirs[i2], tdir, tdirs[i2]);
+    }
+
+    for (i = 0; i < sf->numVerts; i++) {
+        vec3_t tangent, bitangent;
+
+        verts[i].tangent[3] = R_CalcTangentSpace(tangent, bitangent, nrm[i], sdirs[i], tdirs[i]);
+        R_SkelGpuUnrotate(&bones[(int)verts[i].bones[0]], tangent, verts[i].tangent);
+    }
+
+    ri.Free(xyz);
+    ri.Free(nrm);
+    ri.Free(sdirs);
+    ri.Free(tdirs);
+}
+
+static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeaderGame_t *skelmodel,
+    const skelBoneCache_t *bones, int numBones)
 {
     skelGpuVert_t    *verts;
     skeletorVertex_t *v = sf->pVerts;
@@ -248,7 +336,7 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
                 }
                 bone = ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[bone].channel);
             }
-            if (bone < 0) {
+            if (bone < 0 || bone >= numBones) {
                 m->why = "a bone the model does not have";
                 ri.Free(verts);
                 return;
@@ -268,6 +356,8 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
                                  + sizeof(skelWeight_t) * v->numWeights);
     }
 
+    R_SkelGpuTangents(verts, sf, bones);
+
     Q_strncpyz(vao->name, "skelGpu_VAO", sizeof(vao->name));
     qglGenVertexArrays(1, &vao->vao);
     qglBindVertexArray(vao->vao);
@@ -284,7 +374,7 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     R_SkelGpuAttrib(vao, ATTR_INDEX_POSITION2, 4, offsetof(skelGpuVert_t, weights[1]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_NORMAL2, 4, offsetof(skelGpuVert_t, weights[2]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_TANGENT2, 4, offsetof(skelGpuVert_t, weights[3]));
-    R_SkelGpuAttrib(vao, ATTR_INDEX_TANGENT, 4, offsetof(skelGpuVert_t, weights[4]));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_LIGHTDIRECTION, 4, offsetof(skelGpuVert_t, weights[4]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_LIGHTCOORD, 4, offsetof(skelGpuVert_t, weights[5]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_PAINTCOLOR, 4, offsetof(skelGpuVert_t, weights[6]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_COLOR, 4, offsetof(skelGpuVert_t, weights[7]));
@@ -292,6 +382,7 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     R_SkelGpuAttrib(vao, ATTR_INDEX_BONE_WEIGHTS, 4, offsetof(skelGpuVert_t, bones[4]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_NORMAL, 3, offsetof(skelGpuVert_t, normal));
     R_SkelGpuAttrib(vao, ATTR_INDEX_TEXCOORD, 2, offsetof(skelGpuVert_t, st));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_TANGENT, 4, offsetof(skelGpuVert_t, tangent));
     Vao_SetVertexPointers(vao);
     GL_CheckErrors();
 
@@ -359,11 +450,6 @@ static const char *R_SkelGpuShaderWhyNot(const shader_t *shader)
         index = stage->glslShaderIndex;
         if ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP || stage->bundle[0].tcGen == TCGEN_LIGHTMAP) {
             return va("stage %d is lightmapped", i);
-        }
-        // a normal map needs the tangent frame, which is not posed here; a
-        // specular map is read by the fragment program alone
-        if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_PARALLAXMAP)) {
-            return va("stage %d has a normal map", i);
         }
         n++;
     }
@@ -500,7 +586,7 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
         m->sf   = sf;
         *slot   = m;
         skelGpuNumMeshes++;
-        R_SkelGpuBuild(m, tiki, sf, mesh, skelmodel);
+        R_SkelGpuBuild(m, tiki, sf, mesh, skelmodel, &TIKI_Skel_Bones[ent->e.bonestart], ri.TIKI_GetNumChannels(tiki));
     }
     m = *slot;
     if (!m->ok) {
