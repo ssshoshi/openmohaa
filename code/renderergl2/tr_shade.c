@@ -46,9 +46,10 @@ void R_DrawElements( int numIndexes, int firstIndex )
 	{
 		VaoCache_DrawElements(numIndexes, firstIndex);
 	}
-	else if (tess.stream && glState.currentVao == tess.vao)
+	else if (tess.streamVao && glState.currentVao == tess.streamVao)
 	{
-		// Added in OPM: where RB_UpdateTessVao copied the batch into the ring
+		// Added in OPM: where RB_UpdateTessVao copied the batch into the ring,
+		// or where the frame keeps the posed surface it is (RB_SkinArenaDraw)
 		qglDrawElementsBaseVertex(GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
 			BUFFER_OFFSET((tess.streamFirstIndex + firstIndex) * sizeof(glIndex_t)), tess.streamBaseVertex);
 	}
@@ -317,6 +318,8 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	// Added in OPM: the realtime lights its surfaces may take, as the draw
 	// surface list adds them (RB_RenderDrawSurfList); outside it all of them
 	tess.rtMask = ~backEnd.rtSurfaceCulled;
+	tess.skin.valid = qfalse;
+	tess.skin.deferred = qfalse;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
 	tess.currentStageIteratorFunc = state->optimalStageIteratorFunc;
@@ -2336,18 +2339,22 @@ void RB_StageIteratorGeneric( void )
 	// build is CPU work this renderer chose to do, the upload is what it then
 	// costs to hand to the driver. r_vaoCache 0 routes static world geometry
 	// through both of them, once per batch, once per pass, every frame.
-	if (tess.useInternalVao)
-	{
-		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
-		RB_DeformTessGeometry();
-		R_CpuTimerEnd(CPUTIMER_TESSBUILD);
-	}
-
 	vertexAttribs = RB_CalcShaderVertexAttribs( input );
 
-	if (tess.useInternalVao)
+	// Added in OPM
+	//  A posed surface that is the whole batch, in a view that draws depth
+	//  alone (and so takes no vertex colour unless it alpha tests), is drawn
+	//  from the copy of it the frame keeps on the card: nothing built or
+	//  copied (RB_SkinArenaDraw). Otherwise it is in tess, as anything else.
+	if (tess.useInternalVao && tess.skin.valid && backEnd.depthFill && !RB_ShaderAlphaTests(tess.shader)
+		&& RB_SkinArenaDraw(vertexAttribs & ~(ATTR_COLOR | ATTR_LIGHTCOORD | ATTR_LIGHTDIRECTION)))
+	{
+	}
+	else if (tess.useInternalVao)
 	{
 		R_CpuTimerBegin(CPUTIMER_TESSBUILD);
+		RB_SkinMaterialize();
+		RB_DeformTessGeometry();
 		// A depth only pass (the prepass and every sun cascade) reads the
 		// vertex colour for nothing but an alpha test, so a model is only lit
 		// again there if its shader alpha tests. Lighting it is per vertex per

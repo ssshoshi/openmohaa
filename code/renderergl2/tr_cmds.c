@@ -86,9 +86,9 @@ static void R_ReportGpuTimers( int interval )
 	// re-rendered regardless of the cache.
 	// Draw calls and buffer uploads are counts, not times, so unlike the ms
 	// figures they are immune to the card's clock drifting between runs.
-	ri.Printf( PRINT_ALL, "gpu submission: %i draws %i uploads %i streamed (%i waits)\n",
+	ri.Printf( PRINT_ALL, "gpu submission: %i draws %i uploads %i streamed (%i waits) %i from posed copies\n",
 		backEnd.pc.c_drawCalls, backEnd.pc.c_bufferUploads,
-		backEnd.pc.c_streamBatches, backEnd.pc.c_streamWaits );
+		backEnd.pc.c_streamBatches, backEnd.pc.c_streamWaits, backEnd.pc.c_skinArenaDraws );
 
 	ri.Printf( PRINT_ALL, "gpu cascade surfs: %i %i %i %i\n",
 		backEnd.pc.c_sunCascadeSurfs[0], backEnd.pc.c_sunCascadeSurfs[1],

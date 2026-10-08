@@ -634,8 +634,292 @@ static void RB_StreamTessVao(unsigned int attribBits)
 
 	Com_Memcpy(tessIndexRing.base + (size_t)first * sizeof(glIndex_t), tess.indexes, tess.numIndexes * sizeof(glIndex_t));
 
+	tess.streamVao        = tess.vao;
 	tess.streamBaseVertex = base;
 	tess.streamFirstIndex = first;
+}
+
+/*
+=============================================================================
+
+Added in OPM
+The posed skeletal surfaces, kept on the card for the frame (r_skinArena).
+
+A skeletal model is posed once a scene and skinned once a pose (r_skinCache),
+but each view drew it from tess: copied there from the skin cache, and from
+there into the ring, for the prepass, each sun cascade and each of the
+realtime lights' shadow faces it is in. Here a posed surface is copied to the
+card the first time it is drawn in a frame -- its positions, normals,
+texture coordinates, tangents if it has them, and its indexes, which depend
+on the level of detail it is drawn at -- and the views that draw depth alone
+draw it from there when it is a batch by itself (RB_SkelMesh,
+RB_StageIteratorGeneric), with nothing copied at all.
+
+The copies are in three arenas, one a frame, so a frame never writes where
+the card may still be drawing the one before last: a fence at the end of
+each frame, waited on before its arena is written again. An arena that is
+full keeps no more copies that frame: those surfaces are drawn as they were.
+=============================================================================
+*/
+
+#define SKIN_ARENA_FRAMES   3
+#define SKIN_ARENA_VERTEXES (256 * 1024) // a frame's
+#define SKIN_ARENA_INDEXES  (1024 * 1024)
+#define SKIN_ARENA_ATTRIBS  (ATTR_POSITION | ATTR_NORMAL | ATTR_TANGENT | ATTR_TEXCOORD)
+
+static struct {
+	vao_t   *vao;
+	byte    *vertexes;    // mapped
+	byte    *indexes;
+	int      arena;       // this frame's
+	int      frame;       // counts frames, from 1 (a copy of frame 0 is none)
+	int      numVertexes; // used of this frame's
+	int      numIndexes;
+	uint32_t enabled;     // the arrays enabled in its vertex array object
+	GLsync   fences[SKIN_ARENA_FRAMES];
+} skinArena;
+
+static void R_SkinArenaInit(void)
+{
+	const GLbitfield flags    = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+	const int        vertexes = SKIN_ARENA_FRAMES * SKIN_ARENA_VERTEXES;
+	const int        indexes  = SKIN_ARENA_FRAMES * SKIN_ARENA_INDEXES;
+	vao_t           *vao;
+	int              attribIndex, offset, size;
+	GLuint           vbo, ibo;
+
+	Com_Memset(&skinArena, 0, sizeof(skinArena));
+	if (!tess.stream) {
+		return;
+	}
+
+	// laid out as tess's arrays, those it keeps alone
+	size = 0;
+	for (attribIndex = 0; attribIndex < ATTR_INDEX_COUNT; attribIndex++) {
+		if (SKIN_ARENA_ATTRIBS & (1 << attribIndex)) {
+			size += tess.vao->attribs[attribIndex].stride * vertexes;
+		}
+	}
+
+	// made small, then given the arenas' storage in place of its own
+	vao = R_CreateVao("skinArena_VAO", NULL, 16, NULL, 16, VAO_USAGE_DYNAMIC);
+	qglDeleteBuffers(1, &vao->vertexesVBO);
+	qglDeleteBuffers(1, &vao->indexesIBO);
+
+	qglGenBuffers(1, &vbo);
+	qglBindBuffer(GL_ARRAY_BUFFER, vbo);
+	qglBufferStorage(GL_ARRAY_BUFFER, size, NULL, flags);
+	skinArena.vertexes = (byte *)qglMapBufferRange(GL_ARRAY_BUFFER, 0, size, flags);
+
+	qglGenBuffers(1, &ibo);
+	qglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+	qglBufferStorage(GL_ELEMENT_ARRAY_BUFFER, indexes * sizeof(glIndex_t), NULL, flags);
+	skinArena.indexes = (byte *)qglMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, 0, indexes * sizeof(glIndex_t), flags);
+
+	vao->vertexesVBO  = vbo;
+	vao->vertexesSize = size;
+	vao->indexesIBO   = ibo;
+	vao->indexesSize  = indexes * sizeof(glIndex_t);
+
+	if (!skinArena.vertexes || !skinArena.indexes) {
+		// left with a vertex array object that nothing draws from
+		ri.Printf(PRINT_WARNING, "...posed surface copies: could not map their buffers\n");
+		Com_Memset(&skinArena, 0, sizeof(skinArena));
+		return;
+	}
+
+	offset = 0;
+	for (attribIndex = 0; attribIndex < ATTR_INDEX_COUNT; attribIndex++) {
+		vaoAttrib_t *vAtb = &vao->attribs[attribIndex];
+
+		if (!(SKIN_ARENA_ATTRIBS & (1 << attribIndex))) {
+			continue;
+		}
+		*vAtb        = tess.vao->attribs[attribIndex];
+		vAtb->offset = offset;
+		offset += vAtb->stride * vertexes;
+		// its arrays enabled as a draw needs them (RB_SkinArenaDraw)
+		qglVertexAttribPointer(attribIndex, vAtb->count, vAtb->type, vAtb->normalized, vAtb->stride, BUFFER_OFFSET(vAtb->offset));
+	}
+
+	skinArena.vao   = vao;
+	skinArena.frame = 1;
+	ri.Printf(PRINT_ALL, "...posed surface copies: %i vertexes (%i KB) and %i indexes a frame, %i frames\n",
+		SKIN_ARENA_VERTEXES, size / SKIN_ARENA_FRAMES / 1024, SKIN_ARENA_INDEXES, SKIN_ARENA_FRAMES);
+}
+
+static void R_SkinArenaFree(void)
+{
+	int i;
+
+	for (i = 0; i < SKIN_ARENA_FRAMES; i++) {
+		if (skinArena.fences[i]) {
+			qglDeleteSync(skinArena.fences[i]);
+		}
+	}
+	// its buffers went with its vertex array object (R_ShutdownVaos)
+	Com_Memset(&skinArena, 0, sizeof(skinArena));
+}
+
+int RB_SkinArenaFrame(void)
+{
+	return skinArena.vao && r_skinArena->integer ? skinArena.frame : 0;
+}
+
+static byte *RB_SkinArenaArray(int attribIndex, int arenaBase)
+{
+	const vaoAttrib_t *vAtb = &skinArena.vao->attribs[attribIndex];
+
+	return skinArena.vertexes + vAtb->offset + (size_t)arenaBase * vAtb->stride;
+}
+
+/*
+============
+RB_SkinArenaStore
+
+A posed surface tess holds at baseVertex, and its indexes at baseIndex,
+copied into this frame's arena; false if there is no room, or none at all.
+============
+*/
+qboolean RB_SkinArenaStore(int baseVertex, int numVertexes, int baseIndex, int numIndexes, qboolean tangents, int *arenaBase, int *arenaFirstIndex)
+{
+	glIndex_t *out;
+	int        base, first, i;
+
+	if (!RB_SkinArenaFrame() || numVertexes <= 0 || numIndexes <= 0) {
+		return qfalse;
+	}
+	if (skinArena.numVertexes + numVertexes > SKIN_ARENA_VERTEXES || skinArena.numIndexes + numIndexes > SKIN_ARENA_INDEXES) {
+		return qfalse;
+	}
+
+	base  = skinArena.arena * SKIN_ARENA_VERTEXES + skinArena.numVertexes;
+	first = skinArena.arena * SKIN_ARENA_INDEXES + skinArena.numIndexes;
+	skinArena.numVertexes += numVertexes;
+	skinArena.numIndexes  += numIndexes;
+
+	Com_Memcpy(RB_SkinArenaArray(ATTR_INDEX_POSITION, base), tess.xyz[baseVertex], numVertexes * sizeof(tess.xyz[0]));
+	Com_Memcpy(RB_SkinArenaArray(ATTR_INDEX_NORMAL, base), tess.normal[baseVertex], numVertexes * sizeof(tess.normal[0]));
+	Com_Memcpy(RB_SkinArenaArray(ATTR_INDEX_TEXCOORD, base), tess.texCoords[baseVertex], numVertexes * sizeof(tess.texCoords[0]));
+	if (tangents) {
+		Com_Memcpy(RB_SkinArenaArray(ATTR_INDEX_TANGENT, base), tess.tangent[baseVertex], numVertexes * sizeof(tess.tangent[0]));
+	}
+
+	// its own, from its first vertex
+	out = (glIndex_t *)(skinArena.indexes + (size_t)first * sizeof(glIndex_t));
+	for (i = 0; i < numIndexes; i++) {
+		out[i] = tess.indexes[baseIndex + i] - baseVertex;
+	}
+
+	*arenaBase       = base;
+	*arenaFirstIndex = first;
+	return qtrue;
+}
+
+// Its tangents, for a copy kept without them: nothing has drawn them from
+// there, so they are written where the card may be reading the rest.
+void RB_SkinArenaAddTangents(int arenaBase, int baseVertex, int numVertexes)
+{
+	if (!skinArena.vao) {
+		return;
+	}
+	Com_Memcpy(RB_SkinArenaArray(ATTR_INDEX_TANGENT, arenaBase), tess.tangent[baseVertex], numVertexes * sizeof(tess.tangent[0]));
+}
+
+/*
+============
+RB_SkinArenaDraw
+
+The batch drawn from the copy of the posed surface it is (tess.skin): when it
+is that surface alone, the copy is this frame's, and the arrays the draw
+takes are all in it. Then nothing is copied: R_DrawElements draws from it.
+============
+*/
+qboolean RB_SkinArenaDraw(unsigned int attribBits)
+{
+	int attribIndex;
+
+	if (!tess.skin.valid || !tess.skin.frame || tess.skin.frame != RB_SkinArenaFrame()) {
+		return qfalse;
+	}
+	// the surface alone: none added to the batch before or after it
+	if (tess.numVertexes != tess.skin.numVertexes || tess.numIndexes != tess.skin.numIndexes || tess.firstIndex) {
+		return qfalse;
+	}
+	if (!(attribBits & ATTR_BITS) || (attribBits & ~SKIN_ARENA_ATTRIBS)) {
+		return qfalse;
+	}
+	if ((attribBits & ATTR_TANGENT) && !tess.skin.tangents) {
+		return qfalse;
+	}
+	// deformed on the CPU: what is drawn is not what was posed
+	if (ShaderRequiresCPUDeforms(tess.shader)) {
+		return qfalse;
+	}
+
+	R_BindVao(skinArena.vao);
+
+	for (attribIndex = 0; attribIndex < ATTR_INDEX_COUNT; attribIndex++) {
+		const uint32_t attribBit = 1 << attribIndex;
+
+		if ((attribBits & attribBit) && !(skinArena.enabled & attribBit)) {
+			qglEnableVertexAttribArray(attribIndex);
+			skinArena.enabled |= attribBit;
+		} else if (!(attribBits & attribBit) && (skinArena.enabled & attribBit)) {
+			qglDisableVertexAttribArray(attribIndex);
+			skinArena.enabled &= ~attribBit;
+		}
+	}
+
+	tess.streamVao        = skinArena.vao;
+	tess.streamBaseVertex = tess.skin.arenaBase;
+	tess.streamFirstIndex = tess.skin.arenaFirstIndex;
+	backEnd.pc.c_skinArenaDraws++;
+	return qtrue;
+}
+
+/*
+============
+RB_SkinArenaFrameEnd
+
+The frame's copies drawn from: fenced, and on to the next arena, once the
+card is done with what was drawn from it three frames ago.
+============
+*/
+void RB_SkinArenaFrameEnd(void)
+{
+	GLsync fence;
+
+	if (!skinArena.vao) {
+		return;
+	}
+
+	if (skinArena.fences[skinArena.arena]) {
+		qglDeleteSync(skinArena.fences[skinArena.arena]);
+	}
+	skinArena.fences[skinArena.arena] = qglFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+	skinArena.arena = (skinArena.arena + 1) % SKIN_ARENA_FRAMES;
+	skinArena.numVertexes = 0;
+	skinArena.numIndexes  = 0;
+	if (++skinArena.frame <= 0) {
+		skinArena.frame = 1;
+	}
+
+	fence = skinArena.fences[skinArena.arena];
+	if (fence) {
+		GLenum result = qglClientWaitSync(fence, 0, 0);
+		int    tries  = 0;
+
+		if (result == GL_TIMEOUT_EXPIRED) {
+			backEnd.pc.c_streamWaits++;
+			do {
+				result = qglClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+			} while (result == GL_TIMEOUT_EXPIRED && ++tries < 5);
+		}
+		qglDeleteSync(fence);
+		skinArena.fences[skinArena.arena] = NULL;
+	}
 }
 
 /*
@@ -728,6 +1012,9 @@ void R_InitVaos(void)
 
 	Vao_SetVertexPointers(tess.vao);
 
+	// Added in OPM: and the posed surfaces' copies, with it
+	R_SkinArenaInit();
+
 	R_BindNullVao();
 
 	VaoCache_Init();
@@ -770,7 +1057,9 @@ void R_ShutdownVaos(void)
 	// Added in OPM: the tess ring's buffers went with tess.vao's
 	R_TessRingFree(&tessVertexRing);
 	R_TessRingFree(&tessIndexRing);
+	R_SkinArenaFree();
 	tess.stream = qfalse;
+	tess.streamVao = NULL;
 
 	tr.numVaos = 0;
 }

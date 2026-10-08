@@ -1303,6 +1303,14 @@ typedef struct {
     unsigned int             count;
     int                      first;
     qboolean                 tangents;
+
+    // Added in OPM: its copy on the card this frame (RB_SkinArenaStore), if
+    // arenaFrame is RB_SkinArenaFrame()
+    int                      arenaFrame;
+    int                      arenaBase;
+    int                      arenaFirstIndex;
+    int                      arenaIndexes;
+    qboolean                 arenaTangents;
 } skinCacheSlot_t;
 
 static skinCacheSlot_t skinSlots[SKIN_CACHE_SLOTS];
@@ -1368,7 +1376,9 @@ static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned i
     }
 
     if (skinUsed + count > SKIN_CACHE_VERTS) {
-        // full: start over
+        // full: start over, once a batch that takes a surface from it has
+        // (RB_SkinMaterialize)
+        RB_SkinMaterialize();
         Com_Memset(skinSlots, 0, sizeof(skinSlots));
         skinUsed = 0;
     }
@@ -1378,6 +1388,7 @@ static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned i
     slot->count    = count;
     slot->first    = skinUsed;
     slot->tangents = tangents;
+    slot->arenaFrame = 0;
     skinUsed += count;
 
     Com_Memcpy(skinXyz[slot->first], tess.xyz[base], count * sizeof(skinXyz[0]));
@@ -1385,6 +1396,95 @@ static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned i
     Com_Memcpy(skinTexCoords[slot->first], tess.texCoords[base], count * sizeof(skinTexCoords[0]));
     if (tangents) {
         Com_Memcpy(skinTangent[slot->first], tess.tangent[base], count * sizeof(skinTangent[0]));
+    }
+}
+
+/*
+=============
+Posed surfaces drawn from the card
+
+Added in OPM. The skin cache keeps a posed surface for the frame; the frame
+also keeps a copy of it on the card (RB_SkinArenaStore), which the views that
+draw depth alone draw it from when it is a batch by itself
+(RB_SkinArenaDraw). Such a batch need not hold the surface's vertexes at all:
+RB_SkelMesh leaves them out, deferred, and RB_SkinMaterialize copies them in
+from the skin cache only if the batch is drawn from tess after all.
+=============
+*/
+
+static const skinCacheSlot_t *R_SkinCacheFind(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
+{
+    const skinCacheSlot_t *slot;
+
+    if (!poseId || !r_skinCache->integer) {
+        return NULL;
+    }
+    slot = R_SkinCacheSlot(poseId, sf, count);
+    if (slot->poseId != poseId || slot->sf != sf || slot->count != count) {
+        return NULL;
+    }
+    return slot;
+}
+
+// The surface tess now holds at baseVertex: copied to the card if it is not
+// there yet this frame, and if it is the batch's first, the batch told so.
+static void RB_SkinArenaKeep(int poseId, const skelSurfaceGame_t *sf, unsigned int count, int baseVertex, int baseIndex, qboolean tangents)
+{
+    skinCacheSlot_t *slot = (skinCacheSlot_t *)R_SkinCacheFind(poseId, sf, count);
+    const int        frame = RB_SkinArenaFrame();
+    const int        numIndexes = tess.numIndexes - baseIndex;
+
+    if (!slot || !frame) {
+        return;
+    }
+
+    if (slot->arenaFrame != frame) {
+        if (!RB_SkinArenaStore(baseVertex, count, baseIndex, numIndexes, tangents, &slot->arenaBase, &slot->arenaFirstIndex)) {
+            return;
+        }
+        slot->arenaFrame    = frame;
+        slot->arenaIndexes  = numIndexes;
+        slot->arenaTangents = tangents;
+    } else if (tangents && !slot->arenaTangents) {
+        RB_SkinArenaAddTangents(slot->arenaBase, baseVertex, count);
+        slot->arenaTangents = qtrue;
+    }
+
+    if (!baseVertex && !baseIndex && slot->arenaIndexes == numIndexes) {
+        tess.skin.valid           = qtrue;
+        tess.skin.deferred        = qfalse;
+        tess.skin.tangents        = slot->arenaTangents;
+        tess.skin.frame           = frame;
+        tess.skin.numVertexes     = count;
+        tess.skin.numIndexes      = numIndexes;
+        tess.skin.arenaBase       = slot->arenaBase;
+        tess.skin.arenaFirstIndex = slot->arenaFirstIndex;
+    }
+}
+
+/*
+=============
+RB_SkinMaterialize
+
+The vertexes of a surface RB_SkelMesh left out of tess, copied in from the
+skin cache: the batch is drawn from tess after all.
+=============
+*/
+void RB_SkinMaterialize(void)
+{
+    const int first = tess.skin.cacheFirst;
+    const int count = tess.skin.numVertexes;
+
+    if (!tess.skin.deferred) {
+        return;
+    }
+    tess.skin.deferred = qfalse;
+
+    Com_Memcpy(tess.xyz[0], skinXyz[first], count * sizeof(skinXyz[0]));
+    Com_Memcpy(tess.normal[0], skinNormal[first], count * sizeof(skinNormal[0]));
+    Com_Memcpy(tess.texCoords[0], skinTexCoords[first], count * sizeof(skinTexCoords[0]));
+    if (tess.skin.cacheTangents) {
+        Com_Memcpy(tess.tangent[0], skinTangent[first], count * sizeof(skinTangent[0]));
     }
 }
 
@@ -1559,15 +1659,42 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
         tess.numIndexes += i;
     }
 
-    // skinned for another view of this scene already
     tangents = (tess.shader->vertexAttribs & ATTR_TANGENT) ? qtrue : qfalse;
+
+    // Added in OPM
+    //  The batch's first surface, on the card already this frame, in a view
+    //  that draws depth alone: most likely drawn from there, so its vertexes
+    //  are left out of tess unless it turns out not to be (RB_SkinMaterialize).
+    if (!baseVertex && !baseIndex && backEnd.depthFill && tess.currentStageIteratorFunc == RB_StageIteratorGeneric
+        && !ShaderRequiresCPUDeforms(tess.shader) && !r_showtris->integer && !r_shownormals->integer) {
+        const skinCacheSlot_t *slot = R_SkinCacheFind(backEnd.currentEntity->poseId, sf, render_count);
+
+        if (slot && slot->arenaFrame && slot->arenaFrame == RB_SkinArenaFrame()
+            && slot->arenaIndexes == (int)tess.numIndexes && (!tangents || (slot->tangents && slot->arenaTangents))) {
+            tess.skin.valid           = qtrue;
+            tess.skin.deferred        = qtrue;
+            tess.skin.tangents        = slot->arenaTangents;
+            tess.skin.cacheTangents   = slot->tangents;
+            tess.skin.frame           = slot->arenaFrame;
+            tess.skin.numVertexes     = render_count;
+            tess.skin.numIndexes      = tess.numIndexes;
+            tess.skin.arenaBase       = slot->arenaBase;
+            tess.skin.arenaFirstIndex = slot->arenaFirstIndex;
+            tess.skin.cacheFirst      = slot->first;
+            return;
+        }
+    }
+
+    // skinned for another view of this scene already
     kept     = R_SkinCacheFetch(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
     if (kept == 1) {
+        RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
         return;
     }
     if (kept == 2) {
         RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
         R_SkinCacheStore(backEnd.currentEntity->poseId, sf, render_count, baseVertex, qtrue);
+        RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, qtrue);
         return;
     }
 
@@ -1841,6 +1968,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
         RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
     }
     R_SkinCacheStore(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
+    RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
 }
 
 /*

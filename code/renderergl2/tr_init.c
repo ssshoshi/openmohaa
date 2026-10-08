@@ -242,6 +242,7 @@ cvar_t	*r_gpuTimers;
 cvar_t	*r_frameHitchMsec;
 cvar_t	*r_tessOrphan;
 cvar_t	*r_tessStream;
+cvar_t	*r_skinArena;
 
 cvar_t	*r_aviMotionJpegQuality;
 cvar_t	*r_screenshotJpegQuality;
@@ -1830,6 +1831,15 @@ void R_Register( void )
 	//  and a fence on each part keeps it from being written again before the
 	//  card has drawn from it. Needs OpenGL 4.4 (GL_ARB_buffer_storage).
 	r_tessStream = ri.Cvar_Get("r_tessStream", "1", CVAR_ARCHIVE | CVAR_LATCH);
+	// Added in OPM
+	//  With r_tessStream: a skeletal model posed once a scene and skinned once
+	//  a pose (r_skinCache) was still copied into tess, and from there into
+	//  the ring, for every view it was drawn in -- the prepass, each sun
+	//  cascade, each realtime light's shadow face. Each posed surface is now
+	//  copied to the card once a frame, and the views that draw depth alone
+	//  draw it from there.
+	r_skinArena = ri.Cvar_Get("r_skinArena", "1", 0);
+	ri.Cvar_SetDescription(r_skinArena, "With r_tessStream, each posed skeletal surface is copied to the card once a frame and drawn from there in the depth and shadow views. Not archived: an A/B switch");
 	ri.Cvar_SetDescription(r_tessStream, "Batches built on the CPU are copied into one large buffer mapped for good, instead of uploaded with a call per array (needs OpenGL 4.4; vid_restart)");
 	// see tr_gputimer.c -- forces a pipeline drain at each scope boundary
 	r_gpuTimerSync = ri.Cvar_Get("r_gpuTimerSync", "0", CVAR_CHEAT);

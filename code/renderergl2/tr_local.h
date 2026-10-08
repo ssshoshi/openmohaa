@@ -2240,6 +2240,7 @@ typedef struct {
 	int     c_bufferUploads;
 	int     c_streamBatches; // Added in OPM: batches copied into the tess ring (r_tessStream)
 	int     c_streamWaits;   // and the times it had to wait for the card to be done with a part of it
+	int     c_skinArenaDraws; // batches drawn from a posed surface's copy, nothing copied
 	float	c_overDraw;
 	
 	int		c_vaoBinds;
@@ -2871,6 +2872,7 @@ extern cvar_t *r_gpuTimers;
 extern cvar_t *r_frameHitchMsec;
 extern cvar_t *r_tessOrphan;
 extern cvar_t *r_tessStream;
+extern cvar_t *r_skinArena;
 
 //====================================================================
 
@@ -3187,8 +3189,26 @@ typedef struct shaderCommands_s
 	// Added in OPM: the tess buffers as a ring (r_tessStream). Where the batch
 	// last written to it starts, which its draws take as their base.
 	qboolean    stream;
+	vao_t      *streamVao;  // the VAO those are in: tess.vao, or the posed copies' (RB_SkinArenaDraw)
 	int         streamBaseVertex;
 	int         streamFirstIndex;
+
+	// Added in OPM: a posed skeletal surface that is the whole batch, which
+	// the frame keeps a copy of on the card (RB_SkinArenaStore); deferred, its
+	// vertexes were not copied into tess, which RB_SkinMaterialize does if
+	// the batch cannot be drawn from the copy after all (RB_SkelMesh)
+	struct {
+		qboolean valid;
+		qboolean deferred;
+		qboolean tangents;    // the copy has them
+		qboolean cacheTangents;
+		int      frame;       // the frame the copy is of (RB_SkinArenaFrame)
+		int      numVertexes;
+		int      numIndexes;
+		int      arenaBase;
+		int      arenaFirstIndex;
+		int      cacheFirst;  // where the CPU skin cache has it
+	} skin;
 
 	int			firstIndex;
 	int			numIndexes;
@@ -3357,6 +3377,14 @@ void            R_ShutdownVaos(void);
 void            R_VaoList_f(void);
 
 void            RB_UpdateTessVao(unsigned int attribBits);
+
+// Added in OPM: posed skeletal surfaces kept on the card for the frame (tr_vbo.c)
+int      RB_SkinArenaFrame(void);
+qboolean RB_SkinArenaStore(int baseVertex, int numVertexes, int baseIndex, int numIndexes, qboolean tangents, int *arenaBase, int *arenaFirstIndex);
+void     RB_SkinArenaAddTangents(int arenaBase, int baseVertex, int numVertexes);
+qboolean RB_SkinArenaDraw(unsigned int attribBits);
+void     RB_SkinArenaFrameEnd(void);
+void     RB_SkinMaterialize(void);
 
 void VaoCache_Commit(void);
 void VaoCache_DrawElements(int numIndexes, int firstIndex);

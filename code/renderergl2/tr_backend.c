@@ -1862,6 +1862,8 @@ const void	*RB_SwapBuffers( const void *data ) {
 
 	R_GpuTimerEnd(GPUTIMER_FRAME);
 	R_GpuTimerFrameEnd();
+	// Added in OPM: the posed surfaces' copies go on to the next frame's
+	RB_SkinArenaFrameEnd();
 
 	GLimp_EndFrame();
 
