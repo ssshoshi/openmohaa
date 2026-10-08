@@ -4052,6 +4052,8 @@ void R_ClearWorld(void) {
     // Added in OPM
     R_RtFreeWorld();
     R_GroundCoverFree();
+    // the models they were of go with the level
+    R_SkelPosesClear();
 
     if (tr.world) {
         if (tr.world->shaders) {

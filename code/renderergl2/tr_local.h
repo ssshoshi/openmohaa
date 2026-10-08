@@ -3422,6 +3422,7 @@ void     RB_SkinArenaAddTangents(int arenaBase, int baseVertex, int numVertexes)
 qboolean RB_SkinArenaDraw(unsigned int attribBits);
 void     RB_SkinArenaFrameEnd(void);
 void     RB_SkinMaterialize(void);
+void     R_SkelPosesClear(void); // Added in OPM: the poses kept from frame to frame (R_SkelPoseId)
 
 void VaoCache_Commit(void);
 void VaoCache_DrawElements(int numIndexes, int firstIndex);
