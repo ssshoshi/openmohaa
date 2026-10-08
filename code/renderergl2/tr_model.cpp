@@ -1894,6 +1894,14 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     }
 
     // Added in OPM
+    //  A model keeps no direction its light came from: none, as the vertex
+    //  program that poses it has, rather than whatever the batch before left
+    //  there (lightall_fp.glsl takes no direction for all of it ambient).
+    if (tess.shader->vertexAttribs & ATTR_LIGHTDIRECTION) {
+        Com_Memset(tess.lightdir[baseVertex], 0, render_count * sizeof(tess.lightdir[0]));
+    }
+
+    // Added in OPM
     //  The batch's first surface, on the card already this frame, in a view
     //  that draws depth alone: most likely drawn from there, so its vertexes
     //  are left out of tess unless it turns out not to be (RB_SkinMaterialize).

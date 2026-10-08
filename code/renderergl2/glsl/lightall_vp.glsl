@@ -132,19 +132,15 @@ vec3 SkelWeight(vec4 w, float bone)
 }
 
 // MOH:AA's lighting of a model, at a vertex as the model has it (RB_Light_Real,
-// RB_CalcLightGridColor, RB_Light_Fullbright); and in dir where it mostly
-// comes from, each light's way by what it brings, for a normal map to shade
-// against (straight down onto the model where no light has a way)
-vec4 SkelLight(vec3 P, vec3 N, out vec3 dir)
+// RB_CalcLightGridColor, RB_Light_Fullbright)
+vec4 SkelLight(vec3 P, vec3 N)
 {
-	dir = vec3(0.0, 0.0, 1.0);
 	if (u_SkelParams.z < 0.5)
 		return vec4(1.0);
 	if (u_SkelParams.z < 1.5)
 		return u_SkelAmbient / 255.0;
 
 	vec3 c = vec3(0.0);
-	vec3 way = vec3(0.0);
 	int  n = int(u_SkelParams.w);
 	for (int k = 0; k < SKEL_MAX_LIGHTS; k++)
 	{
@@ -153,19 +149,16 @@ vec4 SkelLight(vec3 P, vec3 N, out vec3 dir)
 		vec4 l1 = u_SkelLights[k * 3 + 1]; // origin, spot constant
 		vec4 l2 = u_SkelLights[k * 3 + 2]; // direction, spot scale
 		int  type = int(l0.w + 0.5);
-		vec3 add = vec3(0.0);
-		vec3 to  = l2.xyz;
 		if (type == 0) // a point
 		{
 			vec3  v = l1.xyz - P;
 			float d = dot(v, N);
-			to = v;
-			if (d > 0.0) add = l0.rgb * (d / dot(v, v));
+			if (d > 0.0) c += l0.rgb * (d / dot(v, v));
 		}
 		else if (type == 1) // the sun
 		{
 			float d = dot(l2.xyz, N);
-			if (d > 0.0) add = l0.rgb * d;
+			if (d > 0.0) c += l0.rgb * d;
 		}
 		else
 		{
@@ -174,25 +167,20 @@ vec4 SkelLight(vec3 P, vec3 N, out vec3 dir)
 			{
 				vec3  v  = l1.xyz - P;
 				float d2 = dot(v, v);
-				to = v;
 				if (type == 3) // a spot, near
 				{
-					add = l0.rgb * (d / d2);
+					c += l0.rgb * (d / d2);
 				}
 				else
 				{
 					float along = dot(v, l2.xyz);
 					float most  = (l1.w - d2 / (along * along)) * l2.w;
 					if (most > 0.0)
-						add = l0.rgb * (d / d2 * min(most, 1.0));
+						c += l0.rgb * (d / d2 * min(most, 1.0));
 				}
 			}
 		}
-		c   += add;
-		way += normalize(to) * (add.r + add.g + add.b);
 	}
-	if (dot(way, way) > 1e-6)
-		dir = normalize(way);
 	return vec4(clamp(floor(c) + u_SkelAmbient.rgb, 0.0, 255.0) / 255.0, 1.0);
 }
 #endif
@@ -349,8 +337,7 @@ void main()
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent = attr_Tangent.x * SkelTexel(nb, 1).xyz + attr_Tangent.y * SkelTexel(nb, 2).xyz + attr_Tangent.z * SkelTexel(nb, 3).xyz;
   #endif
-	vec3 skelLightDir;
-	vec4 skelColor = SkelLight(position, normal, skelLightDir);
+	vec4 skelColor = SkelLight(position, normal);
 #else
 	vec3 position  = attr_Position;
 	vec3 normal    = attr_Normal;
@@ -430,8 +417,10 @@ void main()
 #if defined(USE_LIGHT_VECTOR)
 	vec3 L = u_LightOrigin.xyz - (position * u_LightOrigin.w);
 #elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT) && defined(USE_SKEL_GPU)
-	// where the model's lights mostly come from (SkelLight)
-	vec3 L = (u_ModelMatrix * vec4(skelLightDir, 0.0)).xyz;
+	// a model lit per vertex keeps no direction its light came from, as the
+	// CPU's skinning leaves it none: its light is the vertex colour as it is,
+	// and the normal map shades the realtime lights alone (lightall_fp.glsl)
+	vec3 L = vec3(0.0);
 #elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	vec3 L = attr_LightDirection;
   #if defined(USE_MODELMATRIX)

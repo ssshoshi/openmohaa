@@ -1522,7 +1522,7 @@ static qboolean GLSL_InitLightallShader(int i)
 
 			attribs |= ATTR_TANGENT;
 
-			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && !(i & LIGHTDEF_ENTITY_BONE_ANIMATION) && r_parallaxMapping->integer)
+			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_SKEL_GPU)) && r_parallaxMapping->integer)
 			{
 				Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP\n");
 				if (r_parallaxMapping->integer > 1)
