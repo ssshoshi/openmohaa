@@ -1997,6 +1997,43 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 RB_StaticMesh
 =============
 */
+/*
+=============
+Static model vertex cache
+
+Added in OPM. A static model's surface is built into tess in every pass that
+draws it -- the depth prepass, each sun cascade, the main pass -- and every
+frame, though it never changes: each normal packed again, and, for a shader
+with a normal map (most props, since tools/matgen), its tangents worked out
+again from every triangle. Those depend on the surface alone and on how many
+of its vertexes its level of detail keeps, not on which copy of the model it
+is or where it stands, so they are kept here once, keyed by both, and copied.
+Direct mapped, started over when full, as the skin cache is.
+=============
+*/
+#define STATIC_CACHE_SLOTS 4096 // a power of two
+#define STATIC_CACHE_VERTS (256 * 1024)
+
+typedef struct {
+    const skelSurfaceGame_t *sf;
+    int                      count;
+    int                      first;
+    qboolean                 tangents;
+} staticCacheSlot_t;
+
+static staticCacheSlot_t staticSlots[STATIC_CACHE_SLOTS];
+static int16_t           staticNormal[STATIC_CACHE_VERTS][4];
+static int16_t           staticTangent[STATIC_CACHE_VERTS][4];
+static int               staticUsed;
+
+static staticCacheSlot_t *R_StaticCacheSlot(const skelSurfaceGame_t *sf, int count)
+{
+    unsigned int h = (unsigned int)((uintptr_t)sf >> 4) * 2654435761u;
+
+    h ^= (unsigned int)count * 40503u;
+    return &staticSlots[(h ^ (h >> 15)) & (STATIC_CACHE_SLOTS - 1)];
+}
+
 void RB_StaticMesh(staticSurface_t *staticSurf)
 {
     int                i, j;
@@ -2124,12 +2161,48 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
         tess.numIndexes += j;
     }
 
+    // Added in OPM: its normals packed, and its tangents, as kept from before
+    staticCacheSlot_t *cached = NULL;
+    {
+        staticCacheSlot_t *slot = R_StaticCacheSlot(surf, render_count);
+
+        if (slot->sf != surf || slot->count != render_count) {
+            if (render_count > STATIC_CACHE_VERTS) {
+                slot = NULL;
+            } else {
+                if (staticUsed + render_count > STATIC_CACHE_VERTS) {
+                    // full: start over
+                    Com_Memset(staticSlots, 0, sizeof(staticSlots));
+                    staticUsed = 0;
+                    slot = R_StaticCacheSlot(surf, render_count);
+                }
+                slot->sf       = surf;
+                slot->count    = render_count;
+                slot->first    = staticUsed;
+                slot->tangents = qfalse;
+                staticUsed += render_count;
+                for (j = 0; j < render_count; j++) {
+                    // tess.normal is packed int16 (32767 = 1.0), not float -- a plain
+                    // copy of the float model normal truncates every component to
+                    // 0/+-1, which zeroes out any normal-driven CPU deform (flap/wave)
+                    // so foliage never sways.
+                    R_VaoPackNormal(staticNormal[slot->first + j], surf->pStaticNormal[j]);
+                }
+            }
+        }
+        cached = slot;
+    }
+
+    if (cached) {
+        Com_Memcpy(tess.normal[baseVertex], staticNormal[cached->first], render_count * sizeof(tess.normal[0]));
+    } else {
+        for (j = 0; j < render_count; j++) {
+            R_VaoPackNormal(tess.normal[baseVertex + j], surf->pStaticNormal[j]);
+        }
+    }
+
     for (j = 0; j < render_count; j++) {
         Vector4Copy(surf->pStaticXyz[j], tess.xyz[baseVertex + j]);
-        // tess.normal is packed int16 (32767 = 1.0), not float -- a plain copy of
-        // the float model normal truncates every component to 0/+-1, which zeroes
-        // out any normal-driven CPU deform (flap/wave) so foliage never sways.
-        R_VaoPackNormal(tess.normal[baseVertex + j], surf->pStaticNormal[j]);
         tess.texCoords[baseVertex + j][0]   = surf->pStaticTexCoords[j][0][0];
         tess.texCoords[baseVertex + j][1]   = surf->pStaticTexCoords[j][0][1];
         tess.lightCoords[baseVertex + j][0] = surf->pStaticTexCoords[j][1][0];
@@ -2159,8 +2232,20 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
         }
     }
 
-    if (tess.shader->vertexAttribs & ATTR_TANGENT) {
-        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
+    // Added in OPM
+    //  Its tangents: none in a pass that draws depth alone, which reads none;
+    //  else as kept, or worked out once and kept.
+    if ((tess.shader->vertexAttribs & ATTR_TANGENT) && !backEnd.depthFill
+        && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+        if (cached && cached->tangents) {
+            Com_Memcpy(tess.tangent[baseVertex], staticTangent[cached->first], render_count * sizeof(tess.tangent[0]));
+        } else {
+            RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
+            if (cached) {
+                Com_Memcpy(staticTangent[cached->first], tess.tangent[baseVertex], render_count * sizeof(tess.tangent[0]));
+                cached->tangents = qtrue;
+            }
+        }
     }
 }
 
