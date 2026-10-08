@@ -912,6 +912,12 @@ static int R_RtGatherBodies(vec4_t *out)
 		if (!R_RtIsCharacter(&ent->e)) {
 			continue;
 		}
+		// one that has lain still long enough is drawn into the shadow faces
+		// of what stands still, of every light: as capsules too, it cast two
+		// shadows wherever a light had no faces for what moves
+		if (r_rtShadowCharacters->integer && ent->rtCaster == RT_CASTS_STANDING) {
+			continue;
+		}
 		n = R_RtCharacterCapsules(&ent->e, &out[(count + 1) * 2], RT_MAX_BODY_ENTRIES - count - 1);
 		if (!n) {
 			continue;

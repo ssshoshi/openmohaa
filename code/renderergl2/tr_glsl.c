@@ -401,6 +401,14 @@ static const char *rt_glsl =
 	"			vec4  B = texelFetch(u_RtCapsules, ivec2(c * 2 + 1, 0), 0);\n"
 	"			vec3  d2 = B.xyz - A.xyz;\n"
 	"			vec3  r  = P - A.xyz;\n"
+	// a sphere around the capsule and its softest edge, which the ray
+	// passes wide of for most of a body's capsules: a few products, not
+	// the nearest approach of two segments
+	"			vec3  mid = A.xyz + 0.5 * d2 - P;\n"
+	"			float sm  = clamp(dot(mid, d1) / a, 0.0, 1.0);\n"
+	"			vec3  off = mid - d1 * sm;\n"
+	"			float reach = 0.5 * length(d2) + 1.7 * A.w + 1.0;\n"
+	"			if (dot(off, off) > reach * reach) continue;\n"
 	"			float e  = dot(d2, d2), f = dot(d2, r);\n"
 	// P on or in this capsule: the body itself, not in its shadow
 	"			float tp = e > 1e-4 ? clamp(f / e, 0.0, 1.0) : 0.0;\n"
@@ -418,6 +426,8 @@ static const char *rt_glsl =
 	"			float soft = min(1.0 + 0.03 * s * len, 0.7 * A.w);\n"
 	"			vis *= smoothstep(A.w - soft, A.w + soft, dist);\n"
 	"		}\n"
+	// all but dark already: the rest of the bodies change nothing seen
+	"		if (vis < 0.004) return 0.0;\n"
 	"		i += 1 + n;\n"
 	"	}\n"
 	"#endif\n"
@@ -475,7 +485,7 @@ static const char *rt_glsl =
 	"			float texelWorld = 2.0 * d / RT_TILE_TEXELS;\n"
 	"			vec3  v = P + N * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
 	"			float now = RtShadow(l3, v, false);\n"
-	"			if (l3.z >= 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
+	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
 	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
 	"		}\n"
 	"		else if (delta && !added) continue;\n"

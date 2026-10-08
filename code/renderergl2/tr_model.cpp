@@ -773,9 +773,13 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     // shadows, as the md3 path in tr_mesh.c does: that is how the player's
     // own body casts a shadow in first person (cg_firstPersonShadow). They
     // stay out of the dlight cube maps, whose light is often the player's
-    // own muzzle flash.
+    // own muzzle flash. Added in OPM: and they go into the realtime lights'
+    // shadow faces, the map's lamps, which the game's own lights (muzzle
+    // flashes) cast none from; else the player cast their shadows only as
+    // capsules (r_rtCapsules).
     personalModel = (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal
-                 && (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) != VPF_DEPTHSHADOW;
+                 && (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) != VPF_DEPTHSHADOW
+                 && !(tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC));
     if (personalModel) {
         // nothing of it is drawn in this view, so don't pose it
         return;
