@@ -8,14 +8,14 @@
 #endif
 
 attribute vec4 attr_TexCoord0;
-#if defined(USE_LIGHTMAP) || defined(USE_TCGEN)
+#if defined(USE_LIGHTMAP) || defined(USE_TCGEN) || defined(USE_GROUNDCOVER)
 attribute vec4 attr_TexCoord1;
 #endif
 attribute vec4 attr_Color;
 
 attribute vec3 attr_Position;
 attribute vec3 attr_Normal;
-#if defined(USE_TANGENT_FRAME)
+#if defined(USE_TANGENT_FRAME) || defined(USE_GROUNDCOVER)
 attribute vec4 attr_Tangent;
 #endif
 
@@ -77,6 +77,13 @@ uniform mat4   u_ModelMatrix;
   #endif
 varying vec3   var_RtPos;
 varying vec3   var_RtNormal;
+#endif
+
+// Added in OPM: ground cover tufts (tr_groundcover.c). attr_Tangent is where
+// the tuft stands, and in w how far this vertex sways (0 on the ground);
+// attr_TexCoord1 its phase, and the fraction of the draw distance it reaches
+#if defined(USE_GROUNDCOVER)
+uniform vec4   u_GroundCover; // time, draw distance, wind
 #endif
 
 #if defined(USE_VERTEX_ANIMATION)
@@ -228,6 +235,24 @@ void main()
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = attr_Tangent.xyz;
   #endif
+#endif
+
+#if defined(USE_GROUNDCOVER)
+	{
+		vec3  root  = attr_Tangent.xyz;
+		float t     = u_GroundCover.x;
+		float phase = attr_TexCoord1.x;
+		float end   = attr_TexCoord1.y * u_GroundCover.y;
+
+		// sinks into the ground over the last fifth of its distance
+		float sink = clamp((end - distance(root, u_ViewOrigin)) / (end * 0.2), 0.0, 1.0);
+		float gust = 0.6 + 0.4 * sin(t * 0.31 + root.x * 0.0021 + root.y * 0.0013);
+		float sway = sin(t * 1.9 + phase + (root.x + root.y) * 0.011) * 0.65
+		           + sin(t * 3.7 + phase * 1.7) * 0.35;
+
+		position = root + (position - root) * sink;
+		position += vec3(0.8, 0.6, 0.0) * ((sway * 2.2 + 1.2) * gust * attr_Tangent.w * u_GroundCover.z * sink);
+	}
 #endif
 
 #if defined(USE_TCGEN)

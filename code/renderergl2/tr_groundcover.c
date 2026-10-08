@@ -39,9 +39,14 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // into the ground instead of popping: each tuft has its own distance, and a
 // cell's tufts are sorted by it, so a far cell draws a prefix of them.
 //
-// They are drawn on the CPU (RB_SurfaceGroundCover): the sway and the sinking
-// are worked out per frame there, and the vertex cache keys on index arrays
-// that a cell frees and another reuses.
+// A cell's tufts go to the card once, when it is made (GC_UploadCell): each
+// vertex carries where its tuft stands, its phase and how far it reaches, and
+// the vertex program sways it and sinks it (lightall's USE_GROUNDCOVER). A
+// frame then copies nothing, however much grass is in view, and a cell is a
+// draw from its buffer in each pass. Without buffer storage, or with
+// r_groundCoverGPU 0, they go through tess as before, swayed and sunk on the
+// CPU in each pass (RB_SurfaceGroundCover); the vertex cache keys on index
+// arrays that a cell frees and another reuses, so never through that.
 
 #include "tr_local.h"
 
@@ -54,6 +59,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define GC_MASK_SIZE        64
 #define GC_MIN_NORMAL_Z     0.7f
 #define GC_BUILD_BUDGET_US  2000.0
+
+// on the card: a cell's tufts in pages, the pages in chunks of a buffer each
+#define GC_PAGE_TUFTS       16
+#define GC_PAGE_VERTS       (GC_PAGE_TUFTS * GC_VERTS_TUFT)
+#define GC_CHUNK_PAGES      4096
+#define GC_MAX_CHUNKS       32
+#define GC_MAX_BATCH        256 // cells drawn in one batch
 
 typedef enum {
     GC_SRC_TRI,
@@ -96,6 +108,22 @@ typedef struct {
     float  flex;     // how far its tip sways
 } gcTuft_t;
 
+// a tuft's vertex on the card
+typedef struct {
+    vec3_t  xyz;
+    vec2_t  st;
+    byte    color[4];
+    int16_t normal[4];
+    vec4_t  root;  // where the tuft stands; w: how far this vertex sways (0 on the ground)
+    vec2_t  sway;  // its phase, and the fraction of the draw distance it reaches
+} gcGpuVert_t;
+
+typedef struct {
+    vao_t vao;
+    byte  used[GC_CHUNK_PAGES];
+    int   numUsed;
+} gcChunk_t;
+
 // a tuft while its cell is made
 typedef struct {
     gcTuft_t tuft;
@@ -111,8 +139,11 @@ typedef struct gcCell_s {
     qboolean          built;
     int               numTufts;
     gcTuft_t         *tufts;    // by fadeEnd, farthest first
-    srfVert_t        *verts;
+    srfVert_t        *verts;    // for tess; none once on the card
     glIndex_t        *indexes;
+    int               chunk;    // on the card: numPages from firstPage of gc.chunks[chunk]
+    int               firstPage;
+    int               numPages;
     int               lastFrame;
     struct gcCell_s  *nextBuilt;
 } gcCell_t;
@@ -122,6 +153,7 @@ typedef struct {
     surfaceType_t surfaceType;
     gcCell_t     *cell;
     int           numTufts;
+    float         dist;
 } srfGroundCover_t;
 
 static struct {
@@ -153,6 +185,18 @@ static struct {
 
     float       density, height, brightness; // what the built cells were made with
     int         mask;
+    qboolean    gpu;
+
+    qboolean    gpuShader; // the shader is one the vertex program can sway (GC_CheckGpuShader)
+    GLuint      indexBuffer; // the tufts' indexes, the same in every cell
+    gcChunk_t  *chunks[GC_MAX_CHUNKS];
+    int         numChunks;
+
+    // the back end's batch of cells on the card, all in one chunk
+    int         batchChunk;
+    int         batchSize;
+    GLsizei     batchCounts[GC_MAX_BATCH];
+    GLint       batchBases[GC_MAX_BATCH];
     qboolean    lastViewSet;
     vec3_t      lastView;
 
@@ -162,6 +206,8 @@ static struct {
     int              numDraws;
     int              drawsFrame;
 } gc;
+
+static void GC_CheckGpuShader(void);
 
 // why the samples of the cells made so far were dropped (groundcoverinfo)
 static int gc_dropOutside, gc_dropSlope, gc_dropMask, gc_dropCovered, gc_kept;
@@ -173,6 +219,7 @@ static cvar_t *r_groundCoverHeight;
 static cvar_t *r_groundCoverWind;
 static cvar_t *r_groundCoverBrightness;
 static cvar_t *r_groundCoverMask;
+static cvar_t *r_groundCoverGPU;
 
 void R_GroundCoverRegisterCvars(void)
 {
@@ -188,6 +235,9 @@ void R_GroundCoverRegisterCvars(void)
     r_groundCoverBrightness = ri.Cvar_Get("r_groundCoverBrightness", "0.85", CVAR_ARCHIVE);
     // 1: no grass where the ground's texture is not green (paths, dirt)
     r_groundCoverMask = ri.Cvar_Get("r_groundCoverMask", "1", CVAR_ARCHIVE);
+    // 1: the tufts are kept on the card and swayed by the vertex program;
+    // 0: copied and swayed on the CPU in each pass, as before
+    r_groundCoverGPU = ri.Cvar_Get("r_groundCoverGPU", "1", CVAR_ARCHIVE);
 }
 
 /*
@@ -224,6 +274,13 @@ Freeing
 
 static void GC_FreeCell(gcCell_t *cell)
 {
+    if (cell->numPages) {
+        gcChunk_t *chunk = gc.chunks[cell->chunk];
+
+        Com_Memset(chunk->used + cell->firstPage, 0, cell->numPages);
+        chunk->numUsed -= cell->numPages;
+        cell->numPages = 0;
+    }
     if (cell->tufts) {
         ri.Free(cell->tufts);
     }
@@ -251,14 +308,38 @@ static void GC_FreeAllCells(void)
     gc.numBuilt  = 0;
 }
 
+static void GC_FreeChunks(void)
+{
+    int i;
+
+    for (i = 0; i < gc.numChunks; i++) {
+        vao_t *vao = &gc.chunks[i]->vao;
+
+        if (glState.currentVao == vao) {
+            R_BindNullVao();
+        }
+        qglDeleteVertexArrays(1, &vao->vao);
+        qglDeleteBuffers(1, &vao->vertexesVBO);
+        ri.Free(gc.chunks[i]);
+        gc.chunks[i] = NULL;
+    }
+    gc.numChunks = 0;
+
+    if (gc.indexBuffer) {
+        qglDeleteBuffers(1, &gc.indexBuffer);
+        gc.indexBuffer = 0;
+    }
+}
+
 void R_GroundCoverFree(void)
 {
     // the back end may still be drawing last frame's cells
-    if (gc.builtList) {
+    if (gc.builtList || gc.numChunks) {
         R_IssuePendingRenderCommands();
     }
 
     GC_FreeAllCells();
+    GC_FreeChunks();
 
     if (gc.lightmaps) {
         ri.Free(gc.lightmaps);
@@ -496,6 +577,7 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     }
 
     GC_MeasureGrassAlbedo();
+    GC_CheckGpuShader();
 
     dshaders       = (const dshader_t *)(fileBase + shaderLump->fileofs);
     gc.numShaders  = shaderLump->filelen / sizeof(dshader_t);
@@ -652,6 +734,216 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     gc.active = qtrue;
     ri.Printf(PRINT_DEVELOPER, "Ground cover: %d grass shaders, %d triangles, %d terrain patches, %dx%d cells\n",
         gc.numGrassShaders, gc.numTris, gc.numTerrain, gc.cellsX, gc.cellsY);
+}
+
+/*
+=============================================================================
+
+On the card
+
+=============================================================================
+*/
+
+// Whether the vertex program that sways the tufts can draw the shader: one
+// lightall stage with nothing worked out per vertex on the CPU, and none of
+// the arrays the tufts use for where they stand (tangents, lightmap
+// coordinates, light directions).
+static void GC_CheckGpuShader(void)
+{
+    const shaderStage_t *stage = gc.shader->stages[0];
+    int                  index, lightType;
+
+    gc.gpuShader = qfalse;
+    if (!stage || gc.shader->stages[1] || stage->glslShaderGroup != tr.lightallShader) {
+        return;
+    }
+    if (gc.shader->numDeforms || gc.shader->needsCPUVertexAlpha || gc.shader->needsLGrid || gc.shader->needsLSpherical) {
+        return;
+    }
+    index     = stage->glslShaderIndex;
+    lightType = index & LIGHTDEF_LIGHTTYPE_MASK;
+    if (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX) {
+        return;
+    }
+    if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)) {
+        return;
+    }
+    gc.gpuShader = qtrue;
+}
+
+static qboolean GC_GpuAvailable(void)
+{
+    return gc.gpuShader && r_groundCoverGPU->integer && glRefConfig.bufferStorage && glRefConfig.vertexArrayObject;
+}
+
+static void GC_SetAttrib(vao_t *vao, int attribIndex, int count, GLenum type, GLboolean normalized, int offset)
+{
+    vaoAttrib_t *vAtb = &vao->attribs[attribIndex];
+
+    vAtb->enabled    = 1;
+    vAtb->count      = count;
+    vAtb->type       = type;
+    vAtb->normalized = normalized;
+    vAtb->stride     = sizeof(gcGpuVert_t);
+    vAtb->offset     = offset;
+}
+
+static gcChunk_t *GC_NewChunk(void)
+{
+    gcChunk_t *chunk;
+    vao_t     *vao;
+    GLint      prevArray = 0;
+
+    if (gc.numChunks >= GC_MAX_CHUNKS) {
+        return NULL;
+    }
+
+    chunk = ri.Malloc(sizeof(*chunk));
+    Com_Memset(chunk, 0, sizeof(*chunk));
+    vao = &chunk->vao;
+    Q_strncpyz(vao->name, "groundCover_VAO", sizeof(vao->name));
+
+    qglGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArray);
+
+    qglGenVertexArrays(1, &vao->vao);
+    qglBindVertexArray(vao->vao);
+    glState.currentVao = vao;
+
+    // every cell's tufts are indexed the same, from the cell's first vertex
+    if (!gc.indexBuffer) {
+        glIndex_t *indexes = ri.Malloc(GC_MAX_TUFTS_CELL * GC_INDEXES_TUFT * sizeof(glIndex_t));
+        int        q;
+
+        for (q = 0; q < GC_MAX_TUFTS_CELL * GC_QUADS_TUFT; q++) {
+            glIndex_t *ix = &indexes[q * 6];
+
+            ix[0] = q * 4 + 0;
+            ix[1] = q * 4 + 1;
+            ix[2] = q * 4 + 2;
+            ix[3] = q * 4 + 0;
+            ix[4] = q * 4 + 2;
+            ix[5] = q * 4 + 3;
+        }
+        qglGenBuffers(1, &gc.indexBuffer);
+        qglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gc.indexBuffer);
+        qglBufferData(GL_ELEMENT_ARRAY_BUFFER, GC_MAX_TUFTS_CELL * GC_INDEXES_TUFT * sizeof(glIndex_t), indexes, GL_STATIC_DRAW);
+        ri.Free(indexes);
+    } else {
+        qglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gc.indexBuffer);
+    }
+    vao->indexesIBO  = gc.indexBuffer;
+    vao->indexesSize = GC_MAX_TUFTS_CELL * GC_INDEXES_TUFT * sizeof(glIndex_t);
+
+    vao->vertexesSize = GC_CHUNK_PAGES * GC_PAGE_VERTS * sizeof(gcGpuVert_t);
+    qglGenBuffers(1, &vao->vertexesVBO);
+    qglBindBuffer(GL_ARRAY_BUFFER, vao->vertexesVBO);
+    qglBufferData(GL_ARRAY_BUFFER, vao->vertexesSize, NULL, GL_STATIC_DRAW);
+
+    GC_SetAttrib(vao, ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, offsetof(gcGpuVert_t, xyz));
+    GC_SetAttrib(vao, ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, offsetof(gcGpuVert_t, st));
+    GC_SetAttrib(vao, ATTR_INDEX_COLOR, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(gcGpuVert_t, color));
+    GC_SetAttrib(vao, ATTR_INDEX_NORMAL, 4, GL_SHORT, GL_TRUE, offsetof(gcGpuVert_t, normal));
+    GC_SetAttrib(vao, ATTR_INDEX_TANGENT, 4, GL_FLOAT, GL_FALSE, offsetof(gcGpuVert_t, root));
+    GC_SetAttrib(vao, ATTR_INDEX_LIGHTCOORD, 2, GL_FLOAT, GL_FALSE, offsetof(gcGpuVert_t, sway));
+    Vao_SetVertexPointers(vao);
+
+    qglBindBuffer(GL_ARRAY_BUFFER, prevArray);
+    GL_CheckErrors();
+
+    gc.chunks[gc.numChunks++] = chunk;
+    return chunk;
+}
+
+// The first of a run of free pages, or -1
+static int GC_FindPages(const gcChunk_t *chunk, int count)
+{
+    int i, run = 0;
+
+    if (GC_CHUNK_PAGES - chunk->numUsed < count) {
+        return -1;
+    }
+    for (i = 0; i < GC_CHUNK_PAGES; i++) {
+        run = chunk->used[i] ? 0 : run + 1;
+        if (run == count) {
+            return i - count + 1;
+        }
+    }
+    return -1;
+}
+
+/*
+================
+GC_UploadCell
+
+A cell's tufts to the card, and its copy for tess freed: false if there is no
+room, and then it is drawn through tess.
+================
+*/
+static qboolean GC_UploadCell(gcCell_t *cell)
+{
+    static gcGpuVert_t out[GC_MAX_TUFTS_CELL * GC_VERTS_TUFT];
+    const int          numVerts = cell->numTufts * GC_VERTS_TUFT;
+    const int          pages = (cell->numTufts + GC_PAGE_TUFTS - 1) / GC_PAGE_TUFTS;
+    gcChunk_t         *chunk = NULL;
+    GLint              prevArray = 0;
+    int                c, first = -1, n, i;
+
+    for (c = 0; c < gc.numChunks; c++) {
+        first = GC_FindPages(gc.chunks[c], pages);
+        if (first >= 0) {
+            chunk = gc.chunks[c];
+            break;
+        }
+    }
+    if (!chunk) {
+        chunk = GC_NewChunk();
+        if (!chunk) {
+            return qfalse;
+        }
+        c     = gc.numChunks - 1;
+        first = 0;
+    }
+
+    Com_Memset(chunk->used + first, 1, pages);
+    chunk->numUsed += pages;
+    cell->chunk     = c;
+    cell->firstPage = first;
+    cell->numPages  = pages;
+
+    for (n = 0; n < cell->numTufts; n++) {
+        const gcTuft_t *tuft = &cell->tufts[n];
+
+        for (i = 0; i < GC_VERTS_TUFT; i++) {
+            const srfVert_t *v = &cell->verts[n * GC_VERTS_TUFT + i];
+            gcGpuVert_t     *o = &out[n * GC_VERTS_TUFT + i];
+
+            VectorCopy(v->xyz, o->xyz);
+            o->st[0]    = v->st[0];
+            o->st[1]    = v->st[1];
+            o->color[0] = v->color[0] >> 8;
+            o->color[1] = v->color[1] >> 8;
+            o->color[2] = v->color[2] >> 8;
+            o->color[3] = v->color[3] >> 8;
+            VectorCopy4(v->normal, o->normal);
+            VectorCopy(tuft->root, o->root);
+            // 0, 1 on the ground; 2, 3 at the tip
+            o->root[3] = (i & 3) >= 2 ? tuft->flex : 0.0f;
+            o->sway[0] = tuft->phase;
+            o->sway[1] = tuft->fadeEnd;
+        }
+    }
+
+    // the back end binds its vertex array object when it draws from it
+    qglGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArray);
+    qglBindBuffer(GL_ARRAY_BUFFER, chunk->vao.vertexesVBO);
+    qglBufferSubData(GL_ARRAY_BUFFER, (GLintptr)first * GC_PAGE_VERTS * sizeof(gcGpuVert_t), numVerts * sizeof(gcGpuVert_t), out);
+    qglBindBuffer(GL_ARRAY_BUFFER, prevArray);
+
+    ri.Free(cell->verts);
+    ri.Free(cell->indexes);
+    cell->verts   = NULL;
+    cell->indexes = NULL;
+    return qtrue;
 }
 
 /*
@@ -1163,6 +1455,10 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
             ix[5] = first + 3;
         }
     }
+
+    if (gc.gpu) {
+        GC_UploadCell(cell);
+    }
 }
 
 /*
@@ -1203,14 +1499,29 @@ static void GC_EvictFarCells(const vec3_t origin, float range)
     }
 }
 
+// By the buffer they are in, so the back end draws a chunk's cells as one
+// batch; then near to far, so the depth the near ones leave hides what is
+// behind them.
+static int GC_CompareDraws(const void *a, const void *b)
+{
+    const srfGroundCover_t *da = (const srfGroundCover_t *)a, *db = (const srfGroundCover_t *)b;
+    int ca = da->cell->numPages ? da->cell->chunk : -1, cb = db->cell->numPages ? db->cell->chunk : -1;
+
+    if (ca != cb) {
+        return ca < cb ? -1 : 1;
+    }
+    return da->dist < db->dist ? -1 : (da->dist > db->dist ? 1 : 0);
+}
+
 void R_AddGroundCoverSurfaces(void)
 {
     const float *origin;
     float        range;
     double       buildStart;
     int          range4[4];
-    int          x, y;
+    int          x, y, i, firstDraw;
     vec3_t       mins, maxs;
+    uint64_t     rtCandidates;
 
     if (!gc.active || !r_groundCover->integer) {
         return;
@@ -1222,7 +1533,8 @@ void R_AddGroundCoverSurfaces(void)
 
     // a new size or density: make the cells again
     if (gc.density != r_groundCoverDensity->value || gc.height != r_groundCoverHeight->value
-        || gc.brightness != r_groundCoverBrightness->value || gc.mask != r_groundCoverMask->integer) {
+        || gc.brightness != r_groundCoverBrightness->value || gc.mask != r_groundCoverMask->integer
+        || gc.gpu != GC_GpuAvailable()) {
         if (gc.builtList) {
             R_IssuePendingRenderCommands();
         }
@@ -1231,6 +1543,7 @@ void R_AddGroundCoverSurfaces(void)
         gc.height  = r_groundCoverHeight->value;
         gc.brightness = r_groundCoverBrightness->value;
         gc.mask    = r_groundCoverMask->integer;
+        gc.gpu     = GC_GpuAvailable();
     }
 
     // world space; the static models added before this leave theirs set
@@ -1253,7 +1566,9 @@ void R_AddGroundCoverSurfaces(void)
     VectorSet(maxs, origin[0] + range, origin[1] + range, origin[2]);
     GC_CellRange(mins, maxs, range4);
 
-    buildStart = R_MicroSeconds();
+    buildStart   = R_MicroSeconds();
+    rtCandidates = R_RtViewMask();
+    firstDraw    = gc.numDraws;
 
     for (y = range4[1]; y <= range4[3]; y++) {
         for (x = range4[0]; x <= range4[2]; x++) {
@@ -1303,9 +1618,20 @@ void R_AddGroundCoverSurfaces(void)
             draw->surfaceType = SF_GROUNDCOVER;
             draw->cell        = cell;
             draw->numTufts    = count;
-            R_AddDrawSurf(&draw->surfaceType, gc.shader, 0, 0, 0, 0);
+            draw->dist        = dist;
         }
     }
+
+    // a surface list keeps the order of a shader's surfaces
+    qsort(gc.draws + firstDraw, gc.numDraws - firstDraw, sizeof(gc.draws[0]), GC_CompareDraws);
+    for (i = firstDraw; i < gc.numDraws; i++) {
+        gcCell_t *cell = gc.draws[i].cell;
+
+        // only the realtime lights that reach the cell
+        tr.rtDrawCulled = ~R_RtBoxMask(cell->bounds[0], cell->bounds[1], rtCandidates);
+        R_AddDrawSurf(&gc.draws[i].surfaceType, gc.shader, 0, 0, 0, 0);
+    }
+    tr.rtDrawCulled = 0;
 
     GC_EvictFarCells(origin, range);
 }
@@ -1333,6 +1659,35 @@ void RB_SurfaceGroundCover(void *surface)
 
     gc.backEndDraws++;
     gc.backEndTufts += draw->numTufts;
+
+    // On the card: drawn from there with the other cells of its chunk, as one
+    // batch that nothing is copied into (RB_GroundCoverBindVao), and the
+    // vertex program sways and sinks it. tess counts what the batch draws.
+    if (cell->numPages) {
+        // tufts from tess, or cells of another chunk, are a batch of their own
+        if (tess.numIndexes && (!tess.groundCover || gc.batchChunk != cell->chunk || gc.batchSize == GC_MAX_BATCH)) {
+            RB_EndSurface();
+            RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+        }
+        if (!tess.groundCover) {
+            tess.groundCover = qtrue;
+            VectorSet4(tess.groundCoverParams, time, range, wind, 0);
+            gc.batchChunk = cell->chunk;
+            gc.batchSize  = 0;
+        }
+        // every cell is indexed from its first vertex, the tufts it draws a prefix
+        gc.batchBases[gc.batchSize]  = cell->firstPage * GC_PAGE_VERTS;
+        gc.batchCounts[gc.batchSize] = draw->numTufts * GC_INDEXES_TUFT;
+        gc.batchSize++;
+        tess.numVertexes += numVerts;
+        tess.numIndexes  += draw->numTufts * GC_INDEXES_TUFT;
+        return;
+    }
+
+    if (tess.groundCover) {
+        RB_EndSurface();
+        RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+    }
     RB_SurfaceGroundCoverVerts(numVerts, cell->verts, draw->numTufts * GC_INDEXES_TUFT, cell->indexes);
     firstVert = tess.numVertexes - numVerts;
 
@@ -1366,9 +1721,34 @@ void RB_SurfaceGroundCover(void *surface)
     }
 }
 
+/*
+================
+RB_GroundCoverBindVao
+
+The batch RB_SurfaceGroundCover made of cells on the card: their chunk's
+vertex array object bound, which RB_GroundCoverDrawElements draws them from.
+================
+*/
+void RB_GroundCoverBindVao(void)
+{
+    R_BindVao(&gc.chunks[gc.batchChunk]->vao);
+}
+
+// R_DrawElements for that batch: a draw for each cell, nothing set between them
+void RB_GroundCoverDrawElements(void)
+{
+    int i;
+
+    R_BindVao(&gc.chunks[gc.batchChunk]->vao);
+    for (i = 0; i < gc.batchSize; i++) {
+        qglDrawElementsBaseVertex(GL_TRIANGLES, gc.batchCounts[i], GL_INDEX_TYPE, BUFFER_OFFSET(0), gc.batchBases[i]);
+    }
+    backEnd.pc.c_drawCalls += gc.batchSize - 1;
+}
+
 void R_GroundCoverInfo_f(void)
 {
-    int built = 0, tufts = 0, bytes = 0;
+    int built = 0, tufts = 0, bytes = 0, onCard = 0, pages = 0, ch;
     const gcCell_t *cell;
 
     if (!gc.active) {
@@ -1378,12 +1758,25 @@ void R_GroundCoverInfo_f(void)
     for (cell = gc.builtList; cell; cell = cell->nextBuilt) {
         built++;
         tufts += cell->numTufts;
-        bytes += cell->numTufts * (sizeof(gcTuft_t) + GC_VERTS_TUFT * sizeof(srfVert_t) + GC_INDEXES_TUFT * sizeof(glIndex_t));
+        bytes += cell->numTufts * sizeof(gcTuft_t);
+        if (cell->verts) {
+            bytes += cell->numTufts * (GC_VERTS_TUFT * sizeof(srfVert_t) + GC_INDEXES_TUFT * sizeof(glIndex_t));
+        }
+        if (cell->numPages) {
+            onCard++;
+        }
+    }
+    for (ch = 0; ch < gc.numChunks; ch++) {
+        pages += gc.chunks[ch]->numUsed;
     }
     ri.Printf(PRINT_ALL, "Ground cover: %d grass shaders, %d triangles, %d terrain patches\n",
         gc.numGrassShaders, gc.numTris, gc.numTerrain);
     ri.Printf(PRINT_ALL, "  %d of %d cells made, %d tufts, %d KB; %d cells added last frame\n",
         built, gc.cellsX * gc.cellsY, tufts, bytes / 1024, gc.numDraws);
+    ri.Printf(PRINT_ALL, "  on the card: %s, %d cells; %d buffers of %d MB, %d%% used\n",
+        gc.gpu ? "yes" : (r_groundCoverGPU->integer ? "no (needs buffer storage and a shader it can sway)" : "no (r_groundCoverGPU 0)"),
+        onCard, gc.numChunks, (int)(GC_CHUNK_PAGES * GC_PAGE_VERTS * sizeof(gcGpuVert_t) / (1024 * 1024)),
+        gc.numChunks ? pages * 100 / (gc.numChunks * GC_CHUNK_PAGES) : 0);
     ri.Printf(PRINT_ALL, "  samples: %d kept; dropped %d outside, %d steep, %d bare texture, %d covered\n",
         gc_kept, gc_dropOutside, gc_dropSlope, gc_dropMask, gc_dropCovered);
     ri.Printf(PRINT_ALL, "  drawn since the last report: %d cells, %d tufts\n", gc.backEndDraws, gc.backEndTufts);
@@ -1402,7 +1795,7 @@ void R_GroundCoverInfo_f(void)
                 if (d < bestDist) {
                     bestDist = d;
                     best     = &cell->tufts[i];
-                    bestVert = &cell->verts[i * GC_VERTS_TUFT + 2];
+                    bestVert = cell->verts ? &cell->verts[i * GC_VERTS_TUFT + 2] : NULL;
                 }
             }
         }
@@ -1417,8 +1810,11 @@ void R_GroundCoverInfo_f(void)
                 VectorSet(s0, best->root[0], best->root[1], best->root[2] + 400);
                 VectorSet(e0, best->root[0], best->root[1], best->root[2] - 400);
                 ri.CM_BoxTrace(&tr0, s0, e0, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
-                ri.Printf(PRINT_ALL, ", ground below it at %.0f, tip colour %.2f %.2f %.2f", tr0.endpos[2],
-                    bestVert->color[0] / 65535.0f, bestVert->color[1] / 65535.0f, bestVert->color[2] / 65535.0f);
+                ri.Printf(PRINT_ALL, ", ground below it at %.0f", tr0.endpos[2]);
+                if (bestVert) {
+                    ri.Printf(PRINT_ALL, ", tip colour %.2f %.2f %.2f",
+                        bestVert->color[0] / 65535.0f, bestVert->color[1] / 65535.0f, bestVert->color[2] / 65535.0f);
+                }
             }
         }
         ri.Printf(PRINT_ALL, "\n");

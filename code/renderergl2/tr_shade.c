@@ -42,7 +42,12 @@ void R_DrawElements( int numIndexes, int firstIndex )
 {
 	backEnd.pc.c_drawCalls++;
 
-	if (tess.useCacheVao)
+	if (tess.groundCover)
+	{
+		// Added in OPM: ground cover cells, from where they are kept
+		RB_GroundCoverDrawElements();
+	}
+	else if (tess.useCacheVao)
 	{
 		VaoCache_DrawElements(numIndexes, firstIndex);
 	}
@@ -320,6 +325,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.rtMask = ~backEnd.rtSurfaceCulled;
 	tess.skin.valid = qfalse;
 	tess.skin.deferred = qfalse;
+	tess.groundCover = qfalse;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
 	tess.currentStageIteratorFunc = state->optimalStageIteratorFunc;
@@ -1533,6 +1539,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 					index |= LIGHTDEF_USE_TCGEN_AND_TCMOD;
 				}
 
+				if (tess.groundCover)
+				{
+					index |= LIGHTDEF_GROUNDCOVER;
+				}
+
 				sp = GLSL_GetLightallShader(index);
 			}
 			else
@@ -1585,6 +1596,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			if (r_lightmap->integer && ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP))
 			{
 				index = LIGHTDEF_USE_TCGEN_AND_TCMOD;
+			}
+
+			if (tess.groundCover)
+			{
+				index |= LIGHTDEF_GROUNDCOVER;
 			}
 
 			sp = GLSL_GetLightallShader(index);
@@ -1647,6 +1663,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		if (glState.boneAnimation)
 		{
 			GLSL_SetUniformMat4BoneMatrix(sp, UNIFORM_BONEMATRIX, glState.boneMatrix, glState.boneAnimation);
+		}
+
+		// Added in OPM: how a ground cover cell sways (RB_SurfaceGroundCover)
+		if (tess.groundCover)
+		{
+			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDCOVER, tess.groundCoverParams);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
@@ -2346,7 +2368,12 @@ void RB_StageIteratorGeneric( void )
 	//  alone (and so takes no vertex colour unless it alpha tests), is drawn
 	//  from the copy of it the frame keeps on the card: nothing built or
 	//  copied (RB_SkinArenaDraw). Otherwise it is in tess, as anything else.
-	if (tess.useInternalVao && tess.skin.valid && backEnd.depthFill && !RB_ShaderAlphaTests(tess.shader)
+	if (tess.groundCover)
+	{
+		// Added in OPM: a ground cover cell, drawn from where it is kept
+		RB_GroundCoverBindVao();
+	}
+	else if (tess.useInternalVao && tess.skin.valid && backEnd.depthFill && !RB_ShaderAlphaTests(tess.shader)
 		&& RB_SkinArenaDraw(vertexAttribs & ~(ATTR_COLOR | ATTR_LIGHTCOORD | ATTR_LIGHTDIRECTION)))
 	{
 	}
@@ -2552,10 +2579,11 @@ void RB_EndSurface( void ) {
 	//
 	// draw debugging stuff
 	//
-	if ( r_showtris->integer ) {
+	// (a ground cover cell drawn from the card left nothing in tess to show)
+	if ( r_showtris->integer && !tess.groundCover ) {
 		DrawTris (input);
 	}
-	if ( r_shownormals->integer ) {
+	if ( r_shownormals->integer && !tess.groundCover ) {
 		DrawNormals (input);
 	}
 	// clear shader so we can tell we don't have any unclosed surfaces
@@ -2564,6 +2592,7 @@ void RB_EndSurface( void ) {
 	tess.firstIndex = 0;
 	tess.useCacheVao = qfalse;
 	tess.useInternalVao = qfalse;
+	tess.groundCover = qfalse;
 
 	GLimp_LogComment( "----------\n" );
 }

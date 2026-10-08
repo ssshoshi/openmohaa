@@ -800,8 +800,11 @@ enum
 	LIGHTDEF_USE_NORMALMAP       = 0x0080,
 	LIGHTDEF_USE_SPECULARMAP     = 0x0100,
 	LIGHTDEF_USE_DELUXEMAP       = 0x0200,
-	LIGHTDEF_ALL                 = 0x03FF,
-	LIGHTDEF_COUNT               = 0x0400
+	// Added in OPM: ground cover tufts, swayed and sunk in the vertex program
+	// (tr_groundcover.c); built the first time it is asked for
+	LIGHTDEF_GROUNDCOVER         = 0x0400,
+	LIGHTDEF_ALL                 = 0x07FF,
+	LIGHTDEF_COUNT               = 0x0800
 };
 
 enum
@@ -958,6 +961,7 @@ typedef enum
 	UNIFORM_RTCAPSULES,
 	UNIFORM_RTLIST,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
+	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -3212,6 +3216,13 @@ typedef struct shaderCommands_s
 		int      cacheFirst;  // where the CPU skin cache has it
 	} skin;
 
+	// Added in OPM: the batch is ground cover cells drawn from where they
+	// are kept on the card (RB_SurfaceGroundCover); tess holds none of them,
+	// only their counts, and the vertex program sways them (time, draw
+	// distance, wind)
+	qboolean    groundCover;
+	vec4_t      groundCoverParams;
+
 	int			firstIndex;
 	int			numIndexes;
 	int			numVertexes;
@@ -3682,6 +3693,8 @@ void R_AddGroundCoverSurfaces(void);
 void R_GroundCoverInfo_f(void);
 void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
+void RB_GroundCoverBindVao(void);
+void RB_GroundCoverDrawElements(void);
 void R_SwapTerraPatch(cTerraPatch_t* pPatch);
 
 void R_TerrainCrater_f(void);

@@ -189,7 +189,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtShadowBaked",   GLSL_INT },
 	{ "u_RtCapsules",      GLSL_INT },
 	{ "u_RtList",          GLSL_VEC4_RTLIST },
-	{ "u_SoftParticle",    GLSL_VEC4 }
+	{ "u_SoftParticle",    GLSL_VEC4 },
+	{ "u_GroundCover",     GLSL_VEC4 }
 };
 
 typedef enum
@@ -1415,6 +1416,15 @@ static qboolean GLSL_InitLightallShader(int i)
 	if ((i & LIGHTDEF_ENTITY_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
 		return qfalse;
 
+	// Added in OPM: the tufts are world geometry with no material maps; their
+	// tangent and lightmap arrays hold where each stands and how it sways
+	if ((i & LIGHTDEF_GROUNDCOVER) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION
+		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
+		return qfalse;
+
+	if ((i & LIGHTDEF_GROUNDCOVER) && (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX))
+		return qfalse;
+
 	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
 
 	extradefines[0] = '\0';
@@ -1524,6 +1534,12 @@ static qboolean GLSL_InitLightallShader(int i)
 	{
 		Q_strcat(extradefines, 1024, "#define USE_TCGEN\n");
 		Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
+	}
+
+	if (i & LIGHTDEF_GROUNDCOVER)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_GROUNDCOVER\n");
+		attribs |= ATTR_TANGENT | ATTR_LIGHTCOORD;
 	}
 
 	if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)
@@ -1782,7 +1798,7 @@ void GLSL_InitGPUShaders(void)
 		// Pre-build every permutation a surface with no material maps can
 		// need, which covers all of stock MOH:AA. Anything carrying a normal,
 		// specular or deluxe map is left to GLSL_GetLightallShader.
-		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP))
+		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER))
 			continue;
 
 		if (!GLSL_InitLightallShader(i))
