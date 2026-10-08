@@ -1475,7 +1475,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	// Added in OPM: a skeletal model posed from the frame's bones, which
 	// brings its own vertexes, and nothing that reads others
 	if ((i & LIGHTDEF_SKEL_GPU) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_GROUNDCOVER
-		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
+		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_PARALLAXMAP)))
 		return qfalse;
 
 	if ((i & LIGHTDEF_SKEL_GPU) && lightType == LIGHTDEF_USE_LIGHTMAP)

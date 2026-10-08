@@ -360,8 +360,10 @@ static const char *R_SkelGpuShaderWhyNot(const shader_t *shader)
         if ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP || stage->bundle[0].tcGen == TCGEN_LIGHTMAP) {
             return va("stage %d is lightmapped", i);
         }
-        if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)) {
-            return va("stage %d has a normal, specular or deluxe map", i);
+        // a normal map needs the tangent frame, which is not posed here; a
+        // specular map is read by the fragment program alone
+        if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_PARALLAXMAP)) {
+            return va("stage %d has a normal map", i);
         }
         n++;
     }
@@ -378,6 +380,10 @@ static qboolean R_SkelGpuShader(shader_t *shader)
 
     why = R_SkelGpuShaderWhyNot(shader);
     shader->skelGpu = why ? -1 : 1;
+    if (why) {
+        // once a shader, so a log says which without asking (skelgpuinfo)
+        ri.Printf(PRINT_ALL, "r_skelGpu: models with shader %s are posed on the CPU: %s\n", shader->name, why);
+    }
     if (why && skelNumRefused < SKEL_GPU_REFUSED) {
         skelRefused[skelNumRefused].shader = shader;
         Q_strncpyz(skelRefused[skelNumRefused].why, why, sizeof(skelRefused[skelNumRefused].why));
