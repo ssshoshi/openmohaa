@@ -1292,21 +1292,25 @@ void R_RtRenderShadows(const refdef_t *fd)
 				for (m = 0; m < numMovers; m++) {
 					faces |= R_RtFacesTouched(l, movers[m].centre, movers[m].radius);
 				}
-				// none of the view's pixels reads the faces out of it
-				if (faces) {
-					faces &= R_RtFacesInView(l, frustum);
-				}
 				if (faces && dynamicSlots < RT_SLOTS) {
 					const int slot = dynamicSlots++;
+					// None of the view's pixels reads the faces out of it, so
+					// they are not drawn. The light keeps its place among the
+					// few all the same: had the faces out of view not counted,
+					// the places went round the lights as the view turned, and
+					// what moves lost and found its shadows in patches.
+					const int drawn = faces & R_RtFacesInView(l, frustum);
 
 					dynamicLights++;
 					for (f = 0; f < 6; f++) {
-						if (faces & (1 << f)) {
+						if (drawn & (1 << f)) {
 							R_RtRenderFace(l, 1, slot * 6 + f, f);
 						}
 					}
-					// the faces go in the fraction, a bit each
-					dynamicTile = slot * 6 + faces / 64.0f;
+					// the faces go in the fraction, a bit each; with none drawn
+					// the people still take no capsules for this light, as
+					// when they were drawn into faces of it
+					dynamicTile = slot * 6 + drawn / 64.0f;
 				}
 			}
 		}
