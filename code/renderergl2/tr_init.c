@@ -243,6 +243,7 @@ cvar_t	*r_frameHitchMsec;
 cvar_t	*r_tessOrphan;
 cvar_t	*r_tessStream;
 cvar_t	*r_skinArena;
+cvar_t	*r_occlusionCull;
 
 cvar_t	*r_aviMotionJpegQuality;
 cvar_t	*r_screenshotJpegQuality;
@@ -1845,6 +1846,14 @@ void R_Register( void )
 	//  cascade, each realtime light's shadow face. Each posed surface is now
 	//  copied to the card once a frame, and the views that draw depth alone
 	//  draw it from there.
+	// Added in OPM
+	//  Nothing hid a model behind a wall: in the view's cone, it was posed,
+	//  lit and drawn into the prepass and the main pass all the same. Each is
+	//  now tested, after the prepass, against the depth it left (a box round
+	//  it, by an occlusion query, read a frame or two later), and one wholly
+	//  hidden is left out of the main view until a test finds it again.
+	r_occlusionCull = ri.Cvar_Get("r_occlusionCull", "1", 0);
+	ri.Cvar_SetDescription(r_occlusionCull, "Skeletal models wholly hidden behind what the depth prepass drew are left out of the main view, tested each frame by an occlusion query. Not archived: an A/B switch");
 	r_skinArena = ri.Cvar_Get("r_skinArena", "1", 0);
 	ri.Cvar_SetDescription(r_skinArena, "With r_tessStream, each posed skeletal surface is copied to the card once a frame and drawn from there in the depth and shadow views. Not archived: an A/B switch");
 	ri.Cvar_SetDescription(r_tessStream, "Batches built on the CPU are copied into one large buffer mapped for good, instead of uploaded with a call per array (needs OpenGL 4.4; vid_restart)");
@@ -2000,6 +2009,7 @@ void R_InitQueries(void)
 void R_ShutDownQueries(void)
 {
 	R_GpuTimerShutdown();
+	R_OcclusionShutdown();
 
 	if (!glRefConfig.occlusionQuery)
 		return;

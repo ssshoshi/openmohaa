@@ -2874,6 +2874,7 @@ extern cvar_t *r_frameHitchMsec;
 extern cvar_t *r_tessOrphan;
 extern cvar_t *r_tessStream;
 extern cvar_t *r_skinArena;
+extern cvar_t *r_occlusionCull;
 
 //====================================================================
 
@@ -3378,6 +3379,11 @@ void            R_ShutdownVaos(void);
 void            R_VaoList_f(void);
 
 void            RB_UpdateTessVao(unsigned int attribBits);
+
+// Added in OPM: models hidden behind what the depth prepass drew (tr_backend.c)
+qboolean R_OcclusionCulled(int entityNum, const vec3_t mins, const vec3_t maxs);
+void     RB_OcclusionTests(void);
+void     R_OcclusionShutdown(void);
 
 // Added in OPM: posed skeletal surfaces kept on the card for the frame (tr_vbo.c)
 int      RB_SkinArenaFrame(void);

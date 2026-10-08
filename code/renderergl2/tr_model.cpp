@@ -867,6 +867,27 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     }
 
     // Added in OPM
+    //  Hidden behind what the main view's depth prepass drew, the last tests
+    //  found: left out of it (R_OcclusionCulled). Its box takes in the
+    //  animation's sphere and its bones'.
+    if (!lod_tool->integer && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))
+        && !(tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !tr.viewParms.isPortal
+        && !tr.viewParms.isPortalSky && !(tr.refdef.rdflags & RDF_NOWORLDMODEL)) {
+        vec3_t centre, mins, maxs;
+        float  boneRadius = ent->boneRadius + SKEL_BONE_CULL_MARGIN;
+        int    k;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        for (k = 0; k < 3; k++) {
+            mins[k] = Q_min(tiki_worldorigin[k] - radius, centre[k] - boneRadius);
+            maxs[k] = Q_max(tiki_worldorigin[k] + radius, centre[k] + boneRadius);
+        }
+        if (R_OcclusionCulled(ent->e.entityNumber, mins, maxs)) {
+            return;
+        }
+    }
+
+    // Added in OPM
     //  The realtime lights that reach the animation's sphere, or its bones.
     {
         const uint64_t candidates = R_RtViewMask();
