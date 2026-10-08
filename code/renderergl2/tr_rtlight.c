@@ -63,6 +63,7 @@ cvar_t *r_rtCapsules;
 cvar_t *r_rtParticles;
 cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
+cvar_t *r_rtCutoff;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
 // sent four indexes a vec4 (u_RtList)
@@ -193,6 +194,9 @@ void R_RtRegister(void)
 	r_rtParticles = ri.Cvar_Get("r_rtParticles", "1", 0);
 	ri.Cvar_SetDescription(r_rtParticles, "Dust and smoke sprites take the realtime lights at their corners, not per pixel (0: per pixel, which piles of them make very slow). Not archived: an A/B switch");
 	r_rtDebug = ri.Cvar_Get("r_rtDebug", "0", 0);
+	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
+	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
+	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
 	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
 	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
 }
@@ -999,6 +1003,47 @@ void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs)
 }
 
 /*
+How far a light gives a pixel facing it at least cutoff, unshadowed: the
+shaders pass it over beyond (RtLight), so the lists of the lights a surface
+may take (R_RtSphereMask and the rest) can leave it out there. What it gives
+falls with distance all the way to its reach (the compiler's falloff,
+faded to nothing at the edge), so the distance is found by halving.
+
+Every light gives most near its reach least: a lamp of the map is lit out to
+where it adds a raw lightmap unit, faded, and most of the pixels it reaches
+are in its outer shell, where it adds a fraction of the smallest step a
+screen shows, and each was paying for its shadow taps all the same. -1: it
+gives cutoff nowhere.
+*/
+static float R_RtReach(const vec4_t colorRange, float cutoff)
+{
+	const float range = colorRange[3];
+	const float peak  = Q_max(colorRange[0], Q_max(colorRange[1], colorRange[2]));
+	float       lo = 0, hi = range;
+	int         i;
+
+	if (cutoff <= 0 || range <= 0) {
+		return range;
+	}
+	// what it gives at d, as RtLight works it out with ndl 1 and no spot cone
+#define RT_GIVES(d) (peak * Square(1.0f - Square(d) / Square(range)) / Q_max(Square(d), 256.0f))
+	if (RT_GIVES(0.0f) < cutoff) {
+		return -1.0f;
+	}
+	for (i = 0; i < 20; i++) {
+		const float mid = (lo + hi) * 0.5f;
+
+		if (RT_GIVES(mid) >= cutoff) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+#undef RT_GIVES
+	return hi;
+}
+
+/*
 ===============
 R_RtRenderShadows
 
@@ -1379,6 +1424,11 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	VectorSet4(tr.rtParams, (float)tr.rtNumActive, (float)r_realtimeLighting->integer, r_rtShadows->integer ? 1.0f : 0.0f,
 		Com_Clamp(0.0f, 1.0f, r_rtDarkest->value));
+	// how far each light's light is worth looking up (R_RtReach)
+	for (i = 0; i < tr.rtNumActive; i++) {
+		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], r_rtCutoff->value);
+	}
+
 	// each program is sent the lights once a frame, not compared with them
 	// at every draw (GLSL_SetUniformRtLights)
 	tr.rtLightGeneration++;
@@ -1395,7 +1445,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	}
 
 	VectorScale(rt.ambient, scale * r_rtAmbient->value, tr.rtAmbient);
-	tr.rtAmbient[3] = 1.0f;
+	// the least a light may add to a pixel and be looked up there (RtLight)
+	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
 
 	if (r_rtDebug->integer) {
 		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers, faces drawn %d standing %d moving (%d lights), %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
@@ -1463,9 +1514,9 @@ uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates)
 
 	for (i = 0, m = candidates; m && i < tr.rtNumActive; i++, m >>= 1) {
 		const float *origin = tr.rtLightData[i * RT_LIGHT_VEC4S];
-		const float  reach  = tr.rtLightData[i * RT_LIGHT_VEC4S + 1][3] + radius + RT_CULL_MARGIN;
+		const float  reach  = tr.rtLightReach[i] + radius + RT_CULL_MARGIN;
 
-		if ((m & 1) && DistanceSquared(origin, centre) < reach * reach) {
+		if ((m & 1) && tr.rtLightReach[i] >= 0 && DistanceSquared(origin, centre) < reach * reach) {
 			mask |= (uint64_t)1 << i;
 		}
 	}
@@ -1483,10 +1534,10 @@ uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates)
 
 	for (i = 0, m = candidates; m && i < tr.rtNumActive; i++, m >>= 1) {
 		const float *origin = tr.rtLightData[i * RT_LIGHT_VEC4S];
-		const float  reach  = tr.rtLightData[i * RT_LIGHT_VEC4S + 1][3] + RT_CULL_MARGIN;
+		const float  reach  = tr.rtLightReach[i] + RT_CULL_MARGIN;
 		float        d2     = 0;
 
-		if (!(m & 1)) {
+		if (!(m & 1) || tr.rtLightReach[i] < 0) {
 			continue;
 		}
 		// from the light to the nearest point of the box
@@ -1519,10 +1570,10 @@ uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *bac
 
 	for (i = 0, m = candidates; m && i < tr.rtNumActive; i++, m >>= 1) {
 		const float *origin = tr.rtLightData[i * RT_LIGHT_VEC4S];
-		const float  reach  = tr.rtLightData[i * RT_LIGHT_VEC4S + 1][3] + RT_CULL_MARGIN;
+		const float  reach  = tr.rtLightReach[i] + RT_CULL_MARGIN;
 		float        dist;
 
-		if (!(m & 1)) {
+		if (!(m & 1) || tr.rtLightReach[i] < 0) {
 			continue;
 		}
 		dist = DotProduct(origin, plane->normal) - plane->dist;

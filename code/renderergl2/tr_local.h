@@ -2548,6 +2548,7 @@ typedef struct {
     int      rtNumActive;      // lights in rtLightData this frame
     vec4_t   rtLightData[RT_MAX_LIGHTS * RT_LIGHT_VEC4S];
     int      rtLightGeneration; // a new one each time rtLightData is written
+    float    rtLightReach[RT_MAX_LIGHTS]; // how far each gives more than r_rtCutoff, < 0: nowhere
     uint64_t rtDrawCulled;     // the lights that cannot reach the surfaces being added (R_AddDrawSurf), 0: none
     vec4_t   rtParams;         // lights, atlas tiles a side, mode, scale
     vec4_t   rtSunDir;         // w: 1 with a sun

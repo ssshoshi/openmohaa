@@ -463,6 +463,10 @@ static const char *rt_glsl =
 	"			if (sampleRadius >= radiusAtDist) continue;\n"
 	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
 	"		}\n"
+	// what it would give unshadowed is too little to see: passed over, its
+	// shadow not looked up (u_RtAmbient.w, r_rtCutoff; R_RtReach)
+	"		vec3 most = l1.rgb * att;\n"
+	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
@@ -520,6 +524,8 @@ static const char *rt_glsl =
 	"			if (sampleRadius >= radiusAtDist) continue;\n"
 	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
 	"		}\n"
+	"		vec3 most = l1.rgb * att;\n"
+	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
