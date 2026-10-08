@@ -2963,6 +2963,7 @@ void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);
+qboolean R_SunCasterCulled(const vec3_t centre, float radius); // Added in OPM
 void R_RenderCubemapSide( int cubemapIndex, int cubemapSide, qboolean subscene );
 
 void R_AddMD3Surfaces( trRefEntity_t *e );

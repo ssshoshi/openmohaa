@@ -2656,6 +2656,81 @@ static float CalcSplit(float n, float f, float i, float m)
 }
 
 
+/*
+=================
+Sun cascade casters
+
+Added in OPM. A cascade is a box around a slice of the view, as the sun sees
+it, and everything in that box was drawn into it. But the box is square to
+the sun, and the slice is a pyramid's: looking across the sun's light, the box
+takes in much the view never sees, and the models there were drawn into the
+cascade though no shadow of theirs could fall where the view takes it from.
+A model is a caster only if its sphere, swept the way its shadow goes, comes
+into the slice: outside a side of it, and going away from that side, its
+shadow is nowhere the view sees through this cascade.
+=================
+*/
+static struct {
+	qboolean active;
+	cplane_t planes[6]; // the slice's, facing in
+	vec3_t   shadowDir;
+} sunCaster;
+
+#define SUN_CASTER_SLICE_PAD 32.0f  // the slice taken a little longer each way
+#define SUN_CASTER_REACH     8192.0f // how far a shadow can go
+
+static void R_SetSunCasterSlice(const refdef_t *fd, const vec3_t shadowDir, float zNear, float zFar)
+{
+	const float xs = tan(fd->fov_x * M_PI / 360.0f), ys = tan(fd->fov_y * M_PI / 360.0f);
+	float       len;
+	int         i;
+
+	// left, right, top, bottom: through the eye, facing in
+	len = sqrt(xs * xs + 1.0f);
+	VectorScale(fd->viewaxis[0], xs / len, sunCaster.planes[0].normal);
+	VectorMA(sunCaster.planes[0].normal, 1.0f / len, fd->viewaxis[1], sunCaster.planes[0].normal);
+	VectorScale(fd->viewaxis[0], xs / len, sunCaster.planes[1].normal);
+	VectorMA(sunCaster.planes[1].normal, -1.0f / len, fd->viewaxis[1], sunCaster.planes[1].normal);
+	len = sqrt(ys * ys + 1.0f);
+	VectorScale(fd->viewaxis[0], ys / len, sunCaster.planes[2].normal);
+	VectorMA(sunCaster.planes[2].normal, 1.0f / len, fd->viewaxis[2], sunCaster.planes[2].normal);
+	VectorScale(fd->viewaxis[0], ys / len, sunCaster.planes[3].normal);
+	VectorMA(sunCaster.planes[3].normal, -1.0f / len, fd->viewaxis[2], sunCaster.planes[3].normal);
+	for (i = 0; i < 4; i++) {
+		sunCaster.planes[i].dist = DotProduct(fd->vieworg, sunCaster.planes[i].normal);
+	}
+
+	// the slice's near and far
+	VectorCopy(fd->viewaxis[0], sunCaster.planes[4].normal);
+	sunCaster.planes[4].dist = DotProduct(fd->vieworg, fd->viewaxis[0]) + zNear - SUN_CASTER_SLICE_PAD;
+	VectorNegate(fd->viewaxis[0], sunCaster.planes[5].normal);
+	sunCaster.planes[5].dist = -(DotProduct(fd->vieworg, fd->viewaxis[0]) + zFar + SUN_CASTER_SLICE_PAD);
+
+	VectorCopy(shadowDir, sunCaster.shadowDir);
+	sunCaster.active = qtrue;
+}
+
+qboolean R_SunCasterCulled(const vec3_t centre, float radius)
+{
+	int i;
+
+	if (!sunCaster.active || !(tr.viewParms.flags & VPF_ORTHOGRAPHIC) || !(tr.viewParms.flags & VPF_DEPTHSHADOW)) {
+		return qfalse;
+	}
+
+	for (i = 0; i < 6; i++) {
+		const cplane_t *p = &sunCaster.planes[i];
+		const float     d = DotProduct(centre, p->normal) - p->dist;
+		const float     k = DotProduct(sunCaster.shadowDir, p->normal);
+
+		// the most of the sweep inside this side
+		if (d + (k > 0 ? k * SUN_CASTER_REACH : 0) < -radius) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 {
 	viewParms_t		shadowParms;
@@ -2734,6 +2809,12 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 	// Make up a projection
 	VectorScale(lightDir, -1.0f, lightViewAxis[0]);
+
+	// Added in OPM: the models whose shadows can fall in the slice (the last
+	// cascade is the whole level's, not the view's)
+	sunCaster.active = qfalse;
+	if (level != 3)
+		R_SetSunCasterSlice(fd, lightViewAxis[0], splitZNear, splitZFar);
 
 	if (level == 3 || lightViewIndependentOfCameraView)
 	{
@@ -3012,6 +3093,8 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 		Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, tr.refdef.sunShadowMvp[level]);
 	}
+
+	sunCaster.active = qfalse;
 }
 
 void R_RenderCubemapSide( int cubemapIndex, int cubemapSide, qboolean subscene )

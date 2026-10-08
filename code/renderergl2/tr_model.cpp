@@ -871,6 +871,19 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     }
 
     // Added in OPM
+    //  In a sun cascade, a model whose shadow cannot fall where the view
+    //  sees through it (R_SunCasterCulled): the animation's sphere and its
+    //  bones' both.
+    if (!lod_tool->integer && R_SunCasterCulled(tiki_worldorigin, radius)) {
+        vec3_t centre;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        if (R_SunCasterCulled(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN)) {
+            return;
+        }
+    }
+
+    // Added in OPM
     //  Hidden behind what the main view's depth prepass drew, the last tests
     //  found: left out of it (R_OcclusionCulled). Its box takes in the
     //  animation's sphere and its bones'.

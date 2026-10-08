@@ -359,6 +359,10 @@ void R_AddStaticModelSurfaces(void)
         R_LocalPointToWorld(tiki_localorigin, tiki_worldorigin);
 
         iRadiusCull = R_CullPointAndRadius(tiki_worldorigin, SM->cull_radius);
+        // Added in OPM: in a sun cascade, none of its shadow where the view sees
+        if (iRadiusCull != CULL_OUT && R_SunCasterCulled(tiki_worldorigin, SM->cull_radius)) {
+            iRadiusCull = CULL_OUT;
+        }
 
         if (r_showcull->integer & 8) {
             switch (iRadiusCull) {
