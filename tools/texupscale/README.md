@@ -17,9 +17,11 @@ and shader code this uses) and etcpak. The RealESRGAN_x4plus weights (BSD-3) are
 `~/.cache/openmohaa-texupscale` on first use and checked against their sha256. `--model` takes
 another 4x RRDBNet checkpoint. A full build is about 1,800 textures and two hours on a GTX 1080.
 
-- **In game.** GL2 only, with `r_ext_compressed_textures 1` (latched: `vid_restart`). Then
-  `R_LoadImage` tries `<name>.dds` before the `.jpg` or `.tga` a shader asks for, from any pk3,
-  so pak order doesn't matter. With the cvar at 0, or in the GL1 renderer, the pk3 has no effect.
+- **In game.** GL2 only: `R_LoadImage` tries `<name>.dds` before the `.jpg` or `.tga` a shader
+  asks for, from any pk3, so pak order doesn't matter. The GL1 renderer ignores the pk3.
+  `r_ext_compressed_textures` only sets how the other textures are compressed on upload: 0 (the
+  sharpest) leaves them uncompressed, which on an m3l2 save at 1080p took the GPU memory in
+  use from 2.7 GB to 3.6 GB.
 - **Which textures.** Everything under `textures/`, `env/` and `models/`, resolved the way the
   engine resolves it: pk3s sorted by name, later ones win. So installed texture packs (AA HD,
   HRRTM) are what gets upscaled. When a stock `.dds` would hide a bigger `.jpg`/`.tga` from a
