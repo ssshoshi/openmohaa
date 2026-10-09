@@ -174,6 +174,22 @@ extern void (APIENTRYP qglUnlockArraysEXT) (void);
 	GLE(void, DeleteSync, GLsync sync) \
 	GLE(void, DrawElementsBaseVertex, GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex) \
 
+// Added in OPM: GL_ARB_get_program_binary (OpenGL 4.1), the linked programs
+// kept on disk (GL2's r_glslCache)
+#ifndef GL_PROGRAM_BINARY_RETRIEVABLE_HINT
+#define GL_PROGRAM_BINARY_RETRIEVABLE_HINT 0x8257
+#endif
+#ifndef GL_PROGRAM_BINARY_LENGTH
+#define GL_PROGRAM_BINARY_LENGTH 0x8741
+#endif
+#ifndef GL_NUM_PROGRAM_BINARY_FORMATS
+#define GL_NUM_PROGRAM_BINARY_FORMATS 0x87FE
+#endif
+#define QGL_ARB_get_program_binary_PROCS \
+	GLE(void, GetProgramBinary, GLuint program, GLsizei bufSize, GLsizei *length, GLenum *binaryFormat, void *binary) \
+	GLE(void, ProgramBinary, GLuint program, GLenum binaryFormat, const void *binary, GLsizei length) \
+	GLE(void, ProgramParameteri, GLuint program, GLenum pname, GLint value) \
+
 // OpenGL 1.5, was GL_ARB_vertex_buffer_object
 #define QGL_1_5_PROCS \
 	GLE(void, BindBuffer, GLenum target, GLuint buffer) \
@@ -354,6 +370,7 @@ QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
 QGL_ARB_timer_query_PROCS;
 QGL_ARB_buffer_storage_PROCS;
+QGL_ARB_get_program_binary_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;

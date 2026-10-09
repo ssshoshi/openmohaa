@@ -888,8 +888,120 @@ static void GLSL_ShowProgramUniforms(GLuint program)
 	}
 }
 
+/*
+=============================================================================
+
+Added in OPM
+The linked programs, kept on disk (r_glslCache, GL_ARB_get_program_binary):
+each one is compiled once on a given driver rather than every time the game
+starts, or, for the permutations built when a surface first needs one, in the
+middle of play, where a compile is a hitch of a tenth of a second or more.
+A program is named by everything that makes it: its source with the defines,
+the arrays bound to it, and the driver. A program the driver no longer takes
+(a new driver can refuse an old binary) is compiled again, and kept anew.
+
+=============================================================================
+*/
+
+#define GLSL_CACHE_MAGIC   0x474d504f // "OPMG"
+#define GLSL_CACHE_VERSION 1
+
+typedef struct {
+	int      magic;
+	int      version;
+	unsigned format;
+	int      length;
+} glslCacheHeader_t;
+
+static qboolean GLSL_CacheUsable(void)
+{
+	return (r_glslCache && r_glslCache->integer && glRefConfig.programBinary) ? qtrue : qfalse;
+}
+
+static uint64_t GLSL_CacheHash(uint64_t h, const void *data, size_t size)
+{
+	const byte *b = (const byte *)data;
+	size_t      i;
+
+	// FNV-1a
+	for (i = 0; i < size; i++)
+	{
+		h ^= b[i];
+		h *= 1099511628211ULL;
+	}
+	return h;
+}
+
+static void GLSL_CacheName(char *out, int size, const char *vpCode, const char *fpCode, int attribs)
+{
+	const int version = GLSL_CACHE_VERSION;
+	uint64_t  h = 14695981039346656037ULL;
+
+	h = GLSL_CacheHash(h, &version, sizeof(version));
+	h = GLSL_CacheHash(h, glConfig.vendor_string, strlen(glConfig.vendor_string) + 1);
+	h = GLSL_CacheHash(h, glConfig.renderer_string, strlen(glConfig.renderer_string) + 1);
+	h = GLSL_CacheHash(h, glConfig.version_string, strlen(glConfig.version_string) + 1);
+	h = GLSL_CacheHash(h, &attribs, sizeof(attribs));
+	h = GLSL_CacheHash(h, vpCode, strlen(vpCode) + 1);
+	if (fpCode)
+		h = GLSL_CacheHash(h, fpCode, strlen(fpCode) + 1);
+
+	Com_sprintf(out, size, "glslcache/%08x%08x.bin", (unsigned)(h >> 32), (unsigned)h);
+}
+
+// the program as kept, if there is one and the driver still takes it
+static qboolean GLSL_CacheLoad(GLuint program, const char *cacheName)
+{
+	void                    *buffer;
+	const glslCacheHeader_t *header;
+	long                     size;
+	GLint                    linked = 0;
+
+	size = ri.FS_ReadFile(cacheName, &buffer);
+	if (size <= 0 || !buffer)
+		return qfalse;
+
+	header = (const glslCacheHeader_t *)buffer;
+	if (size > (long)sizeof(*header) && header->magic == GLSL_CACHE_MAGIC && header->version == GLSL_CACHE_VERSION
+		&& header->length > 0 && header->length == size - (long)sizeof(*header))
+	{
+		qglProgramBinary(program, header->format, header + 1, header->length);
+		qglGetProgramiv(program, GL_LINK_STATUS, &linked);
+	}
+
+	ri.FS_FreeFile(buffer);
+	return linked ? qtrue : qfalse;
+}
+
+static void GLSL_CacheStore(GLuint program, const char *cacheName)
+{
+	glslCacheHeader_t *header;
+	GLint              length = 0;
+	GLsizei            written = 0;
+	GLenum             format = 0;
+
+	qglGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &length);
+	if (length <= 0)
+		return;
+
+	header = (glslCacheHeader_t *)ri.Malloc(sizeof(*header) + length);
+	qglGetProgramBinary(program, length, &written, &format, header + 1);
+	if (written > 0 && written <= length)
+	{
+		header->magic   = GLSL_CACHE_MAGIC;
+		header->version = GLSL_CACHE_VERSION;
+		header->format  = format;
+		header->length  = written;
+		ri.FS_WriteFile(cacheName, header, sizeof(*header) + written);
+	}
+	ri.Free(header);
+}
+
 static int GLSL_InitGPUShader2(shaderProgram_t * program, const char *name, int attribs, const char *vpCode, const char *fpCode)
 {
+	char     cacheName[MAX_QPATH];
+	qboolean cache = GLSL_CacheUsable();
+
 	ri.Printf(PRINT_DEVELOPER, "------- GPU shader -------\n");
 
 	if(strlen(name) >= MAX_QPATH)
@@ -901,6 +1013,23 @@ static int GLSL_InitGPUShader2(shaderProgram_t * program, const char *name, int 
 
 	program->program = qglCreateProgram();
 	program->attribs = attribs;
+
+	// Added in OPM: linked before, on this driver (r_glslCache)
+	if (cache)
+	{
+		GLSL_CacheName(cacheName, sizeof(cacheName), vpCode, fpCode, attribs);
+		if (GLSL_CacheLoad(program->program, cacheName))
+		{
+			program->vertexShader = 0;
+			program->fragmentShader = 0;
+			return 1;
+		}
+
+		// refused: compiled into a program of its own
+		qglDeleteProgram(program->program);
+		program->program = qglCreateProgram();
+		qglProgramParameteri(program->program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+	}
 
 	if (!(GLSL_CompileGPUShader(program->program, &program->vertexShader, vpCode, strlen(vpCode), GL_VERTEX_SHADER)))
 	{
@@ -965,6 +1094,9 @@ static int GLSL_InitGPUShader2(shaderProgram_t * program, const char *name, int 
 		qglBindAttribLocation(program->program, ATTR_INDEX_TANGENT2, "attr_Tangent2");
 
 	GLSL_LinkProgram(program->program);
+
+	if (cache)
+		GLSL_CacheStore(program->program, cacheName);
 
 	return 1;
 }
@@ -1654,6 +1786,87 @@ static qboolean GLSL_InitLightallShader(int i)
 }
 
 /*
+=============================================================================
+
+Added in OPM
+The lightall permutations play has asked for that the start does not build
+(those for the material maps, the ground cover, the models the vertex program
+poses), kept by name in the cache (r_glslCache): built at the start from then
+on, so that the first surface needing one in play no longer waits on it.
+
+=============================================================================
+*/
+
+#define GLSL_WARM_FILE "glslcache/lightall.txt"
+
+static byte glslWarm[LIGHTDEF_COUNT];
+
+static void GLSL_WarmSave(void)
+{
+	char *text;
+	int   i, len;
+	const int size = 32 + LIGHTDEF_COUNT * 6;
+
+	text = (char *)ri.Malloc(size);
+	len = Com_sprintf(text, size, "lightall %d\n", LIGHTDEF_COUNT);
+	for (i = 0; i < LIGHTDEF_COUNT; i++)
+	{
+		if (glslWarm[i])
+			len += Com_sprintf(text + len, size - len, "%d\n", i);
+	}
+	ri.FS_WriteFile(GLSL_WARM_FILE, text, len);
+	ri.Free(text);
+}
+
+static void GLSL_WarmAdd(int index)
+{
+	if (!r_glslCache->integer || glslWarm[index])
+		return;
+
+	glslWarm[index] = 1;
+	GLSL_WarmSave();
+}
+
+// builds the permutations play asked for before; how many
+static int GLSL_WarmBuild(void)
+{
+	char       *buffer;
+	const char *p;
+	char       *end;
+	long        size, i;
+	int         built = 0;
+
+	Com_Memset(glslWarm, 0, sizeof(glslWarm));
+	if (!r_glslCache->integer)
+		return 0;
+
+	size = ri.FS_ReadFile(GLSL_WARM_FILE, (void **)&buffer);
+	if (size <= 0 || !buffer)
+		return 0;
+
+	// written for this many permutations, or for another renderer's
+	p = buffer;
+	if (!strncmp(p, "lightall ", 9) && strtol(p + 9, &end, 10) == LIGHTDEF_COUNT)
+	{
+		for (p = end; p < buffer + size; p = end)
+		{
+			i = strtol(p, &end, 10);
+			if (end == p)
+				break;
+			if (i < 0 || i >= LIGHTDEF_COUNT)
+				continue;
+
+			glslWarm[i] = 1;
+			if (!tr.lightallShader[i].program && GLSL_InitLightallShader(i))
+				built++;
+		}
+	}
+
+	ri.FS_FreeFile(buffer);
+	return built;
+}
+
+/*
 ============
 GLSL_GetLightallShader
 
@@ -1664,7 +1877,8 @@ shaderProgram_t *GLSL_GetLightallShader(int index)
 {
 	if (!tr.lightallShader[index].program)
 	{
-		GLSL_InitLightallShader(index);
+		if (GLSL_InitLightallShader(index))
+			GLSL_WarmAdd(index);
 
 		// The material cvars are all CVAR_LATCH, so a stage's bits and the
 		// permutations built for them cannot disagree without a vid_restart
@@ -1675,8 +1889,8 @@ shaderProgram_t *GLSL_GetLightallShader(int index)
 		{
 			index &= ~(LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP);
 
-			if (!tr.lightallShader[index].program)
-				GLSL_InitLightallShader(index);
+			if (!tr.lightallShader[index].program && GLSL_InitLightallShader(index))
+				GLSL_WarmAdd(index);
 		}
 	}
 
@@ -1690,6 +1904,7 @@ void GLSL_InitGPUShaders(void)
 	char extradefines[1024];
 	int attribs;
 	int numGenShaders = 0, numLightShaders = 0, numEtcShaders = 0;
+	int numWarmShaders = 0;
 
 	ri.Printf(PRINT_ALL, "------- GLSL_InitGPUShaders -------\n");
 
@@ -1869,6 +2084,10 @@ void GLSL_InitGPUShaders(void)
 
 		numLightShaders++;
 	}
+
+	// Added in OPM: and those play asked for before (r_glslCache)
+	numWarmShaders = GLSL_WarmBuild();
+	numLightShaders += numWarmShaders;
 
 	for (i = 0; i < SHADOWMAPDEF_COUNT; i++)
 	{
@@ -2142,6 +2361,8 @@ void GLSL_InitGPUShaders(void)
 	ri.Printf(PRINT_ALL, "loaded %i GLSL shaders (%i gen %i light %i etc) in %5.2f seconds\n", 
 		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders, 
 		numEtcShaders, (endTime - startTime) / 1000.0);
+	ri.Printf(PRINT_ALL, "r_glslCache: %i lightall permutations play asked for before built now; programs %s\n",
+		numWarmShaders, GLSL_CacheUsable() ? "kept on disk" : (r_glslCache->integer ? "not kept (no GL_ARB_get_program_binary)" : "not kept"));
 }
 
 void GLSL_ShutdownGPUShaders(void)

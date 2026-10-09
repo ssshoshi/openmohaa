@@ -135,6 +135,7 @@ cvar_t  *r_deluxeMapping;
 cvar_t  *r_parallaxMapping;
 cvar_t  *r_parallaxMapOffset;
 cvar_t  *r_parallaxMapShadows;
+cvar_t  *r_glslCache;
 cvar_t  *r_cubeMapping;
 cvar_t  *r_cubemapSize;
 cvar_t  *r_deluxeSpecular;
@@ -1616,6 +1617,9 @@ void R_Register( void )
 	r_parallaxMapping = ri.Cvar_Get( "r_parallaxMapping", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_parallaxMapOffset = ri.Cvar_Get( "r_parallaxMapOffset", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_parallaxMapShadows = ri.Cvar_Get( "r_parallaxMapShadows", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	// Added in OPM: the GLSL programs kept on disk once linked, and the
+	// permutations play needed built at the start (tr_glsl.c)
+	r_glslCache = ri.Cvar_Get( "r_glslCache", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_cubemapSize = ri.Cvar_Get( "r_cubemapSize", "128", CVAR_ARCHIVE | CVAR_LATCH );
 	// Off for MOH:AA. This drives specular from a deluxe map, which MOH:AA BSPs
