@@ -1273,6 +1273,36 @@ inline static void SkelWeightMorphGetXyz(skelWeight_t *weight, skelBoneCache_t *
             * weight->boneWeight;
 }
 
+// Added in OPM
+//  The dents of RF_GORE_DENTS (R_GoreDents), pushed into one vertex in model
+//  space before the scale, for RE_GetSkinnedMesh to hand over the mesh as drawn.
+static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, float *xyz, vec3_t normal);
+
+static void R_GoreDentSkinned(const refEntity_t *model, const skelAnimFrame_t *frame, int numBones, vec3_t local)
+{
+    int i, k;
+
+    for (i = 0; i < model->num_gore_dents && i < MAX_GORE_DENTS; i++) {
+        const goreDent_t *dent = &model->gore_dents[i];
+        vec3_t            centre, dir, normal;
+
+        if (dent->boneIndex < 0 || dent->boneIndex >= numBones || dent->radius <= 0) {
+            continue;
+        }
+
+        for (k = 0; k < 3; k++) {
+            centre[k] = dent->offset[0] * frame->bones[dent->boneIndex][0][k]
+                      + dent->offset[1] * frame->bones[dent->boneIndex][1][k]
+                      + dent->offset[2] * frame->bones[dent->boneIndex][2][k] + frame->bones[dent->boneIndex][3][k];
+            dir[k] = dent->dir[0] * frame->bones[dent->boneIndex][0][k] + dent->dir[1] * frame->bones[dent->boneIndex][1][k]
+                   + dent->dir[2] * frame->bones[dent->boneIndex][2][k];
+        }
+        VectorNormalize(dir);
+
+        R_GoreDentVertex(centre, dir, dent->radius, local, normal);
+    }
+}
+
 /*
 =============
 RE_GetSkinnedMesh
@@ -1376,6 +1406,10 @@ int RE_GetSkinnedMesh(refEntity_t *model, skinnedVert_t *verts, int maxVerts, in
                         heaviest  = weight->boneWeight;
                         out->bone = boneNum;
                     }
+                }
+
+                if ((model->renderfx & RF_GORE_DENTS) && model->gore_dents) {
+                    R_GoreDentSkinned(model, frame, ri.TIKI_GetNumChannels(tiki), local);
                 }
 
                 VectorScale(local, scale, local);
@@ -1614,95 +1648,8 @@ static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned i
     }
 }
 
-/*
-=============
-Posed surfaces drawn from the card
-
-Added in OPM. The skin cache keeps a posed surface for the frame; the frame
-also keeps a copy of it on the card (RB_SkinArenaStore), which the views that
-draw depth alone draw it from when it is a batch by itself
-(RB_SkinArenaDraw). Such a batch need not hold the surface's vertexes at all:
-RB_SkelMesh leaves them out, deferred, and RB_SkinMaterialize copies them in
-from the skin cache only if the batch is drawn from tess after all.
-=============
-*/
-
-static const skinCacheSlot_t *R_SkinCacheFind(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
-{
-    if (!poseId || !r_skinCache->integer) {
-        return NULL;
-    }
-    return R_SkinCacheSlot(poseId, sf, count);
-}
-
-// The surface tess now holds at baseVertex: copied to the card if it is not
-// there yet this frame, and if it is the batch's first, the batch told so.
-static void RB_SkinArenaKeep(int poseId, const skelSurfaceGame_t *sf, unsigned int count, int baseVertex, int baseIndex, qboolean tangents)
-{
-    skinCacheSlot_t *slot = (skinCacheSlot_t *)R_SkinCacheFind(poseId, sf, count);
-    const int        frame = RB_SkinArenaFrame();
-    const int        numIndexes = tess.numIndexes - baseIndex;
-
-    if (!slot || !frame) {
-        return;
-    }
-
-    if (slot->arenaFrame != frame) {
-        if (!RB_SkinArenaStore(baseVertex, count, baseIndex, numIndexes, tangents, &slot->arenaBase, &slot->arenaFirstIndex)) {
-            return;
-        }
-        slot->arenaFrame    = frame;
-        slot->arenaIndexes  = numIndexes;
-        slot->arenaTangents = tangents;
-    } else if (tangents && !slot->arenaTangents) {
-        RB_SkinArenaAddTangents(slot->arenaBase, baseVertex, count);
-        slot->arenaTangents = qtrue;
-    }
-
-    if (!baseVertex && !baseIndex && slot->arenaIndexes == numIndexes) {
-        tess.skin.valid           = qtrue;
-        tess.skin.deferred        = qfalse;
-        tess.skin.tangents        = slot->arenaTangents;
-        tess.skin.frame           = frame;
-        tess.skin.numVertexes     = count;
-        tess.skin.numIndexes      = numIndexes;
-        tess.skin.arenaBase       = slot->arenaBase;
-        tess.skin.arenaFirstIndex = slot->arenaFirstIndex;
-    }
-}
 
 /*
-=============
-RB_SkinMaterialize
-
-The vertexes of a surface RB_SkelMesh left out of tess, copied in from the
-skin cache: the batch is drawn from tess after all.
-=============
-*/
-void RB_SkinMaterialize(void)
-{
-    const int first = tess.skin.cacheFirst;
-    const int count = tess.skin.numVertexes;
-
-    if (!tess.skin.deferred) {
-        return;
-    }
-    tess.skin.deferred = qfalse;
-
-    Com_Memcpy(tess.xyz[0], skinXyz[first], count * sizeof(skinXyz[0]));
-    Com_Memcpy(tess.normal[0], skinNormal[first], count * sizeof(skinNormal[0]));
-    Com_Memcpy(tess.texCoords[0], skinTexCoords[first], count * sizeof(skinTexCoords[0]));
-    if (tess.skin.cacheTangents) {
-        Com_Memcpy(tess.tangent[0], skinTangent[first], count * sizeof(skinTangent[0]));
-    }
-}
-
-// A mesh's bone among the model's (RB_SkelMesh): from the surface's table, or
-// asked of the client for a bone past it
-#define SKEL_LOCAL_BONE(index) \
-    ((boneMapped && (unsigned int)(index) < (unsigned int)skelmodel->numBones) \
-        ? boneMap[(index)] : ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[(index)].channel))
-
 void RB_SkelMesh(skelSurfaceGame_t *sf)
 {
     int                boneMap[TIKI_MAX_BONES];
@@ -1927,6 +1874,9 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 
     // skinned for another view of this scene already
     kept     = R_SkinCacheFetch(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
+    if (kept) {
+        R_GoreDropFolded(&backEnd.currentEntity->e, &TIKI_Skel_Bones[backEnd.currentEntity->e.bonestart], scale, baseIndex);
+    }
     if (kept == 1) {
         RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
         return;
@@ -2207,6 +2157,10 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     //	}
     //}
     //tess.numVertexes += sf->numVerts;
+
+    // Added in OPM
+    R_GoreDents(&backEnd.currentEntity->e, bones, scale, baseVertex, render_count);
+    R_GoreDropFolded(&backEnd.currentEntity->e, bones, scale, baseIndex);
 
     if (tangents) {
         // the indexes written: fewer than the surface's when the level of

@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_archive.h"
 #include "cg_radar.h"
 #include "cg_ragdoll.h"
+#include "cg_gore.h"
 #include "cg_physics.h"
 #include "cg_bugreport.h"
 #include "cg_orch.h"
@@ -673,6 +674,8 @@ void CG_GameStateReceived(void)
     }
 
     CG_InitMarks();
+    // Added in OPM
+    CG_GoreClear();
 
     CG_RegisterSounds();
 
@@ -704,6 +707,8 @@ void CG_ServerRestarted(void)
     CG_RestartCommandManager();
     // get rid of left over decals from the last game
     CG_InitMarks();
+    // Added in OPM
+    CG_GoreClear();
     // clear all the swipes
     CG_ClearSwipes();
     // Reset tempmodels
@@ -745,6 +750,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
 
     CG_RegisterCvars();
     CG_InitRagdoll();
+    CG_GoreInit();
     CG_BlastInit();
     CG_InitPhysics();
     CG_BugReportInit();

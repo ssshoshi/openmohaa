@@ -23,3 +23,4 @@ are, at their path under the folder.
 |---|---|---|
 | `opm-cabinet-ragdoll` | retail | The man who falls out of a shot hidden cabinet (`global/cabinet.scr`, m3l2, m5l1a, m5l1b) dies once he is clear of it, so the ragdoll takes over his fall. |
 | `opm-hrrtm-blood` | HRRTM Blood Effects Addon | Bullet hits on people splatter the wall behind at once and at full strength, light hits as well as hard ones. Built from the addon's own effect, so without the addon it is not built. |
+| `opm-gore` | nothing | The gore system's shaders and textures (`cg_gore.cpp`): wounds, drops, splashes and pools. All our own; the textures are drawn by `tools/content/gore_textures.py`. |
