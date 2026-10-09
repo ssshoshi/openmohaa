@@ -160,13 +160,6 @@ typedef struct {
 	int         bonestart;
 	int         morphstart;
 	qboolean    hasMorph;
-
-	// Added in OPM
-	//  Dents in a skeletal model (goreDent_t), only with RF_GORE_DENTS. Borrowed
-	//  like bone_override: valid for the whole frame. Last in the struct, so a
-	//  renderer from before them reads every other field where it was.
-	const goreDent_t *gore_dents;
-	int         num_gore_dents;
 } refEntity_t;
 
 // Added in OPM

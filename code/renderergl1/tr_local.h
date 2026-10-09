@@ -2472,10 +2472,8 @@ typedef enum {
 // these are sort of arbitrary limits.
 // the limits apply to the sum of all scenes in a frame --
 // the main view, all the 3D icons, etc
-// Added in OPM
-//  Doubled: the gore system's wounds are drawn as polys (cg_gore.cpp).
-#define	MAX_POLYS		8192
-#define	MAX_POLYVERTS	32768
+#define	MAX_POLYS		4096
+#define	MAX_POLYVERTS	16384
 #define	MAX_TERMARKS	1024
 
 // all of the information needed by the back end must be

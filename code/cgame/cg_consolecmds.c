@@ -25,7 +25,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // text commands typed in at the local console, or executed by a key binding
 
 #include "cg_local.h"
-#include "cg_gore.h"
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
 #include "cg_bugreport.h"
@@ -501,7 +500,6 @@ static consoleCommand_t commands[] = {
     {"rdgrab_nearer",          &CG_RagdollGrabNearer_f     },
     {"rdgrab_farther",         &CG_RagdollGrabFarther_f    },
     {"rdpunt",                 &CG_RagdollPunt_f           },
-    {"gore_sever",             &CG_GoreSever_f             },
     //  Client-side physics
     {"phys_selftest",          &CG_PhysicsSelftest_f       },
     {"phys_poke",              &CG_PhysicsPoke_f           },

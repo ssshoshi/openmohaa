@@ -35,7 +35,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
-#include "cg_gore.h"
 #include "cg_orch.h"
 #include "cg_parsemsg.h"
 #include "cg_props.h"
@@ -9183,8 +9182,6 @@ static cg_ragdoll_t *CG_RagdollAdopt(centity_t *cent, int modelIndex)
         }
 
         CG_RagdollLog(rd, "adopted by entity %d", cent->currentState.number);
-        // its wounds go with it
-        CG_GoreTransfer(rd->lastEntityNum, cent->currentState.number);
         rd->entityNum = cent->currentState.number;
         return rd;
     }
@@ -9253,7 +9250,6 @@ static cg_ragdoll_t *CG_RagdollAdoptStandIn(centity_t *cent, const refEntity_t *
 
     CG_RagdollLog(best, "taken over by stand-in entity %d, %.1f units away", cent->currentState.number, bestDist);
 
-    CG_GoreTransfer(best->lastEntityNum, cent->currentState.number);
     best->entityNum = cent->currentState.number;
     best->standIn   = qtrue;
     // Pinned afresh to the stand-in, whose origin may not be the corpse's.
@@ -10413,9 +10409,7 @@ void CG_RagdollAddUnsent(void)
             continue;
         }
 
-        CG_GoreModifyEntity(cent, &model, qtrue);
         cgi.R_AddRefEntityToScene(&model, ENTITYNUM_NONE);
-        CG_GoreAddEntity(cent, &model, qtrue);
     }
 }
 

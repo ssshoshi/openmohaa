@@ -25,7 +25,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
-#include "cg_gore.h"
 #include "cg_physics.h"
 #include "cg_parsemsg.h"
 #include "cg_specialfx.h"
@@ -64,10 +63,6 @@ static int             wall_impact_type[MAX_IMPACTS];
 static vec3_t          flesh_impact_pos[MAX_IMPACTS];
 static vec3_t          flesh_impact_norm[MAX_IMPACTS];
 static int             flesh_impact_large[MAX_IMPACTS];
-// Added in OPM
-//  Which were found by a ragdoll: their norm is the outward normal, where the
-//  server's are the way the round was going.
-static qboolean        flesh_impact_corpse[MAX_IMPACTS];
 
 // Added in OPM
 //  Rounds this frame that went into a ragdoll corpse, from where they went in
@@ -946,8 +941,7 @@ void CG_AddCorpseFleshImpact(const vec3_t pos, const vec3_t norm, int large)
 
     VectorCopy(pos, flesh_impact_pos[flesh_impact_count]);
     VectorCopy(norm, flesh_impact_norm[flesh_impact_count]);
-    flesh_impact_large[flesh_impact_count]  = large;
-    flesh_impact_corpse[flesh_impact_count] = qtrue;
+    flesh_impact_large[flesh_impact_count] = large;
     flesh_impact_count++;
 }
 
@@ -1084,20 +1078,6 @@ void CG_AddBulletImpacts()
 
     wall_impact_count = 0;
 
-    // Added in OPM
-    //  Every round into a body leaves a wound on it, not only the ones heard.
-    for (i = 0; i < flesh_impact_count; i++) {
-        vec3_t vDir;
-
-        if (flesh_impact_corpse[i]) {
-            VectorNegate(flesh_impact_norm[i], vDir);
-            flesh_impact_corpse[i] = qfalse;
-        } else {
-            VectorCopy(flesh_impact_norm[i], vDir);
-        }
-        CG_GoreNoteHit(flesh_impact_pos[i], vDir, flesh_impact_large[i]);
-    }
-
     if (flesh_impact_count) {
         if (flesh_impact_count > 1) {
             fImpSndDistRA  = 9999.0;
@@ -1193,7 +1173,6 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
         }
 
         CG_RagdollNoteExplosion(vPos, iBlastKind);
-        CG_GoreNoteExplosion(vPos, iBlastKind);
         CG_PhysicsNoteExplosion(vPos, iBlastKind);
     }
 

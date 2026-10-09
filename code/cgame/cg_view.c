@@ -24,7 +24,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_parsemsg.h"
 #include "cg_bugreport.h"
 #include "cg_orch.h"
-#include "cg_gore.h"
 
 //============================================================================
 
@@ -1363,9 +1362,6 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
 
     CG_AddBulletTracers();
     CG_AddBulletImpacts();
-    // Added in OPM
-    //  After the impacts, which note the hits, and every entity.
-    CG_GoreAddToScene();
     CG_AddBeams();
 
     if (cg_acidtrip->integer) {
