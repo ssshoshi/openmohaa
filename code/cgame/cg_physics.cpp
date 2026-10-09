@@ -230,6 +230,7 @@ void CG_PhysicsFrame(void)
 
         CG_PhysicsSendNudges();
         CG_PhysicsPlayImpacts();
+        CG_PhysicsPlayScrapes();
         CG_PhysicsDrawProps(phys_accum / dt);
         CG_PhysicsDrawFurniture(phys_accum / dt);
     }

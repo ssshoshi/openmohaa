@@ -170,6 +170,11 @@ physContact_t Phys_ContactFrom(const JPH::Body& a, const JPH::Body& b, const JPH
     c.approach[0] = a.GetPointVelocity(c.point).Dot(c.normal);
     c.approach[1] = -b.GetPointVelocity(c.point).Dot(c.normal);
     c.closing     = c.approach[0] + c.approach[1];
+    {
+        const JPH::Vec3 rel = a.GetPointVelocity(c.point) - b.GetPointVelocity(c.point);
+        // At the point of contact a rolling thing is still: only sliding is.
+        c.sliding = (rel - c.normal * rel.Dot(c.normal)).Length();
+    }
     c.sensor      = a.IsSensor() || b.IsSensor();
 
     for (int i = 0; i < 2; i++) {
@@ -318,4 +323,151 @@ void PhysImpactLimiter::Clear()
     offered.clear();
     last.clear();
     quietUntil = 0;
+}
+
+//=============================================================
+// Scraping
+//=============================================================
+
+// Slower than this, in metres a second across the surface, nothing scrapes (a
+// prop rocking as it settles slides at under half a metre a second);
+// at this one and over, as loud as its weight allows.
+#define PS_MIN_SLIDE   0.6f
+#define PS_FULL_SLIDE  3.0f
+// How fast a scrape's level follows its target, a second: up quickly, so the
+// start of a slide is heard, and down less so, so a slide that stutters over
+// the steps holds together.
+#define PS_RISE 20.0f
+#define PS_FALL 6.0f
+// Under this level a scrape that is no longer noted is over.
+#define PS_SILENT 0.02f
+
+std::string Phys_ScrapeAlias(physSoundMat_t mat, const char *surface, float level, float *volume, float *pitch)
+{
+    if (mat == PHYS_SND_GLASS || !strcmp(surface, "wade") || !strcmp(surface, "puddle")) {
+        return "";
+    }
+
+    *volume = level * (Phys_SurfaceIsSoft(surface) ? 0.5f : 1.0f);
+    *pitch  = 0.85f + 0.3f * level;
+
+    return std::string("phys_") + Phys_SoundMatName(mat) + "_scrape";
+}
+
+PhysScrapeTracker::PhysScrapeTracker()
+    : maxHeard(4)
+    , lastTime(0)
+{}
+
+void PhysScrapeTracker::Note(const physContact_t& c, int slider, JPH::uint64 source, float mass)
+{
+    std::map<JPH::uint64, Noted>::iterator it = noted.find(source);
+
+    if (c.sliding < PS_MIN_SLIDE) {
+        return;
+    }
+    if (it != noted.end() && it->second.contact.sliding >= c.sliding) {
+        return;
+    }
+
+    Noted n;
+
+    n.contact     = c;
+    n.slider      = slider;
+    n.mass        = mass;
+    noted[source] = n;
+}
+
+void PhysScrapeTracker::Update(int now, std::vector<physScrape_t *> *out, std::vector<JPH::uint64> *ended)
+{
+    float dt = (now - lastTime) * 0.001f;
+
+    out->clear();
+    ended->clear();
+
+    if (lastTime == 0 || dt < 0.0f || dt > 0.25f) {
+        dt = 0.016f;
+    }
+    lastTime = now;
+
+    // The slides of this frame.
+    for (std::map<JPH::uint64, Noted>::iterator it = noted.begin(); it != noted.end(); ++it) {
+        const physContact_t& c = it->second.contact;
+        const int            h = it->second.slider;
+        physScrape_t&        s = scrapes[it->first];
+
+        if (!s.source) {
+            s.source      = it->first;
+            s.level       = 0.0f;
+            s.matKnown    = false;
+            s.surfaceTime = 0;
+        }
+        s.hitter = c.data[h];
+        s.other  = c.data[!h];
+        s.mass   = it->second.mass;
+        s.speed  = c.sliding;
+        PhysFromJolt(JPH::Vec3(c.point), s.point);
+        PhysFromJolt(h == 0 ? c.normal : -c.normal, s.dir);
+        VectorNormalize(s.dir);
+    }
+
+    // Each eased toward how hard it scrapes now: nothing, for those not noted.
+    for (std::map<JPH::uint64, physScrape_t>::iterator it = scrapes.begin(); it != scrapes.end();) {
+        physScrape_t& s      = it->second;
+        const bool    sliding = noted.count(it->first) > 0;
+        float         target = 0.0f;
+
+        if (sliding) {
+            const float bySpeed = PI_Clamp((s.speed - PS_MIN_SLIDE) / (PS_FULL_SLIDE - PS_MIN_SLIDE), 0.0f, 1.0f);
+            const float byMass  = PI_Clamp(0.3f + 0.7f * sqrtf(Q_max(s.mass, 0.0f) / PI_FULL_MASS), 0.3f, 1.0f);
+
+            target = (0.2f + 0.8f * bySpeed) * byMass;
+        }
+
+        s.level += (target - s.level) * Q_min(1.0f, dt * (target > s.level ? PS_RISE : PS_FALL));
+
+        if (!sliding && s.level < PS_SILENT) {
+            ended->push_back(it->first);
+            it = scrapes.erase(it);
+            continue;
+        }
+        ++it;
+    }
+    noted.clear();
+
+    // The loudest few; a scrape heard last frame keeps its place over one a
+    // little louder, or two would trade places every frame.
+    std::vector<physScrape_t *> all;
+
+    for (std::map<JPH::uint64, physScrape_t>::iterator it = scrapes.begin(); it != scrapes.end(); ++it) {
+        all.push_back(&it->second);
+    }
+    std::sort(all.begin(), all.end(), [this](const physScrape_t *x, const physScrape_t *y) {
+        const float bx = std::find(heard.begin(), heard.end(), x->source) != heard.end() ? 1.5f : 1.0f;
+        const float by = std::find(heard.begin(), heard.end(), y->source) != heard.end() ? 1.5f : 1.0f;
+        return x->level * bx > y->level * by;
+    });
+
+    std::vector<JPH::uint64> nowHeard;
+
+    for (size_t i = 0; i < all.size() && (int)i < maxHeard; i++) {
+        out->push_back(all[i]);
+        nowHeard.push_back(all[i]->source);
+    }
+    // Pushed out by louder ones: as good as ended, to whoever plays them.
+    for (size_t i = 0; i < heard.size(); i++) {
+        if (std::find(nowHeard.begin(), nowHeard.end(), heard[i]) == nowHeard.end()
+            && std::find(ended->begin(), ended->end(), heard[i]) == ended->end()) {
+            ended->push_back(heard[i]);
+        }
+    }
+    heard = nowHeard;
+}
+
+void PhysScrapeTracker::Clear()
+{
+    noted.clear();
+    scrapes.clear();
+    heard.clear();
+    lastTime = 0;
 }

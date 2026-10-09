@@ -58,6 +58,7 @@ cvar_t *cg_physics_sounddebug;
 #define PS_PARTICLE_SOURCE (1ULL << 40)
 
 static PhysImpactLimiter ps_limiter;
+static PhysScrapeTracker ps_scrapes;
 
 // cg_commands.cpp: whose sound PlaySound makes, and whose aliases it looks in
 // first. An impact is nobody's.
@@ -73,6 +74,7 @@ void CG_PhysicsSoundsInit(void)
     ps_limiter.interval = 120;
     ps_limiter.perFrame = 6;
     ps_limiter.Clear();
+    ps_scrapes.Clear();
 }
 
 void CG_PhysicsSoundsQuiet(void)
@@ -123,6 +125,17 @@ static qboolean PS_MaterialOf(JPH::uint64 data, physSoundMat_t *mat)
     return qfalse;
 }
 
+// The one of a corpse's parts that stands for all of it, and the weight it
+// knocks or scrapes with; anything else stands for itself, at its own weight.
+static JPH::uint64 PS_SourceOf(JPH::uint64 data, float *mass)
+{
+    if (PS_IsRagdoll(data)) {
+        *mass = PS_IsTrunk(data) ? PS_TRUNK_WEIGHT : PS_LIMB_WEIGHT;
+        return PHYS_USERDATA_RAGDOLL_BASE + (data - PHYS_USERDATA_RAGDOLL_BASE) / 32 * 32;
+    }
+    return data;
+}
+
 // From the contact listener, inside the step: only noted.
 void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold)
 {
@@ -136,7 +149,7 @@ void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::
     }
 
     c = Phys_ContactFrom(a, b, manifold);
-    if (c.sensor || c.closing <= 0.0f) {
+    if (c.sensor) {
         return;
     }
 
@@ -146,12 +159,27 @@ void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::
         return;
     }
 
-    // The one that moved into the other; of two moving, the faster.
+    // Sliding: the one of two moving that moves the faster.
     if (!c.dynamic[1]) {
         h = 0;
     } else if (!c.dynamic[0]) {
         h = 1;
     } else {
+        h = a.GetLinearVelocity().LengthSq() >= b.GetLinearVelocity().LengthSq() ? 0 : 1;
+    }
+    {
+        float mass = c.mass[h];
+
+        source = PS_SourceOf(c.data[h], &mass);
+        ps_scrapes.Note(c, h, source, mass);
+    }
+
+    if (c.closing <= 0.0f) {
+        return;
+    }
+
+    // Striking: the one that moved into the other; of two moving, the faster.
+    if (c.dynamic[0] && c.dynamic[1]) {
         h = c.approach[0] >= c.approach[1] ? 0 : 1;
     }
 
@@ -160,10 +188,8 @@ void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::
     impact.hitterMat = PHYS_SND_DEFAULT; // after the limiter, for the few kept
     impact.mass      = c.mass[h];
     impact.speed     = c.closing;
-    if (PS_IsRagdoll(impact.hitter)) {
-        impact.mass = PS_IsTrunk(impact.hitter) ? PS_TRUNK_WEIGHT : PS_LIMB_WEIGHT;
-    }
-    impact.strength = Phys_ImpactStrength(c.closing, impact.mass);
+    source           = PS_SourceOf(impact.hitter, &impact.mass);
+    impact.strength  = Phys_ImpactStrength(c.closing, impact.mass);
     if (impact.strength <= 0.0f) {
         return;
     }
@@ -172,14 +198,8 @@ void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::
     PhysFromJolt(h == 0 ? c.normal : -c.normal, impact.dir);
     VectorNormalize(impact.dir);
 
-    if (PS_IsRagdoll(impact.hitter)) {
-        if (!PS_IsTrunk(impact.hitter)) {
-            impact.strength *= PS_LIMB_VOLUME;
-        }
-        // One sound a corpse at a time, whichever part.
-        source = PHYS_USERDATA_RAGDOLL_BASE + (impact.hitter - PHYS_USERDATA_RAGDOLL_BASE) / 32 * 32;
-    } else {
-        source = impact.hitter;
+    if (PS_IsRagdoll(impact.hitter) && !PS_IsTrunk(impact.hitter)) {
+        impact.strength *= PS_LIMB_VOLUME;
     }
 
     ps_limiter.Offer(impact, source);
@@ -213,21 +233,21 @@ void CG_PhysicsRagdollImpact(int index, qboolean trunk, const trace_t *trace, fl
 
 // The surface below an impact: traced into the world from the point it struck,
 // as the engine has it, and water where the point is wet.
-static const char *PS_SurfaceAt(const physImpact_t *impact)
+static const char *PS_SurfaceAt(const vec3_t point, const vec3_t dir)
 {
     trace_t tr;
     vec3_t  start, end, above;
     int     contents;
 
-    contents = cgi.CM_PointContents(impact->point, 0);
+    contents = cgi.CM_PointContents(point, 0);
     if (contents & MASK_WATER) {
-        VectorCopy(impact->point, above);
+        VectorCopy(point, above);
         above[2] += 16.0f;
         return (cgi.CM_PointContents(above, 0) & MASK_WATER) ? "wade" : "puddle";
     }
 
-    VectorMA(impact->point, -4.0f, impact->dir, start);
-    VectorMA(impact->point, 12.0f, impact->dir, end);
+    VectorMA(point, -4.0f, dir, start);
+    VectorMA(point, 12.0f, dir, end);
     cgi.CM_BoxTrace(&tr, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID | CONTENTS_FENCE, qfalse);
 
     if (tr.fraction >= 1.0f || tr.startsolid) {
@@ -267,7 +287,7 @@ void CG_PhysicsPlayImpacts(void)
         }
 
         if (impact->other == PHYS_USERDATA_WORLD || impact->other == PHYS_USERDATA_FENCE) {
-            surface = PS_SurfaceAt(impact);
+            surface = PS_SurfaceAt(impact->point, impact->dir);
         } else if (PS_MaterialOf(impact->other, &otherMat)) {
             surface = Phys_SurfaceOfMat(otherMat);
         } else {
@@ -305,5 +325,108 @@ void CG_PhysicsPlayImpacts(void)
             current_entity_number = oldNumber;
             current_tiki          = oldTiki;
         }
+    }
+}
+
+//=============================================================
+// Scraping
+//=============================================================
+
+// Looked again this often, as a slide moves on to other ground.
+#define PS_SURFACE_INTERVAL 300
+
+typedef struct {
+    sfxHandle_t sfx;
+    float       volume, pitch, minDist, maxDist;
+} psLoop_t;
+
+static std::map<std::string, psLoop_t> ps_loops;
+
+// A scrape alias as a loop: its one sound, registered once.
+static const psLoop_t *PS_Loop(const std::string& alias)
+{
+    std::map<std::string, psLoop_t>::iterator it = ps_loops.find(alias);
+    AliasListNode_t                         *node = NULL;
+    const char                              *name;
+    psLoop_t                                 loop;
+
+    if (it != ps_loops.end()) {
+        return it->second.sfx ? &it->second : NULL;
+    }
+
+    memset(&loop, 0, sizeof(loop));
+    name = cgi.Alias_FindRandom(alias.c_str(), &node);
+    if (name && node) {
+        loop.sfx     = cgi.S_RegisterSound(name, node->streamed);
+        loop.volume  = node->volume;
+        loop.pitch   = node->pitch;
+        loop.minDist = node->dist;
+        loop.maxDist = node->maxDist;
+    } else {
+        cgi.DPrintf("physics sound: %s needs an alias in ubersound/opm_physics.scr\n", alias.c_str());
+    }
+
+    ps_loops[alias] = loop;
+    return loop.sfx ? &ps_loops[alias] : NULL;
+}
+
+// Once a frame, after the steps: the loops of what is sliding, added again
+// (the sound system forgets them every frame).
+void CG_PhysicsPlayScrapes(void)
+{
+    std::vector<physScrape_t *> heard;
+    std::vector<JPH::uint64>    ended;
+
+    ps_scrapes.Update(cg.time, &heard, &ended);
+
+    if (!CG_PhysicsSoundsOn()) {
+        return;
+    }
+
+    for (size_t i = 0; i < heard.size(); i++) {
+        physScrape_t   *s = heard[i];
+        physSoundMat_t  otherMat;
+        const psLoop_t *loop;
+        float           volume, pitch;
+        std::string     alias;
+
+        if (!s->matKnown) {
+            if (!PS_MaterialOf(s->hitter, &s->mat)) {
+                continue;
+            }
+            s->matKnown = true;
+        }
+
+        if (s->other == PHYS_USERDATA_WORLD || s->other == PHYS_USERDATA_FENCE) {
+            if (s->surface.empty() || cg.time - s->surfaceTime >= PS_SURFACE_INTERVAL || cg.time < s->surfaceTime) {
+                s->surface     = PS_SurfaceAt(s->point, s->dir);
+                s->surfaceTime = cg.time;
+            }
+        } else if (PS_MaterialOf(s->other, &otherMat)) {
+            s->surface = Phys_SurfaceOfMat(otherMat);
+        } else {
+            continue;
+        }
+
+        alias = Phys_ScrapeAlias(s->mat, s->surface.c_str(), s->level, &volume, &pitch);
+        if (alias.empty() || !(loop = PS_Loop(alias))) {
+            continue;
+        }
+
+        volume *= loop->volume * cg_physics_soundvolume->value;
+        if (cg_physics_sounddebug->integer > 1) {
+            cgi.Printf(
+                "physics scrape: %s, %s on %s, %.1f m/s, level %.2f, volume %.2f pitch %.2f\n",
+                alias.c_str(),
+                Phys_SoundMatName(s->mat),
+                s->surface.c_str(),
+                s->speed,
+                s->level,
+                volume,
+                pitch
+            );
+        }
+
+        cgi.S_AddLoopingSound(s->point, vec3_origin, loop->sfx, volume, loop->minDist, loop->maxDist, pitch * loop->pitch, 0);
     }
 }

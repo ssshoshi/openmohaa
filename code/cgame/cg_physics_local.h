@@ -70,6 +70,7 @@ void CG_PhysicsSoundsInit(void);
 void CG_PhysicsSoundsQuiet(void);
 void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold);
 void CG_PhysicsPlayImpacts(void);
+void CG_PhysicsPlayScrapes(void);
 
 extern cvar_t *cg_physics_furniture;
 

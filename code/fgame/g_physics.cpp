@@ -242,6 +242,15 @@ static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
 static cvar_t           *g_physics_sounds;
 static cvar_t           *g_physics_sounddebug;
 static PhysImpactLimiter gphys_impacts;
+static PhysScrapeTracker gphys_scrapes;
+
+// The entities whose loop sound is a scrape of ours, with the alias's own
+// volume and pitch, which the slide's are made from.
+typedef struct {
+    float volume, pitch;
+} gphysLoop_t;
+
+static std::map<int, gphysLoop_t> gphys_loops;
 
 // A world just made, or a game restored, is quiet this long.
 #define GPHYS_QUIET_TIME 1500
@@ -292,15 +301,26 @@ private:
         }
 
         c = Phys_ContactFrom(a, b, manifold);
-        if (c.sensor || c.closing <= 0.0f) {
+        if (c.sensor) {
             return;
         }
 
+        // Sliding: the one of two moving that moves the faster.
         if (!c.dynamic[1]) {
             h = 0;
         } else if (!c.dynamic[0]) {
             h = 1;
         } else {
+            h = a.GetLinearVelocity().LengthSq() >= b.GetLinearVelocity().LengthSq() ? 0 : 1;
+        }
+        gphys_scrapes.Note(c, h, c.data[h], c.mass[h]);
+
+        if (c.closing <= 0.0f) {
+            return;
+        }
+
+        // Striking: the one that moved into the other; of two moving, the faster.
+        if (c.dynamic[0] && c.dynamic[1]) {
             h = c.approach[0] >= c.approach[1] ? 0 : 1;
         }
 
@@ -326,20 +346,20 @@ static GPhysContacts gphys_contacts;
 
 // The surface below an impact, from the engine's own trace, and water where
 // the point is wet.
-static const char *G_PhysicsSurfaceAt(const physImpact_t *impact, Entity *hitter)
+static const char *G_PhysicsSurfaceAt(const vec3_t point, const vec3_t dir, Entity *hitter)
 {
     trace_t tr;
     vec3_t  above;
     Vector  start, end;
 
-    if (gi.pointcontents(impact->point, ENTITYNUM_NONE) & MASK_WATER) {
-        VectorCopy(impact->point, above);
+    if (gi.pointcontents(point, ENTITYNUM_NONE) & MASK_WATER) {
+        VectorCopy(point, above);
         above[2] += 16.0f;
         return (gi.pointcontents(above, ENTITYNUM_NONE) & MASK_WATER) ? "wade" : "puddle";
     }
 
-    start = Vector(impact->point) - Vector(impact->dir) * 4.0f;
-    end   = Vector(impact->point) + Vector(impact->dir) * 12.0f;
+    start = Vector(point) - Vector(dir) * 4.0f;
+    end   = Vector(point) + Vector(dir) * 12.0f;
     tr    = G_Trace(start, vec_zero, vec_zero, end, hitter, MASK_SOLID, qfalse, "G_PhysicsSurfaceAt");
 
     if (tr.fraction >= 1.0f || tr.startsolid) {
@@ -376,7 +396,7 @@ static void G_PhysicsPlayImpacts(void)
             // Someone's box, a door: the box makes no sound of its own.
             continue;
         } else {
-            surface = G_PhysicsSurfaceAt(impact, hitter);
+            surface = G_PhysicsSurfaceAt(impact->point, impact->dir, hitter);
         }
 
         alias = Phys_ImpactAlias(impact->hitterMat, surface, impact->mass, impact->strength, &volume, &pitch);
@@ -401,6 +421,114 @@ static void G_PhysicsPlayImpacts(void)
 
     if (g_physics_sounddebug->integer && rejected) {
         gi.Printf("g_physics sound: %d left out\n", rejected);
+    }
+}
+
+// A scrape of ours over: the entity's loop stopped, if it is still there.
+static void G_PhysicsStopScrape(int entnum)
+{
+    std::map<int, gphysLoop_t>::iterator it = gphys_loops.find(entnum);
+
+    if (it == gphys_loops.end()) {
+        return;
+    }
+    gphys_loops.erase(it);
+
+    if (g_entities[entnum].entity) {
+        g_entities[entnum].entity->StopLoopSound();
+    }
+}
+
+static void G_PhysicsStopScrapes(void)
+{
+    while (!gphys_loops.empty()) {
+        G_PhysicsStopScrape(gphys_loops.begin()->first);
+    }
+}
+
+// Once a frame, after the steps: what is sliding, as the loop sound of the
+// entity that slides, which every client hears.
+static void G_PhysicsPlayScrapes(void)
+{
+    std::vector<physScrape_t *> heard;
+    std::vector<JPH::uint64>    ended;
+
+    gphys_scrapes.Update(level.inttime, &heard, &ended);
+
+    for (size_t i = 0; i < ended.size(); i++) {
+        if (ended[i] >= PHYS_USERDATA_ENTITY_BASE && ended[i] < PHYS_USERDATA_ENTITY_BASE + MAX_GENTITIES) {
+            G_PhysicsStopScrape((int)(ended[i] - PHYS_USERDATA_ENTITY_BASE));
+        }
+    }
+
+    if (!g_physics_sounds->integer) {
+        G_PhysicsStopScrapes();
+        return;
+    }
+
+    for (size_t i = 0; i < heard.size(); i++) {
+        physScrape_t *s      = heard[i];
+        Entity       *hitter = G_PhysicsPropOf(s->hitter);
+        Entity       *other;
+        float         volume, pitch;
+        std::string   alias;
+
+        if (!hitter) {
+            continue;
+        }
+        if (!s->matKnown) {
+            s->mat      = G_PhysicsMaterial(hitter)->sound;
+            s->matKnown = true;
+        }
+
+        other = G_PhysicsPropOf(s->other);
+        if (other) {
+            s->surface = Phys_SurfaceOfMat(G_PhysicsMaterial(other)->sound);
+        } else if (s->other >= PHYS_USERDATA_ENTITY_BASE && s->other < PHYS_USERDATA_ENTITY_BASE + MAX_GENTITIES) {
+            continue;
+        } else if (s->surface.empty() || level.inttime - s->surfaceTime >= 300 || level.inttime < s->surfaceTime) {
+            s->surface     = G_PhysicsSurfaceAt(s->point, s->dir, hitter);
+            s->surfaceTime = level.inttime;
+        }
+
+        alias = Phys_ScrapeAlias(s->mat, s->surface.c_str(), s->level, &volume, &pitch);
+        if (alias.empty()) {
+            G_PhysicsStopScrape(hitter->entnum);
+            continue;
+        }
+
+        if (!gphys_loops.count(hitter->entnum)) {
+            gphysLoop_t loop;
+
+            // A loop of its own (a fire, a hiss) is not ours to take over.
+            if (hitter->edict->s.loopSound) {
+                continue;
+            }
+            hitter->LoopSound(alias.c_str(), 1.0f, -1.0f, -1.0f, 1.0f);
+            if (!hitter->edict->s.loopSound) {
+                continue;
+            }
+            loop.volume                  = hitter->edict->s.loopSoundVolume;
+            loop.pitch                   = hitter->edict->s.loopSoundPitch;
+            gphys_loops[hitter->entnum] = loop;
+        }
+
+        hitter->edict->s.loopSoundVolume = gphys_loops[hitter->entnum].volume * volume;
+        hitter->edict->s.loopSoundPitch  = gphys_loops[hitter->entnum].pitch * pitch;
+
+        if (g_physics_sounddebug->integer > 1) {
+            gi.Printf(
+                "g_physics scrape: %s, %s (%s) on %s, %.1f m/s, level %.2f, volume %.2f pitch %.2f\n",
+                alias.c_str(),
+                Phys_SoundMatName(s->mat),
+                hitter->getClassname(),
+                s->surface.c_str(),
+                s->speed,
+                s->level,
+                volume,
+                pitch
+            );
+        }
     }
 }
 
@@ -585,6 +713,9 @@ void G_PhysicsInitLevel(const char *mapfile)
     g_physics_sounddebug = gi.Cvar_Get("g_physics_sounddebug", "0", 0);
     gphys_impacts.Clear();
     gphys_impacts.Quiet(level.inttime + GPHYS_QUIET_TIME);
+    // The entities of a level gone are gone with it.
+    gphys_loops.clear();
+    gphys_scrapes.Clear();
 
     G_PhysicsShutdown();
     G_PhysicsRulesLoad();
@@ -902,6 +1033,8 @@ void G_PhysicsRemoveEntity(Entity *ent)
     bodies.RemoveBody(pe->id);
     bodies.DestroyBody(pe->id);
     pe->owned = qfalse;
+    // No longer ours to slide, nor its scrape.
+    G_PhysicsStopScrape(ent->entnum);
 
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (gphys_grab[i].entnum == ent->entnum) {
@@ -1849,6 +1982,7 @@ void G_PhysicsFrame(float frametime)
     }
 
     G_PhysicsPlayImpacts();
+    G_PhysicsPlayScrapes();
 
     if (!steps) {
         return;

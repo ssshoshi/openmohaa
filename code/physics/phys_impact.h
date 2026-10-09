@@ -67,6 +67,7 @@ typedef struct {
     JPH::Vec3   normal;  // from the first body to the second
     float       closing; // metres a second, along the normal
     float       approach[2]; // each one's own speed toward the other
+    float       sliding;     // metres a second, across the surface
     bool        sensor;
 } physContact_t;
 
@@ -93,6 +94,60 @@ float Phys_ImpactStrength(float speed, float mass);
 // The alias for an impact of mat on surface (a Phys_SurfaceName), and the
 // volume and pitch to play it at.
 std::string Phys_ImpactAlias(physSoundMat_t mat, const char *surface, float mass, float strength, float *volume, float *pitch);
+
+//=============================================================
+// Scraping
+//=============================================================
+
+// A body sliding along something, as long as it slides: a loop that follows
+// it, as loud as it is fast and heavy.
+typedef struct {
+    JPH::uint64    source;
+    JPH::uint64    hitter, other; // user data, the slider first
+    float          mass;
+    float          speed;  // metres a second, this frame's fastest
+    vec3_t         point;  // game units
+    vec3_t         dir;    // from the slider into what it slides on
+    float          level;  // 0..1, eased toward how hard it scrapes now
+    physSoundMat_t mat;    // the caller's, once it is known
+    bool           matKnown;
+    std::string    surface; // the caller's, looked again now and then
+    int            surfaceTime;
+} physScrape_t;
+
+// The alias for mat sliding on surface, and its volume and pitch at level.
+// Empty when it makes no such sound (glass, or anything in water).
+std::string Phys_ScrapeAlias(physSoundMat_t mat, const char *surface, float level, float *volume, float *pitch);
+
+class PhysScrapeTracker
+{
+public:
+    PhysScrapeTracker();
+
+    // A contact sliding fast enough, from the listener; the fastest of a
+    // source's contacts over the frame is kept.
+    void Note(const physContact_t& c, int slider, JPH::uint64 source, float mass);
+
+    // Advances each scrape's level to now; out has the loudest few still to be
+    // heard, ended has the sources that were and are not any more.
+    void Update(int now, std::vector<physScrape_t *> *out, std::vector<JPH::uint64> *ended);
+
+    void Clear();
+
+    int maxHeard; // scrapes heard at once at most
+
+private:
+    struct Noted {
+        physContact_t contact;
+        int           slider;
+        float         mass;
+    };
+
+    std::map<JPH::uint64, Noted>        noted;
+    std::map<JPH::uint64, physScrape_t> scrapes;
+    std::vector<JPH::uint64>            heard;
+    int                                 lastTime;
+};
 
 // Keeps the sounds few: each source no more often than its interval, and no
 // more than a handful a frame, the loudest kept. Its clock is the caller's, in

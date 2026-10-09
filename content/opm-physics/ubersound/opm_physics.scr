@@ -4,6 +4,8 @@
 // the thing's weight, soft on earth, grass, sand, snow or carpet; phys_flesh_<hard|soft>
 // for corpses (a trunk on hard ground; a limb, or soft ground). The code scales
 // volume by how hard the knock was and pitch by the weight.
+// phys_<material>_scrape: one loop each, played while a thing slides (no glass);
+// the code sets its volume and pitch by how fast and how heavy.
 //
 // The recordings are Half-Life 2's and Day of Defeat: Source's physics sounds, which
 // are not ours to publish: physics.fetch says where the build fetches them from,
@@ -179,5 +181,15 @@ aliascache phys_flesh_soft4 sound/physics/body/body_medium_impact_soft4.wav soun
 aliascache phys_flesh_soft5 sound/physics/body/body_medium_impact_soft5.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_flesh_soft6 sound/physics/body/body_medium_impact_soft6.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_flesh_soft7 sound/physics/body/body_medium_impact_soft7.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+
+// Scraping: loops, one a material.
+aliascache phys_wood_scrape1 sound/physics/wood/wood_box_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_scrape1 sound/physics/metal/metal_box_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_weapon_scrape1 sound/physics/metal/metal_grenade_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_helmet_scrape1 sound/physics/metal/canister_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_scrape1 sound/physics/cardboard/cardboard_box_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_scrape1 sound/physics/concrete/concrete_block_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_scrape1 sound/physics/wood/wood_box_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_scrape1 sound/physics/body/body_medium_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
 
 end
