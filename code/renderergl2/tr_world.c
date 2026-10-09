@@ -319,12 +319,25 @@ static int R_PshadowSurface( msurface_t *surf, int pshadowBits ) {
 R_AddWorldSurface
 ======================
 */
-static void R_AddWorldSurface( msurface_t *surf, int dlightBits, int pshadowBits ) {
+static void R_AddWorldSurface( msurface_t *surf, int dlightBits, int pshadowBits, uint64_t rtBits, qboolean worldSpace ) {
+	uint64_t oldCulled;
+
 	// FIXME: bmodel fog?
 
 	// try to cull before dlighting or adding
 	if ( R_CullSurface( surf ) ) {
 		return;
+	}
+
+	// Added in OPM
+	//  The realtime lights the nodes found near it, against its own bounds.
+	//  A brush model's are its own, in its space: it takes the entity's.
+	if ( worldSpace && rtBits && rtBits != RT_MASK_ALL ) {
+		if ( surf->cullinfo.type & CULLINFO_BOX ) {
+			rtBits = R_RtBoxMask( surf->cullinfo.bounds[0], surf->cullinfo.bounds[1], rtBits );
+		} else if ( surf->cullinfo.type & CULLINFO_SPHERE ) {
+			rtBits = R_RtSphereMask( surf->cullinfo.localOrigin, surf->cullinfo.radius, rtBits );
+		}
 	}
 
 	// check for dlighting
@@ -349,7 +362,10 @@ static void R_AddWorldSurface( msurface_t *surf, int dlightBits, int pshadowBits
 	}
 	//=========================
 
+	oldCulled = tr.rtDrawCulled;
+	tr.rtDrawCulled = ~rtBits;
 	R_AddDrawSurf( surf->data, surf->shader, surf->fogIndex, dlightBits, pshadowBits, surf->cubemapIndex );
+	tr.rtDrawCulled = oldCulled;
 }
 
 /*
@@ -379,6 +395,24 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 	if ( clip == CULL_OUT ) {
 		return;
 	}
+
+	// Added in OPM
+	//  The realtime lights that reach it, by a sphere around its bounds where
+	//  it is now.
+	{
+		const uint64_t candidates = R_RtViewMask();
+
+		if ( candidates != RT_MASK_ALL ) {
+			vec3_t local, centre;
+			float  radius;
+
+			VectorAdd( bmodel->bounds[0], bmodel->bounds[1], local );
+			VectorScale( local, 0.5f, local );
+			R_LocalPointToWorld( local, centre );
+			radius = Distance( bmodel->bounds[0], bmodel->bounds[1] ) * 0.5f * Q_max( 1.0f, ent->e.scale );
+			tr.rtDrawCulled = ~R_RtSphereMask( centre, radius, candidates );
+		}
+	}
 	
 	R_SetupEntityLighting( &tr.refdef, ent );
 	R_DlightBmodel( bmodel );
@@ -388,7 +422,7 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 	//  view, but no longer draws them.
 	if ( bmodel->surfaceList ) {
 		for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
-			R_AddWorldSurface( tr.world->surfaces + bmodel->surfaceList[i], tr.currentEntity->needDlights, 0 );
+			R_AddWorldSurface( tr.world->surfaces + bmodel->surfaceList[i], tr.currentEntity->needDlights, 0, ~tr.rtDrawCulled, qfalse );
 		}
 		return;
 	}
@@ -399,7 +433,7 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 		if (tr.world->surfacesViewCount[surf] != tr.viewCount)
 		{
 			tr.world->surfacesViewCount[surf] = tr.viewCount;
-			R_AddWorldSurface( tr.world->surfaces + surf, tr.currentEntity->needDlights, 0 );
+			R_AddWorldSurface( tr.world->surfaces + surf, tr.currentEntity->needDlights, 0, ~tr.rtDrawCulled, qfalse );
 		}
 	}
 }
@@ -419,11 +453,12 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 R_RecursiveWorldNode
 ================
 */
-static void R_RecursiveWorldNode( mnode_t *node, uint32_t planeBits, uint32_t dlightBits, uint32_t pshadowBits ) {
+static void R_RecursiveWorldNode( mnode_t *node, uint32_t planeBits, uint32_t dlightBits, uint32_t pshadowBits, uint64_t rtBits ) {
 
 	do {
 		uint32_t newDlights[2];
 		uint32_t newPShadows[2];
+		uint64_t newRtBits[2];
 
 		// if the node wasn't marked as potentially visible, exit
 		// pvs is skipped for depth shadows
@@ -544,13 +579,22 @@ static void R_RecursiveWorldNode( mnode_t *node, uint32_t planeBits, uint32_t dl
 			}
 		}
 
+		// Added in OPM
+		//  The realtime lights, split as the dynamic lights are.
+		if ( rtBits && rtBits != RT_MASK_ALL ) {
+			newRtBits[0] = R_RtPlaneMask( node->plane, rtBits, &newRtBits[1] );
+		} else {
+			newRtBits[0] = newRtBits[1] = rtBits;
+		}
+
 		// recurse down the children, front side first
-		R_RecursiveWorldNode (node->children[0], planeBits, newDlights[0], newPShadows[0] );
+		R_RecursiveWorldNode (node->children[0], planeBits, newDlights[0], newPShadows[0], newRtBits[0] );
 
 		// tail recurse
 		node = node->children[1];
 		dlightBits = newDlights[1];
 		pshadowBits = newPShadows[1];
+		rtBits = newRtBits[1];
 	} while ( 1 );
 
 	{
@@ -593,11 +637,13 @@ static void R_RecursiveWorldNode( mnode_t *node, uint32_t planeBits, uint32_t dl
 				tr.world->surfacesViewCount[surf] = tr.viewCount;
 				tr.world->surfacesDlightBits[surf] = dlightBits;
 				tr.world->surfacesPshadowBits[surf] = pshadowBits;
+				tr.world->surfacesRtBits[surf] = rtBits;
 			}
 			else
 			{
 				tr.world->surfacesDlightBits[surf] |= dlightBits;
 				tr.world->surfacesPshadowBits[surf] |= pshadowBits;
+				tr.world->surfacesRtBits[surf] |= rtBits;
 			}
 			view++;
 		}
@@ -882,7 +928,7 @@ void R_AddWorldSurfaces (void) {
 
 	{
 		double tStart = R_MicroSeconds();
-		R_RecursiveWorldNode( tr.world->nodes, planeBits, dlightBits, pshadowBits);
+		R_RecursiveWorldNode( tr.world->nodes, planeBits, dlightBits, pshadowBits, R_RtViewMask() );
 		tr.pc.t_worldNode += R_MicroSeconds() - tStart;
 	}
 
@@ -905,7 +951,7 @@ void R_AddWorldSurfaces (void) {
 			if (tr.world->surfaces[i].detached && !(tr.viewParms.flags & VPF_RTBAKED))
 				continue;
 
-			R_AddWorldSurface( tr.world->surfaces + i, tr.world->surfacesDlightBits[i], tr.world->surfacesPshadowBits[i] );
+			R_AddWorldSurface( tr.world->surfaces + i, tr.world->surfacesDlightBits[i], tr.world->surfacesPshadowBits[i], tr.world->surfacesRtBits[i], qtrue );
 			tr.refdef.dlightMask |= tr.world->surfacesDlightBits[i];
 		}
 

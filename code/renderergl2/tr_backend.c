@@ -483,6 +483,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
 
+	// Added in OPM: what the pass's time goes to (r_gpuTimers)
+	RB_SurfProfBegin();
+
 	// OPENMOHAA-specific stuff
 	//=========================
 	// A light sphere depends on the entity and the lights, not on the view,
@@ -506,7 +509,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				continue;
 
 			// fast path, same as previous sort
+			tess.rtMask |= drawSurf->rtMask;
+			backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
+			RB_SurfProfSurface( *drawSurf->surface );
 			rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
+			RB_SurfProfSwitch( SURFPROF_LIST );
 			continue;
 		}
 		oldSort = (int)drawSurf->sort;
@@ -538,6 +545,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			}
 			RB_BeginSurface( shader, fogNum, cubemapIndex );
 			backEnd.pc.c_surfBatches++;
+			// Added in OPM: the realtime lights its surfaces may take
+			tess.rtMask = 0;
 			oldShader = shader;
 			oldFogNum = fogNum;
 			oldDlighted = dlighted;
@@ -735,8 +744,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
         }
 
 		// add the triangles for this surface
+		tess.rtMask |= drawSurf->rtMask;
+		backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
+		RB_SurfProfSurface( *drawSurf->surface );
 		rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
+		RB_SurfProfSwitch( SURFPROF_LIST );
 	}
+	backEnd.rtSurfaceCulled = 0;
 
 	backEnd.refdef.floatTime = originalTime;
 
@@ -744,6 +758,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	if (oldShader != NULL) {
 		RB_EndSurface();
 	}
+	RB_SurfProfEnd();
 
 	if (glRefConfig.framebufferObject)
 		FBO_Bind(fbo);
@@ -1184,6 +1199,191 @@ static void RB_DrawDebugLines(void)
     ri.Hunk_FreeTempMemory(verts);
 }
 
+/*
+=============================================================================
+
+Added in OPM
+Occlusion culling of skeletal models (r_occlusionCull).
+
+Nothing hid a model behind a wall: a person in the view's cone was posed,
+skinned, lit and drawn into the depth prepass and the main pass, though no
+pixel of them reached the screen. Here each is tested against the depth the
+prepass left: a box round it, drawn with an occlusion query and without
+writing anything (RB_OcclusionTests). The result is read a frame or two
+later, without waiting for it (R_OcclusionCulled), and a model whose box no
+pixel of passed twice running is left out of the main view -- tested again
+every frame all the same, so it comes back as soon as it would show.
+
+The sun's cascades and the realtime lights' shadow faces are views of their
+own and still draw it: a person out of sight casts shadows into it.
+=============================================================================
+*/
+
+#define OCC_MAX_TESTS 256
+#define OCC_MARGIN    8.0f // round the box, so it shows a little before the model would
+#define OCC_HIDDEN    2    // tests in a row with nothing passed, before it is left out
+
+typedef struct {
+	GLuint   query;
+	qboolean pending;  // issued, not yet read
+	int      hidden;   // tests in a row nothing of its box passed
+	int      asked;    // the frame it last wanted a test (tr.frameCount)
+	vec3_t   mins, maxs;
+} occlusion_t;
+
+static occlusion_t occlusion[MAX_GENTITIES];
+static int         occlusionTests[OCC_MAX_TESTS];
+static int         numOcclusionTests;
+
+/*
+================
+R_OcclusionCulled
+
+Whether to leave an entity's model out of the main view; and its box tested
+this frame, after the prepass.
+================
+*/
+qboolean R_OcclusionCulled(int entityNum, const vec3_t mins, const vec3_t maxs)
+{
+	occlusion_t *o;
+	int          i;
+
+	if (!r_occlusionCull->integer || !glRefConfig.occlusionQuery || !glRefConfig.framebufferObject || !r_depthPrepass->integer) {
+		return qfalse;
+	}
+	if (entityNum < 0 || entityNum >= ENTITYNUM_WORLD) {
+		return qfalse;
+	}
+
+	o = &occlusion[entityNum];
+
+	// the last test, if the card has done it
+	if (o->pending) {
+		GLuint available = 0;
+
+		qglGetQueryObjectuiv(o->query, GL_QUERY_RESULT_AVAILABLE, &available);
+		if (available) {
+			GLuint samples = 0;
+
+			qglGetQueryObjectuiv(o->query, GL_QUERY_RESULT, &samples);
+			o->hidden  = samples ? 0 : o->hidden + 1;
+			o->pending = qfalse;
+		}
+	}
+
+	// not in the view last frame: nothing known of it, or another entity has
+	// its number now
+	if (o->asked != tr.frameCount && o->asked != tr.frameCount - 1) {
+		o->hidden = 0;
+	}
+
+	for (i = 0; i < 3; i++) {
+		o->mins[i] = mins[i] - OCC_MARGIN;
+		o->maxs[i] = maxs[i] + OCC_MARGIN;
+	}
+
+	// the eye in its box: its faces would be behind the eye
+	for (i = 0; i < 3; i++) {
+		if (tr.viewParms.ori.origin[i] < o->mins[i] - r_znear->value || tr.viewParms.ori.origin[i] > o->maxs[i] + r_znear->value) {
+			break;
+		}
+	}
+	if (i == 3) {
+		o->hidden = 0;
+		o->asked  = tr.frameCount;
+		return qfalse;
+	}
+
+	if (o->asked != tr.frameCount && numOcclusionTests < OCC_MAX_TESTS) {
+		occlusionTests[numOcclusionTests++] = entityNum;
+	}
+	o->asked = tr.frameCount;
+
+	return o->hidden >= OCC_HIDDEN ? qtrue : qfalse;
+}
+
+/*
+================
+RB_OcclusionTests
+
+The boxes asked for, after the main view's depth prepass: drawn against its
+depth, writing nothing, each in an occlusion query.
+================
+*/
+void RB_OcclusionTests(void)
+{
+	static const int faces[36] = {
+		0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1,
+		2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3
+	};
+	int i, k;
+
+	if (!numOcclusionTests) {
+		return;
+	}
+
+	if (tess.numIndexes) {
+		RB_EndSurface();
+	}
+
+	GL_SetModelviewMatrix(backEnd.viewParms.world.modelMatrix);
+	qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	GL_State(0); // depth tested, nothing written
+	GL_Cull(CT_TWO_SIDED);
+	GLSL_BindProgram(&tr.textureColorShader);
+	GLSL_SetUniformMat4(&tr.textureColorShader, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
+	GLSL_SetUniformVec4(&tr.textureColorShader, UNIFORM_COLOR, colorWhite);
+	GL_BindToTMU(tr.whiteImage, TB_COLORMAP);
+
+	for (i = 0; i < numOcclusionTests; i++) {
+		occlusion_t *o = &occlusion[occlusionTests[i]];
+
+		// the last one not read yet: it is still the one to read
+		if (o->pending) {
+			continue;
+		}
+		if (!o->query) {
+			qglGenQueries(1, &o->query);
+		}
+
+		for (k = 0; k < 8; k++) {
+			VectorSet(tess.xyz[k], (k & 1) ? o->maxs[0] : o->mins[0], (k & 2) ? o->maxs[1] : o->mins[1], (k & 4) ? o->maxs[2] : o->mins[2]);
+			tess.xyz[k][3] = 1.0f;
+		}
+		for (k = 0; k < 36; k++) {
+			tess.indexes[k] = faces[k];
+		}
+		tess.numVertexes = 8;
+		tess.numIndexes  = 36;
+		tess.firstIndex  = 0;
+
+		qglBeginQuery(glRefConfig.occlusionQueryTarget, o->query);
+		RB_UpdateTessVao(ATTR_POSITION);
+		R_DrawElements(tess.numIndexes, tess.firstIndex);
+		qglEndQuery(glRefConfig.occlusionQueryTarget);
+		o->pending = qtrue;
+	}
+
+	tess.numVertexes = 0;
+	tess.numIndexes  = 0;
+	numOcclusionTests = 0;
+
+	qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
+}
+
+void R_OcclusionShutdown(void)
+{
+	int i;
+
+	for (i = 0; i < MAX_GENTITIES; i++) {
+		if (occlusion[i].query) {
+			qglDeleteQueries(1, &occlusion[i].query);
+		}
+	}
+	Com_Memset(occlusion, 0, sizeof(occlusion));
+	numOcclusionTests = 0;
+}
+
 const void	*RB_DrawSurfs( const void *data ) {
 	const drawSurfsCommand_t	*cmd;
 	qboolean isShadowView;
@@ -1207,6 +1407,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	backEnd.depthPrepassed = qfalse;
 
 	// clear the z buffer, set the modelview, etc
 	RB_BeginDrawingView ();
@@ -1228,20 +1429,30 @@ const void	*RB_DrawSurfs( const void *data ) {
 		// at whatever the viewParms memset produced).
 		int sunLevel = (isShadowView && (backEnd.viewParms.flags & VPF_ORTHOGRAPHIC))
 			? backEnd.viewParms.sunCascade : -1;
+		// Added in OPM: a realtime light's shadow face, timed apart from the sun's
+		const qboolean rtShadow = !!(backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED));
+		const int gpuTimer = rtShadow ? GPUTIMER_RTSHADOW : isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS;
+		const int cpuTimer = rtShadow ? CPUTIMER_RTSHADOW : isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS;
 
 		backEnd.depthFill = qtrue;
 		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-		R_GpuTimerBegin(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
-		R_CpuTimerBegin(isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS);
+		R_GpuTimerBegin(gpuTimer);
+		R_CpuTimerBegin(cpuTimer);
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerBegin(GPUTIMER_SUN0 + sunLevel);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerEnd(GPUTIMER_SUN0 + sunLevel);
-		R_CpuTimerEnd(isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS);
-		R_GpuTimerEnd(isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS);
+		R_CpuTimerEnd(cpuTimer);
+		R_GpuTimerEnd(gpuTimer);
 		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 		backEnd.depthFill = qfalse;
+		backEnd.depthPrepassed = !isShadowView;
+
+		// Added in OPM: the main view's models, tested against the depth
+		// it left (R_OcclusionCulled)
+		if (!isShadowView && !backEnd.viewParms.isPortal && !backEnd.viewParms.isPortalSky)
+			RB_OcclusionTests();
 
 		if (sunLevel >= 0 && sunLevel <= 3)
 			backEnd.pc.c_sunCascadeSurfs[sunLevel] += cmd->numDrawSurfs;
@@ -1472,6 +1683,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		R_GpuTimerBegin(GPUTIMER_MAIN3D);
 		R_CpuTimerBegin(CPUTIMER_MAIN3D);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+		backEnd.depthPrepassed = qfalse;
 
 		if (r_drawSun->integer)
 		{
@@ -1848,6 +2060,8 @@ const void	*RB_SwapBuffers( const void *data ) {
 
 	R_GpuTimerEnd(GPUTIMER_FRAME);
 	R_GpuTimerFrameEnd();
+	// Added in OPM: the posed surfaces' copies go on to the next frame's
+	RB_SkinArenaFrameEnd();
 
 	GLimp_EndFrame();
 
