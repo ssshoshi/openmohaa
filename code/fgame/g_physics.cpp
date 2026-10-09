@@ -192,6 +192,9 @@ typedef struct {
 static const gphysMaterial_t gphys_metal  = {{"barrel", "can", "bucket", "helmet", NULL}, 3.0f, 0.5f, 0.2f, PHYS_SND_METAL};
 static const gphysMaterial_t gphys_paper  = {{"magazine", "paper", "book", "map", NULL}, 0.8f, 0.8f, 0.05f, PHYS_SND_PAPER};
 static const gphysMaterial_t gphys_wood   = {{"crate", NULL}, 4.0f, 0.6f, 0.15f, PHYS_SND_WOOD};
+// Metal still, that sound like what they are.
+static const gphysMaterial_t gphys_weapon = {{NULL}, 3.0f, 0.5f, 0.2f, PHYS_SND_WEAPON};
+static const gphysMaterial_t gphys_helmet = {{NULL}, 3.0f, 0.5f, 0.2f, PHYS_SND_HELMET};
 
 static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
 {
@@ -199,8 +202,12 @@ static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
         return &gphys_wood;
     }
 
-    // Weapons, ammunition and the first aid tins.
-    if (ent->IsSubclassOfWeapon() || strstr(ent->model.c_str(), "ammo") || strstr(ent->model.c_str(), "health")) {
+    if (ent->IsSubclassOfWeapon()) {
+        return &gphys_weapon;
+    }
+
+    // Ammunition and the first aid tins.
+    if (strstr(ent->model.c_str(), "ammo") || strstr(ent->model.c_str(), "health")) {
         return &gphys_metal;
     }
 
@@ -212,7 +219,11 @@ static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
         return &gphys_paper;
     }
 
-    if (strstr(ent->model.c_str(), "helmet") || strstr(ent->model.c_str(), "can")) {
+    if (strstr(ent->model.c_str(), "helmet")) {
+        return &gphys_helmet;
+    }
+
+    if (strstr(ent->model.c_str(), "can")) {
         return &gphys_metal;
     }
 

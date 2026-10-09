@@ -5,8 +5,11 @@ Each content/<name>/ folder becomes one pak. A *.patch file in it is a unified
 diff against a game file (retail or mod) that is not ours to publish: the
 original is taken from the player's own paks, the one the game would load
 (the last pak in load order that has it, opm paks left out), and the diff is
-applied to it. Any other file is our own and goes in as it is, at its path
-under the folder.
+applied to it. A *.fetch file lists files that are not ours either and are
+not in the game, one `<path in the pak> <url>` a line: each is downloaded when
+the pak is built (once; kept in ~/.cache/openmohaa-content) and goes in at its
+path. Any other file is our own and goes in as it is, at its path under the
+folder.
 
     pack.py                         build every pak into build/content/
     pack.py opm-cabinet-ragdoll     build just that one
@@ -21,18 +24,22 @@ into the pak with CRLF, as the retail ones are.
 import argparse
 import difflib
 import glob
+import hashlib
 import io
 import os
 import shutil
 import subprocess
 import sys
+import struct
 import tempfile
+import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONTENT = os.path.join(ROOT, "content")
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 PREFIX = "zzzzzzzzz-"
+CACHE = os.path.join(os.path.expanduser("~"), ".cache", "openmohaa-content")
 
 
 class Skip(Exception):
@@ -82,6 +89,41 @@ def apply(text, patch_file):
             return f.read()
 
 
+def check_wav(path, data):
+    """A wav the game can play: RIFF WAVE, uncompressed PCM."""
+    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise Skip(f"{path} is not a wav file")
+    pos = 12
+    while pos + 8 <= len(data):
+        chunk, size = data[pos:pos + 4], struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        if chunk == b"fmt ":
+            if struct.unpack("<H", data[pos + 8:pos + 10])[0] != 1:
+                raise Skip(f"{path} is not PCM")
+            return
+        pos += 8 + size + (size & 1)
+    raise Skip(f"{path} has no fmt chunk")
+
+
+def fetch(path, url):
+    """A file listed in a .fetch file: from the cache, or downloaded into it."""
+    cached = os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + os.path.splitext(path)[1])
+    if not os.path.isfile(cached):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                data = r.read()
+        except OSError as e:
+            raise Skip(f"could not fetch {url}: {e}")
+        os.makedirs(CACHE, exist_ok=True)
+        with open(cached + ".part", "wb") as f:
+            f.write(data)
+        os.replace(cached + ".part", cached)
+    with open(cached, "rb") as f:
+        data = f.read()
+    if path.lower().endswith(".wav"):
+        check_wav(path, data)
+    return data
+
+
 def build(name, game, out):
     folder = os.path.join(CONTENT, name)
     files = {}
@@ -96,6 +138,17 @@ def build(name, game, out):
                 text, pak = original(game, path)
                 files[path] = apply(text, full).replace("\n", "\r\n").encode("latin1")
                 print(f"  {path}  (patched from {os.path.basename(pak)})")
+            elif fn.endswith(".fetch"):
+                count = 0
+                with open(full) as f:
+                    for line in f:
+                        line = line.split("#")[0].strip()
+                        if not line:
+                            continue
+                        path, url = line.split()
+                        files[path] = fetch(path, url)
+                        count += 1
+                print(f"  {count} files from {rel}")
             else:
                 with open(full, "rb") as f:
                     files[rel] = f.read()

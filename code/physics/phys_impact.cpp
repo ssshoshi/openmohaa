@@ -25,10 +25,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // The sound of a body striking something.
 //
 // Both worlds listen to their contacts and hand the ones that close fast
-// enough here. What is heard is chosen by what moved into what: a corpse plays
-// the retail body falls, which come for every surface the maps have; a prop
-// plays its own material (phys_<material>_<light|heavy|soft>, aliases of our
-// own in ubersound/opm_physics.scr), dulled on soft ground. How loud goes with
+// enough here. What is heard is chosen by what moved into what: a prop plays
+// its own material (phys_<material>_<light|heavy|soft>), a corpse
+// phys_flesh_<hard|soft>, both aliases of ubersound/opm_physics.scr (the
+// opm-physics content pak), and water the retail splashes. How loud goes with
 // the speed and the weight, how high with the weight.
 //
 // The Jolt world keeps no surface flags (the brushes are merged into one shape
@@ -51,6 +51,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define PI_FULL_MASS   20.0f
 // Heavier than this a prop plays its heavy set.
 #define PI_HEAVY_MASS  8.0f
+// A corpse knocking this heavily is its trunk (cg_physics_sounds.cpp gives it
+// the body's weight), which on hard ground plays the hard set.
+#define PI_TRUNK_MASS  40.0f
 // What soft ground leaves of a knock.
 #define PI_SOFT_VOLUME 0.6f
 
@@ -74,6 +77,10 @@ const char *Phys_SoundMatName(physSoundMat_t mat)
         return "stone";
     case PHYS_SND_FLESH:
         return "flesh";
+    case PHYS_SND_WEAPON:
+        return "weapon";
+    case PHYS_SND_HELMET:
+        return "helmet";
     default:
         return "default";
     }
@@ -124,6 +131,8 @@ const char *Phys_SurfaceOfMat(physSoundMat_t mat)
     case PHYS_SND_WOOD:
         return "wood";
     case PHYS_SND_METAL:
+    case PHYS_SND_WEAPON:
+    case PHYS_SND_HELMET:
         return "metal";
     case PHYS_SND_GLASS:
         return "glass";
@@ -200,12 +209,19 @@ std::string Phys_ImpactAlias(physSoundMat_t mat, const char *surface, float mass
     *volume = strength;
 
     if (mat == PHYS_SND_FLESH) {
-        *pitch = 1.0f + 0.05f * crandom();
-        return std::string("snd_bodyfall_") + surface;
+        *pitch = 1.0f + 0.04f * crandom();
+        if (water) {
+            return std::string("snd_bodyfall_") + surface;
+        }
+        if (soft || mass < PI_TRUNK_MASS) {
+            return "phys_flesh_soft";
+        }
+        return "phys_flesh_hard";
     }
 
-    // Small things ring higher: an octave of weight is a few semitones.
-    *pitch = PI_Clamp(1.15f - 0.075f * log2f(Q_max(mass, 0.1f)), 0.85f, 1.3f) * (1.0f + 0.06f * crandom());
+    // Small things ring higher, a little: these are recordings of the real
+    // thing, which a wide shift makes into something else.
+    *pitch = PI_Clamp(1.08f - 0.04f * log2f(Q_max(mass, 0.1f)), 0.92f, 1.15f) * (1.0f + 0.04f * crandom());
 
     if (water) {
         return "grenade_bounce_water";

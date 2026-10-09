@@ -42,6 +42,8 @@ typedef enum {
     PHYS_SND_PAPER,
     PHYS_SND_STONE,
     PHYS_SND_FLESH,
+    PHYS_SND_WEAPON,
+    PHYS_SND_HELMET,
     PHYS_SND_COUNT
 } physSoundMat_t;
 
