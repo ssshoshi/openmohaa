@@ -215,26 +215,6 @@ void GLimp_InitExtraExtensions(void)
 		ri.Printf(PRINT_ALL, result[2], extension);
 	}
 
-	// Added in OPM
-	//  OpenGL 4.1 - GL_ARB_get_program_binary: the linked programs kept on
-	//  disk (r_glslCache), where the driver can hand back at least one form.
-	extension = "GL_ARB_get_program_binary";
-	glRefConfig.programBinary = qfalse;
-	if (QGL_VERSION_ATLEAST(4, 1) || SDL_GL_ExtensionSupported(extension))
-	{
-		GLint formats = 0;
-
-		QGL_ARB_get_program_binary_PROCS;
-		if (qglGetProgramBinary && qglProgramBinary && qglProgramParameteri)
-			qglGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
-		glRefConfig.programBinary = formats > 0 ? qtrue : qfalse;
-		ri.Printf(PRINT_ALL, result[glRefConfig.programBinary], extension);
-	}
-	else
-	{
-		ri.Printf(PRINT_ALL, result[2], extension);
-	}
-
 	// OpenGL 3.0 - GL_ARB_framebuffer_object
 	extension = "GL_ARB_framebuffer_object";
 	glRefConfig.framebufferObject = qfalse;

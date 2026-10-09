@@ -50,7 +50,6 @@ QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
 QGL_ARB_timer_query_PROCS;
 QGL_ARB_buffer_storage_PROCS;
-QGL_ARB_get_program_binary_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;
@@ -2232,7 +2231,6 @@ typedef struct {
 
 	qboolean	timerQuery;
 	qboolean	bufferStorage; // Added in OPM: QGL_ARB_buffer_storage_PROCS, for r_tessStream
-	qboolean	programBinary; // Added in OPM: QGL_ARB_get_program_binary_PROCS, for r_glslCache
 
 	int glslMajorVersion;
 	int glslMinorVersion;
@@ -2727,7 +2725,6 @@ extern  cvar_t  *r_deluxeMapping;
 extern  cvar_t  *r_parallaxMapping;
 extern  cvar_t  *r_parallaxMapOffset;
 extern  cvar_t  *r_parallaxMapShadows;
-extern  cvar_t  *r_glslCache;
 extern  cvar_t  *r_cubeMapping;
 extern  cvar_t  *r_cubemapSize;
 extern  cvar_t  *r_deluxeSpecular;
