@@ -86,12 +86,20 @@ extern "C" {
     void     CG_PhysicsEditDraw2D(void);
     qboolean CG_PhysicsEditServerCommand(const char *cmd);
 
+    // A joint of the particle solver's corpse index struck the surface of
+    // trace at speed (units a second): heard, if hard enough
+    // (cg_physics_sounds.cpp). trunk: the head or trunk rather than a limb.
+    void CG_PhysicsRagdollImpact(int index, qboolean trunk, const trace_t *trace, float speed);
+
     extern cvar_t *cg_physics;
     extern cvar_t *cg_physics_log;
     extern cvar_t *cg_physics_debug;
     extern cvar_t *cg_physics_props;
     extern cvar_t *cg_physics_clipped;
     extern cvar_t *cg_physics_edit;
+    extern cvar_t *cg_physics_sounds;
+    extern cvar_t *cg_physics_soundvolume;
+    extern cvar_t *cg_physics_sounddebug;
 
 #ifdef __cplusplus
 }

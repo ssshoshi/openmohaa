@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../physics/phys_jolt.h"
 #include "../physics/phys_world.h"
 #include "../physics/phys_furniture.h"
+#include "../physics/phys_impact.h"
 
 #include "cg_physics.h"
 
@@ -60,6 +61,15 @@ void CG_PhysicsDrawProps(float frac);
 void CG_PhysicsImpulse(JPH::BodyID id, const vec3_t point, const vec3_t impulse);
 void CG_PhysicsBlast(const vec3_t centre, float radius, float strength);
 void CG_PhysicsMaterialFor(const char *name, float *arealDensity, float *friction, float *restitution);
+physSoundMat_t CG_PhysicsSoundMatFor(const char *name);
+
+// cg_physics_sounds.cpp: what bodies striking things sound like. Contacts are
+// noted from the listener and played after the steps; a world just made is
+// quiet for a moment.
+void CG_PhysicsSoundsInit(void);
+void CG_PhysicsSoundsQuiet(void);
+void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold);
+void CG_PhysicsPlayImpacts(void);
 
 extern cvar_t *cg_physics_furniture;
 

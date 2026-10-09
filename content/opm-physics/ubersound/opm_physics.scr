@@ -1,0 +1,106 @@
+// Added in OPM
+// What physics bodies sound like striking things (code/physics/phys_impact.cpp):
+// phys_<material>_<light|heavy|soft>, light and heavy on hard ground by the
+// thing's weight, soft on earth, grass, sand, snow or carpet. The code scales
+// volume by how hard the knock was and pitch by the weight, so these set only
+// the character of each. For now all retail recordings; better ones can take
+// their place here without touching the code.
+// Corpses play the retail snd_bodyfall_<surface> set.
+
+aliascache phys_wood_light1 sound/weapons/foley/GrenadeBounceHard1.wav soundparms 0.8 0.2 1.0 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light2 sound/weapons/foley/GrenadeBounceHard2.wav soundparms 0.8 0.2 1.0 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light3 sound/weapons/foley/GrenadeBounceHard3.wav soundparms 0.8 0.2 1.0 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_wood_heavy1 sound/mechanics/DoorWoodClose_stop1.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_heavy2 sound/mechanics/DoorWoodClose_stop2.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_heavy3 sound/mechanics/DoorWoodClose_stop3.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_heavy4 sound/mechanics/DoorWoodClose_stop4.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_heavy5 sound/mechanics/DoorWoodOpen_stop1.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_heavy6 sound/mechanics/DoorWoodOpen_stop2.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_heavy7 sound/mechanics/DoorWoodOpen_stop3.wav soundparms 0.8 0.2 0.95 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_wood_soft1 sound/weapons/foley/GrenadeBounceSoft1.wav soundparms 0.8 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft2 sound/weapons/foley/GrenadeBounceSoft2.wav soundparms 0.8 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft3 sound/weapons/foley/GrenadeBounceSoft3.wav soundparms 0.8 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_metal_light1 sound/weapons/foley/GrenadeBounceMetal1.wav soundparms 0.8 0.2 1.0 0.15 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_light2 sound/weapons/foley/GrenadeBounceMetal2.wav soundparms 0.8 0.2 1.0 0.15 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_light3 sound/weapons/foley/GrenadeBounceMetal3.wav soundparms 0.8 0.2 1.0 0.15 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_light4 sound/weapons/foley/GunDrop1.wav soundparms 0.8 0.2 1.0 0.15 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_light5 sound/weapons/foley/GunDrop4.wav soundparms 0.8 0.2 1.0 0.15 120 1400 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_metal_heavy1 sound/mechanics/HammerHit_Metal03.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_heavy2 sound/mechanics/HammerHit_Metal04.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_heavy3 sound/mechanics/Mec_MetalKnock.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_heavy4 sound/mechanics/DoorMetalClose_stop1.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_heavy5 sound/mechanics/DoorMetalClose_stop2.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_heavy6 sound/mechanics/DoorMetalClose_stop3.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_heavy7 sound/mechanics/DoorMetalClose_stop4.wav soundparms 0.8 0.2 0.9 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_metal_soft1 sound/weapons/foley/GrenadeBounceSoft1.wav soundparms 0.7 0.2 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft2 sound/weapons/foley/GrenadeBounceSoft2.wav soundparms 0.7 0.2 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft3 sound/weapons/foley/GrenadeBounceSoft3.wav soundparms 0.7 0.2 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft4 sound/weapons/foley/GunDrop1.wav soundparms 0.7 0.2 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_glass_light1 sound/weapons/foley/PistolShellMed1.wav soundparms 0.8 0.2 1.2 0.2 80 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_light2 sound/weapons/foley/PistolShellMed2.wav soundparms 0.8 0.2 1.2 0.2 80 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_light3 sound/weapons/foley/PistolShellMed3.wav soundparms 0.8 0.2 1.2 0.2 80 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_light4 sound/weapons/foley/PistolShellHard1.wav soundparms 0.8 0.2 1.2 0.2 80 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_light5 sound/weapons/foley/PistolShellHard2.wav soundparms 0.8 0.2 1.2 0.2 80 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_light6 sound/weapons/foley/PistolShellHard3.wav soundparms 0.8 0.2 1.2 0.2 80 900 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_glass_heavy1 sound/weapons/foley/GrenadeBounceMetal1.wav soundparms 0.8 0.2 1.3 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_heavy2 sound/weapons/foley/GrenadeBounceMetal2.wav soundparms 0.8 0.2 1.3 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_heavy3 sound/weapons/foley/GrenadeBounceMetal3.wav soundparms 0.8 0.2 1.3 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_glass_soft1 sound/weapons/foley/PistolShellSoft1.wav soundparms 0.7 0.2 1.1 0.15 60 700 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_soft2 sound/weapons/foley/PistolShellSoft2.wav soundparms 0.7 0.2 1.1 0.15 60 700 auto loaded maps "m t dm obj lib train"
+aliascache phys_glass_soft3 sound/weapons/foley/PistolShellSoft3.wav soundparms 0.7 0.2 1.1 0.15 60 700 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_paper_light1 sound/weapons/foley/GrenadeBounceSoft1.wav soundparms 0.5 0.2 1.1 0.15 60 600 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_light2 sound/weapons/foley/GrenadeBounceSoft2.wav soundparms 0.5 0.2 1.1 0.15 60 600 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_light3 sound/weapons/foley/GrenadeBounceSoft3.wav soundparms 0.5 0.2 1.1 0.15 60 600 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_paper_heavy1 sound/characters/body_falldirt_01.WAV soundparms 0.5 0.2 1.0 0.1 100 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_heavy2 sound/characters/body_falldirt_02.WAV soundparms 0.5 0.2 1.0 0.1 100 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_heavy3 sound/characters/body_falldirt_03.WAV soundparms 0.5 0.2 1.0 0.1 100 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_heavy4 sound/characters/body_falldirt_04.WAV soundparms 0.5 0.2 1.0 0.1 100 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_heavy5 sound/characters/body_falldirt_05.WAV soundparms 0.5 0.2 1.0 0.1 100 900 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_heavy6 sound/characters/body_falldirt_06.WAV soundparms 0.5 0.2 1.0 0.1 100 900 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_paper_soft1 sound/weapons/foley/GrenadeBounceSoft1.wav soundparms 0.4 0.2 1.0 0.15 60 500 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_soft2 sound/weapons/foley/GrenadeBounceSoft2.wav soundparms 0.4 0.2 1.0 0.15 60 500 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_soft3 sound/weapons/foley/GrenadeBounceSoft3.wav soundparms 0.4 0.2 1.0 0.15 60 500 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_stone_light1 sound/weapons/foley/GrenadeBounceHard1.wav soundparms 0.8 0.2 0.8 0.1 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_light2 sound/weapons/foley/GrenadeBounceHard2.wav soundparms 0.8 0.2 0.8 0.1 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_light3 sound/weapons/foley/GrenadeBounceHard3.wav soundparms 0.8 0.2 0.8 0.1 120 1200 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_stone_heavy1 sound/characters/body_falldirt_01.WAV soundparms 1.0 0.2 0.8 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_heavy2 sound/characters/body_falldirt_02.WAV soundparms 1.0 0.2 0.8 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_heavy3 sound/characters/body_falldirt_03.WAV soundparms 1.0 0.2 0.8 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_heavy4 sound/characters/body_falldirt_04.WAV soundparms 1.0 0.2 0.8 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_heavy5 sound/characters/body_falldirt_05.WAV soundparms 1.0 0.2 0.8 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_heavy6 sound/characters/body_falldirt_06.WAV soundparms 1.0 0.2 0.8 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_stone_soft1 sound/characters/body_falldirt_01.WAV soundparms 0.7 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft2 sound/characters/body_falldirt_02.WAV soundparms 0.7 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft3 sound/characters/body_falldirt_03.WAV soundparms 0.7 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft4 sound/characters/body_falldirt_04.WAV soundparms 0.7 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft5 sound/characters/body_falldirt_05.WAV soundparms 0.7 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft6 sound/characters/body_falldirt_06.WAV soundparms 0.7 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_default_light1 sound/weapons/foley/GrenadeBounceHard1.wav soundparms 0.8 0.2 0.95 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_light2 sound/weapons/foley/GrenadeBounceHard2.wav soundparms 0.8 0.2 0.95 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_light3 sound/weapons/foley/GrenadeBounceHard3.wav soundparms 0.8 0.2 0.95 0.15 120 1200 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_default_heavy1 sound/mechanics/DoorWoodClose_stop1.wav soundparms 0.8 0.2 0.9 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_heavy2 sound/mechanics/DoorWoodClose_stop2.wav soundparms 0.8 0.2 0.9 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_heavy3 sound/mechanics/DoorWoodClose_stop3.wav soundparms 0.8 0.2 0.9 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_heavy4 sound/mechanics/DoorWoodClose_stop4.wav soundparms 0.8 0.2 0.9 0.1 200 1800 auto loaded maps "m t dm obj lib train"
+
+aliascache phys_default_soft1 sound/weapons/foley/GrenadeBounceSoft1.wav soundparms 0.8 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_soft2 sound/weapons/foley/GrenadeBounceSoft2.wav soundparms 0.8 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_soft3 sound/weapons/foley/GrenadeBounceSoft3.wav soundparms 0.8 0.2 0.9 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+
+end

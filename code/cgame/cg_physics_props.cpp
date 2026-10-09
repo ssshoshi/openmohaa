@@ -50,29 +50,30 @@ typedef struct {
     float       arealDensity; // kg/m2 of box surface
     float       friction;
     float       restitution;
+    physSoundMat_t sound; // what it sounds like striking things (phys_impact.cpp)
 } physMaterial_t;
 
 static const physMaterial_t phys_materials[] = {
     {"glass",
      {"bottle", "jug", "pitcher", "glass", "jar", "vase", NULL},
-     1.5f, 0.4f, 0.3f},
+     1.5f, 0.4f, 0.3f, PHYS_SND_GLASS},
     {"metal",
      {"bucket", "helmet", "can", "shell", "pot", "stove", "radio", "ammo", "valve", "switch", "microphone", "filter",
       "canteen", "mg42", "radar", "lantern", NULL},
-     3.0f, 0.5f, 0.2f},
+     3.0f, 0.5f, 0.2f, PHYS_SND_METAL},
     {"paper",
      {"paper", "card", "book", "map", "sack", "bag", "cloth", "blanket", "pillow", NULL},
-     0.8f, 0.8f, 0.05f},
+     0.8f, 0.8f, 0.05f, PHYS_SND_PAPER},
     {"stone",
      {"sandbag", "brick", "stone", "rock", "concrete", NULL},
-     25.0f, 0.8f, 0.05f},
+     25.0f, 0.8f, 0.05f, PHYS_SND_STONE},
     {"wood",
      {"chair", "stool", "crate", "table", "trunk", "box", "bench", "lid", "cot", "basket", "desk", "shelf", "barrel",
       NULL},
-     4.0f, 0.6f, 0.15f},
+     4.0f, 0.6f, 0.15f, PHYS_SND_WOOD},
 };
 
-static const physMaterial_t phys_defaultMaterial = {"default", {NULL}, 3.0f, 0.5f, 0.15f};
+static const physMaterial_t phys_defaultMaterial = {"default", {NULL}, 3.0f, 0.5f, 0.15f, PHYS_SND_DEFAULT};
 
 static const physMaterial_t *CG_PhysicsMaterial(const char *name)
 {
@@ -101,6 +102,11 @@ void CG_PhysicsMaterialFor(const char *name, float *arealDensity, float *frictio
     *arealDensity = m->arealDensity;
     *friction     = m->friction;
     *restitution  = m->restitution;
+}
+
+physSoundMat_t CG_PhysicsSoundMatFor(const char *name)
+{
+    return CG_PhysicsMaterial(name)->sound;
 }
 
 //=============================================================

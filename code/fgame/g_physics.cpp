@@ -38,6 +38,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../physics/phys_world.h"
 #include "../physics/phys_furniture.h"
 #include "../physics/phys_rules.h"
+#include "../physics/phys_impact.h"
 
 #include "g_local.h"
 #include "entity.h"
@@ -185,11 +186,12 @@ typedef struct {
     float       arealDensity; // kg/m2
     float       friction;
     float       restitution;
+    physSoundMat_t sound; // what it sounds like striking things (phys_impact.cpp)
 } gphysMaterial_t;
 
-static const gphysMaterial_t gphys_metal  = {{"barrel", "can", "bucket", "helmet", NULL}, 3.0f, 0.5f, 0.2f};
-static const gphysMaterial_t gphys_paper  = {{"magazine", "paper", "book", "map", NULL}, 0.8f, 0.8f, 0.05f};
-static const gphysMaterial_t gphys_wood   = {{"crate", NULL}, 4.0f, 0.6f, 0.15f};
+static const gphysMaterial_t gphys_metal  = {{"barrel", "can", "bucket", "helmet", NULL}, 3.0f, 0.5f, 0.2f, PHYS_SND_METAL};
+static const gphysMaterial_t gphys_paper  = {{"magazine", "paper", "book", "map", NULL}, 0.8f, 0.8f, 0.05f, PHYS_SND_PAPER};
+static const gphysMaterial_t gphys_wood   = {{"crate", NULL}, 4.0f, 0.6f, 0.15f, PHYS_SND_WOOD};
 
 static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
 {
@@ -215,6 +217,180 @@ static const gphysMaterial_t *G_PhysicsMaterial(Entity *ent)
     }
 
     return &gphys_wood;
+}
+
+//=============================================================
+// Impact sounds
+//=============================================================
+
+// What the entity props sound like striking things, as on the client (see
+// code/physics/phys_impact.cpp): noted from the contacts during the steps,
+// played after them, the loudest few. Everyone hears them, since the entity
+// makes them.
+
+static cvar_t           *g_physics_sounds;
+static cvar_t           *g_physics_sounddebug;
+static PhysImpactLimiter gphys_impacts;
+
+// A world just made, or a game restored, is quiet this long.
+#define GPHYS_QUIET_TIME 1500
+
+// The prop an entity body is, or NULL: one of ours that moves.
+static Entity *G_PhysicsPropOf(JPH::uint64 data)
+{
+    int entnum;
+
+    if (data < PHYS_USERDATA_ENTITY_BASE || data >= PHYS_USERDATA_ENTITY_BASE + MAX_GENTITIES) {
+        return NULL;
+    }
+
+    entnum = (int)(data - PHYS_USERDATA_ENTITY_BASE);
+    if (!gphys_entities[entnum].owned) {
+        return NULL;
+    }
+
+    return g_entities[entnum].entity;
+}
+
+class GPhysContacts final : public JPH::ContactListener
+{
+public:
+    void OnContactAdded(
+        const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings
+    ) override
+    {
+        Note(a, b, manifold);
+    }
+
+    void OnContactPersisted(
+        const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings
+    ) override
+    {
+        Note(a, b, manifold);
+    }
+
+private:
+    static void Note(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold)
+    {
+        physContact_t c;
+        physImpact_t  impact;
+        int           h;
+
+        if (!g_physics_sounds || !g_physics_sounds->integer || (!a.IsDynamic() && !b.IsDynamic())) {
+            return;
+        }
+
+        c = Phys_ContactFrom(a, b, manifold);
+        if (c.sensor || c.closing <= 0.0f) {
+            return;
+        }
+
+        if (!c.dynamic[1]) {
+            h = 0;
+        } else if (!c.dynamic[0]) {
+            h = 1;
+        } else {
+            h = c.approach[0] >= c.approach[1] ? 0 : 1;
+        }
+
+        impact.hitter    = c.data[h];
+        impact.other     = c.data[!h];
+        impact.hitterMat = PHYS_SND_DEFAULT;
+        impact.mass      = c.mass[h];
+        impact.speed     = c.closing;
+        impact.strength  = Phys_ImpactStrength(c.closing, c.mass[h]);
+        if (impact.strength <= 0.0f) {
+            return;
+        }
+
+        PhysFromJolt(JPH::Vec3(c.point), impact.point);
+        PhysFromJolt(h == 0 ? c.normal : -c.normal, impact.dir);
+        VectorNormalize(impact.dir);
+
+        gphys_impacts.Offer(impact, impact.hitter);
+    }
+};
+
+static GPhysContacts gphys_contacts;
+
+// The surface below an impact, from the engine's own trace, and water where
+// the point is wet.
+static const char *G_PhysicsSurfaceAt(const physImpact_t *impact, Entity *hitter)
+{
+    trace_t tr;
+    vec3_t  above;
+    Vector  start, end;
+
+    if (gi.pointcontents(impact->point, ENTITYNUM_NONE) & MASK_WATER) {
+        VectorCopy(impact->point, above);
+        above[2] += 16.0f;
+        return (gi.pointcontents(above, ENTITYNUM_NONE) & MASK_WATER) ? "wade" : "puddle";
+    }
+
+    start = Vector(impact->point) - Vector(impact->dir) * 4.0f;
+    end   = Vector(impact->point) + Vector(impact->dir) * 12.0f;
+    tr    = G_Trace(start, vec_zero, vec_zero, end, hitter, MASK_SOLID, qfalse, "G_PhysicsSurfaceAt");
+
+    if (tr.fraction >= 1.0f || tr.startsolid) {
+        return "stone";
+    }
+
+    return Phys_SurfaceName(tr.surfaceFlags);
+}
+
+static void G_PhysicsPlayImpacts(void)
+{
+    std::vector<physImpact_t> heard;
+    int                       rejected;
+
+    gphys_impacts.Take(level.inttime, &heard, &rejected);
+
+    for (size_t i = 0; i < heard.size(); i++) {
+        physImpact_t *impact = &heard[i];
+        Entity       *hitter = G_PhysicsPropOf(impact->hitter);
+        Entity       *other;
+        const char   *surface;
+        float         volume, pitch;
+        std::string   alias;
+
+        if (!hitter) {
+            continue;
+        }
+        impact->hitterMat = G_PhysicsMaterial(hitter)->sound;
+
+        other = G_PhysicsPropOf(impact->other);
+        if (other) {
+            surface = Phys_SurfaceOfMat(G_PhysicsMaterial(other)->sound);
+        } else if (impact->other >= PHYS_USERDATA_ENTITY_BASE && impact->other < PHYS_USERDATA_ENTITY_BASE + MAX_GENTITIES) {
+            // Someone's box, a door: the box makes no sound of its own.
+            continue;
+        } else {
+            surface = G_PhysicsSurfaceAt(impact, hitter);
+        }
+
+        alias = Phys_ImpactAlias(impact->hitterMat, surface, impact->mass, impact->strength, &volume, &pitch);
+
+        if (g_physics_sounddebug->integer) {
+            gi.Printf(
+                "g_physics sound: %s, %s (%s) on %s, %.1f m/s, %.1f kg, volume %.2f pitch %.2f\n",
+                alias.c_str(),
+                Phys_SoundMatName(impact->hitterMat),
+                hitter->getClassname(),
+                surface,
+                impact->speed,
+                impact->mass,
+                volume,
+                pitch
+            );
+        }
+
+        Vector at(impact->point);
+        hitter->Sound(alias.c_str(), CHAN_AUTO, volume, -1.0f, &at, pitch, 1, 0, 0);
+    }
+
+    if (g_physics_sounddebug->integer && rejected) {
+        gi.Printf("g_physics sound: %d left out\n", rejected);
+    }
 }
 
 //=============================================================
@@ -394,6 +570,10 @@ void G_PhysicsInitLevel(const char *mapfile)
     g_physics     = gi.Cvar_Get("g_physics", "1", CVAR_ARCHIVE | CVAR_LATCH);
     g_physics_log = gi.Cvar_Get("g_physics_log", "0", 0);
     g_physics_hitscale = gi.Cvar_Get("g_physics_hitscale", "1", 0);
+    g_physics_sounds     = gi.Cvar_Get("g_physics_sounds", "1", CVAR_ARCHIVE);
+    g_physics_sounddebug = gi.Cvar_Get("g_physics_sounddebug", "0", 0);
+    gphys_impacts.Clear();
+    gphys_impacts.Quiet(level.inttime + GPHYS_QUIET_TIME);
 
     G_PhysicsShutdown();
     G_PhysicsRulesLoad();
@@ -414,6 +594,7 @@ void G_PhysicsInitLevel(const char *mapfile)
 
     Phys_RegisterJolt(G_PhysicsTrace);
     Phys_CreateWorld(&gphys_world, GPHYS_MAX_BODIES);
+    gphys_world.system->SetContactListener(&gphys_contacts);
 
     // Solid brushes, and fences; the clip brushes that stand in for the
     // client's static model furniture are solid too, which is what the
@@ -1655,6 +1836,8 @@ void G_PhysicsFrame(float frametime)
             }
         }
     }
+
+    G_PhysicsPlayImpacts();
 
     if (!steps) {
         return;
