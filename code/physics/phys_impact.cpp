@@ -267,10 +267,11 @@ void PhysImpactLimiter::Take(int now, std::vector<physImpact_t> *out, int *rejec
     });
 
     for (size_t i = 0; i < offered.size(); i++) {
-        std::map<JPH::uint64, int>::iterator it = lastTime.find(offered[i].source);
+        std::map<JPH::uint64, Heard>::iterator it = last.find(offered[i].source);
 
         // A clock that went back is a new game.
-        if (it != lastTime.end() && it->second <= now && now - it->second < interval) {
+        if (it != last.end() && it->second.time <= now && now - it->second.time < interval
+            && offered[i].impact.strength < it->second.strength * 2.0f) {
             (*rejected)++;
             continue;
         }
@@ -279,16 +280,16 @@ void PhysImpactLimiter::Take(int now, std::vector<physImpact_t> *out, int *rejec
             continue;
         }
 
-        lastTime[offered[i].source] = now;
+        last[offered[i].source] = {now, offered[i].impact.strength};
         out->push_back(offered[i].impact);
     }
     offered.clear();
 
     // What has not sounded for a while needs no remembering.
-    if (lastTime.size() > 1024) {
-        for (std::map<JPH::uint64, int>::iterator it = lastTime.begin(); it != lastTime.end();) {
-            if (it->second > now || now - it->second >= interval) {
-                it = lastTime.erase(it);
+    if (last.size() > 1024) {
+        for (std::map<JPH::uint64, Heard>::iterator it = last.begin(); it != last.end();) {
+            if (it->second.time > now || now - it->second.time >= interval) {
+                it = last.erase(it);
             } else {
                 ++it;
             }
@@ -299,6 +300,6 @@ void PhysImpactLimiter::Take(int now, std::vector<physImpact_t> *out, int *rejec
 void PhysImpactLimiter::Clear()
 {
     offered.clear();
-    lastTime.clear();
+    last.clear();
     quietUntil = 0;
 }

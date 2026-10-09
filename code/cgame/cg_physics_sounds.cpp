@@ -48,6 +48,12 @@ cvar_t *cg_physics_sounddebug;
 // The parts of a corpse other than its head and trunk knock this much quieter.
 #define PS_LIMB_VOLUME 0.35f
 
+// How heavily a corpse knocks, in kilograms: a body lands with its weight
+// behind it, not a capsule's, which at a few kilograms made the fall of a man
+// as quiet as a dropped can. A limb swings in with less of it.
+#define PS_TRUNK_WEIGHT 40.0f
+#define PS_LIMB_WEIGHT  10.0f
+
 // A corpse of the particle solver, told apart from the Jolt bodies.
 #define PS_PARTICLE_SOURCE (1ULL << 40)
 
@@ -154,7 +160,10 @@ void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::
     impact.hitterMat = PHYS_SND_DEFAULT; // after the limiter, for the few kept
     impact.mass      = c.mass[h];
     impact.speed     = c.closing;
-    impact.strength  = Phys_ImpactStrength(c.closing, c.mass[h]);
+    if (PS_IsRagdoll(impact.hitter)) {
+        impact.mass = PS_IsTrunk(impact.hitter) ? PS_TRUNK_WEIGHT : PS_LIMB_WEIGHT;
+    }
+    impact.strength = Phys_ImpactStrength(c.closing, impact.mass);
     if (impact.strength <= 0.0f) {
         return;
     }
@@ -189,8 +198,7 @@ void CG_PhysicsRagdollImpact(int index, qboolean trunk, const trace_t *trace, fl
     impact.hitter    = PS_PARTICLE_SOURCE + index;
     impact.other     = PHYS_USERDATA_WORLD;
     impact.hitterMat = PHYS_SND_FLESH;
-    // As much of the body as a Jolt corpse's part would be.
-    impact.mass      = trunk ? 12.0f : 2.5f;
+    impact.mass      = trunk ? PS_TRUNK_WEIGHT : PS_LIMB_WEIGHT;
     impact.speed     = speed * PHYS_UNITS_TO_METRES;
     impact.strength  = Phys_ImpactStrength(impact.speed, impact.mass) * (trunk ? 1.0f : PS_LIMB_VOLUME);
     if (impact.strength <= 0.0f) {
@@ -272,9 +280,10 @@ void CG_PhysicsPlayImpacts(void)
 
         if (cg_physics_sounddebug->integer) {
             cgi.Printf(
-                "physics sound: %s, %s on %s, %.1f m/s, %.1f kg, volume %.2f pitch %.2f at %.0f %.0f %.0f\n",
+                "physics sound: %s, %s%s on %s, %.1f m/s, %.1f kg, volume %.2f pitch %.2f at %.0f %.0f %.0f\n",
                 alias.c_str(),
                 Phys_SoundMatName(impact->hitterMat),
+                impact->hitterMat == PHYS_SND_FLESH ? (impact->mass >= PS_TRUNK_WEIGHT ? " (trunk)" : " (limb)") : "",
                 surface,
                 impact->speed,
                 impact->mass,

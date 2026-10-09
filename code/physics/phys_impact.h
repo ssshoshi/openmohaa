@@ -105,7 +105,8 @@ public:
     void Quiet(int untilTime);
 
     // Offered over a step; source groups the bodies that are one thing (the
-    // parts of a corpse).
+    // parts of a corpse). Within a source's interval only a knock twice as hard
+    // as the last is heard: a corpse's trunk landing just after a foot.
     void Offer(const physImpact_t& impact, JPH::uint64 source);
 
     // What is to be heard of what was offered since the last call, loudest
@@ -124,6 +125,11 @@ private:
     };
 
     std::vector<Offered>         offered;
-    std::map<JPH::uint64, int>   lastTime;
+    struct Heard {
+        int   time;
+        float strength;
+    };
+
+    std::map<JPH::uint64, Heard> last;
     int                          quietUntil;
 };
