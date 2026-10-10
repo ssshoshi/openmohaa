@@ -78,13 +78,15 @@ def dots(rng, size, n, rmin, rmax, spread, centre=(0.5, 0.5)):
     return a
 
 
-def save(name, rgb, alpha, round_=True):
+def save(name, rgb, alpha, round_=True, edge=True):
     h, w = alpha.shape
     # Nothing at the border, however the noise fell: the shaders clamp, and the
-    # cgame cuts the decal to the square, which would show.
-    y, x = np.mgrid[0:h, 0:w]
-    border = np.minimum.reduce([x, y, w - 1 - x, h - 1 - y])
-    alpha = alpha * smooth(0, 2, border)
+    # cgame cuts the decal to the square, which would show. (Not for a texture
+    # wrapped over a model: edge=False.)
+    if edge:
+        y, x = np.mgrid[0:h, 0:w]
+        border = np.minimum.reduce([x, y, w - 1 - x, h - 1 - y])
+        alpha = alpha * smooth(0, 2, border)
     if round_:
         alpha = alpha * smooth(1.0, 0.8, polar((h, w))[0])
     img = np.dstack([np.clip(rgb, 0, 255), np.clip(alpha * 255, 0, 255)]).astype(np.uint8)
@@ -235,6 +237,52 @@ def main():
     rr = r / ragged(rng, ang, 10, 0.35) / (0.85 + 0.25 * n)
     rgb = mix(np.array([62, 5, 4], float)[None, None], np.array([26, 2, 2], float)[None, None], smooth(0.9, 0.3, rr) + (n - 0.5) * 0.6)
     save("pool.tga", rgb, smooth(0.9, 0.78, rr) * 0.94)
+
+    # the bits a round breaks out of a head (cg_gore.cpp, CG_GoreSpawnBits):
+    # wrapped over small debris models, so solid and without edges. Bone:
+    # off-white, pitted, stained with blood in patches
+    solid = np.ones((64, 64))
+    n = noise(rng, (64, 64), 5)
+    fine = noise(rng, (64, 64), 16, 3)
+    rgb = np.array([170, 152, 122], float)[None, None] * (0.75 + 0.35 * fine[..., None])
+    rgb = mix(rgb, np.array([70, 12, 8], float)[None, None], smooth(0.55, 0.8, n))
+    save("bit_bone.tga", rgb, solid, round_=False, edge=False)
+
+    # scalp and flesh: torn red meat, darker where it is wet
+    n = noise(rng, (64, 64), 6)
+    fine = noise(rng, (64, 64), 18, 3)
+    rgb = mix(np.array([96, 26, 20], float)[None, None], np.array([42, 4, 3], float)[None, None], smooth(0.4, 0.75, n))
+    rgb = mix(rgb, np.array([120, 70, 60], float)[None, None], smooth(0.75, 0.9, fine) * 0.6)
+    save("bit_flesh.tga", rgb, solid, round_=False, edge=False)
+
+    # brain: grey-pink folds with blood between them
+    lumps = noise(rng, (64, 64), 10, 3)
+    rgb = mix(np.array([112, 78, 74], float)[None, None], np.array([128, 92, 86], float)[None, None], smooth(0.4, 0.7, lumps))
+    rgb = mix(rgb, np.array([44, 5, 4], float)[None, None], smooth(0.42, 0.3, lumps) * 0.85)
+    save("bit_brain.tga", rgb, solid, round_=False, edge=False)
+
+    # the smear a body leaves dragged along the ground or a wall
+    # (CG_GoreStreak): its length down the texture, dragged out in lines along
+    # it, wider and narrower as it goes, ragged at the sides, with clots and
+    # thin patches, and thinning out at both ends
+    h, w = 256, 128
+    y, x = np.mgrid[0:h, 0:w]
+    y, x = y / (h - 1), x / (w - 1)
+
+    def stretched(cells, octaves):
+        n = noise(rng, (16, w), cells, octaves)
+        return np.asarray(Image.fromarray((n * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
+
+    smear = stretched(10, 3)
+    side = np.asarray(Image.fromarray((noise(rng, (h, 4), 5, 3) * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
+    blotch = noise(rng, (h, w), 6, 3)
+    centre = 0.5 + (side - 0.5) * 0.18
+    edge = 0.2 + 0.28 * side + 0.06 * (blotch - 0.5)
+    across = smooth(edge, edge - 0.18, np.abs(x - centre))
+    ends = smooth(0.0, 0.12, y) * smooth(1.0, 0.88, y)
+    thick = np.clip(0.35 + 0.65 * smear + 0.5 * (blotch - 0.5), 0, 1)
+    rgb = mix(FRESH[None, None], DRIED[None, None], 0.2 + smear * 0.5 + (blotch - 0.5) * 0.4)
+    save("streak.tga", rgb, across * ends * thick, round_=False)
 
 
 if __name__ == "__main__":

@@ -8120,11 +8120,18 @@ extern "C" void CG_RagdollGrabDown_f(void)
     rd = CG_RagdollUnderCrosshair(&entry);
     CG_RagdollViewRay(start, dir);
 
-    // A prop, if one is nearer along the aim than any body.
+    // A part cut off a body (cg_gore.cpp), or a prop, if one is nearer along
+    // the aim than any body.
     {
-        float propEntry;
+        float propEntry, partEntry;
+        int   prop = CG_PhysicsGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &propEntry);
+        int   part = CG_GoreGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &partEntry);
 
-        if (CG_PhysicsGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &propEntry) && (!rd || propEntry < entry)) {
+        if (part && (!rd || partEntry < entry) && (!prop || partEntry <= propEntry + 8.0f)
+            && CG_GoreGrabStart(start, dir, cg_ragdoll_grabrange->value, RD_GRAB_MIN_DIST)) {
+            return;
+        }
+        if (prop && (!rd || propEntry < entry)) {
             CG_PhysicsGrabStart(start, dir, cg_ragdoll_grabrange->value, RD_GRAB_MIN_DIST);
             return;
         }
@@ -8202,7 +8209,13 @@ extern "C" void CG_RagdollPunt_f(void)
     } else {
         float propEntry;
 
+        float partEntry;
+
         rd = CG_RagdollUnderCrosshair(&entry);
+        if (CG_GoreGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &partEntry) && (!rd || partEntry < entry)
+            && CG_GorePunt(start, dir, cg_ragdoll_grabrange->value, cg_ragdoll_puntspeed->value)) {
+            return;
+        }
         if (CG_PhysicsGrabCandidate(start, dir, cg_ragdoll_grabrange->value, &propEntry) && (!rd || propEntry < entry)) {
             CG_PhysicsPunt(start, dir, cg_ragdoll_grabrange->value, cg_ragdoll_puntspeed->value);
             return;

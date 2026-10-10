@@ -965,9 +965,10 @@ typedef struct {
     float          scale;
     int            numBones;
     int            numMorphs;
+    int            numDents;
     int            poseId;
     int            size;
-    byte          *data; // its bones, then its morphs
+    byte          *data; // its bones, its morphs, then its gore dents
 } skelPoseRecord_t;
 
 static skelPoseRecord_t skelPoseRecords[MAX_GENTITIES];
@@ -989,13 +990,19 @@ void R_SkelPosesClear(void)
 
 static int R_SkelPoseId(const trRefEntity_t *ent, const skelBoneCache_t *bones, int numBones, const int *morphs, int numMorphs)
 {
-    skelPoseRecord_t *rec       = &skelPoseRecords[ent->e.entityNumber & (MAX_GENTITIES - 1)];
-    const int         boneBytes = numBones * sizeof(skelBoneCache_t);
-    const int         size      = boneBytes + numMorphs * sizeof(int);
+    skelPoseRecord_t *rec        = &skelPoseRecords[ent->e.entityNumber & (MAX_GENTITIES - 1)];
+    const int         boneBytes  = numBones * sizeof(skelBoneCache_t);
+    const int         morphBytes = numMorphs * sizeof(int);
+    // Added in OPM: the gore dents are part of the pose; a new one is a new
+    // pose, or the surfaces skinned before it would go on being drawn
+    const int         numDents  = (ent->e.renderfx & RF_GORE_DENTS) && ent->e.gore_dents ? Q_min(Q_max(ent->e.num_gore_dents, 0), MAX_GORE_DENTS) : 0;
+    const int         dentBytes = numDents * sizeof(goreDent_t);
+    const int         size      = boneBytes + morphBytes + dentBytes;
 
     if (rec->poseId && rec->tiki == ent->e.tiki && rec->entityNumber == ent->e.entityNumber && rec->scale == ent->e.scale
-        && rec->numBones == numBones && rec->numMorphs == numMorphs && !memcmp(rec->data, bones, boneBytes)
-        && !memcmp(rec->data + boneBytes, morphs, numMorphs * sizeof(int))) {
+        && rec->numBones == numBones && rec->numMorphs == numMorphs && rec->numDents == numDents
+        && !memcmp(rec->data, bones, boneBytes) && !memcmp(rec->data + boneBytes, morphs, morphBytes)
+        && !memcmp(rec->data + boneBytes + morphBytes, ent->e.gore_dents, dentBytes)) {
         return rec->poseId;
     }
 
@@ -1007,12 +1014,16 @@ static int R_SkelPoseId(const trRefEntity_t *ent, const skelBoneCache_t *bones, 
         rec->size = size;
     }
     Com_Memcpy(rec->data, bones, boneBytes);
-    Com_Memcpy(rec->data + boneBytes, morphs, numMorphs * sizeof(int));
+    Com_Memcpy(rec->data + boneBytes, morphs, morphBytes);
+    if (dentBytes) {
+        Com_Memcpy(rec->data + boneBytes + morphBytes, ent->e.gore_dents, dentBytes);
+    }
     rec->tiki         = ent->e.tiki;
     rec->entityNumber = ent->e.entityNumber;
     rec->scale        = ent->e.scale;
     rec->numBones     = numBones;
     rec->numMorphs    = numMorphs;
+    rec->numDents     = numDents;
     rec->poseId       = R_NewSkelPoseId();
     return rec->poseId;
 }
@@ -1710,7 +1721,7 @@ static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, floa
 {
     int numBones, i, v;
 
-    if (!(e->renderfx & RF_GORE_DENTS) || (e->renderfx & RF_GORE_CHUNK) || !e->gore_dents || e->num_gore_dents <= 0
+    if (!(e->renderfx & RF_GORE_DENTS) || !e->gore_dents || e->num_gore_dents <= 0
         || !e->tiki) {
         return;
     }
@@ -1734,22 +1745,48 @@ static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, floa
 }
 
 // Added in OPM
+//  The dents of a model the vertex program poses (tr_skelgpu.cpp), two vec4s
+//  each: its middle and radius, then the way out of the hollow, in model space
+//  at the model's scale as R_GoreDents has them.
+int R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out)
+{
+    const refEntity_t *e = &ent->e;
+    float              scale;
+    int                numBones, i, n = 0;
+
+    if (!(e->renderfx & RF_GORE_DENTS) || !e->gore_dents || e->num_gore_dents <= 0 || !e->tiki) {
+        return 0;
+    }
+
+    scale    = e->tiki->load_scale * e->scale;
+    numBones = ri.TIKI_GetNumChannels(e->tiki);
+    for (i = 0; i < e->num_gore_dents && i < MAX_GORE_DENTS; i++) {
+        vec3_t centre, dir;
+        float  radius;
+
+        R_GoreDentCentre(e, &TIKI_Skel_Bones[e->bonestart], numBones, scale, i, centre, dir, &radius);
+        if (radius <= 0) {
+            continue;
+        }
+        VectorCopy(centre, out[n * 2]);
+        out[n * 2][3] = radius;
+        VectorCopy(dir, out[n * 2 + 1]);
+        out[n * 2 + 1][3] = 0;
+        n++;
+    }
+    return n;
+}
+
+// Added in OPM
 //  A model the gore system has cut a part off (RF_GORE_DENTS): the part's
 //  triangles are folded into its joint, and drawn as they are they would come
 //  out with no area and tangents of nothing over nothing. They are left out.
-static void R_GoreDropFolded(const refEntity_t *e, const skelBoneCache_t *bones, float scale, int firstIndex)
+static void R_GoreDropFolded(const refEntity_t *e, int firstIndex)
 {
-    vec3_t chunkCentre, chunkDir;
-    float  chunkRadius = 0;
-    int    i, kept = firstIndex;
+    int i, kept = firstIndex;
 
     if (!(e->renderfx & RF_GORE_DENTS)) {
         return;
-    }
-
-    // a piece broken off: only what is inside its sphere
-    if ((e->renderfx & RF_GORE_CHUNK) && e->gore_dents && e->num_gore_dents > 0 && e->tiki) {
-        R_GoreDentCentre(e, bones, ri.TIKI_GetNumChannels(e->tiki), scale, 0, chunkCentre, chunkDir, &chunkRadius);
     }
 
     for (i = firstIndex; i + 2 < tess.numIndexes; i += 3) {
@@ -1763,16 +1800,6 @@ static void R_GoreDropFolded(const refEntity_t *e, const skelBoneCache_t *bones,
         CrossProduct(e1, e2, n);
         if (VectorLengthSquared(n) < 0.0001f) {
             continue;
-        }
-        if (chunkRadius > 0) {
-            vec3_t mid;
-
-            VectorAdd(a, b, mid);
-            VectorAdd(mid, c, mid);
-            VectorScale(mid, 1.0f / 3, mid);
-            if (Distance(mid, chunkCentre) > chunkRadius) {
-                continue;
-            }
         }
 
         tess.indexes[kept]     = tess.indexes[i];
@@ -2098,7 +2125,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     // skinned for another view of this scene already
     kept     = R_SkinCacheFetch(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
     if (kept) {
-        R_GoreDropFolded(&backEnd.currentEntity->e, &TIKI_Skel_Bones[backEnd.currentEntity->e.bonestart], scale, baseIndex);
+        R_GoreDropFolded(&backEnd.currentEntity->e, baseIndex);
     }
     if (kept == 1) {
         RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
@@ -2383,7 +2410,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 
     // Added in OPM
     R_GoreDents(&backEnd.currentEntity->e, bones, scale, baseVertex, render_count);
-    R_GoreDropFolded(&backEnd.currentEntity->e, bones, scale, baseIndex);
+    R_GoreDropFolded(&backEnd.currentEntity->e, baseIndex);
 
     if (tangents) {
         // the indexes written: fewer than the surface's when the level of

@@ -668,6 +668,7 @@ static void CG_MakeBulletTracerInternal(
                     // makes no impact, and neither does the server's report of
                     // hitting it (see CG_AddBulletImpacts).
                     CG_PhysicsNoteBullet(vTraceStart, trace.endpos, iLarge);
+                    CG_GoreNoteBullet(vTraceStart, trace.endpos, iLarge);
 
                     if (CG_RagdollNoteBullet(vTraceStart, trace.endpos, iLarge, vCorpseStop)) {
                         CG_NoteCorpseStoppedBullet(vCorpseStop, i_vEnd[iBullet]);

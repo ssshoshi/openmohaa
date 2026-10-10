@@ -1691,6 +1691,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec4(sp, UNIFORM_SKELAMBIENT, tess.skelGpu.ambient);
 			if (tess.skelGpu.params[3] > 0)
 				GLSL_SetUniformSkelLights(sp, UNIFORM_SKELLIGHTS, tess.skelGpu.lights, (int)tess.skelGpu.params[3] * 3);
+			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMDENTS, tess.skelGpu.numDents);
+			if (tess.skelGpu.numDents > 0)
+				GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, tess.skelGpu.dents, tess.skelGpu.numDents * 2);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
