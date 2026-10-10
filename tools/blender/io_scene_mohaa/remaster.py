@@ -22,6 +22,9 @@ exporter splits bigger ones, under the same name, so the game's own .tik still s
 and 32 surfaces per model (MAX_MODEL_SURFACES: each entity's surface flags are sent in a
 fixed array), so the budget shrinks until the split surfaces fit.
 
+Props need no new shapes, only rounder ones: mode "subdivide" skips the candidates and rounds
+every surface as the fallback does (smoothed_copy), with the same checks.
+
 Coordinates here are armature space, which is raw model units (the importer puts the unit
 scale on the armature object).
 """
@@ -667,36 +670,134 @@ def build_object(arm, s, data, rest_verts, name):
     return obj
 
 
+HARD_ANGLE = 60.0     # faces meeting at more than this keep their edge creased
+FOLD_ANGLE = 120.0    # ... and at more than this (a thin panel's rim) shaded sharp too
+NORMAL_BREAK = 0.98   # ... and so do faces whose normals at a shared corner differ (cosine)
+HOLD_RATIO = 2.0      # an edge with a face reaching further than this many times its length is held
+
+
+def _weld(bm, dist):
+    """Join the vertices the game format splits at every UV seam and normal break, so the
+    surface is one connected mesh again (UVs stay per corner, so seams stay in the UVs)."""
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=dist)
+
+
+def _span(face, edge):
+    """How far a face reaches from one of its edges."""
+    a, b = (v.co for v in edge.verts)
+    d = b - a
+    ln2 = max(d.length_squared, 1e-12)
+    return max(((v.co - a) - d * ((v.co - a).dot(d) / ln2)).length for v in face.verts)
+
+
+def _mark_hard_edges(bm, normal_layer):
+    """Creased edges: open borders, steep folds, and the edges the original's normals break
+    across; only the borders, breaks and folds back on themselves are shaded sharp (a steep
+    fold the artist shaded smooth stays smooth). Everything else is meant to look curved and
+    gets rounded, except across long faces: a face reaching far from an edge would bow out along its length (a
+    straight-sided cylinder would turn into a barrel), so such an edge is creased too, but
+    stays smooth shaded, the way a modeller adds a holding edge."""
+    crease = bm.edges.layers.float.get("crease_edge") or bm.edges.layers.float.new("crease_edge")
+    hard_cos = math.cos(math.radians(HARD_ANGLE))
+    fold_cos = math.cos(math.radians(FOLD_ANGLE))
+    for e in bm.edges:
+        sharp = len(e.link_faces) != 2  # shaded sharp: open borders and the original's breaks
+        steep = False
+        if not sharp:
+            f1, f2 = e.link_faces
+            steep = f1.normal.dot(f2.normal) < hard_cos
+            sharp = f1.normal.dot(f2.normal) < fold_cos
+            if normal_layer is not None and not sharp:
+                for v in e.verts:
+                    n1 = next(l[normal_layer] for l in f1.loops if l.vert is v)
+                    n2 = next(l[normal_layer] for l in f2.loops if l.vert is v)
+                    if Vector(n1).dot(Vector(n2)) < NORMAL_BREAK:
+                        sharp = True
+                        break
+            elif normal_layer is None:
+                sharp = steep
+        hold = not (sharp or steep) and max(_span(f, e) for f in e.link_faces) > HOLD_RATIO * e.calc_length()
+        e[crease] = 1.0 if sharp or steep or hold else 0.0
+        e.smooth = not sharp
+    for f in bm.faces:
+        f.smooth = True
+
+
+def _subdivided(me, groups, levels, kind):
+    """me evaluated through a Subdivision modifier of the given kind (SIMPLE or
+    CATMULL_CLARK); the same topology and vertex order either way."""
+    tmp = bpy.data.objects.new(me.name + "_tmp", me)
+    bpy.context.scene.collection.objects.link(tmp)
+    for g in groups:
+        tmp.vertex_groups.new(name=g)
+    mod = tmp.modifiers.new("Subdivision", "SUBSURF")
+    mod.subdivision_type = kind
+    mod.levels = mod.render_levels = levels
+    mod.uv_smooth = "NONE"  # linear: every original face keeps its texture mapping
+    mod.boundary_smooth = "PRESERVE_CORNERS"
+    mod.use_creases = True
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = bpy.data.meshes.new_from_object(tmp.evaluated_get(dg), preserve_all_data_layers=True, depsgraph=dg)
+    bpy.data.objects.remove(tmp, do_unlink=True)
+    return out
+
+
+def _round(flat, smooth):
+    """Move the linearly subdivided mesh `flat` to the Catmull-Clark one `smooth`, but only
+    along its normals: sliding along the surface would drag the texture with it."""
+    n = len(flat.vertices)
+    lin = np.empty(n * 3)
+    flat.vertices.foreach_get("co", lin)
+    lin = lin.reshape(-1, 3)
+    cc = np.empty(n * 3)
+    smooth.vertices.foreach_get("co", cc)
+    cc = cc.reshape(-1, 3)
+    nrm = np.empty(n * 3)
+    flat.vertex_normals.foreach_get("vector", nrm)
+    nrm = nrm.reshape(-1, 3)
+    lift = ((cc - lin) * nrm).sum(1)
+    flat.vertices.foreach_set("co", (lin + nrm * lift[:, None]).ravel())
+    flat.update()
+
+
 def smoothed_copy(arm, s, name, levels=1):
-    """The original surface subdivided (Catmull-Clark, edges sharper than 50 degrees kept),
-    or None for a surface with morph targets (its modifiers would not apply)."""
+    """The original surface rounded by subdivision (Catmull-Clark): welded into one mesh,
+    triangles paired into quads, sharp edges kept (see _mark_hard_edges), and the texture
+    kept in place (see _round). The rounded surface runs a little inside the original's
+    corners and outside its flat faces. None for a surface with morph targets (its modifiers
+    would not apply)."""
     orig = s["obj"]
     if orig.data.shape_keys is not None:
         return None
     me = orig.data.copy()
     me.name = name
+    # the original's normals, per corner, to find which edges it shades smooth
+    cn = np.empty(len(me.loops) * 3)
+    me.corner_normals.foreach_get("vector", cn)
+    attr = me.attributes.new("mohaa_normal", "FLOAT_VECTOR", "CORNER")
+    attr.data.foreach_set("vector", cn)
+    if "custom_normal" in me.attributes:  # it would carry the flat shading over: sharp edges decide now
+        me.attributes.remove(me.attributes["custom_normal"])
     bm = bmesh.new()
     bm.from_mesh(me)
-    crease = bm.edges.layers.float.get("crease_edge") or bm.edges.layers.float.new("crease_edge")
-    for e in bm.edges:
-        if len(e.link_faces) != 2 or e.calc_face_angle(0.0) > math.radians(50.0) or not e.smooth:
-            e[crease] = 1.0
+    lo, hi = np.array(bounds_of_bm(bm))
+    _weld(bm, 1e-4 * max(float(np.linalg.norm(hi - lo)), 1e-6))
+    bm.normal_update()
+    normal_layer = bm.loops.layers.float_vector.get("mohaa_normal")
+    _mark_hard_edges(bm, normal_layer)
+    bmesh.ops.join_triangles(bm, faces=bm.faces[:], cmp_sharp=True, cmp_uvs=True, cmp_materials=True,
+                             angle_face_threshold=math.radians(40.0), angle_shape_threshold=math.radians(40.0))
     bm.to_mesh(me)
     bm.free()
-    tmp = bpy.data.objects.new(name + "_tmp", me)
-    bpy.context.scene.collection.objects.link(tmp)
-    for g in orig.vertex_groups:
-        tmp.vertex_groups.new(name=g.name)
-    mod = tmp.modifiers.new("Subdivision", "SUBSURF")
-    mod.levels = mod.render_levels = levels
-    mod.uv_smooth = "PRESERVE_BOUNDARIES"
-    mod.boundary_smooth = "PRESERVE_CORNERS"
-    dg = bpy.context.evaluated_depsgraph_get()
-    new_me = bpy.data.meshes.new_from_object(tmp.evaluated_get(dg), preserve_all_data_layers=True, depsgraph=dg)
-    bpy.data.objects.remove(tmp, do_unlink=True)
+    me.attributes.remove(me.attributes["mohaa_normal"])
+    groups = [g.name for g in orig.vertex_groups]
+    new_me = _subdivided(me, groups, levels, "SIMPLE")
+    smooth = _subdivided(me, groups, levels, "CATMULL_CLARK")
     bpy.data.meshes.remove(me)
-    for attr in [a.name for a in new_me.attributes if a.name.startswith("mohaa_collapse")]:
-        new_me.attributes.remove(new_me.attributes[attr])
+    _round(new_me, smooth)
+    bpy.data.meshes.remove(smooth)
+    for a in [a.name for a in new_me.attributes if a.name.startswith("mohaa_collapse")]:
+        new_me.attributes.remove(new_me.attributes[a])
     new_me.name = name
     obj = bpy.data.objects.new(name, new_me)
     for coll in orig.users_collection:
@@ -712,6 +813,11 @@ def smoothed_copy(arm, s, name, levels=1):
     mod.object = arm
     obj["mohaa_remaster"] = "smoothed"
     return obj
+
+
+def bounds_of_bm(bm):
+    co = np.array([v.co[:] for v in bm.verts]) if bm.verts else np.zeros((1, 3))
+    return co.min(0), co.max(0)
 
 
 # ----------------------------------------------------------------------------- checks
@@ -787,6 +893,8 @@ class Options:
         self.stretch_margin = 1.5   # new p99 edge stretch may be this many times the original's
         self.stretch_slack = 0.05   # ... plus this
         self.smooth = True          # fall back to smoothing
+        self.mode = "detail"        # detail: candidate meshes; subdivide: round every surface
+        self.levels = 1             # subdivision levels (each about quadruples the triangles)
         self.seed = 0
         for k, v in kw.items():
             if not hasattr(self, k):
@@ -798,6 +906,8 @@ def build(arm, candidates, options, log=print):
     """Replace the model's surfaces with the best candidate mesh where it passes the checks,
     and smoothed originals where it does not. Candidates are file paths; the scene must hold
     the model as prepare() left it (lifted pose, no action). Returns a report dict."""
+    if options.mode == "subdivide":
+        return subdivide(arm, options, log=log)
     rng = np.random.default_rng(options.seed)
     report = {"candidates": [], "surfaces": {}, "warnings": []}
     actions = [a for a in bpy.data.actions if a.get("mohaa_armature") == arm.name]
@@ -905,14 +1015,81 @@ def build(arm, candidates, options, log=print):
         report["surfaces"]["%s (%s)" % (s["name"], os.path.basename(s["skd"]))] = entry
         log("  %-28s %s%s" % (s["name"], entry["result"], (": " + entry["reason"]) if entry.get("reason") else ""))
 
-    # the replaced originals leave the export (hidden in the .blend, for comparing)
+    _hide_replaced(source, final, report)
+    return report
+
+
+def _hide_replaced(source, final, report):
+    """The replaced originals leave the export (hidden in the .blend, for comparing)."""
     report["replaced"] = []
-    for si, obj in final.items():
+    for si in final:
         s = source.surfaces[si]
         s["obj"].hide_set(True)
         s["obj"].hide_render = True
         s["obj"]["mohaa_remaster"] = "replaced"
         report["replaced"].append(s["skd"])
+
+
+def subdivide(arm, options, log=print):
+    """Round every surface by subdivision (smoothed_copy), for props: their shapes are
+    right, only coarse. A surface that strays from the original's shape, stretches in
+    animation or would break the engine's limits stays as it was. Returns a report dict."""
+    rng = np.random.default_rng(options.seed)
+    report = {"mode": "subdivide", "levels": options.levels, "surfaces": {}, "warnings": []}
+    actions = [a for a in bpy.data.actions if a.get("mohaa_armature") == arm.name]
+    clear_pose(arm)
+    source = Source(arm, options.keep)
+    _, _, diag = bounds(source.verts)
+    tol = options.fit_tolerance * diag
+    final = {}
+    tri_counts = {}
+    for si, s in enumerate(source.surfaces):
+        entry = {"skd": s["skd"], "original_tris": int(len(s["tris"]))}
+        sm = None
+        reason = "kept (--keep)" if s["keep"] else None
+        if reason is None:
+            sm = smoothed_copy(arm, s, "%s.smooth" % s["obj"].name, levels=options.levels)
+            if sm is None:
+                reason = "has morph targets"
+        if sm is not None:
+            co, tris, _ = posed_geometry(arm, sm)
+            near, extra = fit_metrics(source, si, co, tris, rng)
+            entry.update({"tris": int(len(tris)), "missing_p95": near / diag, "extra_p95": extra / diag})
+            if near > tol or extra > tol:
+                reason = "strays from the original (%.3f of the model's size)" % (max(near, extra) / diag)
+            elif actions:
+                so, sn = deformation_check(arm, [(s["obj"], sm)], actions)[sm.name]
+                entry.update({"stretch_original": so, "stretch_new": sn})
+                if sn > so * options.stretch_margin + options.stretch_slack:
+                    reason = "stretches in animation (%.3f, the original %.3f)" % (sn, so)
+        if reason is None:
+            entry["result"] = "smoothed"
+            final[si] = sm
+            tri_counts[si] = entry["tris"]
+        else:
+            if sm is not None:
+                bpy.data.objects.remove(sm, do_unlink=True)
+            entry["result"] = "original"
+            entry["reason"] = reason
+        report["surfaces"]["%s (%s)" % (s["name"], os.path.basename(s["skd"]))] = entry
+        log("  %-28s %s%s" % (s["name"], entry["result"], (": " + entry["reason"]) if entry.get("reason") else ""))
+
+    # the engine's limits: drop the biggest rounded surfaces until the model fits
+    def totals():
+        counts = [tri_counts.get(si, len(s["tris"])) for si, s in enumerate(source.surfaces)]
+        return sum(counts), estimate_pieces(counts)
+    total, pieces = totals()
+    while final and (pieces > MAX_SURFACES or total > options.max_tris):
+        si = max(final, key=lambda k: tri_counts[k])
+        bpy.data.objects.remove(final.pop(si), do_unlink=True)
+        del tri_counts[si]
+        s = source.surfaces[si]
+        e = report["surfaces"]["%s (%s)" % (s["name"], os.path.basename(s["skd"]))]
+        e["result"], e["reason"] = "original", "over the engine's or --max-tris budget"
+        report["warnings"].append("%s left as it was: the model would be over budget" % s["name"])
+        total, pieces = totals()
+    report["tris"], report["surfaces_once_split"] = int(total), int(pieces)
+    _hide_replaced(source, final, report)
     return report
 
 
@@ -1037,7 +1214,8 @@ def build_from_blend(context, blend, candidates, out_root, work_dir, options, lo
     _apply_pose(arm, json.loads(arm["mohaa_remaster_pose"]))
     report = build(arm, candidates, options, log=log)
     clear_pose(arm)
-    after = render_views(model_meshes(arm), os.path.join(work_dir, "review"), size=512,
+    shown = [o for o in model_meshes(arm) if o.get("mohaa_remaster") != "replaced"]
+    after = render_views(shown, os.path.join(work_dir, "review"), size=512,
                          yaws=(0.0, 45.0, 90.0, 180.0), elevation=5.0, prefix="after")
     report["sheet"] = contact_sheet([before, after], os.path.join(work_dir, "review", "before_after.png"))
     if any(e["result"] != "original" for e in report["surfaces"].values()):

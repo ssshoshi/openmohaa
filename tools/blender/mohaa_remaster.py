@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Remastering the game's models in batches: new detail from TRELLIS (or meshes you supply)
-on the original rigs, UVs and textures, with smoothing where that fails.
+"""Remastering the game's models in batches, on the original rigs, UVs and textures.
 
-    tools/blender/mohaa_remaster.py run models/weapons/kar98.tik 'models/human/allied_*.tik' \\
+    tools/blender/mohaa_remaster.py run 'models/static/*.tik' \\
         --work ~/remaster --pk3 ~/remaster/zzz-remaster.pk3
 
-For every model:
+--mode subdivide (the default, for props): every surface is rounded by subdivision, its
+sharp edges kept; steps prepare, build, pack.
+--mode trellis (characters, weapons): new detail from TRELLIS (or meshes you supply), with
+smoothing where that fails. For every model:
   prepare   Blender imports it with the game's textures (yours, when your texture pk3 is in
             main/), lifts its arms and renders it from around: WORK/<model>/views/
   generate  TRELLIS turns the renders into candidate meshes: WORK/<model>/candidates/
@@ -125,7 +127,10 @@ def step_build(args, model, wd):
     cands = candidates(args, model, wd)
     win = mohaa_blender.is_windows_exe(mohaa_blender.find_blender())
     opts = {"factor": args.factor, "max_tris": args.max_tris, "keep": args.keep,
-            "fit_tolerance": args.fit_tolerance, "smooth": not args.no_smooth}
+            "fit_tolerance": args.fit_tolerance, "smooth": not args.no_smooth,
+            "mode": "subdivide" if args.mode == "subdivide" else "detail", "levels": args.levels}
+    if args.mode == "subdivide":
+        cands = []
     extra = ["--candidates", ";".join(mohaa_blender.to_host(c, win) for c in cands), "--options", json.dumps(opts)]
     out_root = os.path.join(args.work, "out")
     os.makedirs(out_root, exist_ok=True)
@@ -165,6 +170,10 @@ def main():
     ap.add_argument("--game", default=mohaa_blender.DEFAULT_GAME)
     ap.add_argument("--ta", action="store_true")
     ap.add_argument("--tt", action="store_true")
+    ap.add_argument("--mode", choices=("subdivide", "trellis"), default="subdivide",
+                    help="subdivide: round the model's own surfaces (props); trellis: new detail from "
+                         "TRELLIS or your meshes, smoothing where it fails")
+    ap.add_argument("--levels", type=int, default=1, help="subdivide: levels (each about quadruples the triangles)")
     ap.add_argument("--redo", default="", help="steps to run again although done: prepare,generate,build")
     ap.add_argument("--spread", type=float, default=30.0, help="degrees the arms are lifted for generation")
     ap.add_argument("--check-anims", default="auto", help="animation aliases for the stretch check (auto: a few)")
@@ -193,7 +202,7 @@ def main():
             try:
                 if args.step in ("run", "prepare"):
                     step_prepare(args, model, wd)
-                if args.step in ("run", "generate"):
+                if args.step in ("run", "generate") and args.mode == "trellis":
                     step_generate(args, model, wd)
                 if args.step in ("run", "build"):
                     step_build(args, model, wd)

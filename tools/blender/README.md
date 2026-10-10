@@ -9,12 +9,39 @@
 
 ## Remastering models
 
-New geometry for the game's models, on their original skeletons, UVs and textures, so your
-upscaled textures and normal maps keep fitting. Where the new geometry fails a check, a
-surface is smoothed instead, or left as it was.
+Two modes, both keeping the models' original skeletons, UVs and textures, so your upscaled
+textures and normal maps keep fitting.
+
+### Props: subdivide (the default)
+
+    tools/blender/mohaa_remaster.py run 'models/static/*.tik' 'models/furniture/*.tik' \
+        --work ~/remaster --pk3 ~/remaster/zzz-remaster.pk3
+
+Props have the right shapes, only coarse ones: an eight-sided stove, a boxy chair. Each
+surface is rounded by subdivision (Catmull-Clark, `--levels 1` by default, each level about
+four times the triangles):
+
+- the surface is welded back into one mesh first (the game format splits vertices at every
+  UV seam and normal break, which would leave every edge an open border);
+- edges stay creased where the faces meet at more than 60 degrees, where the original's
+  normals break, and along long faces (a straight-sided cylinder would bulge into a barrel
+  otherwise: these act as a modeller's holding edges). Shading follows the original: an edge
+  is shaded sharp where its normals broke, or where a thin panel folds back on itself;
+- vertices move only along the surface normal (from a linear subdivision to the rounded one),
+  so the texture stays where it was instead of sliding with them.
+
+A surface that strays from the original by more than `--fit-tolerance`, stretches in
+animation, has facial morphs, or would put the model over the engine's limits stays as it
+was. Steps: **prepare** (import, renders), **build**, **pack**, as below; nothing is
+generated.
+
+### Characters and weapons: TRELLIS (`--mode trellis`)
+
+New geometry, where the shape itself should gain detail. Where it fails a check a surface
+is smoothed as above instead, or left as it was.
 
     tools/blender/mohaa_remaster.py run 'models/weapons/*.tik' models/human/allied_airborne_soldier.tik \
-        --work ~/remaster --pk3 ~/remaster/zzz-remaster.pk3 \
+        --mode trellis --work ~/remaster --pk3 ~/remaster/zzz-remaster.pk3 \
         --trellis-python ~/miniconda3/envs/trellis/bin/python --trellis-home ~/TRELLIS
 
 1. **prepare**: each model is imported with the game's textures (put your texture pk3 in
@@ -31,6 +58,11 @@ surface is smoothed instead, or left as it was.
    the model's animations. Surfaces matching `--keep` (e.g. `--keep 'head*'`) stay as they are.
 4. **pack**: the changed `.skd` files go into the pk3. The game's `.tik` files and animations
    are not touched.
+
+TRELLIS rebuilds a model from pictures of it, so it reproduces a coarse model's flat facets
+rather than rounding them, and its 64-cube grid loses thin parts: it does not suit props.
+
+### Both
 
 Review `WORK/<model>/review/before_after.png` (top: original, bottom: remastered) and
 `report.json` (what happened to each surface, and why). `WORK/<model>/remastered.blend`

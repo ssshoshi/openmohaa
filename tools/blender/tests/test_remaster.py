@@ -12,7 +12,9 @@ sides, a head with a facial morph, textures, and a wave animation. Then:
   3. build must pick the blob, cut it into the three surfaces with their UVs, weights and
      morph, and export .skd files the engine's maths skins like Blender shows them;
   4. with only the sphere, every surface must fall back: smoothed, or kept when it has
-     morphs.
+     morphs;
+  5. subdivide mode (props) rounds every surface without a candidate, keeps its textures
+     where they were, and skins like Blender shows it.
 """
 
 import argparse
@@ -339,6 +341,27 @@ def main():
           ", ".join("%s %s" % (k, e["result"]) for k, e in results.items()))
     worst, count, models = engine_vs_blender(out_root, wd2, "models/test/dude.tik", source_root)
     check("smoothed files skin as Blender shows", worst < 0.05, "worst %.4f units, %d surfaces" % (worst, count))
+
+    # 5. subdivide
+    shutil.rmtree(out_root)
+    wd3 = os.path.join(work, "remaster", "dude_subdivide")
+    shutil.copytree(wd, wd3, ignore=shutil.ignore_patterns("candidates", "review", "report.json", "remastered.blend"))
+    r = remaster.build_from_blend(bpy.context, os.path.join(wd3, "source.blend"), [], out_root, wd3,
+                                  remaster.Options(mode="subdivide"))
+    results = {k.split(" ")[0]: e for k, e in r["surfaces"].items()}
+    check("subdivide rounds every surface", results["body"]["result"] == "smoothed" and results["arms"]["result"] ==
+          "smoothed" and results["head"]["result"] == "original" and results["body"]["tris"] > 2 *
+          results["body"]["original_tris"],
+          ", ".join("%s %s %s" % (k, e["result"], e.get("tris", "")) for k, e in results.items()))
+    worst, count, models = engine_vs_blender(out_root, wd3, "models/test/dude.tik", source_root)
+    check("subdivided files skin as Blender shows", worst < 0.05, "worst %.4f units, %d surfaces" % (worst, count))
+    bef = _b.data.images.load(os.path.join(wd3, "review", "before_00.png"))
+    aft = _b.data.images.load(os.path.join(wd3, "review", "after_00.png"))
+    bef.pixels.foreach_get(a.ravel())
+    aft.pixels.foreach_get(b.ravel())
+    both = (a[:, 3] > 0.5) & (b[:, 3] > 0.5)
+    diff = float(np.abs(a[both, :3] - b[both, :3]).mean())
+    check("subdivided textures map as before", diff < 0.06, "mean colour difference %.3f over %d pixels" % (diff, both.sum()))
 
     print("TESTS %s" % ("FAILED" if failed else "PASSED"))
     sys.exit(1 if failed else 0)
