@@ -72,10 +72,11 @@ typedef enum {
     SKEL_CPU_MESH,
     SKEL_CPU_MORPHS,
     SKEL_CPU_LIGHTING,
+    SKEL_CPU_GORE,     // dents and parts cut off (R_GoreDents, R_GoreDropFolded)
     SKEL_CPU_COUNT
 } skelGpuWhy_t;
 
-static const char *const skelCpuNames[SKEL_CPU_COUNT] = { "off", "view", "shader", "mesh", "morphs", "lighting" };
+static const char *const skelCpuNames[SKEL_CPU_COUNT] = { "off", "view", "shader", "mesh", "morphs", "lighting", "gore" };
 
 // the shaders it was not for, and why, for skelgpuinfo
 #define SKEL_GPU_REFUSED 64
@@ -595,6 +596,10 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
     }
     if (ent->e.hasMorph && m->hasMorphs) {
         backEnd.pc.c_skelGpuCpu[SKEL_CPU_MORPHS]++;
+        return NULL;
+    }
+    if (ent->e.renderfx & RF_GORE_DENTS) {
+        backEnd.pc.c_skelGpuCpu[SKEL_CPU_GORE]++;
         return NULL;
     }
 
