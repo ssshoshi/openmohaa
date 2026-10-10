@@ -1,11 +1,12 @@
 // Added in OPM
+// Written by tools/content/physics_sounds.py; change the sets there.
+//
 // What physics bodies sound like striking things (code/physics/phys_impact.cpp):
 // phys_<material>_<light|heavy|soft> for props, light and heavy on hard ground by
 // the thing's weight, soft on earth, grass, sand, snow or carpet; phys_flesh_<hard|soft>
-// for corpses (a trunk on hard ground; a limb, or soft ground). The code scales
-// volume by how hard the knock was and pitch by the weight.
-// phys_<material>_scrape: one loop each, played while a thing slides (no glass);
-// the code sets its volume and pitch by how fast and how heavy.
+// for corpses (a trunk on hard ground; a limb, or soft ground); phys_<material>_scrape,
+// loops, while a thing slides (none for glass). The code scales volume by how hard
+// the knock was or how fast the slide, and pitch by the weight.
 //
 // The recordings are Half-Life 2's and Day of Defeat: Source's physics sounds, which
 // are not ours to publish: physics.fetch says where the build fetches them from,
@@ -17,6 +18,11 @@ aliascache phys_wood_light3 sound/physics/wood/wood_box_impact_hard3.wav soundpa
 aliascache phys_wood_light4 sound/physics/wood/wood_box_impact_hard4.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_wood_light5 sound/physics/wood/wood_box_impact_hard5.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_wood_light6 sound/physics/wood/wood_box_impact_hard6.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light7 sound/physics/wood/wood_plank_impact_hard1.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light8 sound/physics/wood/wood_plank_impact_hard2.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light9 sound/physics/wood/wood_plank_impact_hard3.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light10 sound/physics/wood/wood_plank_impact_hard4.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_light11 sound/physics/wood/wood_plank_impact_hard5.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 
 aliascache phys_wood_heavy1 sound/physics/wood/wood_crate_impact_hard1.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
 aliascache phys_wood_heavy2 sound/physics/wood/wood_crate_impact_hard2.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
@@ -33,6 +39,15 @@ aliascache phys_wood_soft3 sound/physics/wood/wood_box_impact_soft3.wav soundpar
 aliascache phys_wood_soft4 sound/physics/wood/wood_crate_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 aliascache phys_wood_soft5 sound/physics/wood/wood_crate_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 aliascache phys_wood_soft6 sound/physics/wood/wood_crate_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft7 sound/physics/wood/wood_solid_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft8 sound/physics/wood/wood_solid_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft9 sound/physics/wood/wood_solid_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft10 sound/physics/wood/wood_plank_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft11 sound/physics/wood/wood_plank_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft12 sound/physics/wood/wood_plank_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft13 sound/physics/wood/wood_furniture_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft14 sound/physics/wood/wood_furniture_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_soft15 sound/physics/wood/wood_furniture_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 
 aliascache phys_metal_light1 sound/physics/metal/metal_canister_impact_hard1.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_metal_light2 sound/physics/metal/metal_canister_impact_hard2.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
@@ -64,6 +79,18 @@ aliascache phys_metal_soft4 sound/physics/metal/metal_barrel_impact_soft1.wav so
 aliascache phys_metal_soft5 sound/physics/metal/metal_barrel_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 aliascache phys_metal_soft6 sound/physics/metal/metal_barrel_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 aliascache phys_metal_soft7 sound/physics/metal/metal_barrel_impact_soft4.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft8 sound/physics/metal/metal_box_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft9 sound/physics/metal/metal_box_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft10 sound/physics/metal/metal_box_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft11 sound/physics/metal/metal_solid_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft12 sound/physics/metal/metal_solid_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft13 sound/physics/metal/metal_solid_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft14 sound/physics/metal/paintcan_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft15 sound/physics/metal/paintcan_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft16 sound/physics/metal/paintcan_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft17 sound/physics/metal/soda_can_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft18 sound/physics/metal/soda_can_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_soft19 sound/physics/metal/soda_can_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 
 aliascache phys_weapon_light1 sound/physics/metal/weapon_impact_hard1.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_weapon_light2 sound/physics/metal/weapon_impact_hard2.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
@@ -137,6 +164,9 @@ aliascache phys_stone_light3 sound/physics/concrete/rock_impact_hard3.wav soundp
 aliascache phys_stone_light4 sound/physics/concrete/rock_impact_hard4.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_stone_light5 sound/physics/concrete/rock_impact_hard5.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_stone_light6 sound/physics/concrete/rock_impact_hard6.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_light7 sound/physics/concrete/concrete_impact_hard1.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_light8 sound/physics/concrete/concrete_impact_hard2.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_light9 sound/physics/concrete/concrete_impact_hard3.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 
 aliascache phys_stone_heavy1 sound/physics/concrete/concrete_block_impact_hard1.wav soundparms 1.0 0.0 0.95 0.1 200 2200 auto loaded maps "m t dm obj lib train"
 aliascache phys_stone_heavy2 sound/physics/concrete/concrete_block_impact_hard2.wav soundparms 1.0 0.0 0.95 0.1 200 2200 auto loaded maps "m t dm obj lib train"
@@ -149,6 +179,9 @@ aliascache phys_stone_heavy7 sound/physics/concrete/boulder_impact_hard4.wav sou
 aliascache phys_stone_soft1 sound/physics/concrete/rock_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 aliascache phys_stone_soft2 sound/physics/concrete/rock_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 aliascache phys_stone_soft3 sound/physics/concrete/rock_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft4 sound/physics/concrete/concrete_impact_soft1.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft5 sound/physics/concrete/concrete_impact_soft2.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_soft6 sound/physics/concrete/concrete_impact_soft3.wav soundparms 0.8 0.1 0.95 0.1 100 1000 auto loaded maps "m t dm obj lib train"
 
 aliascache phys_default_light1 sound/physics/wood/wood_box_impact_hard1.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_default_light2 sound/physics/wood/wood_box_impact_hard2.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
@@ -173,6 +206,12 @@ aliascache phys_flesh_hard3 sound/physics/body/body_medium_impact_hard3.wav soun
 aliascache phys_flesh_hard4 sound/physics/body/body_medium_impact_hard4.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
 aliascache phys_flesh_hard5 sound/physics/body/body_medium_impact_hard5.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
 aliascache phys_flesh_hard6 sound/physics/body/body_medium_impact_hard6.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_hard7 sound/physics/flesh/flesh_impact_hard1.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_hard8 sound/physics/flesh/flesh_impact_hard2.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_hard9 sound/physics/flesh/flesh_impact_hard3.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_hard10 sound/physics/flesh/flesh_impact_hard4.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_hard11 sound/physics/flesh/flesh_impact_hard5.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_hard12 sound/physics/flesh/flesh_impact_hard6.wav soundparms 1.0 0.0 0.95 0.1 200 2000 auto loaded maps "m t dm obj lib train"
 
 aliascache phys_flesh_soft1 sound/physics/body/body_medium_impact_soft1.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_flesh_soft2 sound/physics/body/body_medium_impact_soft2.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
@@ -182,14 +221,34 @@ aliascache phys_flesh_soft5 sound/physics/body/body_medium_impact_soft5.wav soun
 aliascache phys_flesh_soft6 sound/physics/body/body_medium_impact_soft6.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 aliascache phys_flesh_soft7 sound/physics/body/body_medium_impact_soft7.wav soundparms 0.9 0.1 0.95 0.1 120 1400 auto loaded maps "m t dm obj lib train"
 
-// Scraping: loops, one a material.
 aliascache phys_wood_scrape1 sound/physics/wood/wood_box_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_scrape2 sound/physics/wood/wood_crate_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_scrape3 sound/physics/wood/wood_solid_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_wood_scrape4 sound/physics/wood/wood_plank_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_metal_scrape1 sound/physics/metal/metal_box_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_scrape2 sound/physics/metal/metal_box_scrape_rough_loop2.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_metal_scrape3 sound/physics/metal/metal_box_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_weapon_scrape1 sound/physics/metal/metal_grenade_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_weapon_scrape2 sound/physics/metal/metal_grenade_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_helmet_scrape1 sound/physics/metal/canister_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_helmet_scrape2 sound/physics/metal/canister_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_helmet_scrape3 sound/physics/metal/soda_can_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_paper_scrape1 sound/physics/cardboard/cardboard_box_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_paper_scrape2 sound/physics/cardboard/cardboard_box_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_stone_scrape1 sound/physics/concrete/concrete_block_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_scrape2 sound/physics/concrete/rock_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_stone_scrape3 sound/physics/concrete/concrete_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_default_scrape1 sound/physics/wood/wood_box_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_default_scrape2 sound/physics/wood/wood_plank_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+
 aliascache phys_flesh_scrape1 sound/physics/body/body_medium_scrape_rough_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_scrape2 sound/physics/body/body_medium_scrape_smooth_loop1.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
+aliascache phys_flesh_scrape3 sound/physics/flesh/flesh_scrape_rough_loop.wav soundparms 0.8 0.0 1.0 0.0 100 1200 auto loaded maps "m t dm obj lib train"
 
 end

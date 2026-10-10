@@ -340,34 +340,46 @@ typedef struct {
     float       volume, pitch, minDist, maxDist;
 } psLoop_t;
 
+// Each recording a scrape has played, registered once.
 static std::map<std::string, psLoop_t> ps_loops;
 
-// A scrape alias as a loop: its one sound, registered once.
-static const psLoop_t *PS_Loop(const std::string& alias)
+// The loop a slide plays: one of its alias's recordings, picked when the slide
+// starts (or its alias changes) and kept while it lasts, so one slide does not
+// jump between them, and the next may sound otherwise.
+static const psLoop_t *PS_Loop(physScrape_t *s, const std::string& alias)
 {
-    std::map<std::string, psLoop_t>::iterator it = ps_loops.find(alias);
-    AliasListNode_t                         *node = NULL;
-    const char                              *name;
-    psLoop_t                                 loop;
+    std::map<std::string, psLoop_t>::iterator it;
 
-    if (it != ps_loops.end()) {
-        return it->second.sfx ? &it->second : NULL;
+    if (s->loopAlias != alias) {
+        AliasListNode_t *node = NULL;
+        const char      *name = cgi.Alias_FindRandom(alias.c_str(), &node);
+
+        s->loopAlias = alias;
+        s->loop.clear();
+
+        if (!name || !node) {
+            cgi.DPrintf("physics sound: %s needs an alias in ubersound/opm_physics.scr\n", alias.c_str());
+            return NULL;
+        }
+        s->loop = name;
+
+        if (!ps_loops.count(s->loop)) {
+            psLoop_t loop;
+
+            loop.sfx     = cgi.S_RegisterSound(name, node->streamed);
+            loop.volume  = node->volume;
+            loop.pitch   = node->pitch;
+            loop.minDist = node->dist;
+            loop.maxDist = node->maxDist;
+            ps_loops[s->loop] = loop;
+        }
     }
 
-    memset(&loop, 0, sizeof(loop));
-    name = cgi.Alias_FindRandom(alias.c_str(), &node);
-    if (name && node) {
-        loop.sfx     = cgi.S_RegisterSound(name, node->streamed);
-        loop.volume  = node->volume;
-        loop.pitch   = node->pitch;
-        loop.minDist = node->dist;
-        loop.maxDist = node->maxDist;
-    } else {
-        cgi.DPrintf("physics sound: %s needs an alias in ubersound/opm_physics.scr\n", alias.c_str());
+    if (s->loop.empty()) {
+        return NULL;
     }
-
-    ps_loops[alias] = loop;
-    return loop.sfx ? &ps_loops[alias] : NULL;
+    it = ps_loops.find(s->loop);
+    return (it != ps_loops.end() && it->second.sfx) ? &it->second : NULL;
 }
 
 // Once a frame, after the steps: the loops of what is sliding, added again
@@ -409,15 +421,16 @@ void CG_PhysicsPlayScrapes(void)
         }
 
         alias = Phys_ScrapeAlias(s->mat, s->surface.c_str(), s->level, &volume, &pitch);
-        if (alias.empty() || !(loop = PS_Loop(alias))) {
+        if (alias.empty() || !(loop = PS_Loop(s, alias))) {
             continue;
         }
 
         volume *= loop->volume * cg_physics_soundvolume->value;
         if (cg_physics_sounddebug->integer > 1) {
             cgi.Printf(
-                "physics scrape: %s, %s on %s, %.1f m/s, level %.2f, volume %.2f pitch %.2f\n",
+                "physics scrape: %s (%s), %s on %s, %.1f m/s, level %.2f, volume %.2f pitch %.2f\n",
                 alias.c_str(),
+                COM_SkipPath((char *)s->loop.c_str()),
                 Phys_SoundMatName(s->mat),
                 s->surface.c_str(),
                 s->speed,

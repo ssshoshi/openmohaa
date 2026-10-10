@@ -113,6 +113,8 @@ typedef struct {
     bool           matKnown;
     std::string    surface; // the caller's, looked again now and then
     int            surfaceTime;
+    std::string    loopAlias; // the caller's: the alias a loop was picked from,
+    std::string    loop;      // and the recording this slide plays
 } physScrape_t;
 
 // The alias for mat sliding on surface, and its volume and pitch at level.
