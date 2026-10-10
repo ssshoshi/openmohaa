@@ -261,6 +261,20 @@ def main():
     rgb = mix(rgb, np.array([44, 5, 4], float)[None, None], smooth(0.42, 0.3, lumps) * 0.85)
     save("bit_brain.tga", rgb, solid, round_=False, edge=False)
 
+    # the streak a body leaves dragged along the ground (CG_GoreStreak): its
+    # length down the texture, smeared in lines along it, ragged at the sides
+    # and thinning out at both ends
+    h, w = 256, 64
+    y, x = np.mgrid[0:h, 0:w]
+    y, x = y / (h - 1), x / (w - 1)
+    smear = np.asarray(Image.fromarray((noise(rng, (16, w), 8, 3) * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
+    side = np.asarray(Image.fromarray((noise(rng, (h, 4), 6, 2) * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
+    edge = 0.3 + 0.15 * side
+    across = smooth(edge, edge - 0.22, np.abs(x - 0.5))
+    ends = smooth(0.0, 0.15, y) * smooth(1.0, 0.85, y)
+    rgb = mix(FRESH[None, None], DRIED[None, None], 0.25 + smear * 0.6)
+    save("streak.tga", rgb, across * ends * (0.5 + 0.5 * smear), round_=False)
+
 
 if __name__ == "__main__":
     main()

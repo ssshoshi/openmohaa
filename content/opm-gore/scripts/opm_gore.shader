@@ -393,3 +393,16 @@ gore/stain2
 		alphaGen vertex
 	}
 }
+
+// The streak a body or a part leaves dragged along the ground (CG_GoreStreak)
+gore/streak
+{
+	polygonOffset
+	nopicmip
+	{
+		clampmap textures/opm_gore/streak.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
