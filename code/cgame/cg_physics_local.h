@@ -115,6 +115,8 @@ void CG_PhysicsReloadWorld(void);
 
 // A body's mass in kilograms, or 0 if it does not move; a prop's body.
 float    CG_PhysicsBodyMass(JPH::BodyID id);
+// Takes hold of a body at a point of it, for the grabber, carried dist along the view.
+qboolean CG_PhysicsGrabBodyAt(JPH::BodyID id, const vec3_t point, float dist);
 qboolean CG_PhysicsPropBody(int prop, JPH::BodyID *id);
 // The static models that have moved from where the map put them.
 void CG_PhysicsMovedStaticModels(std::vector<int> *out);

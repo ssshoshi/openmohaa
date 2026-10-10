@@ -52,6 +52,11 @@ extern "C" {
     void CG_GoreNoteExplosion(const vec3_t pos, int kind);
     // A round's path: the parts cut off that it goes through are knocked along it.
     void CG_GoreNoteBullet(const vec3_t start, const vec3_t end, int large);
+    // The grabber (cg_ragdoll_grab) and the parts cut off: one along the aim,
+    // how far; taking hold of it; knocking it along the aim.
+    qboolean CG_GoreGrabCandidate(const vec3_t start, const vec3_t dir, float range, float *entry);
+    qboolean CG_GoreGrabStart(const vec3_t start, const vec3_t dir, float range, float minDist);
+    qboolean CG_GorePunt(const vec3_t start, const vec3_t dir, float range, float speed);
 
     // A corpse taken over by another entity (CG_RagdollAdopt) keeps its wounds.
     void CG_GoreTransfer(int fromEntity, int toEntity);

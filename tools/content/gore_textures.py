@@ -261,19 +261,28 @@ def main():
     rgb = mix(rgb, np.array([44, 5, 4], float)[None, None], smooth(0.42, 0.3, lumps) * 0.85)
     save("bit_brain.tga", rgb, solid, round_=False, edge=False)
 
-    # the streak a body leaves dragged along the ground (CG_GoreStreak): its
-    # length down the texture, smeared in lines along it, ragged at the sides
-    # and thinning out at both ends
-    h, w = 256, 64
+    # the smear a body leaves dragged along the ground or a wall
+    # (CG_GoreStreak): its length down the texture, dragged out in lines along
+    # it, wider and narrower as it goes, ragged at the sides, with clots and
+    # thin patches, and thinning out at both ends
+    h, w = 256, 128
     y, x = np.mgrid[0:h, 0:w]
     y, x = y / (h - 1), x / (w - 1)
-    smear = np.asarray(Image.fromarray((noise(rng, (16, w), 8, 3) * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
-    side = np.asarray(Image.fromarray((noise(rng, (h, 4), 6, 2) * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
-    edge = 0.3 + 0.15 * side
-    across = smooth(edge, edge - 0.22, np.abs(x - 0.5))
-    ends = smooth(0.0, 0.15, y) * smooth(1.0, 0.85, y)
-    rgb = mix(FRESH[None, None], DRIED[None, None], 0.25 + smear * 0.6)
-    save("streak.tga", rgb, across * ends * (0.5 + 0.5 * smear), round_=False)
+
+    def stretched(cells, octaves):
+        n = noise(rng, (16, w), cells, octaves)
+        return np.asarray(Image.fromarray((n * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
+
+    smear = stretched(10, 3)
+    side = np.asarray(Image.fromarray((noise(rng, (h, 4), 5, 3) * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), float) / 255
+    blotch = noise(rng, (h, w), 6, 3)
+    centre = 0.5 + (side - 0.5) * 0.18
+    edge = 0.2 + 0.28 * side + 0.06 * (blotch - 0.5)
+    across = smooth(edge, edge - 0.18, np.abs(x - centre))
+    ends = smooth(0.0, 0.12, y) * smooth(1.0, 0.88, y)
+    thick = np.clip(0.35 + 0.65 * smear + 0.5 * (blotch - 0.5), 0, 1)
+    rgb = mix(FRESH[None, None], DRIED[None, None], 0.2 + smear * 0.5 + (blotch - 0.5) * 0.4)
+    save("streak.tga", rgb, across * ends * thick, round_=False)
 
 
 if __name__ == "__main__":
