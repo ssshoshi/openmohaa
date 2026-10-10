@@ -65,3 +65,17 @@ void     CG_JoltRagdollWake(int handle);
 
 // Each joint's swing, twist and hinge angle as Jolt has them, for debugging.
 void CG_JoltRagdollReport(int handle, void (*print)(const char *fmt, ...));
+
+// Added in OPM
+//  A chain of capsules, joined end to end: a part cut off a body (cg_gore.cpp),
+//  as the ragdoll's limbs are made. Its points run from the cut to the end of
+//  the part; each piece is as thick as the larger of its two ends' radii.
+#define PHYS_CHAIN_MAX_PTS 4
+
+int      CG_JoltChainCreate(int numPts, const vec3_t *p, const vec3_t *v, const float *radius, float mass);
+void     CG_JoltChainDestroy(int handle);
+// The points where the pieces are now, numPts of them; qfalse if it is gone.
+qboolean CG_JoltChainRead(int handle, vec3_t *p);
+// A push, in game units a second, on the piece nearest point.
+void     CG_JoltChainAddVelocity(int handle, const vec3_t point, const vec3_t dv);
+qboolean CG_JoltChainAwake(int handle);

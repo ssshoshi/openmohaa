@@ -50,6 +50,8 @@ extern "C" {
     // A round into flesh: where, and the way it was going.
     void CG_GoreNoteHit(const vec3_t pos, const vec3_t dir, int large);
     void CG_GoreNoteExplosion(const vec3_t pos, int kind);
+    // A round's path: the parts cut off that it goes through are knocked along it.
+    void CG_GoreNoteBullet(const vec3_t start, const vec3_t end, int large);
 
     // A corpse taken over by another entity (CG_RagdollAdopt) keeps its wounds.
     void CG_GoreTransfer(int fromEntity, int toEntity);
@@ -57,6 +59,10 @@ extern "C" {
     // gore_sever <part|all> [explode]: cuts a part off the body nearest the
     // middle of the view, for trying it out.
     void CG_GoreSever_f(void);
+    // gore_blast [kind]: what the client does with an explosion (0 grenade to 3
+    // tank), where the crosshair meets the world: bodies and parts thrown, limbs
+    // blown off. Nothing is hurt; for testing.
+    void CG_GoreBlast_f(void);
 
     // Once a frame, after every entity: places new wounds and draws them all.
     void CG_GoreAddToScene(void);

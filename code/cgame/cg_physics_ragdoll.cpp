@@ -801,6 +801,8 @@ void CG_JoltRagdollDestroy(int handle)
     }
 }
 
+static void CG_JoltChainsUnload(void);
+
 // The world is going: every body in it.
 void CG_JoltRagdollsUnload(void)
 {
@@ -809,6 +811,7 @@ void CG_JoltRagdollsUnload(void)
             CG_JoltRagdollRelease(&pr_ragdolls[i]);
         }
     }
+    CG_JoltChainsUnload();
 }
 
 // The world under them has changed (the physics editor): every body wakes, to
@@ -1134,4 +1137,256 @@ void CG_JoltRagdollReport(int handle, void (*print)(const char *fmt, ...))
             );
         }
     }
+}
+
+//=============================================================
+// Chains
+//=============================================================
+//
+// Added in OPM. A part cut off a body (cg_gore.cpp): an arm, a leg, a head,
+// as a short chain of the ragdoll's capsules, joined as its limbs are but
+// loosely, a swing and a twist each. On the ragdoll layer, so it falls on the
+// world and the props, knocks into corpses and the other parts, and is left
+// alone by the living walking through it, as corpses are.
+
+#define PC_MAX_CHAINS 32
+#define PC_MAX_SEGS   (PHYS_CHAIN_MAX_PTS - 1)
+// The user data of a chain's pieces: this + its slot * 32 + the piece, on from
+// the ragdolls' (a body, for the impact sounds)
+#define PHYS_USERDATA_CHAIN_BASE (PHYS_USERDATA_RAGDOLL_BASE + PR_MAX_RAGDOLLS * 32)
+
+typedef struct {
+    qboolean                       used;
+    int                            generation;
+    int                            numSegs;
+    JPH::Ref<JPH::RagdollSettings> settings;
+    JPH::Ref<JPH::Ragdoll>         ragdoll;
+    JPH::Vec3                      localA[PC_MAX_SEGS], localB[PC_MAX_SEGS]; // each piece's ends, metres, body space
+} pcChain_t;
+
+static pcChain_t pc_chains[PC_MAX_CHAINS];
+
+static pcChain_t *CG_JoltChainGet(int handle)
+{
+    int slot, gen;
+
+    if (handle <= 0 || !phys_system) {
+        return NULL;
+    }
+
+    slot = (handle - 1) % PC_MAX_CHAINS;
+    gen  = (handle - 1) / PC_MAX_CHAINS;
+    if (!pc_chains[slot].used || pc_chains[slot].generation != gen) {
+        return NULL;
+    }
+    return &pc_chains[slot];
+}
+
+static void CG_JoltChainRelease(pcChain_t *pc)
+{
+    if (pc->ragdoll) {
+        pc->ragdoll->RemoveFromPhysicsSystem();
+    }
+    pc->ragdoll  = NULL;
+    pc->settings = NULL;
+    pc->used     = qfalse;
+    pc->generation++;
+}
+
+static void CG_JoltChainsUnload(void)
+{
+    for (int i = 0; i < PC_MAX_CHAINS; i++) {
+        if (pc_chains[i].used) {
+            CG_JoltChainRelease(&pc_chains[i]);
+        }
+    }
+}
+
+int CG_JoltChainCreate(int numPts, const vec3_t *p, const vec3_t *v, const float *radius, float mass)
+{
+    JPH::Vec3                      jp[PHYS_CHAIN_MAX_PTS], jv[PHYS_CHAIN_MAX_PTS];
+    JPH::Mat44                     world[PC_MAX_SEGS];
+    JPH::Ref<JPH::RagdollSettings> settings;
+    pcChain_t                     *pc = NULL;
+    int                            slot, i, numSegs = numPts - 1;
+
+    if (!phys_system || numSegs < 1 || numPts > PHYS_CHAIN_MAX_PTS) {
+        return 0;
+    }
+
+    for (slot = 0; slot < PC_MAX_CHAINS; slot++) {
+        if (!pc_chains[slot].used) {
+            pc = &pc_chains[slot];
+            break;
+        }
+    }
+    if (!pc) {
+        return 0;
+    }
+
+    for (i = 0; i < numPts; i++) {
+        jp[i] = PhysToJolt(p[i]);
+        jv[i] = PhysToJolt(v[i]);
+    }
+
+    settings            = new JPH::RagdollSettings;
+    settings->mSkeleton = new JPH::Skeleton;
+    settings->mParts.resize(numSegs);
+
+    for (i = 0; i < numSegs; i++) {
+        JPH::RagdollSettings::Part &part = settings->mParts[i];
+        const JPH::Vec3             a    = jp[i];
+        const JPH::Vec3             b    = jp[i + 1];
+        const JPH::Vec3             dir  = b - a;
+        const float                 len  = dir.Length();
+        const float                 ra   = Q_max(radius[i], 1.0f) * PHYS_UNITS_TO_METRES;
+        const float                 rb   = Q_max(radius[i + 1], 1.0f) * PHYS_UNITS_TO_METRES;
+        JPH::Quat                   rot;
+        JPH::Mat44                  toLocal;
+        JPH::ShapeRefC              shape;
+
+        if (len < 0.01f * PHYS_UNITS_TO_METRES) {
+            return 0;
+        }
+
+        settings->mSkeleton->AddJoint(va("piece%d", i), i - 1);
+
+        rot      = JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), dir / len);
+        world[i] = JPH::Mat44::sRotationTranslation(rot, (a + b) * 0.5f);
+        toLocal  = world[i].InversedRotationTranslation();
+
+        pc->localA[i] = toLocal * a;
+        pc->localB[i] = toLocal * b;
+
+        shape = PR_Capsule(pc->localA[i], pc->localB[i], ra, rb);
+        if (!shape) {
+            return 0;
+        }
+        part.SetShape(shape);
+        part.mPosition                     = JPH::RVec3((a + b) * 0.5f);
+        part.mRotation                     = rot;
+        part.mMotionType                   = JPH::EMotionType::Dynamic;
+        part.mObjectLayer                  = PhysLayers::RAGDOLL;
+        part.mOverrideMassProperties       = JPH::EOverrideMassProperties::CalculateInertia;
+        part.mMassPropertiesOverride.mMass = Q_max(mass / numSegs, 0.2f);
+        // rough and heavy-feeling: a limb drags to a stop rather than
+        // skating off across the snow
+        part.mFriction                     = 1.2f;
+        part.mRestitution                  = 0.05f;
+        part.mLinearDamping                = 0.6f;
+        part.mAngularDamping               = 0.8f;
+        part.mMotionQuality                = JPH::EMotionQuality::LinearCast;
+
+        if (i > 0) {
+            const JPH::Vec3 parentDir = PR_Normalized(jp[i] - jp[i - 1], dir / len);
+
+            // loose: what held it straight is gone with the rest of him
+            part.mToParent = PR_SwingTwist(JPH::RVec3(a), parentDir, PR_AnySquare(parentDir), dir / len, 70.0f, 70.0f, 30.0f, PR_FRICTION_LIMB);
+        }
+    }
+
+    settings->mSkeleton->CalculateParentJointIndices();
+    if (!settings->Stabilize()) {
+        return 0;
+    }
+    settings->DisableParentChildCollisions(world, 0.005f);
+    settings->CalculateBodyIndexToConstraintIndex();
+    settings->CalculateConstraintIndexToBodyIdxPair();
+
+    pc->ragdoll = settings->CreateRagdoll(pr_nextGroup++, 0, phys_system);
+    if (!pc->ragdoll) {
+        return 0;
+    }
+    pc->settings = settings;
+    pc->numSegs  = numSegs;
+    pc->ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate);
+
+    {
+        JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+
+        for (i = 0; i < numSegs; i++) {
+            const JPH::Vec3 d  = jp[i + 1] - jp[i];
+            const float     l2 = Q_max(d.LengthSq(), 1e-6f);
+
+            bodies.SetUserData(pc->ragdoll->GetBodyID(i), PHYS_USERDATA_CHAIN_BASE + slot * 32 + i);
+            bodies.SetLinearAndAngularVelocity(pc->ragdoll->GetBodyID(i), (jv[i] + jv[i + 1]) * 0.5f, d.Cross(jv[i + 1] - jv[i]) / l2);
+        }
+    }
+
+    pc->used = qtrue;
+    return slot + 1 + PC_MAX_CHAINS * pc->generation;
+}
+
+void CG_JoltChainDestroy(int handle)
+{
+    pcChain_t *pc = CG_JoltChainGet(handle);
+
+    if (pc) {
+        CG_JoltChainRelease(pc);
+    }
+}
+
+qboolean CG_JoltChainRead(int handle, vec3_t *p)
+{
+    pcChain_t *pc = CG_JoltChainGet(handle);
+    int        i;
+
+    if (!pc || !pc->ragdoll) {
+        return qfalse;
+    }
+
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterfaceNoLock();
+
+    for (i = 0; i < pc->numSegs; i++) {
+        const JPH::Mat44 m = bodies.GetWorldTransform(pc->ragdoll->GetBodyID(i));
+
+        PhysFromJolt(m * pc->localA[i], p[i]);
+        if (i == pc->numSegs - 1) {
+            PhysFromJolt(m * pc->localB[i], p[i + 1]);
+        }
+    }
+    return qtrue;
+}
+
+void CG_JoltChainAddVelocity(int handle, const vec3_t point, const vec3_t dv)
+{
+    pcChain_t *pc = CG_JoltChainGet(handle);
+    float      best = 0;
+    int        i, nearest = 0;
+
+    if (!pc || !pc->ragdoll) {
+        return;
+    }
+
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+    const JPH::Vec3     at     = PhysToJolt(point);
+
+    for (i = 0; i < pc->numSegs; i++) {
+        const float d = (JPH::Vec3(bodies.GetCenterOfMassPosition(pc->ragdoll->GetBodyID(i))) - at).LengthSq();
+
+        if (!i || d < best) {
+            best    = d;
+            nearest = i;
+        }
+    }
+
+    {
+        const JPH::BodyID id   = pc->ragdoll->GetBodyID(nearest);
+        const float       mass = CG_PhysicsBodyMass(id);
+
+        if (mass > 0) {
+            bodies.AddImpulse(id, PhysToJolt(dv) * mass, JPH::RVec3(at));
+            bodies.ActivateBody(id);
+        }
+    }
+}
+
+qboolean CG_JoltChainAwake(int handle)
+{
+    pcChain_t *pc = CG_JoltChainGet(handle);
+
+    if (!pc || !pc->ragdoll) {
+        return qfalse;
+    }
+    return pc->ragdoll->IsActive() ? qtrue : qfalse;
 }
