@@ -366,3 +366,30 @@ gore/bit_brain
 		rgbGen lightingSpherical
 	}
 }
+
+// The stain under a bit where it lies (CG_GoreUpdateBit): the HRRTM blood
+// effects' splats, so the cgame uses these only when they are there, and
+// gore/splat otherwise
+gore/stain1
+{
+	polygonOffset
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
+gore/stain2
+{
+	polygonOffset
+	nopicmip
+	{
+		clampmap textures/effects/blood_splat2.tga
+		blendFunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}

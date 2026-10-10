@@ -528,6 +528,7 @@ enum
 #define TMU_SKELBONES   13 // Added in OPM: the frame's bones, for the models the vertex program poses
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
+#define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
 
 typedef enum
 {
@@ -836,7 +837,8 @@ enum
 	GLSL_MAT16_BONEMATRIX,
 	GLSL_VEC4_RTLIGHTS, // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
 	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
-	GLSL_VEC4_SKELLIGHTS // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
+	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
+	GLSL_VEC4_SKELDENTS   // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 };
 
 typedef enum
@@ -976,6 +978,10 @@ typedef enum
 	UNIFORM_SKELPARAMS,
 	UNIFORM_SKELAMBIENT,
 	UNIFORM_SKELLIGHTS,
+	UNIFORM_SKELNUMDENTS,
+	UNIFORM_SKELDENTS,
+	UNIFORM_SKELDENTORIGIN,
+	UNIFORM_SKELDENTUP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -3268,6 +3274,9 @@ typedef struct shaderCommands_s
 		vec4_t   params;       // first bone, scale, lighting (0 none, 1 one colour, 2 lights), lights
 		vec4_t   ambient;      // 0 to 255
 		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
+		int      numDents;     // R_GoreDentsGpu
+		vec4_t   dents[SKEL_GPU_MAX_DENTS * 2];
+		vec4_t   dentJoint[2]; // the joint the dents' bone hangs from, and up from it
 		int      numBones;     // the model's, from params[0]
 	} skelGpu;
 
@@ -3488,6 +3497,7 @@ void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*c
 void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation);
 void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
 void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 
@@ -3752,6 +3762,7 @@ struct skelHeaderGame_s;
 void    *RB_SkelGpuUsable(dtiki_t *tiki, struct skelSurfaceGame_s *sf, int mesh, struct skelHeaderGame_s *skelmodel);
 void     RB_SkelGpuSubmit(void *mesh);
 void     RB_SkelGpuBind(void);
+int      R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out, vec4_t *joint);
 void     R_SkelGpuFree(void);
 void     R_SkelGpuInitImage(void);
 void     R_SkelGpuRegisterCvars(void);

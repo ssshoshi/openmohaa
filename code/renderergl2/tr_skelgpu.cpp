@@ -72,11 +72,10 @@ typedef enum {
     SKEL_CPU_MESH,
     SKEL_CPU_MORPHS,
     SKEL_CPU_LIGHTING,
-    SKEL_CPU_GORE,     // dents and parts cut off (R_GoreDents, R_GoreDropFolded)
     SKEL_CPU_COUNT
 } skelGpuWhy_t;
 
-static const char *const skelCpuNames[SKEL_CPU_COUNT] = { "off", "view", "shader", "mesh", "morphs", "lighting", "gore" };
+static const char *const skelCpuNames[SKEL_CPU_COUNT] = { "off", "view", "shader", "mesh", "morphs", "lighting" };
 
 // the shaders it was not for, and why, for skelgpuinfo
 #define SKEL_GPU_REFUSED 64
@@ -598,10 +597,6 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
         backEnd.pc.c_skelGpuCpu[SKEL_CPU_MORPHS]++;
         return NULL;
     }
-    if (ent->e.renderfx & RF_GORE_DENTS) {
-        backEnd.pc.c_skelGpuCpu[SKEL_CPU_GORE]++;
-        return NULL;
-    }
 
     if (!RB_SkelGpuLighting()) {
         backEnd.pc.c_skelGpuCpu[SKEL_CPU_LIGHTING]++;
@@ -610,6 +605,10 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
     tess.skelGpu.params[0] = ent->e.bonestart;
     tess.skelGpu.params[1] = tiki->load_scale * ent->e.scale;
     tess.skelGpu.numBones  = ri.TIKI_GetNumChannels(tiki);
+    // a body the gore system has been at: its dents pushed in by the vertex
+    // program; the triangles of a part cut off are folded to nothing and
+    // draw nothing
+    tess.skelGpu.numDents = R_GoreDentsGpu(ent, tess.skelGpu.dents, tess.skelGpu.dentJoint);
     return m;
 }
 
@@ -651,6 +650,11 @@ void RB_SkelGpuBind(void)
     m->vao.indexesIBO = buffer;
 
     GL_BindToTMU(tr.skelBoneImage, TMU_SKELBONES);
+
+    // what the gore dents have broken off is clipped away (lightall_vp.glsl)
+    if (tess.skelGpu.numDents > 0) {
+        qglEnable(GL_CLIP_DISTANCE0);
+    }
 
     tess.streamVao        = &m->vao;
     tess.streamBaseVertex = 0;

@@ -117,6 +117,13 @@ uniform sampler2D u_SkelBones;
 uniform vec4      u_SkelParams;  // the model's first bone, its scale, its lighting (0 none, 1 one colour, 2 lights), lights
 uniform vec4      u_SkelAmbient; // 0 to 255
 uniform vec4      u_SkelLights[SKEL_MAX_LIGHTS * 3];
+// gore dents (R_GoreDentsGpu): the middle and radius, then the way out of the
+// hollow; and the joint their bone hangs from (w: how far short of it a dent
+// breaks off what it pushes), and up from it
+uniform int       u_SkelNumDents;
+uniform vec4      u_SkelDents[SKEL_MAX_DENTS * 2];
+uniform vec4      u_SkelDentOrigin;
+uniform vec4      u_SkelDentUp;
 
 vec4 SkelTexel(int bone, int k)
 {
@@ -336,6 +343,58 @@ void main()
 	vec3 normal = attr_Normal.x * SkelTexel(nb, 1).xyz + attr_Normal.y * SkelTexel(nb, 2).xyz + attr_Normal.z * SkelTexel(nb, 3).xyz;
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent = attr_Tangent.x * SkelTexel(nb, 1).xyz + attr_Tangent.y * SkelTexel(nb, 2).xyz + attr_Tangent.z * SkelTexel(nb, 3).xyz;
+  #endif
+	// pushed into the dents, as R_GoreDentVertex does; what is broken off
+	// clips away every triangle it is part of (R_GoreDropFolded)
+	float goreClip = 1.0;
+	for (int k = 0; k < SKEL_MAX_DENTS; k++)
+	{
+		if (k >= u_SkelNumDents) break;
+		vec3  dc = u_SkelDents[k * 2].xyz;
+		float dr = u_SkelDents[k * 2].w;
+		vec3  dd = u_SkelDents[k * 2 + 1].xyz;
+		vec3  jo = u_SkelDentOrigin.xyz;
+		vec3  ju = u_SkelDentUp.xyz;
+		if (dot(position - jo, ju) <= 0.0) continue; // below the joint: the neck stays
+		if (dot(position - jo, dd) <= 0.0) continue; // the other side of the middle: a hollow only goes in
+		vec3  d = position - dc;
+		float along   = dot(d, dd);
+		float across2 = dot(d, d) - along * along;
+		if (across2 >= dr * dr) continue;
+		float fl = -sqrt(dr * dr - across2);
+		if (along <= fl) continue;
+		vec3 moved = position + (fl - along) * dd;
+		if (dot(moved - jo, dd) < u_SkelDentOrigin.w || dot(moved - jo, ju) <= 0.0)
+		{
+			// past the middle, or below the joint: broken off and gone
+			position = jo;
+			normal   = ju;
+			goreClip = -1000.0;
+		}
+		else
+		{
+			position = moved;
+			normal   = normalize(dc - moved);
+		}
+	}
+	// what has ended up inside another hollow is gone as well
+	if (goreClip > 0.0 && u_SkelNumDents > 0 && dot(position - u_SkelDentOrigin.xyz, u_SkelDentUp.xyz) > 0.0)
+	{
+		for (int k = 0; k < SKEL_MAX_DENTS; k++)
+		{
+			if (k >= u_SkelNumDents) break;
+			vec4 ds = u_SkelDents[k * 2];
+			vec3 d  = position - ds.xyz;
+			if (dot(d, d) < ds.w * ds.w * 0.95)
+			{
+				position = u_SkelDentOrigin.xyz;
+				goreClip = -1000.0;
+				break;
+			}
+		}
+	}
+  #if !defined(GL_ES)
+	gl_ClipDistance[0] = goreClip; // only while GL_CLIP_DISTANCE0 is on (RB_SkelGpuBind)
   #endif
 	vec4 skelColor = SkelLight(position, normal);
 #else
