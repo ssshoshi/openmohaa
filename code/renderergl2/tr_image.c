@@ -2421,13 +2421,19 @@ static int numImageLoaders = ARRAY_LEN( imageLoaders );
 
 /*
 =================
-R_LoadImage
+R_LoadImageFile
 
-Loads any of the supported image types into a canonical
-32 bit format.
+Loads any of the supported image formats into a canonical 32 bit format.
+
+A .dds of the same name is tried first unless allowDDS is false. In ioq3 that
+was tied to r_ext_compressed_textures, which also compresses every other
+texture as it is uploaded, so a block compressed texture pack could only be
+had with lossy driver compression of everything else. OPM: block compressed
+.dds files are used whenever present; r_ext_compressed_textures now only picks
+the upload compression of the rest.
 =================
 */
-void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips )
+static void R_LoadImageFile( const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips, qboolean allowDDS )
 {
 	qboolean orgNameFailed = qfalse;
 	int orgLoader = -1;
@@ -2452,39 +2458,9 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 	Q_strncpyz(ddsName, base, sizeof(ddsName));
 	Q_strcat(ddsName, sizeof(ddsName), ".dds");
 
-	if (r_ext_compressed_textures->integer) {
-		// Try DDS first
+	if (allowDDS) {
 		R_LoadDDS(ddsName, pic, width, height, picFormat, numMips);
 		if (*pic) return;
-
-		// Then try explicitly requested extension (if not DDS)
-		if (ext && *ext && Q_stricmp(ext, "dds")) {
-			for (i = 0; i < numImageLoaders; i++) {
-				if (!Q_stricmp(ext, imageLoaders[i].ext)) {
-					imageLoaders[i].ImageLoader(localName, pic, width, height);
-					if (*pic) return;
-					orgNameFailed = qtrue;
-					orgLoader = i;
-					break;
-				}
-			}
-			COM_StripExtension(name, localName, sizeof(localName));
-		}
-
-		// Then probe all supported formats except the failed one
-		for (i = 0; i < numImageLoaders; i++) {
-			if (i == orgLoader)
-				continue;
-			altName = va("%s.%s", localName, imageLoaders[i].ext);
-			imageLoaders[i].ImageLoader(altName, pic, width, height);
-			if (*pic) {
-				if (orgNameFailed)
-					ri.Printf(PRINT_DEVELOPER, "WARNING: %s not present, using %s instead\n", name, altName);
-				return;
-			}
-		}
-
-		return;
 	}
 
 	//
@@ -2550,11 +2526,15 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 		}
 	}
 
-	// Finally, allow DDS fallback even when compressed textures are off
-	if (!*pic) {
+	// Finally, a DDS is better than nothing
+	if (!allowDDS) {
 		R_LoadDDS(ddsName, pic, width, height, picFormat, numMips);
-		if (*pic) ri.Printf(PRINT_DEVELOPER, "WARNING: falling back to compressed texture %s when r_ext_compressed_textures=0\n", ddsName);
 	}
+}
+
+void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips )
+{
+	R_LoadImageFile(name, pic, width, height, picFormat, numMips, qtrue);
 }
 
 // Added in OPM
@@ -2563,11 +2543,8 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 void R_LoadImageUncompressed( const char *name, byte **pic, int *width, int *height, GLenum *picFormat )
 {
 	int numMips;
-	int saved = r_ext_compressed_textures->integer;
 
-	r_ext_compressed_textures->integer = 0;
-	R_LoadImage( name, pic, width, height, picFormat, &numMips );
-	r_ext_compressed_textures->integer = saved;
+	R_LoadImageFile(name, pic, width, height, picFormat, &numMips, qfalse);
 }
 
 
@@ -3069,6 +3046,9 @@ void R_CreateBuiltinImages( void ) {
 			tr.renderCubeImage = R_CreateImage("*renderCube", NULL, r_cubemapSize->integer, r_cubemapSize->integer, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_MIPMAP | IMGFLAG_CUBEMAP, rgbFormat);
 		}
 	}
+
+	// Added in OPM: the bones of the models the vertex program poses
+	R_SkelGpuInitImage();
 }
 
 

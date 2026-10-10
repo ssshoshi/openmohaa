@@ -1,12 +1,13 @@
 name: "PR Checks"
 
-# The checks main's ruleset requires. Kept fast: one Linux build (with GL2, which
+# The builds main's ruleset requires. Kept fast: one Linux build (with GL2, which
 # the release matrix doesn't build), the Windows build that actually gets
-# played, the unit tests, and the PR title (it becomes the squash commit).
+# played, and the unit tests. The PR title check is pr-title.yml, so editing a
+# PR's title or description doesn't rebuild (or cancel a build in progress).
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - 'main'
@@ -21,32 +22,6 @@ permissions:
   pull-requests: read
 
 jobs:
-  title:
-    name: "PR title"
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    steps:
-    - uses: amannn/action-semantic-pull-request@v5
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        # Matches the history: fix(render): ..., feat(cgame): ..., chore(misc): ...
-        types: |
-          feat
-          fix
-          perf
-          refactor
-          docs
-          test
-          build
-          ci
-          chore
-          revert
-        requireScope: false
-        subjectPattern: ^[a-z].+[^.]$
-        subjectPatternError: |
-          The subject "{subject}" should start lowercase and not end with a period.
-
   linux:
     name: "Linux (GL2) + unit tests"
     runs-on: ubuntu-24.04

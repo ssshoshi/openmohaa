@@ -7,8 +7,10 @@ and so overrides them.
 Most of these change a retail or mod file that is not ours to publish, so the
 folder holds only a unified diff against it (`<path>.patch`). The build takes
 the original from your own paks, the copy the game would load (the last pak in
-load order that has it), and applies the diff. Files of our own go in as they
-are, at their path under the folder.
+load order that has it), and applies the diff. Files from elsewhere that are
+not ours either are listed with where to download them (`*.fetch`, one
+`<path in the pak> <url>` a line), and the build fetches them. Files of our own
+go in as they are, at their path under the folder.
 
     tools/content/pack.py                    # every pak, into build/content/
     tools/content/pack.py opm-hrrtm-blood    # one of them
@@ -24,3 +26,4 @@ are, at their path under the folder.
 | `opm-cabinet-ragdoll` | retail | The man who falls out of a shot hidden cabinet (`global/cabinet.scr`, m3l2, m5l1a, m5l1b) dies once he is clear of it, so the ragdoll takes over his fall. |
 | `opm-hrrtm-blood` | HRRTM Blood Effects Addon | Bullet hits on people splatter the wall behind at once and at full strength, light hits as well as hard ones. Built from the addon's own effect, so without the addon it is not built. |
 | `opm-gore` | nothing | The gore system's shaders and textures (`cg_gore.cpp`): wounds, drops, splashes and pools. All our own; the textures are drawn by `tools/content/gore_textures.py`. |
+| `opm-physics` | internet, once | What corpses and props sound like striking things: the `phys_*` aliases the physics plays (`code/physics/phys_impact.cpp`), on Half-Life 2's and Day of Defeat: Source's physics recordings. Those are Valve's, so `physics.fetch` lists where the build downloads them from (kept in `~/.cache/openmohaa-content`) and only the pak built here has them. |

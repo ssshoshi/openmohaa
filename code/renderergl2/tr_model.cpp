@@ -773,9 +773,13 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     // shadows, as the md3 path in tr_mesh.c does: that is how the player's
     // own body casts a shadow in first person (cg_firstPersonShadow). They
     // stay out of the dlight cube maps, whose light is often the player's
-    // own muzzle flash.
+    // own muzzle flash. Added in OPM: and they go into the realtime lights'
+    // shadow faces, the map's lamps, which the game's own lights (muzzle
+    // flashes) cast none from; else the player cast their shadows only as
+    // capsules (r_rtCapsules).
     personalModel = (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal
-                 && (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) != VPF_DEPTHSHADOW;
+                 && (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) != VPF_DEPTHSHADOW
+                 && !(tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC));
     if (personalModel) {
         // nothing of it is drawn in this view, so don't pose it
         return;
@@ -849,17 +853,70 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
 
     // Nothing here ever skipped a model outside the view: it was posed,
     // skinned and drawn regardless, and every sun cascade that takes entities
-    // is a view of its own. A model is left out of a cascade only when both
-    // the animation's own sphere and its bones are outside that cascade: a
-    // ragdoll's bones can lie well away from the sphere, which follows the
-    // entity and not the body. The main view is left as it was.
+    // is a view of its own. A model is left out of a view only when both
+    // the animation's own sphere and its bones are outside it: a ragdoll's
+    // bones can lie well away from the sphere, which follows the entity and
+    // not the body. The main view, which had been left as it was, culls
+    // them too: the people behind the camera were drawn into every frame.
+    // It is posed above whether drawn or not, for the views that do. The
+    // view's own model, which hangs off the eye, is always drawn.
     if (r_skelCull->integer && !lod_tool->integer && iRadiusCull == CULL_OUT
-        && (tr.viewParms.flags & VPF_DEPTHSHADOW)) {
+        && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))) {
         vec3_t centre;
 
         R_LocalPointToWorld(ent->boneCentre, centre);
         if (R_CullPointAndRadius(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN) == CULL_OUT) {
             return;
+        }
+    }
+
+    // Added in OPM
+    //  In a sun cascade, a model whose shadow cannot fall where the view
+    //  sees through it (R_SunCasterCulled): the animation's sphere and its
+    //  bones' both.
+    if (!lod_tool->integer && R_SunCasterCulled(tiki_worldorigin, radius)) {
+        vec3_t centre;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        if (R_SunCasterCulled(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN)) {
+            return;
+        }
+    }
+
+    // Added in OPM
+    //  Hidden behind what the main view's depth prepass drew, the last tests
+    //  found: left out of it (R_OcclusionCulled). Its box takes in the
+    //  animation's sphere and its bones'.
+    if (!lod_tool->integer && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))
+        && !(tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !tr.viewParms.isPortal
+        && !tr.viewParms.isPortalSky && !(tr.refdef.rdflags & RDF_NOWORLDMODEL)) {
+        vec3_t centre, mins, maxs;
+        float  boneRadius = ent->boneRadius + SKEL_BONE_CULL_MARGIN;
+        int    k;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        for (k = 0; k < 3; k++) {
+            mins[k] = Q_min(tiki_worldorigin[k] - radius, centre[k] - boneRadius);
+            maxs[k] = Q_max(tiki_worldorigin[k] + radius, centre[k] + boneRadius);
+        }
+        if (R_OcclusionCulled(ent->e.entityNumber, mins, maxs)) {
+            return;
+        }
+    }
+
+    // Added in OPM
+    //  The realtime lights that reach the animation's sphere, or its bones.
+    {
+        const uint64_t candidates = R_RtViewMask();
+
+        if (candidates != RT_MASK_ALL) {
+            vec3_t   centre;
+            uint64_t mask;
+
+            R_LocalPointToWorld(ent->boneCentre, centre);
+            mask = R_RtSphereMask(tiki_worldorigin, radius, candidates);
+            mask |= R_RtSphereMask(centre, ent->boneRadius + SKEL_BONE_CULL_MARGIN, candidates);
+            tr.rtDrawCulled = ~mask;
         }
     }
 
@@ -877,15 +934,98 @@ Added in OPM, out of R_AddSkelSurfaces: the bones and morphs of a skeletal
 model for this scene, and the bounds of its bones.
 =============
 */
+static int skelPoses; // the last pose id handed out
+
+static int R_NewSkelPoseId(void)
+{
+    // never 0, which is no pose (RB_SkelMesh keeps nothing of it)
+    if (++skelPoses <= 0) {
+        skelPoses = 1;
+    }
+    return skelPoses;
+}
+
+/*
+=============
+Poses kept from frame to frame
+
+Added in OPM. Each scene posed every model again and gave it a new pose, so
+its surfaces were skinned again in the first view that drew them, though most
+models in a level stand still: props, items, the dead, a weapon on the
+ground. What a surface skins to depends on nothing but the model, its bones,
+its morphs and its scale, so a model whose are all as they were the last time
+its entity was posed keeps that pose, and its surfaces stay in the skin cache
+from one frame to the next. Kept by entity number; the bones are compared
+whole, and a model whose first bone moved is told apart at once.
+=============
+*/
+typedef struct {
+    const dtiki_t *tiki;
+    int            entityNumber;
+    float          scale;
+    int            numBones;
+    int            numMorphs;
+    int            poseId;
+    int            size;
+    byte          *data; // its bones, then its morphs
+} skelPoseRecord_t;
+
+static skelPoseRecord_t skelPoseRecords[MAX_GENTITIES];
+
+void R_SkelPosesClear(void)
+{
+    int i;
+
+    // the surfaces the vertex program poses, of the models that go with them
+    R_SkelGpuFree();
+
+    for (i = 0; i < MAX_GENTITIES; i++) {
+        if (skelPoseRecords[i].data) {
+            ri.Free(skelPoseRecords[i].data);
+        }
+    }
+    Com_Memset(skelPoseRecords, 0, sizeof(skelPoseRecords));
+}
+
+static int R_SkelPoseId(const trRefEntity_t *ent, const skelBoneCache_t *bones, int numBones, const int *morphs, int numMorphs)
+{
+    skelPoseRecord_t *rec       = &skelPoseRecords[ent->e.entityNumber & (MAX_GENTITIES - 1)];
+    const int         boneBytes = numBones * sizeof(skelBoneCache_t);
+    const int         size      = boneBytes + numMorphs * sizeof(int);
+
+    if (rec->poseId && rec->tiki == ent->e.tiki && rec->entityNumber == ent->e.entityNumber && rec->scale == ent->e.scale
+        && rec->numBones == numBones && rec->numMorphs == numMorphs && !memcmp(rec->data, bones, boneBytes)
+        && !memcmp(rec->data + boneBytes, morphs, numMorphs * sizeof(int))) {
+        return rec->poseId;
+    }
+
+    if (rec->size < size) {
+        if (rec->data) {
+            ri.Free(rec->data);
+        }
+        rec->data = (byte *)ri.Malloc(size);
+        rec->size = size;
+    }
+    Com_Memcpy(rec->data, bones, boneBytes);
+    Com_Memcpy(rec->data + boneBytes, morphs, numMorphs * sizeof(int));
+    rec->tiki         = ent->e.tiki;
+    rec->entityNumber = ent->e.entityNumber;
+    rec->scale        = ent->e.scale;
+    rec->numBones     = numBones;
+    rec->numMorphs    = numMorphs;
+    rec->poseId       = R_NewSkelPoseId();
+    return rec->poseId;
+}
+
 static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, float tiki_scale, const vec3_t tiki_localorigin, int iRadiusCull)
 {
-    static int       poses;
     skelBoneCache_t *outbones = &TIKI_Skel_Bones[TIKI_Skel_Bones_Index];
     skelAnimFrame_t *newFrame;
     skeletor_c      *skeletor;
     vec3_t           mins, maxs, local;
     int              added;
     int              i;
+    qboolean         boned = qfalse;
 
     newFrame = (skelAnimFrame_t *)ri.Hunk_AllocateTempMemory(
         sizeof(skelAnimFrame_t) + ri.TIKI_GetNumChannels(tiki) * sizeof(SkelMat4)
@@ -915,6 +1055,8 @@ static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, flo
         //
         for (i = 0; i < num_tags; i++) {
             VectorCopy(newFrame->bones[i][3], outbones->offset);
+            // every float written, so a pose can be compared whole (R_SkelPoseId)
+            outbones->offset[3]    = 0;
             outbones->matrix[0][0] = newFrame->bones[i][0][0];
             outbones->matrix[0][1] = newFrame->bones[i][0][1];
             outbones->matrix[0][2] = newFrame->bones[i][0][2];
@@ -933,6 +1075,7 @@ static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, flo
         if (ent->e.renderfx & RF_FIRST_PERSON_BODY) {
             R_FoldHeadAndArms(tiki, ent->e.entityNumber, outbones - num_tags, num_tags);
         }
+        boned = qtrue;
     }
 
     ri.Hunk_FreeTempMemory(newFrame);
@@ -962,11 +1105,14 @@ static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, flo
     }
 
     ent->posedScene = tr.sceneCount;
-    // never 0, which is no pose (RB_SkelMesh keeps nothing of it)
-    if (++poses <= 0) {
-        poses = 1;
+    // the pose it had last, if nothing it skins by has changed; a model
+    // culled before its bones were written has none to compare
+    if (boned && r_skinCache->integer) {
+        ent->poseId = R_SkelPoseId(ent, &TIKI_Skel_Bones[ent->e.bonestart], num_tags,
+            &skeletorMorphCache[ent->e.morphstart], ent->e.hasMorph ? added : 0);
+    } else {
+        ent->poseId = R_NewSkelPoseId();
     }
-    ent->poseId = poses;
 }
 
 /*
@@ -1305,12 +1451,13 @@ Added in OPM. A pose (R_PoseSkelModel) is the same in every view of a scene,
 so a surface skinned for one is copied into the others: the prepass, the sun
 cascades and the realtime lights' shadow faces draw each character again, and
 used to skin it again each time. Keyed by the pose, the surface and how many of
-its vertexes the level of detail keeps; direct mapped, and started over when
-full. A key never comes back, so nothing needs clearing between frames.
+its vertexes the level of detail keeps; direct mapped. A model that has not
+moved keeps its pose from frame to frame (R_SkelPoseId), and its surfaces stay
+here with it; full, the cache keeps what is in use (R_SkinCacheCompact).
 =============
 */
-#define SKIN_CACHE_SLOTS 4096 // a power of two
-#define SKIN_CACHE_VERTS (128 * 1024)
+#define SKIN_CACHE_SLOTS 8192 // a power of two, in pairs a key may be in either of
+#define SKIN_CACHE_VERTS (256 * 1024)
 
 typedef struct {
     int                      poseId;
@@ -1318,6 +1465,15 @@ typedef struct {
     unsigned int             count;
     int                      first;
     qboolean                 tangents;
+    int                      usedFrame; // the last frame a view took it (R_SkinCacheCompact)
+
+    // Added in OPM: its copy on the card this frame (RB_SkinArenaStore), if
+    // arenaFrame is RB_SkinArenaFrame()
+    int                      arenaFrame;
+    int                      arenaBase;
+    int                      arenaFirstIndex;
+    int                      arenaIndexes;
+    qboolean                 arenaTangents;
 } skinCacheSlot_t;
 
 static skinCacheSlot_t skinSlots[SKIN_CACHE_SLOTS];
@@ -1327,13 +1483,44 @@ static int16_t         skinTangent[SKIN_CACHE_VERTS][4];
 static vec2_t          skinTexCoords[SKIN_CACHE_VERTS];
 static int             skinUsed;
 
-static skinCacheSlot_t *R_SkinCacheSlot(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
+// The first of the two slots a key may be in. Two, as a model standing still
+// keeps its slot from frame to frame, and a single one would be taken from it
+// by any of the poses made every frame that came to the same slot.
+static skinCacheSlot_t *R_SkinCachePair(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
 {
     unsigned int h = (unsigned int)poseId * 2654435761u;
 
     h ^= (unsigned int)((uintptr_t)sf >> 4) * 40503u;
     h ^= count * 2246822519u;
-    return &skinSlots[(h ^ (h >> 15)) & (SKIN_CACHE_SLOTS - 1)];
+    return &skinSlots[(h ^ (h >> 15)) & (SKIN_CACHE_SLOTS - 2)];
+}
+
+static skinCacheSlot_t *R_SkinCacheSlot(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
+{
+    skinCacheSlot_t *pair = R_SkinCachePair(poseId, sf, count);
+    int              i;
+
+    for (i = 0; i < 2; i++) {
+        if (pair[i].poseId == poseId && pair[i].sf == sf && pair[i].count == count) {
+            pair[i].usedFrame = backEnd.viewParms.frameCount;
+            return &pair[i];
+        }
+    }
+    return NULL;
+}
+
+// Where a new key goes: an empty slot of its pair, or the one taken longest ago
+static skinCacheSlot_t *R_SkinCacheVictim(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
+{
+    skinCacheSlot_t *pair = R_SkinCachePair(poseId, sf, count);
+
+    if (!pair[0].poseId) {
+        return &pair[0];
+    }
+    if (!pair[1].poseId) {
+        return &pair[1];
+    }
+    return pair[0].usedFrame <= pair[1].usedFrame ? &pair[0] : &pair[1];
 }
 
 // 0: not kept; 1: copied whole; 2: copied but for the tangents, which it was
@@ -1347,7 +1534,7 @@ static int R_SkinCacheFetch(int poseId, const skelSurfaceGame_t *sf, unsigned in
     }
 
     slot = R_SkinCacheSlot(poseId, sf, count);
-    if (slot->poseId != poseId || slot->sf != sf || slot->count != count) {
+    if (!slot) {
         return 0;
     }
 
@@ -1364,6 +1551,56 @@ static int R_SkinCacheFetch(int poseId, const skelSurfaceGame_t *sf, unsigned in
     return 1;
 }
 
+static int R_SkinCacheCompareFirst(const void *a, const void *b)
+{
+    return skinSlots[*(const short *)a].first - skinSlots[*(const short *)b].first;
+}
+
+/*
+=============
+R_SkinCacheCompact
+
+Added in OPM. Poses are kept from frame to frame (R_SkelPoseId), so the cache
+fills with them and the ones gone by. Full, it keeps what a view took this
+frame or the last, moved down to the start, and lets the rest go: starting
+over would skin every model that stands still again.
+=============
+*/
+static void R_SkinCacheCompact(void)
+{
+    static short order[SKIN_CACHE_SLOTS];
+    const int    frame = backEnd.viewParms.frameCount;
+    int          n = 0, used = 0, i;
+
+    for (i = 0; i < SKIN_CACHE_SLOTS; i++) {
+        skinCacheSlot_t *slot = &skinSlots[i];
+
+        if (slot->poseId && slot->usedFrame >= frame - 1) {
+            order[n++] = i;
+        } else {
+            Com_Memset(slot, 0, sizeof(*slot));
+        }
+    }
+
+    // by where they are, so each moves down over what was let go before it
+    qsort(order, n, sizeof(order[0]), R_SkinCacheCompareFirst);
+    for (i = 0; i < n; i++) {
+        skinCacheSlot_t *slot = &skinSlots[order[i]];
+
+        if (slot->first != used) {
+            memmove(skinXyz[used], skinXyz[slot->first], slot->count * sizeof(skinXyz[0]));
+            memmove(skinNormal[used], skinNormal[slot->first], slot->count * sizeof(skinNormal[0]));
+            memmove(skinTexCoords[used], skinTexCoords[slot->first], slot->count * sizeof(skinTexCoords[0]));
+            if (slot->tangents) {
+                memmove(skinTangent[used], skinTangent[slot->first], slot->count * sizeof(skinTangent[0]));
+            }
+            slot->first = used;
+        }
+        used += slot->count;
+    }
+    skinUsed = used;
+}
+
 static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned int count, int base, qboolean tangents)
 {
     skinCacheSlot_t *slot;
@@ -1373,7 +1610,7 @@ static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned i
     }
 
     slot = R_SkinCacheSlot(poseId, sf, count);
-    if (slot->poseId == poseId && slot->sf == sf && slot->count == count) {
+    if (slot) {
         // kept already, now with its tangents
         if (tangents && !slot->tangents) {
             Com_Memcpy(skinTangent[slot->first], tess.tangent[base], count * sizeof(skinTangent[0]));
@@ -1383,16 +1620,24 @@ static void R_SkinCacheStore(int poseId, const skelSurfaceGame_t *sf, unsigned i
     }
 
     if (skinUsed + count > SKIN_CACHE_VERTS) {
-        // full: start over
-        Com_Memset(skinSlots, 0, sizeof(skinSlots));
-        skinUsed = 0;
+        // full: what is in use kept, and if that is still too much, start
+        // over; once a batch that takes a surface from it has (RB_SkinMaterialize)
+        RB_SkinMaterialize();
+        R_SkinCacheCompact();
+        if (skinUsed + count > SKIN_CACHE_VERTS) {
+            Com_Memset(skinSlots, 0, sizeof(skinSlots));
+            skinUsed = 0;
+        }
     }
 
+    slot = R_SkinCacheVictim(poseId, sf, count);
     slot->poseId   = poseId;
     slot->sf       = sf;
     slot->count    = count;
     slot->first    = skinUsed;
     slot->tangents = tangents;
+    slot->usedFrame = backEnd.viewParms.frameCount;
+    slot->arenaFrame = 0;
     skinUsed += count;
 
     Com_Memcpy(skinXyz[slot->first], tess.xyz[base], count * sizeof(skinXyz[0]));
@@ -1539,8 +1784,100 @@ static void R_GoreDropFolded(const refEntity_t *e, const skelBoneCache_t *bones,
     tess.numIndexes = kept;
 }
 
+/*
+=============
+Posed surfaces drawn from the card
+
+Added in OPM. The skin cache keeps a posed surface for the frame; the frame
+also keeps a copy of it on the card (RB_SkinArenaStore), which the views that
+draw depth alone draw it from when it is a batch by itself
+(RB_SkinArenaDraw). Such a batch need not hold the surface's vertexes at all:
+RB_SkelMesh leaves them out, deferred, and RB_SkinMaterialize copies them in
+from the skin cache only if the batch is drawn from tess after all.
+=============
+*/
+
+static const skinCacheSlot_t *R_SkinCacheFind(int poseId, const skelSurfaceGame_t *sf, unsigned int count)
+{
+    if (!poseId || !r_skinCache->integer) {
+        return NULL;
+    }
+    return R_SkinCacheSlot(poseId, sf, count);
+}
+
+// The surface tess now holds at baseVertex: copied to the card if it is not
+// there yet this frame, and if it is the batch's first, the batch told so.
+static void RB_SkinArenaKeep(int poseId, const skelSurfaceGame_t *sf, unsigned int count, int baseVertex, int baseIndex, qboolean tangents)
+{
+    skinCacheSlot_t *slot = (skinCacheSlot_t *)R_SkinCacheFind(poseId, sf, count);
+    const int        frame = RB_SkinArenaFrame();
+    const int        numIndexes = tess.numIndexes - baseIndex;
+
+    if (!slot || !frame) {
+        return;
+    }
+
+    if (slot->arenaFrame != frame) {
+        if (!RB_SkinArenaStore(baseVertex, count, baseIndex, numIndexes, tangents, &slot->arenaBase, &slot->arenaFirstIndex)) {
+            return;
+        }
+        slot->arenaFrame    = frame;
+        slot->arenaIndexes  = numIndexes;
+        slot->arenaTangents = tangents;
+    } else if (tangents && !slot->arenaTangents) {
+        RB_SkinArenaAddTangents(slot->arenaBase, baseVertex, count);
+        slot->arenaTangents = qtrue;
+    }
+
+    if (!baseVertex && !baseIndex && slot->arenaIndexes == numIndexes) {
+        tess.skin.valid           = qtrue;
+        tess.skin.deferred        = qfalse;
+        tess.skin.tangents        = slot->arenaTangents;
+        tess.skin.frame           = frame;
+        tess.skin.numVertexes     = count;
+        tess.skin.numIndexes      = numIndexes;
+        tess.skin.arenaBase       = slot->arenaBase;
+        tess.skin.arenaFirstIndex = slot->arenaFirstIndex;
+    }
+}
+
+/*
+=============
+RB_SkinMaterialize
+
+The vertexes of a surface RB_SkelMesh left out of tess, copied in from the
+skin cache: the batch is drawn from tess after all.
+=============
+*/
+void RB_SkinMaterialize(void)
+{
+    const int first = tess.skin.cacheFirst;
+    const int count = tess.skin.numVertexes;
+
+    if (!tess.skin.deferred) {
+        return;
+    }
+    tess.skin.deferred = qfalse;
+
+    Com_Memcpy(tess.xyz[0], skinXyz[first], count * sizeof(skinXyz[0]));
+    Com_Memcpy(tess.normal[0], skinNormal[first], count * sizeof(skinNormal[0]));
+    Com_Memcpy(tess.texCoords[0], skinTexCoords[first], count * sizeof(skinTexCoords[0]));
+    if (tess.skin.cacheTangents) {
+        Com_Memcpy(tess.tangent[0], skinTangent[first], count * sizeof(skinTangent[0]));
+    }
+}
+
+// A mesh's bone among the model's (RB_SkelMesh): from the surface's table, or
+// asked of the client for a bone past it
+#define SKEL_LOCAL_BONE(index) \
+    ((boneMapped && (unsigned int)(index) < (unsigned int)skelmodel->numBones) \
+        ? boneMap[(index)] : ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[(index)].channel))
+
 void RB_SkelMesh(skelSurfaceGame_t *sf)
 {
+    int                boneMap[TIKI_MAX_BONES];
+    qboolean           boneMapped = qfalse;
+    void              *skelGpu;
     qboolean           tangents;
     int                kept;
     unsigned int       baseIndex, baseVertex;
@@ -1659,6 +1996,15 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
         render_count = sf->numVerts;
     }
 
+    // Added in OPM
+    //  Posed by the vertex program from the frame's bones, if it can be
+    //  (tr_skelgpu.cpp): a batch of its own, which holds its indexes alone.
+    skelGpu = RB_SkelGpuUsable(tiki, sf, mesh, skelmodel);
+    if (skelGpu && tess.numIndexes) {
+        RB_EndSurface();
+        RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+    }
+
     indexes = sf->numTriangles * 3;
     RB_CHECKOVERFLOW(render_count, indexes);
 
@@ -1710,18 +2056,58 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
         tess.numIndexes += i;
     }
 
-    // skinned for another view of this scene already
     tangents = (tess.shader->vertexAttribs & ATTR_TANGENT) ? qtrue : qfalse;
+
+    if (skelGpu) {
+        RB_SkelGpuSubmit(skelGpu);
+        return;
+    }
+
+    // Added in OPM
+    //  A model keeps no direction its light came from: none, as the vertex
+    //  program that poses it has, rather than whatever the batch before left
+    //  there (lightall_fp.glsl takes no direction for all of it ambient).
+    if (tess.shader->vertexAttribs & ATTR_LIGHTDIRECTION) {
+        Com_Memset(tess.lightdir[baseVertex], 0, render_count * sizeof(tess.lightdir[0]));
+    }
+
+    // Added in OPM
+    //  The batch's first surface, on the card already this frame, in a view
+    //  that draws depth alone: most likely drawn from there, so its vertexes
+    //  are left out of tess unless it turns out not to be (RB_SkinMaterialize).
+    if (!baseVertex && !baseIndex && backEnd.depthFill && tess.currentStageIteratorFunc == RB_StageIteratorGeneric
+        && !ShaderRequiresCPUDeforms(tess.shader) && !r_showtris->integer && !r_shownormals->integer) {
+        const skinCacheSlot_t *slot = R_SkinCacheFind(backEnd.currentEntity->poseId, sf, render_count);
+
+        if (slot && slot->arenaFrame && slot->arenaFrame == RB_SkinArenaFrame()
+            && slot->arenaIndexes == (int)tess.numIndexes && (!tangents || (slot->tangents && slot->arenaTangents))) {
+            tess.skin.valid           = qtrue;
+            tess.skin.deferred        = qtrue;
+            tess.skin.tangents        = slot->arenaTangents;
+            tess.skin.cacheTangents   = slot->tangents;
+            tess.skin.frame           = slot->arenaFrame;
+            tess.skin.numVertexes     = render_count;
+            tess.skin.numIndexes      = tess.numIndexes;
+            tess.skin.arenaBase       = slot->arenaBase;
+            tess.skin.arenaFirstIndex = slot->arenaFirstIndex;
+            tess.skin.cacheFirst      = slot->first;
+            return;
+        }
+    }
+
+    // skinned for another view of this scene already
     kept     = R_SkinCacheFetch(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
     if (kept) {
         R_GoreDropFolded(&backEnd.currentEntity->e, &TIKI_Skel_Bones[backEnd.currentEntity->e.bonestart], scale, baseIndex);
     }
     if (kept == 1) {
+        RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
         return;
     }
     if (kept == 2) {
         RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
         R_SkinCacheStore(backEnd.currentEntity->poseId, sf, render_count, baseVertex, qtrue);
+        RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, qtrue);
         return;
     }
 
@@ -1731,13 +2117,24 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     bones  = &TIKI_Skel_Bones[backEnd.currentEntity->e.bonestart];
     morphs = &skeletorMorphCache[backEnd.currentEntity->e.morphstart];
 
+    // Added in OPM
+    //  A mesh past the model's first names its bones by channel, and each
+    //  weight looked its bone up among the model's with a call into the
+    //  client: thousands of them a surface, a character's every frame. Each
+    //  of the mesh's bones is looked up once a surface instead.
+    if (mesh > 0 && skelmodel->numBones <= TIKI_MAX_BONES) {
+        for (i = 0; i < skelmodel->numBones; i++) {
+            boneMap[i] = ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[i].channel);
+        }
+        boneMapped = qtrue;
+    }
+
     if (backEnd.currentEntity->e.hasMorph) {
         if (mesh > 0) {
             for (vertNum = 0; vertNum < render_count; vertNum++) {
                 vec3_t normal;
                 vec3_t out;
                 vec3_t totalmorph;
-                int    channelNum;
                 int    boneNum;
 
                 VectorClear(out);
@@ -1759,19 +2156,17 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
                 }
 
                 if (newVerts->numMorphs) {
-                    channelNum = skelmodel->pBones[morph->morphIndex].channel;
+                    boneNum = SKEL_LOCAL_BONE(morph->morphIndex);
                 } else {
-                    channelNum = skelmodel->pBones[weight->boneIndex].channel;
+                    boneNum = SKEL_LOCAL_BONE(weight->boneIndex);
                 }
 
-                boneNum = ri.TIKI_GetLocalChannel(tiki, channelNum);
                 bone    = &bones[boneNum];
 
                 SkelVertGetNormal(newVerts, bone, normal);
 
                 for (weightNum = 0; weightNum < newVerts->numWeights; weightNum++) {
-                    channelNum = skelmodel->pBones[weight->boneIndex].channel;
-                    boneNum    = ri.TIKI_GetLocalChannel(tiki, channelNum);
+                    boneNum    = SKEL_LOCAL_BONE(weight->boneIndex);
                     bone       = &bones[boneNum];
 
                     if (!weightNum) {
@@ -1859,7 +2254,6 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
             for (vertNum = 0; vertNum < render_count; vertNum++) {
                 vec3_t normal;
                 vec3_t out;
-                int    channelNum;
                 int    boneNum;
 
                 VectorClear(out);
@@ -1868,15 +2262,13 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
                 weight = (skelWeight_t *)((byte *)newVerts + sizeof(skeletorVertex_t)
                                           + sizeof(skeletorMorph_t) * newVerts->numMorphs);
 
-                channelNum = skelmodel->pBones[weight->boneIndex].channel;
-                boneNum    = ri.TIKI_GetLocalChannel(tiki, channelNum);
+                boneNum    = SKEL_LOCAL_BONE(weight->boneIndex);
                 bone       = &bones[boneNum];
 
                 SkelVertGetNormal(newVerts, bone, normal);
 
                 for (weightNum = 0; weightNum < newVerts->numWeights; weightNum++) {
-                    channelNum = skelmodel->pBones[weight->boneIndex].channel;
-                    boneNum    = ri.TIKI_GetLocalChannel(tiki, channelNum);
+                    boneNum    = SKEL_LOCAL_BONE(weight->boneIndex);
                     bone       = &bones[boneNum];
 
                     SkelWeightGetXyz(weight, bone, out);
@@ -1999,6 +2391,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
         RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
     }
     R_SkinCacheStore(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
+    RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
 }
 
 /*
@@ -2006,6 +2399,43 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 RB_StaticMesh
 =============
 */
+/*
+=============
+Static model vertex cache
+
+Added in OPM. A static model's surface is built into tess in every pass that
+draws it -- the depth prepass, each sun cascade, the main pass -- and every
+frame, though it never changes: each normal packed again, and, for a shader
+with a normal map (most props, since tools/matgen), its tangents worked out
+again from every triangle. Those depend on the surface alone and on how many
+of its vertexes its level of detail keeps, not on which copy of the model it
+is or where it stands, so they are kept here once, keyed by both, and copied.
+Direct mapped, started over when full, as the skin cache is.
+=============
+*/
+#define STATIC_CACHE_SLOTS 4096 // a power of two
+#define STATIC_CACHE_VERTS (256 * 1024)
+
+typedef struct {
+    const skelSurfaceGame_t *sf;
+    int                      count;
+    int                      first;
+    qboolean                 tangents;
+} staticCacheSlot_t;
+
+static staticCacheSlot_t staticSlots[STATIC_CACHE_SLOTS];
+static int16_t           staticNormal[STATIC_CACHE_VERTS][4];
+static int16_t           staticTangent[STATIC_CACHE_VERTS][4];
+static int               staticUsed;
+
+static staticCacheSlot_t *R_StaticCacheSlot(const skelSurfaceGame_t *sf, int count)
+{
+    unsigned int h = (unsigned int)((uintptr_t)sf >> 4) * 2654435761u;
+
+    h ^= (unsigned int)count * 40503u;
+    return &staticSlots[(h ^ (h >> 15)) & (STATIC_CACHE_SLOTS - 1)];
+}
+
 void RB_StaticMesh(staticSurface_t *staticSurf)
 {
     int                i, j;
@@ -2133,12 +2563,48 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
         tess.numIndexes += j;
     }
 
+    // Added in OPM: its normals packed, and its tangents, as kept from before
+    staticCacheSlot_t *cached = NULL;
+    {
+        staticCacheSlot_t *slot = R_StaticCacheSlot(surf, render_count);
+
+        if (slot->sf != surf || slot->count != render_count) {
+            if (render_count > STATIC_CACHE_VERTS) {
+                slot = NULL;
+            } else {
+                if (staticUsed + render_count > STATIC_CACHE_VERTS) {
+                    // full: start over
+                    Com_Memset(staticSlots, 0, sizeof(staticSlots));
+                    staticUsed = 0;
+                    slot = R_StaticCacheSlot(surf, render_count);
+                }
+                slot->sf       = surf;
+                slot->count    = render_count;
+                slot->first    = staticUsed;
+                slot->tangents = qfalse;
+                staticUsed += render_count;
+                for (j = 0; j < render_count; j++) {
+                    // tess.normal is packed int16 (32767 = 1.0), not float -- a plain
+                    // copy of the float model normal truncates every component to
+                    // 0/+-1, which zeroes out any normal-driven CPU deform (flap/wave)
+                    // so foliage never sways.
+                    R_VaoPackNormal(staticNormal[slot->first + j], surf->pStaticNormal[j]);
+                }
+            }
+        }
+        cached = slot;
+    }
+
+    if (cached) {
+        Com_Memcpy(tess.normal[baseVertex], staticNormal[cached->first], render_count * sizeof(tess.normal[0]));
+    } else {
+        for (j = 0; j < render_count; j++) {
+            R_VaoPackNormal(tess.normal[baseVertex + j], surf->pStaticNormal[j]);
+        }
+    }
+
     for (j = 0; j < render_count; j++) {
         Vector4Copy(surf->pStaticXyz[j], tess.xyz[baseVertex + j]);
-        // tess.normal is packed int16 (32767 = 1.0), not float -- a plain copy of
-        // the float model normal truncates every component to 0/+-1, which zeroes
-        // out any normal-driven CPU deform (flap/wave) so foliage never sways.
-        R_VaoPackNormal(tess.normal[baseVertex + j], surf->pStaticNormal[j]);
         tess.texCoords[baseVertex + j][0]   = surf->pStaticTexCoords[j][0][0];
         tess.texCoords[baseVertex + j][1]   = surf->pStaticTexCoords[j][0][1];
         tess.lightCoords[baseVertex + j][0] = surf->pStaticTexCoords[j][1][0];
@@ -2168,8 +2634,20 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
         }
     }
 
-    if (tess.shader->vertexAttribs & ATTR_TANGENT) {
-        RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
+    // Added in OPM
+    //  Its tangents: none in a pass that draws depth alone, which reads none;
+    //  else as kept, or worked out once and kept.
+    if ((tess.shader->vertexAttribs & ATTR_TANGENT) && !backEnd.depthFill
+        && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+        if (cached && cached->tangents) {
+            Com_Memcpy(tess.tangent[baseVertex], staticTangent[cached->first], render_count * sizeof(tess.tangent[0]));
+        } else {
+            RB_CalcTangentsForRange(baseVertex, render_count, baseIndex, tess.numIndexes - baseIndex);
+            if (cached) {
+                Com_Memcpy(staticTangent[cached->first], tess.tangent[baseVertex], render_count * sizeof(tess.tangent[0]));
+                cached->tangents = qtrue;
+            }
+        }
     }
 }
 

@@ -27,6 +27,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_commands.h"
 #include "surfaceflags.h"
 #include "cg_specialfx.h"
+#include "cg_ragdoll.h"
+#include "cg_physics.h"
 
 extern refEntity_t *current_entity;
 extern dtiki_t     *current_tiki;
@@ -961,6 +963,13 @@ void CG_BodyFallSound(centity_t *ent, refEntity_t *pREnt, float volume)
     vec3_t  midlegs;
     str     sSoundName;
     trace_t trace;
+
+    // Added in OPM
+    //  A ragdoll's fall is heard when it lands (cg_physics_sounds.cpp), not
+    //  when the death animation would have put the body down.
+    if (cg_physics_sounds && cg_physics_sounds->integer && CG_RagdollOwnsEntity(ent->currentState.number)) {
+        return;
+    }
 
     VectorCopy(ent->lerpOrigin, vStart);
     vStart[2] += 8;

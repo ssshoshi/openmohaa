@@ -353,7 +353,10 @@ void main()
 	L += (texture2D(u_DeluxeMap, var_TexCoords.zw).xyz - vec3(0.5)) * u_EnableTextures.y;
   #endif
 	float sqrLightDist = dot(L, L);
-	L /= sqrt(sqrLightDist);
+	// Added in OPM: no direction at all (a model lit per vertex) is no light
+	// from any way: all of it ambient, as it was where the division made it
+	// NaN and the driver's clamps turned that to nothing
+	L = sqrLightDist > 0.0 ? L * inversesqrt(sqrLightDist) : vec3(0.0);
 
   #if defined(USE_LIGHT_VECTOR)
 	attenuation  = CalcLightAttenuation(float(var_LightDir.w > 0.0), var_LightDir.w / sqrLightDist);

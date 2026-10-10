@@ -391,6 +391,7 @@ public:
     {
         Note(a, b, manifold);
         CG_JoltRagdollContact(a, b, manifold);
+        CG_PhysicsImpactContact(a, b, manifold);
     }
 
     void OnContactPersisted(
@@ -399,6 +400,7 @@ public:
     {
         Note(a, b, manifold);
         CG_JoltRagdollContact(a, b, manifold);
+        CG_PhysicsImpactContact(a, b, manifold);
     }
 
 private:

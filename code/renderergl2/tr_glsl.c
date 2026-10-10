@@ -188,7 +188,13 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSunShadow",     GLSL_INT },
 	{ "u_RtShadowBaked",   GLSL_INT },
 	{ "u_RtCapsules",      GLSL_INT },
-	{ "u_SoftParticle",    GLSL_VEC4 }
+	{ "u_RtList",          GLSL_VEC4_RTLIST },
+	{ "u_SoftParticle",    GLSL_VEC4 },
+	{ "u_GroundCover",     GLSL_VEC4 },
+	{ "u_SkelBones",       GLSL_INT },
+	{ "u_SkelParams",      GLSL_VEC4 },
+	{ "u_SkelAmbient",     GLSL_VEC4 },
+	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS }
 };
 
 typedef enum
@@ -297,6 +303,8 @@ static const char *rt_glsl =
 	"#define RT_STAGE_PARTICLE  5\n"
 	"#define RT_STAGE_PARTICLE_LIT 6\n"
 	"uniform vec4 u_RtLights[RT_MAX_LIGHTS * 4];\n"
+	// the lights this draw may take, four indexes a vec4; u_RtParams.x of them
+	"uniform vec4 u_RtList[RT_MAX_LIGHTS / 4];\n"
 	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
 	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
 	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
@@ -309,6 +317,13 @@ static const char *rt_glsl =
 	"#if defined(RT_CAPSULES)\n"
 	"uniform sampler2D u_RtCapsules;\n"
 	"#endif\n"
+	"\n"
+	"int RtListed(int k)\n"
+	"{\n"
+	"	vec4 q = u_RtList[k / 4];\n"
+	"	int  c = k - (k / 4) * 4;\n"
+	"	return int(c == 0 ? q.x : c == 1 ? q.y : c == 2 ? q.z : q.w);\n"
+	"}\n"
 	"\n"
 	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth)\n"
 	"{\n"
@@ -390,6 +405,14 @@ static const char *rt_glsl =
 	"			vec4  B = texelFetch(u_RtCapsules, ivec2(c * 2 + 1, 0), 0);\n"
 	"			vec3  d2 = B.xyz - A.xyz;\n"
 	"			vec3  r  = P - A.xyz;\n"
+	// a sphere around the capsule and its softest edge, which the ray
+	// passes wide of for most of a body's capsules: a few products, not
+	// the nearest approach of two segments
+	"			vec3  mid = A.xyz + 0.5 * d2 - P;\n"
+	"			float sm  = clamp(dot(mid, d1) / a, 0.0, 1.0);\n"
+	"			vec3  off = mid - d1 * sm;\n"
+	"			float reach = 0.5 * length(d2) + 1.7 * A.w + 1.0;\n"
+	"			if (dot(off, off) > reach * reach) continue;\n"
 	"			float e  = dot(d2, d2), f = dot(d2, r);\n"
 	// P on or in this capsule: the body itself, not in its shadow
 	"			float tp = e > 1e-4 ? clamp(f / e, 0.0, 1.0) : 0.0;\n"
@@ -407,6 +430,8 @@ static const char *rt_glsl =
 	"			float soft = min(1.0 + 0.03 * s * len, 0.7 * A.w);\n"
 	"			vis *= smoothstep(A.w - soft, A.w + soft, dist);\n"
 	"		}\n"
+	// all but dark already: the rest of the bodies change nothing seen
+	"		if (vis < 0.004) return 0.0;\n"
 	"		i += 1 + n;\n"
 	"	}\n"
 	"#endif\n"
@@ -423,9 +448,10 @@ static const char *rt_glsl =
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
-	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
-	"		if (i >= count) break;\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -452,6 +478,10 @@ static const char *rt_glsl =
 	"			if (sampleRadius >= radiusAtDist) continue;\n"
 	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
 	"		}\n"
+	// what it would give unshadowed is too little to see: passed over, its
+	// shadow not looked up (u_RtAmbient.w, r_rtCutoff; R_RtReach)
+	"		vec3 most = l1.rgb * att;\n"
+	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
@@ -459,7 +489,7 @@ static const char *rt_glsl =
 	"			float texelWorld = 2.0 * d / RT_TILE_TEXELS;\n"
 	"			vec3  v = P + N * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
 	"			float now = RtShadow(l3, v, false);\n"
-	"			if (l3.z >= 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
+	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
 	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
 	"		}\n"
 	"		else if (delta && !added) continue;\n"
@@ -486,9 +516,10 @@ static const char *rt_glsl =
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
-	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
-	"		if (i >= count) break;\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -508,6 +539,8 @@ static const char *rt_glsl =
 	"			if (sampleRadius >= radiusAtDist) continue;\n"
 	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
 	"		}\n"
+	"		vec3 most = l1.rgb * att;\n"
+	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
@@ -1033,6 +1066,12 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_RTLIGHTS:
 				size += sizeof(vec4_t) * RT_MAX_LIGHTS * RT_LIGHT_VEC4S;
 				break;
+			case GLSL_VEC4_RTLIST:
+				size += sizeof(vec4_t) * (RT_MAX_LIGHTS / 4);
+				break;
+			case GLSL_VEC4_SKELLIGHTS:
+				size += sizeof(vec4_t) * SKEL_GPU_MAX_LIGHTS * 3;
+				break;
 			default:
 				break;
 		}
@@ -1221,11 +1260,9 @@ Added in OPM
 The realtime lights, RT_LIGHT_VEC4S vec4s each (tr_rtlight.c). Only the first
 count are sent; the shader reads no further than u_RtParams.x.
 */
-void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation)
 {
 	GLint *uniforms = program->uniforms;
-	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
-	int    floats   = count * RT_LIGHT_VEC4S * 4;
 
 	if (uniforms[uniformNum] == -1 || count <= 0) {
 		return;
@@ -1238,16 +1275,81 @@ void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec
 	}
 
 	if (count > RT_MAX_LIGHTS) {
-		count  = RT_MAX_LIGHTS;
-		floats = count * RT_LIGHT_VEC4S * 4;
+		count = RT_MAX_LIGHTS;
 	}
 
-	if (!memcmp(v, compare, floats * sizeof(float))) {
+	// written once a frame (R_RtRenderShadows): comparing the whole of them
+	// at each draw was kilobytes a draw for nothing
+	if (program->rtLightsGeneration == generation && program->rtLightsCount == count) {
 		return;
 	}
 
-	Com_Memcpy(compare, v, floats * sizeof(float));
+	program->rtLightsGeneration = generation;
+	program->rtLightsCount      = count;
 	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], count * RT_LIGHT_VEC4S, &v[0][0]);
+}
+
+/*
+Added in OPM
+The lights of a model the vertex program poses (tr_skelgpu.c), vec4s of them;
+sent when they are not what the program has.
+*/
+void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELLIGHTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelLights: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_LIGHTS * 3) {
+		vec4s = SKEL_GPU_MAX_LIGHTS * 3;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+The realtime lights a draw may take (R_RtSetUniforms), count indexes, four a
+vec4. Only the vec4s that hold them are sent.
+*/
+void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+	int    vec4s    = (count + 3) / 4;
+
+	if (uniforms[uniformNum] == -1 || count <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_RTLIST)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformRtList: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > RT_MAX_LIGHTS / 4) {
+		vec4s = RT_MAX_LIGHTS / 4;
+	}
+
+	if (!memcmp(v, compare, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
 }
 
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies)
@@ -1361,6 +1463,23 @@ static qboolean GLSL_InitLightallShader(int i)
 	if ((i & LIGHTDEF_ENTITY_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
 		return qfalse;
 
+	// Added in OPM: the tufts are world geometry with no material maps; their
+	// tangent and lightmap arrays hold where each stands and how it sways
+	if ((i & LIGHTDEF_GROUNDCOVER) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION
+		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
+		return qfalse;
+
+	if ((i & LIGHTDEF_GROUNDCOVER) && (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX))
+		return qfalse;
+
+	// Added in OPM: a skeletal model posed from the frame's bones, which
+	// brings its own vertexes, and nothing that reads others
+	if ((i & LIGHTDEF_SKEL_GPU) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_GROUNDCOVER)))
+		return qfalse;
+
+	if ((i & LIGHTDEF_SKEL_GPU) && lightType == LIGHTDEF_USE_LIGHTMAP)
+		return qfalse;
+
 	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
 
 	extradefines[0] = '\0';
@@ -1403,7 +1522,7 @@ static qboolean GLSL_InitLightallShader(int i)
 
 			attribs |= ATTR_TANGENT;
 
-			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && !(i & LIGHTDEF_ENTITY_BONE_ANIMATION) && r_parallaxMapping->integer)
+			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_SKEL_GPU)) && r_parallaxMapping->integer)
 			{
 				Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP\n");
 				if (r_parallaxMapping->integer > 1)
@@ -1472,6 +1591,19 @@ static qboolean GLSL_InitLightallShader(int i)
 		Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
 	}
 
+	if (i & LIGHTDEF_GROUNDCOVER)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_GROUNDCOVER\n");
+		attribs |= ATTR_TANGENT | ATTR_LIGHTCOORD;
+	}
+
+	if (i & LIGHTDEF_SKEL_GPU)
+	{
+		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW));
+		attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES
+			| ATTR_TANGENT | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR | ATTR_BONE_WEIGHTS | ATTR_LIGHTDIRECTION;
+	}
+
 	if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)
 	{
 		Q_strcat(extradefines, 1024, "#define USE_MODELMATRIX\n");
@@ -1513,6 +1645,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 
@@ -1728,7 +1861,7 @@ void GLSL_InitGPUShaders(void)
 		// Pre-build every permutation a surface with no material maps can
 		// need, which covers all of stock MOH:AA. Anything carrying a normal,
 		// specular or deluxe map is left to GLSL_GetLightallShader.
-		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP))
+		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER | LIGHTDEF_SKEL_GPU))
 			continue;
 
 		if (!GLSL_InitLightallShader(i))
