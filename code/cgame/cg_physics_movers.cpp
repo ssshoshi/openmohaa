@@ -592,6 +592,10 @@ static struct {
     vec3_t      entityLocal; // the point held, in the entity's own space
     float       dist;
     vec3_t      target;
+    // the body's own collision group, given back when it is let go: the pieces
+    // of a ragdoll chain (a part cut off a body) are kept from colliding with
+    // each other by theirs
+    JPH::CollisionGroup group;
 } pg;
 
 // The nearest of the client's dynamic bodies along a ray, not behind anything
@@ -694,10 +698,14 @@ static void CG_PhysicsSetHeldGroup(JPH::BodyID id, qboolean held)
 {
     JPH::BodyLockWrite lock(phys_system->GetBodyLockInterface(), id);
 
-    if (lock.Succeeded()) {
-        lock.GetBody().SetCollisionGroup(
-            held ? JPH::CollisionGroup(CG_PhysicsHoldFilter(), PM_HOLD_GROUP, PM_HOLD_HELD) : JPH::CollisionGroup()
-        );
+    if (!lock.Succeeded()) {
+        return;
+    }
+    if (held) {
+        pg.group = lock.GetBody().GetCollisionGroup();
+        lock.GetBody().SetCollisionGroup(JPH::CollisionGroup(CG_PhysicsHoldFilter(), PM_HOLD_GROUP, PM_HOLD_HELD));
+    } else {
+        lock.GetBody().SetCollisionGroup(pg.group);
     }
 }
 
@@ -747,11 +755,22 @@ qboolean CG_PhysicsGrabStart(const vec3_t start, const vec3_t dir, float range, 
     }
 
     VectorMA(start, bodyEntry, dir, point);
+    return CG_PhysicsGrabBodyAt(id, point, Q_max(bodyEntry, minDist));
+}
+
+// Takes hold of a body at a point of it, to be carried dist along the view.
+qboolean CG_PhysicsGrabBodyAt(JPH::BodyID id, const vec3_t point, float dist)
+{
+    CG_PhysicsGrabRelease();
+
+    if (!phys_system) {
+        return qfalse;
+    }
 
     {
         JPH::BodyLockRead lock(phys_system->GetBodyLockInterface(), id);
 
-        if (!lock.Succeeded()) {
+        if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) {
             return qfalse;
         }
         pg.local = JPH::Vec3(lock.GetBody().GetWorldTransform().Inversed() * JPH::RVec3(PhysToJolt(point)));
@@ -760,13 +779,13 @@ qboolean CG_PhysicsGrabStart(const vec3_t start, const vec3_t dir, float range, 
     pg.held   = qtrue;
     pg.server = qfalse;
     pg.id     = id;
-    pg.dist   = Q_max(bodyEntry, minDist);
+    pg.dist   = dist;
     VectorCopy(point, pg.target);
     CG_PhysicsSetHeldGroup(id, qtrue);
     phys_system->GetBodyInterface().ActivateBody(id);
 
     if (cg_physics_log->integer) {
-        cgi.Printf("physics: grabbed a body %.0f units away\n", bodyEntry);
+        cgi.Printf("physics: grabbed a body %.0f units away\n", dist);
     }
     return qtrue;
 }

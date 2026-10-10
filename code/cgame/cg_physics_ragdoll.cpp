@@ -1390,3 +1390,28 @@ qboolean CG_JoltChainAwake(int handle)
     }
     return pc->ragdoll->IsActive() ? qtrue : qfalse;
 }
+
+// Takes hold of a chain, by the piece nearest point, for the grabber.
+qboolean CG_JoltChainGrab(int handle, const vec3_t point, float dist)
+{
+    pcChain_t *pc = CG_JoltChainGet(handle);
+    float      best = 0;
+    int        i, nearest = 0;
+
+    if (!pc || !pc->ragdoll) {
+        return qfalse;
+    }
+
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+    const JPH::Vec3     at     = PhysToJolt(point);
+
+    for (i = 0; i < pc->numSegs; i++) {
+        const float d = (JPH::Vec3(bodies.GetCenterOfMassPosition(pc->ragdoll->GetBodyID(i))) - at).LengthSq();
+
+        if (!i || d < best) {
+            best    = d;
+            nearest = i;
+        }
+    }
+    return CG_PhysicsGrabBodyAt(pc->ragdoll->GetBodyID(nearest), point, dist);
+}

@@ -79,3 +79,5 @@ qboolean CG_JoltChainRead(int handle, vec3_t *p);
 // A push, in game units a second, on the piece nearest point.
 void     CG_JoltChainAddVelocity(int handle, const vec3_t point, const vec3_t dv);
 qboolean CG_JoltChainAwake(int handle);
+// Takes hold of a chain at point for the grabber (cg_ragdoll_grab), dist along the view.
+qboolean CG_JoltChainGrab(int handle, const vec3_t point, float dist);
