@@ -261,14 +261,10 @@ typedef struct {
 // its end, kept their lengths apart, falling and catching on the world. Each
 // bone of that chain is posed between its two points; every other bone of the
 // part rides on the nearest of them, as it was when it came off.
-//
-// A piece broken off a head is one too (chunk), but rigid: a copy of the body
-// as it was, drawn only inside the dent the round made (RF_GORE_CHUNK).
 #define GORE_CHAIN_PTS 4
 
 typedef struct {
     qboolean       active;
-    qboolean       chunk;
     int            key; // its body's entity number, GORE_GIB_KEY and up
     int            part;
     refEntity_t    ref;
@@ -354,6 +350,8 @@ static int  CG_GoreZone(const char *bone);
 static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius);
 static void CG_GoreHeadHit(goreBody_t *body, refEntity_t *model);
 static void CG_GoreChainStart(goreGib_t *gib, const goreRig_t *rig);
+static void CG_GoreSpinAxis(vec3_t axis[3], const vec3_t spin, float dt);
+static void CG_GoreRegisterBits(void);
 
 static skinnedVert_t gore_verts[GORE_SKIN_VERTS];
 static int           gore_tris[GORE_SKIN_TRIS * 3];
@@ -413,6 +411,7 @@ void CG_GoreClear(void)
     gore_splatShader = cgi.R_RegisterShader("gore/splat");
     gore_poolShader  = cgi.R_RegisterShader("gore/pool");
     gore_chunkShader = cgi.R_RegisterShader("gore/chunk");
+    CG_GoreRegisterBits();
 
     memset(gore_drops, 0, sizeof(gore_drops));
     memset(gore_pools, 0, sizeof(gore_pools));
@@ -893,6 +892,11 @@ static unsigned int CG_GorePoseHash(const refEntity_t *ref)
     }
     GORE_HASH_DIR(ref->scale);
     GORE_HASH_INT(ref->num_bone_overrides);
+
+    // the dents change the mesh as much as the pose does
+    if ((ref->renderfx & RF_GORE_DENTS) && ref->gore_dents) {
+        GORE_HASH_INT(ref->num_gore_dents);
+    }
 
     if (ref->bone_override && ref->num_bone_overrides > 0) {
         // The whole skeleton is the ragdoll's: the animation under it no
@@ -2324,73 +2328,227 @@ static void CG_GoreUpdateChain(goreGib_t *gib, float dt)
 // Pieces of a head
 //
 
-// The skin a dent pushed in, broken off and thrown out of it: the head as it
-// was, every bone held where it is, drawn only inside the dent's sphere.
-static void CG_GoreSpawnChunk(goreBody_t *from, refEntity_t *model, int dent)
+// What a round breaks out of a head: a handful of small pieces of skull, scalp
+// and brain, tumbling and bouncing to a stop. The shapes are the game's own
+// small debris (a shard, lumps of concrete), sized from their meshes and drawn
+// in bone, flesh and brain: each mesh is stretched on its three axes to the
+// bit's own shape, a flat plate of skull or a lump.
+#define GORE_MAX_BITS  96
+#define GORE_BIT_LIFE  20000 // ms a bit lies before it goes
+#define GORE_BIT_FADE  1500  // and shrinks away over the last of them
+
+typedef struct {
+    qboolean    active, resting;
+    refEntity_t ref;
+    int         model;
+    vec3_t      pos;     // its middle; ref.origin is the mesh's, offset from it
+    vec3_t      axis[3]; // which way it is turned
+    vec3_t      size;    // how far it reaches each way, along axis
+    vec3_t      vel, spin;
+    int         born;
+} goreBit_t;
+
+typedef enum { GB_BONE, GB_FLESH, GB_BRAIN, GB_NUM } goreBitKind_t;
+
+// which shapes go with which bits: a shard for skull, lumps for the rest
+static const struct {
+    const char *name;
+    qboolean    shard;
+} gore_bitModelNames[] = {
+    {"models/fx/shard_piece.tik", qtrue  },
+    {"models/fx/chunkcrete.tik",  qfalse},
+    {"models/fx/concrete1.tik",   qfalse},
+    {"models/fx/concrete2.tik",   qfalse},
+};
+#define GORE_BIT_MODELS ARRAY_LEN(gore_bitModelNames)
+
+static const char *gore_bitShaderNames[GB_NUM] = {"gore/bit_bone", "gore/bit_flesh", "gore/bit_brain"};
+
+static goreBit_t gore_bits[GORE_MAX_BITS];
+static int       gore_nextBit;
+static qhandle_t gore_bitModels[GORE_BIT_MODELS];
+static vec3_t    gore_bitMid[GORE_BIT_MODELS], gore_bitHalf[GORE_BIT_MODELS]; // the mesh's bounds, at scale 1
+static qboolean  gore_bitShard[GORE_BIT_MODELS];
+static int       gore_numBitModels;
+static qhandle_t gore_bitShaders[GB_NUM];
+static qhandle_t gore_bitStains[2]; // under a bit where it lies
+
+// A bit's shape posed as it stands: the middle of its mesh and how far it
+// reaches from there each way.
+static qboolean CG_GoreBitBounds(qhandle_t hModel, vec3_t mid, vec3_t half)
 {
-    const goreRig_t *rig = CG_GoreRig(model->tiki);
-    goreGib_t       *gib = NULL, *oldest = NULL;
-    float            m[4][3];
-    vec3_t           out, centre;
-    int              i, n = 0, k;
+    refEntity_t ent;
+    vec3_t      mins, maxs;
+    int         i, n, numTris = 0;
 
-    if (!rig || dent < 0 || dent >= from->numDents) {
+    memset(&ent, 0, sizeof(ent));
+    ent.reType              = RT_MODEL;
+    ent.hModel              = hModel;
+    ent.tiki                = cgi.R_Model_GetHandle(hModel);
+    ent.scale               = 1.0f;
+    ent.entityNumber        = ENTITYNUM_NONE;
+    ent.frameInfo[0].weight = 1.0f;
+    ent.actionWeight        = 1.0f;
+    AxisClear(ent.axis);
+    if (!ent.tiki) {
+        return qfalse;
+    }
+
+    n = cgi.R_GetSkinnedMesh(&ent, gore_verts, GORE_SKIN_VERTS, gore_tris, GORE_SKIN_TRIS, &numTris);
+    ClearBounds(mins, maxs);
+    for (i = 0; i < n; i++) {
+        AddPointToBounds(gore_verts[i].xyz, mins, maxs);
+    }
+    for (i = 0; i < 3; i++) {
+        mid[i]  = (mins[i] + maxs[i]) * 0.5f;
+        half[i] = (maxs[i] - mins[i]) * 0.5f;
+        if (n <= 0 || half[i] < 0.05f) {
+            return qfalse;
+        }
+    }
+    return qtrue;
+}
+
+static void CG_GoreRegisterBits(void)
+{
+    int i;
+
+    gore_numBitModels = 0;
+    memset(gore_bits, 0, sizeof(gore_bits));
+    gore_nextBit = 0;
+    if (cgi.apiversion < 4 || !cgi.R_GetSkinnedMesh) {
         return;
     }
 
-    for (i = 0; i < GORE_MAX_GIBS && i < Q_max(cg_gore_maxGibs->integer, 1); i++) {
-        if (!gore_gibs[i].active) {
-            gib = &gore_gibs[i];
-            break;
-        }
-        // a chunk goes before a limb
-        if (!oldest || (gore_gibs[i].chunk && !oldest->chunk)
-            || (gore_gibs[i].chunk == oldest->chunk && gore_gibs[i].born < oldest->born)) {
-            oldest = &gore_gibs[i];
-        }
-    }
-    if (!gib) {
-        if (!oldest) {
-            return;
-        }
-        CG_GoreFreeGib(oldest);
-        gib = oldest;
-    }
+    for (i = 0; i < (int)GORE_BIT_MODELS; i++) {
+        qhandle_t h = cgi.R_RegisterModel(gore_bitModelNames[i].name);
 
-    memset(gib, 0, sizeof(*gib));
-    gib->chunk = qtrue;
-    gib->key   = -1;
-    gib->part  = GP_HEAD;
-    gib->born  = cg.time;
-    gib->ref   = *model;
-
-    for (i = 0; i < rig->numBones && n < GORE_MAX_OVERRIDES; i++) {
-        if (CG_GoreBoneFrame(model, i, m, NULL)) {
-            gib->ovr[n].boneIndex = i;
-            memcpy(gib->ovr[n].matrix, m, sizeof(m));
-            n++;
+        if (h && CG_GoreBitBounds(h, gore_bitMid[gore_numBitModels], gore_bitHalf[gore_numBitModels])) {
+            gore_bitShard[gore_numBitModels]    = gore_bitModelNames[i].shard;
+            gore_bitModels[gore_numBitModels++] = h;
         }
     }
-    if (!n) {
+    for (i = 0; i < GB_NUM; i++) {
+        gore_bitShaders[i] = cgi.R_RegisterShader(gore_bitShaderNames[i]);
+    }
+    // HRRTM's blood splats when it is installed (CG_GoreClear has looked)
+    for (i = 0; i < 2; i++) {
+        gore_bitStains[i] = gore_numVariants == GORE_VARIANTS ? cgi.R_RegisterShader(va("gore/stain%d", i + 1)) : gore_splatShader;
+    }
+}
+
+// The mesh stretched to the bit's size along its axes, its middle on pos.
+static void CG_GoreBitPlace(goreBit_t *bit, float shrink)
+{
+    int k;
+
+    for (k = 0; k < 3; k++) {
+        VectorScale(bit->axis[k], bit->size[k] * shrink / gore_bitHalf[bit->model][k], bit->ref.axis[k]);
+    }
+    VectorCopy(bit->pos, bit->ref.origin);
+    for (k = 0; k < 3; k++) {
+        VectorMA(bit->ref.origin, -gore_bitMid[bit->model][k], bit->ref.axis[k], bit->ref.origin);
+    }
+    VectorCopy(bit->ref.origin, bit->ref.oldorigin);
+    VectorCopy(bit->pos, bit->ref.lightingOrigin);
+    bit->ref.lightingOrigin[2] += 2.0f;
+}
+
+// a shape for a bit: a shard or a lump if there is one, any if not
+static int CG_GoreBitModel(qboolean shard)
+{
+    int pick[GORE_BIT_MODELS], n = 0, i;
+
+    for (i = 0; i < gore_numBitModels; i++) {
+        if (gore_bitShard[i] == shard) {
+            pick[n++] = i;
+        }
+    }
+    return n ? pick[rand() % n] : rand() % gore_numBitModels;
+}
+
+// count bits out of where a dent opens, mostly along out
+static void CG_GoreSpawnBits(const vec3_t at, const vec3_t out, int count)
+{
+    int i, k;
+
+    if (!gore_numBitModels) {
         return;
     }
 
-    // a little more than was pushed in, so the piece reads at a distance
-    gib->dents[0]        = from->dents[dent];
-    gib->dents[0].radius = from->dents[dent].radius * 1.6f;
-    gib->ref.bone_override      = gib->ovr;
-    gib->ref.num_bone_overrides = n;
-    gib->ref.entityNumber       = ENTITYNUM_NONE;
-    gib->ref.bone_tag           = NULL;
-    gib->ref.bone_quat          = NULL;
-    gib->ref.gore_dents         = gib->dents;
-    gib->ref.num_gore_dents     = 1;
-    gib->ref.renderfx &= ~(RF_THIRD_PERSON | RF_FIRST_PERSON | RF_DEPTHHACK | RF_FIRST_PERSON_BODY);
-    gib->ref.renderfx |= RF_GORE_DENTS | RF_GORE_CHUNK | RF_LIGHTING_ORIGIN;
+    for (i = 0; i < count; i++) {
+        goreBit_t *bit   = &gore_bits[gore_nextBit];
+        int        kind;
+        float      size, roll = random();
 
-    // where the dent is, and which way it opens
+        gore_nextBit = (gore_nextBit + 1) % GORE_MAX_BITS;
+
+        memset(bit, 0, sizeof(*bit));
+
+        // mostly skull, a flat plate and the biggest; some scalp and a little
+        // brain, in lumps
+        if (roll < 0.5f) {
+            kind = GB_BONE;
+            size = GoreRand(0.7f, 1.6f);
+            VectorSet(bit->size, size, size * GoreRand(0.5f, 0.9f), size * GoreRand(0.15f, 0.3f));
+        } else if (roll < 0.8f) {
+            kind = GB_FLESH;
+            size = GoreRand(0.5f, 1.2f);
+            VectorSet(bit->size, size, size * GoreRand(0.6f, 0.9f), size * GoreRand(0.3f, 0.6f));
+        } else {
+            kind = GB_BRAIN;
+            size = GoreRand(0.4f, 0.9f);
+            VectorSet(bit->size, size, size * GoreRand(0.7f, 1.0f), size * GoreRand(0.6f, 0.9f));
+        }
+        VectorScale(bit->size, cg_gore_scale->value, bit->size);
+        bit->model = CG_GoreBitModel(kind == GB_BONE);
+
+        bit->ref.reType              = RT_MODEL;
+        bit->ref.hModel              = gore_bitModels[bit->model];
+        bit->ref.tiki                = cgi.R_Model_GetHandle(bit->ref.hModel);
+        bit->ref.customShader        = gore_bitShaders[kind];
+        bit->ref.entityNumber        = ENTITYNUM_NONE;
+        bit->ref.frameInfo[0].weight = 1.0f;
+        bit->ref.actionWeight        = 1.0f;
+        bit->ref.renderfx            = RF_LIGHTING_ORIGIN;
+        for (k = 0; k < 4; k++) {
+            bit->ref.shaderRGBA[k] = 255;
+        }
+        bit->ref.scale               = 1.0f;
+        bit->ref.nonNormalizedAxes   = qtrue;
+        {
+            vec3_t angles = {GoreRand(0, 360), GoreRand(0, 360), GoreRand(0, 360)};
+
+            AnglesToAxis(angles, bit->axis);
+        }
+        for (k = 0; k < 3; k++) {
+            bit->pos[k] = at[k] + crandom() * 1.0f;
+        }
+        CG_GoreBitPlace(bit, 1.0f);
+
+        VectorScale(out, GoreRand(30, 110), bit->vel);
+        bit->vel[0] += crandom() * 40;
+        bit->vel[1] += crandom() * 40;
+        bit->vel[2] += GoreRand(20, 90);
+        for (k = 0; k < 3; k++) {
+            bit->spin[k] = crandom();
+        }
+        VectorNormalize(bit->spin);
+        VectorScale(bit->spin, GoreRand(360, 1440), bit->spin);
+
+        bit->born   = cg.time;
+        bit->active = qtrue;
+    }
+}
+
+// The bits a dent breaks off, thrown out of it.
+static void CG_GoreBreakDent(goreBody_t *from, refEntity_t *model, int dent, int count)
+{
+    float  m[4][3];
+    vec3_t centre, out, at, dir;
+    int    k;
+
     if (!CG_GoreBoneFrame(model, from->dents[dent].boneIndex, m, NULL)) {
-        gib->active = qfalse;
         return;
     }
     for (k = 0; k < 3; k++) {
@@ -2398,25 +2556,104 @@ static void CG_GoreSpawnChunk(goreBody_t *from, refEntity_t *model, int dent)
                   + from->dents[dent].offset[2] * m[2][k];
         out[k] = from->dents[dent].dir[0] * m[0][k] + from->dents[dent].dir[1] * m[1][k] + from->dents[dent].dir[2] * m[2][k];
     }
-    CG_GoreRawToWorld(model, centre, gib->centre);
-    {
-        vec3_t w;
-
-        CG_GoreModelToWorldDir(model, out, w);
-        VectorNormalize(w);
-        VectorScale(w, GoreRand(90, 180), gib->vel);
+    CG_GoreRawToWorld(model, centre, at);
+    CG_GoreModelToWorldDir(model, out, dir);
+    VectorNormalize(dir);
+    CG_GoreSpawnBits(at, dir, count);
+    if (cg_gore_debug->integer) {
+        Com_Printf("gore: %d bits out of a dent at %.0f %.0f %.0f\n", count, at[0], at[1], at[2]);
     }
-    gib->vel[0] += crandom() * 40;
-    gib->vel[1] += crandom() * 40;
-    gib->vel[2] += GoreRand(60, 140);
-    gib->spin[0] = crandom();
-    gib->spin[1] = crandom();
-    gib->spin[2] = crandom();
-    VectorNormalize(gib->spin);
-    VectorScale(gib->spin, GoreRand(400, 900), gib->spin);
-    VectorCopy(gib->centre, gib->ref.lightingOrigin);
-    gib->ref.lightingOrigin[2] += GORE_GIB_LIGHT_UP;
-    gib->active = qtrue;
+}
+
+// Flies, tumbling, bounces to a stop, and in time shrinks away.
+static void CG_GoreUpdateBit(goreBit_t *bit, float dt)
+{
+    static const vec3_t mins = {-0.5f, -0.5f, -0.5f}, maxs = {0.5f, 0.5f, 0.5f};
+    trace_t             tr;
+    vec3_t              next;
+    int                 left = GORE_BIT_LIFE - (cg.time - bit->born);
+    float               shrink = left < GORE_BIT_FADE ? Q_max(left, 0) / (float)GORE_BIT_FADE : 1.0f;
+
+    if (bit->resting || dt <= 0) {
+        CG_GoreBitPlace(bit, shrink);
+        return;
+    }
+
+    bit->vel[2] -= GORE_GRAVITY * dt;
+    VectorMA(bit->pos, dt, bit->vel, next);
+    CG_Trace(&tr, bit->pos, mins, maxs, next, ENTITYNUM_NONE, MASK_SOLID, qfalse, qfalse, "gore bit");
+    if (tr.startsolid) {
+        bit->resting = qtrue;
+        if (cg_gore_debug->integer) {
+            Com_Printf("gore: a bit starts in something at %.0f %.0f %.0f\n", bit->pos[0], bit->pos[1], bit->pos[2]);
+        }
+        CG_GoreBitPlace(bit, shrink);
+        return;
+    }
+
+    CG_GoreSpinAxis(bit->axis, bit->spin, dt);
+    VectorCopy(tr.endpos, bit->pos);
+
+    if (tr.fraction < 1.0f) {
+        float into = DotProduct(bit->vel, tr.plane.normal);
+
+        VectorMA(bit->vel, -1.35f * into, tr.plane.normal, bit->vel);
+        VectorScale(bit->vel, 0.55f, bit->vel);
+        VectorScale(bit->spin, 0.5f, bit->spin);
+        if (tr.plane.normal[2] > 0.7f && VectorLength(bit->vel) < 30.0f) {
+            // lying flat, its thinnest way up
+            VectorCopy(tr.plane.normal, bit->axis[2]);
+            VectorMA(bit->axis[0], -DotProduct(bit->axis[0], bit->axis[2]), bit->axis[2], bit->axis[0]);
+            if (VectorNormalize(bit->axis[0]) < 0.01f) {
+                PerpendicularVector(bit->axis[0], bit->axis[2]);
+            }
+            CrossProduct(bit->axis[2], bit->axis[0], bit->axis[1]);
+            VectorMA(tr.endpos, bit->size[2] + mins[2], bit->axis[2], bit->pos); // the box sits -mins[2] up
+
+            VectorClear(bit->vel);
+            VectorClear(bit->spin);
+            bit->resting = qtrue;
+
+            // a little blood under it
+            {
+                float r = Q_max(bit->size[0], bit->size[1]) * GoreRand(1.6f, 2.4f);
+
+                CG_ImpactMark(
+                    gore_bitStains[rand() & 1], tr.endpos, tr.plane.normal, GoreRand(0, 360), r, r, GORE_LIGHT_SCALE,
+                    GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, 1, qfalse, qfalse, qtrue, qfalse, 0.5f, 0.5f
+                );
+            }
+            if (cg_gore_debug->integer) {
+                Com_Printf("gore: a bit comes to rest at %.0f %.0f %.0f\n", bit->pos[0], bit->pos[1], bit->pos[2]);
+            }
+        }
+    }
+
+    CG_GoreBitPlace(bit, shrink);
+}
+
+static void CG_GoreAddBits(void)
+{
+    float dt = Q_min(Q_max(cg.frametime * 0.001f, 0.0f), 0.05f);
+    int   i;
+
+    for (i = 0; i < GORE_MAX_BITS; i++) {
+        goreBit_t *bit = &gore_bits[i];
+
+        if (!bit->active) {
+            continue;
+        }
+        if (cg.time - bit->born > GORE_BIT_LIFE) {
+            bit->active = qfalse;
+            continue;
+        }
+
+        CG_GoreUpdateBit(bit, dt);
+        if (Distance(bit->pos, cg.refdef.vieworg) > cg_gore_drawDist->value * 0.5f) {
+            continue;
+        }
+        cgi.R_AddRefEntityToScene(&bit->ref, ENTITYNUM_NONE);
+    }
 }
 
 static void CG_GoreSpinAxis(vec3_t axis[3], const vec3_t spin, float dt)
@@ -2510,12 +2747,6 @@ static void CG_GoreAddGibs(void)
             continue;
         }
 
-        // a piece of a head lies a while, then goes
-        if (gib->chunk && cg.time - gib->born > 20000) {
-            CG_GoreFreeGib(gib);
-            continue;
-        }
-
         if (gib->numPts) {
             CG_GoreUpdateChain(gib, Q_min(dt, 0.1f));
         } else {
@@ -2527,9 +2758,7 @@ static void CG_GoreAddGibs(void)
         }
 
         cgi.R_AddRefEntityToScene(&gib->ref, ENTITYNUM_NONE);
-        if (!gib->chunk) {
-            CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue);
-        }
+        CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue);
     }
 }
 
@@ -2689,6 +2918,9 @@ static void CG_GoreCut(goreBody_t *body, const goreRig_t *rig, refEntity_t *mode
 
     if (body->explodePending & (1u << part)) {
         CG_GoreBurst(world, dir, light, 40, 14);
+        if (part == GP_HEAD) {
+            CG_GoreSpawnBits(world, dir, 12 + rand() % 6);
+        }
     } else {
         CG_GoreSpawnGib(body, rig, model, part, vel, m[3]);
         CG_GoreBurst(world, dir, light, 16, 0);
@@ -2893,15 +3125,15 @@ static void CG_GoreHeadHit(goreBody_t *body, refEntity_t *model)
 
     VectorNegate(body->lastHitDir, back);
     CG_GoreDent(body, model, body->lastHitPos, back, body->lastHitLarge ? GoreRand(2.0f, 2.6f) : GoreRand(1.5f, 1.9f));
-    if (body->numDents > before && (body->lastHitLarge || random() < 0.5f)) {
-        CG_GoreSpawnChunk(body, model, body->numDents - 1);
+    if (body->numDents > before) {
+        CG_GoreBreakDent(body, model, body->numDents - 1, body->lastHitLarge ? 6 + rand() % 4 : 3 + rand() % 3);
     }
 
     if (body->lastHitExit) {
         before = body->numDents;
         CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, body->lastHitLarge ? GoreRand(2.6f, 3.2f) : GoreRand(1.9f, 2.4f));
         if (body->numDents > before) {
-            CG_GoreSpawnChunk(body, model, body->numDents - 1);
+            CG_GoreBreakDent(body, model, body->numDents - 1, body->lastHitLarge ? 8 + rand() % 5 : 5 + rand() % 4);
         }
     }
 }
@@ -3765,6 +3997,7 @@ void CG_GoreAddToScene(void)
 
     // the parts that came off, among the bodies a round can find
     CG_GoreAddGibs();
+    CG_GoreAddBits();
 
     // New wounds, on the bodies as they are this frame. A hit waits a little
     // for its body, which may not have been drawn yet.
@@ -3865,7 +4098,7 @@ void CG_GoreAddToScene(void)
             for (i = 0; i < GORE_MAX_GIBS; i++) {
                 const goreGib_t *g = &gore_gibs[i];
 
-                if (g->active && !g->chunk) {
+                if (g->active) {
                     Com_Printf(
                         "gore:   %s: %d points, from %.0f %.0f %.0f to %.0f %.0f %.0f%s\n", gore_partNames[g->part], g->numPts,
                         g->pt[0][0], g->pt[0][1], g->pt[0][2], g->pt[Q_max(g->numPts - 1, 0)][0], g->pt[Q_max(g->numPts - 1, 0)][1],
