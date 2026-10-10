@@ -8,8 +8,8 @@
 // prone.fetch says where the build fetches them from, and they go into the pak
 // built on the player's machine, never into the repository.
 
-aliascache opm_prone_down sound/opm/player/goprone.wav soundparms 0.9 0.1 1.0 0.05 160 1600 auto loaded maps "m t dm obj lib train"
-aliascache opm_prone_up sound/opm/player/unprone.wav soundparms 0.9 0.1 1.0 0.05 160 1600 auto loaded maps "m t dm obj lib train"
-aliascache opm_prone_crawl sound/opm/player/moveprone.wav soundparms 0.7 0.0 1.0 0.0 120 1200 auto loaded maps "m t dm obj lib train"
-aliascache opm_sprint sound/opm/player/sprint.wav soundparms 0.6 0.0 1.0 0.0 120 1200 auto loaded maps "m t dm obj lib train"
-aliascache opm_reload_rustle sound/opm/player/reload_rustle.wav soundparms 0.7 0.1 1.0 0.05 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache opm_prone_down sound/opm/player/goprone.wav soundparms 1.6 0.1 1.0 0.05 160 1600 auto loaded maps "m t dm obj lib train"
+aliascache opm_prone_up sound/opm/player/unprone.wav soundparms 1.6 0.1 1.0 0.05 160 1600 auto loaded maps "m t dm obj lib train"
+aliascache opm_prone_crawl sound/opm/player/moveprone.wav soundparms 1.4 0.0 1.0 0.0 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache opm_sprint sound/opm/player/sprint.wav soundparms 1.2 0.0 1.0 0.0 120 1200 auto loaded maps "m t dm obj lib train"
+aliascache opm_reload_rustle sound/opm/player/reload_rustle.wav soundparms 1.4 0.1 1.0 0.05 120 1200 auto loaded maps "m t dm obj lib train"
