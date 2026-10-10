@@ -1,0 +1,473 @@
+/*
+===========================================================================
+Copyright (C) 2026 the OpenMoHAA team
+
+This file is part of OpenMoHAA source code.
+
+OpenMoHAA source code is free software; you can redistribute it
+and/or modify it under the terms of the GNU General Public License as
+published by the Free Software Foundation; either version 2 of the License,
+or (at your option) any later version.
+
+OpenMoHAA source code is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with OpenMoHAA source code; if not, write to the Free Software
+Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+===========================================================================
+*/
+
+// Added in OPM
+// DESCRIPTION:
+// The sound of a body striking something.
+//
+// Both worlds listen to their contacts and hand the ones that close fast
+// enough here. What is heard is chosen by what moved into what: a prop plays
+// its own material (phys_<material>_<light|heavy|soft>), a corpse
+// phys_flesh_<hard|soft>, both aliases of ubersound/opm_physics.scr (the
+// opm-physics content pak), and water the retail splashes. How loud goes with
+// the speed and the weight, how high with the weight.
+//
+// The Jolt world keeps no surface flags (the brushes are merged into one shape
+// a cell), so the surface struck is found by the caller with a trace of the
+// engine's own at the point of contact, once the step is over.
+
+#include "phys_impact.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+// Slower than this, in metres a second along the normal, nothing is heard: a
+// body settling, rolling or sliding. A fall of five centimetres is one metre a
+// second.
+#define PI_MIN_SPEED   0.8f
+// At this speed and over a knock is at its loudest for the weight.
+#define PI_FULL_SPEED  5.0f
+// A thing this heavy, in kilograms, knocks at full weight; lighter, quieter.
+#define PI_FULL_MASS   20.0f
+// Heavier than this a prop plays its heavy set.
+#define PI_HEAVY_MASS  8.0f
+// A corpse knocking this heavily is its trunk (cg_physics_sounds.cpp gives it
+// the body's weight), which on hard ground plays the hard set.
+#define PI_TRUNK_MASS  40.0f
+// What soft ground leaves of a knock.
+#define PI_SOFT_VOLUME 0.6f
+
+static float PI_Clamp(float v, float lo, float hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+const char *Phys_SoundMatName(physSoundMat_t mat)
+{
+    switch (mat) {
+    case PHYS_SND_WOOD:
+        return "wood";
+    case PHYS_SND_METAL:
+        return "metal";
+    case PHYS_SND_GLASS:
+        return "glass";
+    case PHYS_SND_PAPER:
+        return "paper";
+    case PHYS_SND_STONE:
+        return "stone";
+    case PHYS_SND_FLESH:
+        return "flesh";
+    case PHYS_SND_WEAPON:
+        return "weapon";
+    case PHYS_SND_HELMET:
+        return "helmet";
+    default:
+        return "default";
+    }
+}
+
+const char *Phys_SurfaceName(int surfaceFlags)
+{
+    // In the order of CG_BodyFallSound's choice, which is a switch on the whole
+    // mask: a surface with two flags is stone there, and is here.
+    switch (surfaceFlags & MASK_SURF_TYPE) {
+    case SURF_FOLIAGE:
+        return "foliage";
+    case SURF_SNOW:
+        return "snow";
+    case SURF_CARPET:
+        return "carpet";
+    case SURF_SAND:
+        return "sand";
+    case SURF_PUDDLE:
+        return "puddle";
+    case SURF_GLASS:
+        return "glass";
+    case SURF_GRAVEL:
+        return "gravel";
+    case SURF_MUD:
+        return "mud";
+    case SURF_DIRT:
+        return "dirt";
+    case SURF_GRILL:
+        return "grill";
+    case SURF_GRASS:
+        return "grass";
+    case SURF_PAPER:
+        return "paper";
+    case SURF_WOOD:
+        return "wood";
+    case SURF_METAL:
+        return "metal";
+    case SURF_ROCK:
+    default:
+        return "stone";
+    }
+}
+
+const char *Phys_SurfaceOfMat(physSoundMat_t mat)
+{
+    switch (mat) {
+    case PHYS_SND_WOOD:
+        return "wood";
+    case PHYS_SND_METAL:
+    case PHYS_SND_WEAPON:
+    case PHYS_SND_HELMET:
+        return "metal";
+    case PHYS_SND_GLASS:
+        return "glass";
+    case PHYS_SND_PAPER:
+        return "paper";
+    case PHYS_SND_FLESH:
+        // Another body: a dull thud, which the dirt falls are.
+        return "dirt";
+    case PHYS_SND_STONE:
+    default:
+        return "stone";
+    }
+}
+
+bool Phys_SurfaceIsSoft(const char *surface)
+{
+    static const char *soft[] = {"foliage", "snow", "carpet", "sand", "mud", "dirt", "grass", "paper", NULL};
+
+    for (int i = 0; soft[i]; i++) {
+        if (!strcmp(surface, soft[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+physContact_t Phys_ContactFrom(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold)
+{
+    physContact_t c;
+    const JPH::Body *bodies[2] = {&a, &b};
+
+    c.point  = manifold.GetWorldSpaceContactPointOn1(0);
+    c.normal = manifold.mWorldSpaceNormal;
+    // The normal points from a to b, so a closing on b moves along it.
+    c.approach[0] = a.GetPointVelocity(c.point).Dot(c.normal);
+    c.approach[1] = -b.GetPointVelocity(c.point).Dot(c.normal);
+    c.closing     = c.approach[0] + c.approach[1];
+    {
+        const JPH::Vec3 rel = a.GetPointVelocity(c.point) - b.GetPointVelocity(c.point);
+        // At the point of contact a rolling thing is still: only sliding is.
+        c.sliding = (rel - c.normal * rel.Dot(c.normal)).Length();
+    }
+    c.sensor      = a.IsSensor() || b.IsSensor();
+
+    for (int i = 0; i < 2; i++) {
+        c.data[i]    = bodies[i]->GetUserData();
+        c.dynamic[i] = bodies[i]->IsDynamic();
+        c.mass[i]    = 0.0f;
+        if (c.dynamic[i]) {
+            const float inv = bodies[i]->GetMotionProperties()->GetInverseMass();
+            c.mass[i]       = inv > 0.0f ? 1.0f / inv : 0.0f;
+        }
+    }
+
+    return c;
+}
+
+float Phys_ImpactStrength(float speed, float mass)
+{
+    float bySpeed, byMass;
+
+    if (speed < PI_MIN_SPEED) {
+        return 0.0f;
+    }
+
+    // Even the slowest knock that is heard is heard.
+    bySpeed = 0.15f + 0.85f * PI_Clamp((speed - PI_MIN_SPEED) / (PI_FULL_SPEED - PI_MIN_SPEED), 0.0f, 1.0f);
+    byMass  = PI_Clamp(0.3f + 0.7f * sqrtf(Q_max(mass, 0.0f) / PI_FULL_MASS), 0.3f, 1.0f);
+
+    return bySpeed * byMass;
+}
+
+std::string Phys_ImpactAlias(physSoundMat_t mat, const char *surface, float mass, float strength, float *volume, float *pitch)
+{
+    const bool  water = !strcmp(surface, "wade") || !strcmp(surface, "puddle");
+    const bool  soft  = Phys_SurfaceIsSoft(surface);
+    std::string alias;
+
+    *volume = strength;
+
+    if (mat == PHYS_SND_FLESH) {
+        *pitch = 1.0f + 0.04f * crandom();
+        if (water) {
+            return std::string("snd_bodyfall_") + surface;
+        }
+        if (soft || mass < PI_TRUNK_MASS) {
+            return "phys_flesh_soft";
+        }
+        return "phys_flesh_hard";
+    }
+
+    // Small things ring higher, a little: these are recordings of the real
+    // thing, which a wide shift makes into something else.
+    *pitch = PI_Clamp(1.08f - 0.04f * log2f(Q_max(mass, 0.1f)), 0.92f, 1.15f) * (1.0f + 0.04f * crandom());
+
+    if (water) {
+        return "grenade_bounce_water";
+    }
+
+    alias = std::string("phys_") + Phys_SoundMatName(mat) + "_";
+    if (soft) {
+        *volume *= PI_SOFT_VOLUME;
+        alias += "soft";
+    } else {
+        alias += mass >= PI_HEAVY_MASS ? "heavy" : "light";
+    }
+
+    return alias;
+}
+
+//=============================================================
+// Keeping them few
+//=============================================================
+
+PhysImpactLimiter::PhysImpactLimiter()
+    : interval(120)
+    , perFrame(6)
+    , quietUntil(0)
+{}
+
+void PhysImpactLimiter::Quiet(int untilTime)
+{
+    quietUntil = untilTime;
+    offered.clear();
+}
+
+void PhysImpactLimiter::Offer(const physImpact_t& impact, JPH::uint64 source)
+{
+    Offered o;
+
+    o.impact = impact;
+    o.source = source;
+    offered.push_back(o);
+}
+
+void PhysImpactLimiter::Take(int now, std::vector<physImpact_t> *out, int *rejected)
+{
+    *rejected = 0;
+    out->clear();
+
+    if (offered.empty()) {
+        return;
+    }
+
+    if (now < quietUntil) {
+        *rejected = (int)offered.size();
+        offered.clear();
+        return;
+    }
+
+    std::stable_sort(offered.begin(), offered.end(), [](const Offered& x, const Offered& y) {
+        return x.impact.strength > y.impact.strength;
+    });
+
+    for (size_t i = 0; i < offered.size(); i++) {
+        std::map<JPH::uint64, Heard>::iterator it = last.find(offered[i].source);
+
+        // A clock that went back is a new game.
+        if (it != last.end() && it->second.time <= now && now - it->second.time < interval
+            && offered[i].impact.strength < it->second.strength * 2.0f) {
+            (*rejected)++;
+            continue;
+        }
+        if ((int)out->size() >= perFrame) {
+            (*rejected)++;
+            continue;
+        }
+
+        last[offered[i].source] = {now, offered[i].impact.strength};
+        out->push_back(offered[i].impact);
+    }
+    offered.clear();
+
+    // What has not sounded for a while needs no remembering.
+    if (last.size() > 1024) {
+        for (std::map<JPH::uint64, Heard>::iterator it = last.begin(); it != last.end();) {
+            if (it->second.time > now || now - it->second.time >= interval) {
+                it = last.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
+void PhysImpactLimiter::Clear()
+{
+    offered.clear();
+    last.clear();
+    quietUntil = 0;
+}
+
+//=============================================================
+// Scraping
+//=============================================================
+
+// Slower than this, in metres a second across the surface, nothing scrapes (a
+// prop rocking as it settles slides at under half a metre a second);
+// at this one and over, as loud as its weight allows.
+#define PS_MIN_SLIDE   0.6f
+#define PS_FULL_SLIDE  3.0f
+// How fast a scrape's level follows its target, a second: up quickly, so the
+// start of a slide is heard, and down less so, so a slide that stutters over
+// the steps holds together.
+#define PS_RISE 20.0f
+#define PS_FALL 6.0f
+// Under this level a scrape that is no longer noted is over.
+#define PS_SILENT 0.02f
+
+std::string Phys_ScrapeAlias(physSoundMat_t mat, const char *surface, float level, float *volume, float *pitch)
+{
+    if (mat == PHYS_SND_GLASS || !strcmp(surface, "wade") || !strcmp(surface, "puddle")) {
+        return "";
+    }
+
+    *volume = level * (Phys_SurfaceIsSoft(surface) ? 0.5f : 1.0f);
+    *pitch  = 0.85f + 0.3f * level;
+
+    return std::string("phys_") + Phys_SoundMatName(mat) + "_scrape";
+}
+
+PhysScrapeTracker::PhysScrapeTracker()
+    : maxHeard(4)
+    , lastTime(0)
+{}
+
+void PhysScrapeTracker::Note(const physContact_t& c, int slider, JPH::uint64 source, float mass)
+{
+    std::map<JPH::uint64, Noted>::iterator it = noted.find(source);
+
+    if (c.sliding < PS_MIN_SLIDE) {
+        return;
+    }
+    if (it != noted.end() && it->second.contact.sliding >= c.sliding) {
+        return;
+    }
+
+    Noted n;
+
+    n.contact     = c;
+    n.slider      = slider;
+    n.mass        = mass;
+    noted[source] = n;
+}
+
+void PhysScrapeTracker::Update(int now, std::vector<physScrape_t *> *out, std::vector<JPH::uint64> *ended)
+{
+    float dt = (now - lastTime) * 0.001f;
+
+    out->clear();
+    ended->clear();
+
+    if (lastTime == 0 || dt < 0.0f || dt > 0.25f) {
+        dt = 0.016f;
+    }
+    lastTime = now;
+
+    // The slides of this frame.
+    for (std::map<JPH::uint64, Noted>::iterator it = noted.begin(); it != noted.end(); ++it) {
+        const physContact_t& c = it->second.contact;
+        const int            h = it->second.slider;
+        physScrape_t&        s = scrapes[it->first];
+
+        if (!s.source) {
+            s.source      = it->first;
+            s.level       = 0.0f;
+            s.matKnown    = false;
+            s.surfaceTime = 0;
+        }
+        s.hitter = c.data[h];
+        s.other  = c.data[!h];
+        s.mass   = it->second.mass;
+        s.speed  = c.sliding;
+        PhysFromJolt(JPH::Vec3(c.point), s.point);
+        PhysFromJolt(h == 0 ? c.normal : -c.normal, s.dir);
+        VectorNormalize(s.dir);
+    }
+
+    // Each eased toward how hard it scrapes now: nothing, for those not noted.
+    for (std::map<JPH::uint64, physScrape_t>::iterator it = scrapes.begin(); it != scrapes.end();) {
+        physScrape_t& s      = it->second;
+        const bool    sliding = noted.count(it->first) > 0;
+        float         target = 0.0f;
+
+        if (sliding) {
+            const float bySpeed = PI_Clamp((s.speed - PS_MIN_SLIDE) / (PS_FULL_SLIDE - PS_MIN_SLIDE), 0.0f, 1.0f);
+            const float byMass  = PI_Clamp(0.3f + 0.7f * sqrtf(Q_max(s.mass, 0.0f) / PI_FULL_MASS), 0.3f, 1.0f);
+
+            target = (0.2f + 0.8f * bySpeed) * byMass;
+        }
+
+        s.level += (target - s.level) * Q_min(1.0f, dt * (target > s.level ? PS_RISE : PS_FALL));
+
+        if (!sliding && s.level < PS_SILENT) {
+            ended->push_back(it->first);
+            it = scrapes.erase(it);
+            continue;
+        }
+        ++it;
+    }
+    noted.clear();
+
+    // The loudest few; a scrape heard last frame keeps its place over one a
+    // little louder, or two would trade places every frame.
+    std::vector<physScrape_t *> all;
+
+    for (std::map<JPH::uint64, physScrape_t>::iterator it = scrapes.begin(); it != scrapes.end(); ++it) {
+        all.push_back(&it->second);
+    }
+    std::sort(all.begin(), all.end(), [this](const physScrape_t *x, const physScrape_t *y) {
+        const float bx = std::find(heard.begin(), heard.end(), x->source) != heard.end() ? 1.5f : 1.0f;
+        const float by = std::find(heard.begin(), heard.end(), y->source) != heard.end() ? 1.5f : 1.0f;
+        return x->level * bx > y->level * by;
+    });
+
+    std::vector<JPH::uint64> nowHeard;
+
+    for (size_t i = 0; i < all.size() && (int)i < maxHeard; i++) {
+        out->push_back(all[i]);
+        nowHeard.push_back(all[i]->source);
+    }
+    // Pushed out by louder ones: as good as ended, to whoever plays them.
+    for (size_t i = 0; i < heard.size(); i++) {
+        if (std::find(nowHeard.begin(), nowHeard.end(), heard[i]) == nowHeard.end()
+            && std::find(ended->begin(), ended->end(), heard[i]) == ended->end()) {
+            ended->push_back(heard[i]);
+        }
+    }
+    heard = nowHeard;
+}
+
+void PhysScrapeTracker::Clear()
+{
+    noted.clear();
+    scrapes.clear();
+    heard.clear();
+    lastTime = 0;
+}

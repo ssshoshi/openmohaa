@@ -88,6 +88,7 @@ void CG_InitPhysics(void)
     cg_physics_clipped = cgi.Cvar_Get("cg_physics_clipped", "0", CVAR_ARCHIVE | CVAR_LATCH);
     cg_physics_furniture = cgi.Cvar_Get("cg_physics_furniture", "1", CVAR_ARCHIVE | CVAR_LATCH);
     CG_PhysicsEditInit();
+    CG_PhysicsSoundsInit();
     phys_lastTime    = 0;
     phys_accum       = 0.0f;
 
@@ -151,6 +152,8 @@ void CG_ShutdownPhysics(void)
 void CG_PhysicsFrame(void)
 {
     if (!phys_system || !cg_physics->integer || !cg.snap) {
+        // The particle solver's corpses are heard without the physics.
+        CG_PhysicsPlayImpacts();
         return;
     }
 
@@ -170,6 +173,8 @@ void CG_PhysicsFrame(void)
         if (!phys_lastTime || cg.time < phys_lastTime || cg.time - phys_lastTime > 1000) {
             phys_lastTime = cg.time;
             phys_accum    = 0.0f;
+            // A game restored, or a long stall: what lies about settles again.
+            CG_PhysicsSoundsQuiet();
         }
 
         phys_accum += (cg.time - phys_lastTime) * 0.001f;
@@ -224,6 +229,8 @@ void CG_PhysicsFrame(void)
         }
 
         CG_PhysicsSendNudges();
+        CG_PhysicsPlayImpacts();
+        CG_PhysicsPlayScrapes();
         CG_PhysicsDrawProps(phys_accum / dt);
         CG_PhysicsDrawFurniture(phys_accum / dt);
     }

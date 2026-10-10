@@ -4921,6 +4921,10 @@ static int CG_RagdollCollide(cg_ragdoll_t *rd, int skipEntity)
         if (-dot > rd->impactSpeed) {
             rd->impactSpeed = -dot;
         }
+
+        // Added in OPM
+        //  Heard, if hard enough (cg_physics_sounds.cpp).
+        CG_PhysicsRagdollImpact((int)(rd - cg_ragdolls), i <= RD_HEADTIP ? qtrue : qfalse, &trace, -dot);
         VectorScale(trace.plane.normal, dot, vn);
         VectorSubtract(v, vn, vt);
 
@@ -9135,6 +9139,13 @@ static cg_ragdoll_t *CG_RagdollForEntity(int entityNum)
     }
 
     return NULL;
+}
+
+// Added in OPM
+//  Whether a corpse is carried by a ragdoll, which has its own sounds.
+qboolean CG_RagdollOwnsEntity(int entityNum)
+{
+    return CG_RagdollForEntity(entityNum) ? qtrue : qfalse;
 }
 
 // In multiplayer the dying player entity is the corpse until it respawns, at

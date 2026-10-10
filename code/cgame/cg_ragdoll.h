@@ -86,6 +86,10 @@ extern "C" {
     extern cvar_t *cg_ragdoll_debug;
     extern cvar_t *cg_ragdoll_stiffness;
 
+    // Whether the entity's corpse is a ragdoll, whose landings make their own
+    // sounds (Added in OPM)
+    qboolean CG_RagdollOwnsEntity(int entityNum);
+
     // What a key the ragdoll grabber takes over is bound to now (Added in OPM)
     qboolean CG_RagdollKeyBinding(const char *key, char *out, int size);
 
