@@ -34,6 +34,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //   +sprint    runs faster while moving forward, weapon lowered; firing or
 //              aiming stops it.
 //
+// Crawling lowers the weapon, which cannot be fired until it is back up,
+// g_prone_raise_time after the player stops. Lying down, getting up, crawling,
+// sprinting and reloading have sounds of their own (ubersound/opm_prone.scr,
+// in the opm-prone pak).
+//
 
 #include "player.h"
 #include "earthquake.h"
@@ -42,6 +47,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 bool Player::IsProne() const
 {
     return m_bProne;
+}
+
+bool Player::IsDiving() const
+{
+    return m_bDiving;
 }
 
 void Player::EventProne(Event *ev)
@@ -123,6 +133,7 @@ void Player::StartProne(usercmd_t *ucmd)
         maxs.z     = CROUCH_MAXS_Z;
     } else {
         SetProneHeight();
+        Sound("opm_prone_down");
     }
 
     m_bSprinting    = false;
@@ -151,12 +162,18 @@ bool Player::LeaveProne(bool crouch, bool force)
         }
     }
 
-    m_bProne  = false;
-    m_bDiving = false;
+    m_bProne           = false;
+    m_bDiving          = false;
+    m_bCrawlWeaponDown = false;
+    m_fCrawlTime       = 0;
 
     if (IsDead()) {
         // the dead hull takes over
         return true;
+    }
+
+    if (!force) {
+        Sound("opm_prone_up");
     }
 
     if (crouch) {
@@ -229,6 +246,7 @@ void Player::UpdateStance(usercmd_t *ucmd)
                 SetProneHeight();
 
                 LandingSound(1.0f, 1);
+                Sound("opm_prone_down");
                 new ViewJitter(origin, 128, 0.05f, Vector(2.5f, 1.0f, 2.0f), 0, vec_zero, 0);
             }
         } else if (ucmd->upmove && !m_bHoldUpmove) {
@@ -251,6 +269,18 @@ void Player::UpdateStance(usercmd_t *ucmd)
         ucmd->buttons &= ~(BUTTON_LEAN_LEFT | BUTTON_LEAN_RIGHT | BUTTON_SPRINT);
     }
 
+    // crawling takes both hands: the weapon goes down while moving, and
+    // comes back up g_prone_raise_time after stopping, when it can fire again
+    if (m_bProne && !m_bDiving && (ucmd->forwardmove || ucmd->rightmove)) {
+        m_fCrawlTime = level.time;
+    }
+    m_bCrawlWeaponDown = m_bProne && !m_bDiving && m_fCrawlTime > 0
+                      && level.time < m_fCrawlTime + g_prone_raise_time->value;
+
+    if (m_bCrawlWeaponDown) {
+        ucmd->buttons &= ~(BUTTON_ATTACKLEFT | BUTTON_ATTACKRIGHT);
+    }
+
     UpdateSprintStamina(ucmd);
 
     wantSprint = allowed && g_sprint->integer && !m_bProne && !m_bSprintExhausted && (ucmd->buttons & BUTTON_SPRINT)
@@ -266,7 +296,75 @@ void Player::UpdateStance(usercmd_t *ucmd)
         client->ps.pm_flags &= ~PMF_SPRINTING;
     }
 
+    UpdateStanceSounds(ucmd);
     SetStanceStat();
+}
+
+/*
+====================
+UpdateStanceSounds
+
+The crawling and sprinting loops. The player's loop sound is the mine
+detector's as well, so it is only stopped here when it was started here.
+====================
+*/
+void Player::UpdateStanceSounds(usercmd_t *ucmd)
+{
+    enum {
+        LOOP_NONE,
+        LOOP_CRAWL,
+        LOOP_SPRINT
+    };
+
+    Vector hvel(velocity.x, velocity.y, 0);
+    int    loop = LOOP_NONE;
+
+    if (m_bProne && !m_bDiving && groundentity && (ucmd->forwardmove || ucmd->rightmove)
+        && hvel.lengthSquared() > Square(10.0f)) {
+        loop = LOOP_CRAWL;
+    } else if (m_bSprinting) {
+        loop = LOOP_SPRINT;
+    }
+
+    if (loop == m_iStanceLoop) {
+        return;
+    }
+
+    if (loop == LOOP_CRAWL) {
+        LoopSound("opm_prone_crawl");
+    } else if (loop == LOOP_SPRINT) {
+        LoopSound("opm_sprint");
+    } else {
+        StopLoopSound();
+    }
+
+    m_iStanceLoop = loop;
+}
+
+/*
+====================
+StanceTorsoState
+
+A torso state was entered: the reloads (RELOAD_RIFLE, RELOAD_SMG and so on,
+not the RELOAD_WEAPON that picks one or the interrupted ones) rustle the
+player's kit along with the weapon's own reload sound. Once per reload: a
+shotgun goes through its reload state for every shell.
+====================
+*/
+void Player::StanceTorsoState(State *state)
+{
+    const char *name = state->getName();
+
+    if (Q_stricmpn(name, "RELOAD_", 7) || !Q_stricmp(name, "RELOAD_WEAPON") || Q_stristr(name, "INTERUPT")) {
+        return;
+    }
+
+    if (level.time < m_fReloadRustleTime + 2.5f) {
+        return;
+    }
+
+    m_fReloadRustleTime = level.time;
+    Sound("opm_reload_rustle", CHAN_AUTO);
 }
 
 /*
@@ -301,6 +399,9 @@ void Player::SetStanceStat()
     }
     if (level.time < m_fTiredStart + g_sprint_tired_time->value && m_fTiredStart > 0) {
         stat |= STANCE_STAT_TIRED;
+    }
+    if (m_bCrawlWeaponDown) {
+        stat |= STANCE_STAT_CRAWLING;
     }
 
     client->ps.stats[STAT_OPM_STANCE] = stat;

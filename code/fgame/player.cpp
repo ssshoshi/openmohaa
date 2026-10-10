@@ -2277,6 +2277,10 @@ void Player::Init(void)
     m_fSprintUsed      = 0;
     m_bSprintExhausted = false;
     m_fTiredStart      = 0;
+    m_fCrawlTime       = 0;
+    m_bCrawlWeaponDown = false;
+    m_iStanceLoop      = 0;
+    m_fReloadRustleTime = 0;
 
     InitClient();
     InitPhysics();
@@ -5495,6 +5499,9 @@ void Player::EvaluateState(State *forceTorso, State *forceLegs)
 
             // Process entry commands of the new state
             currentState_Torso->ProcessEntryCommands(this);
+
+            // Added in OPM: the reload rustle
+            StanceTorsoState(currentState_Torso);
 
             if (waitForState.length() && (!waitForState.icmpn(currentState_Torso->getName(), waitForState.length()))) {
                 waitForState = "";

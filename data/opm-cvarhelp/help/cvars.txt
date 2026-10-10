@@ -505,6 +505,9 @@ g_gametypestring			code/server/sv_init.c:1059	Name of the current game type, sho
 g_gotmedal	0	1	code/fgame/gamecvars.cpp:652	Set by the game when a medal was earned on the last mission.
 g_grenade_cone	0	1	code/fgame/gamecvars.cpp:846	A grenade on the ground throws its fragments up and out in a cone: lying flat beside it saves you from most of it, except close in.
 g_grenade_cone_min	0	1	code/fgame/gamecvars.cpp:847	The least of a grenade's damage a man lying flat outside its cone still takes.
+g_grenade_prone	0	1	code/fgame/gamecvars.cpp:853	How much of a grenade's damage a player lying prone or diving takes, on top of the cone.
+g_grenade_prone_close	0	256	code/fgame/gamecvars.cpp:854	Within this many units of a grenade, lying prone or diving saves nothing; the full saving from twice it out.
+g_grenade_push	0	512	code/fgame/gamecvars.cpp:855	A grenade only throws a player within this many units of it, where it kills him anyway.
 g_healrate	0		code/fgame/gamecvars.cpp:568	Health packs heal over time at this many points per second instead of all at once. 0 heals instantly. Server setting.
 g_healthdrop	0	1	code/fgame/gamecvars.cpp:566	Dead players drop a health pack. Server setting.
 g_immediateswitch	0	1	code/fgame/player_conditionals.cpp:134	Multiplayer: weapons switch instantly, without the holster animation. Server setting.
@@ -580,6 +583,7 @@ g_playerdmhealth	0		code/fgame/player.cpp:2434	Multiplayer: player maximum healt
 g_playermodel			code/fgame/gamecvars.cpp:497	Player model in single player (under models/player/). Saved with savegames.
 g_playerStacking	0	1	code/fgame/gamecvars.cpp:776	Multiplayer: allow standing on other players' heads. Server setting.
 g_prone	0	1	code/fgame/gamecvars.cpp:833	Lying prone in single player (the prone command, bound to C): crawl, dive from a run or sprint.
+g_prone_raise_time	0	2	code/fgame/gamecvars.cpp:839	Seconds after the player stops crawling before his weapon is back up and can fire.
 g_prone_speed	0	1	code/fgame/gamecvars.cpp:834	Crawling speed while prone, as a fraction of the run speed.
 g_qunits_to_feet	0	1	code/fgame/gamecvars.cpp:730	Show distances in feet rather than game units.
 g_rankedserver	0	1	code/fgame/gamecvars.cpp:772	Mark the server as ranked. Server setting.
@@ -1274,6 +1278,15 @@ viewmodelanim			code/cgame/cg_modelanim.c:228	Internal: view model animation bei
 viewmodelanimslot			code/cgame/cg_modelanim.c:305	Internal: animation slot being tested (viewthing).
 viewmodelentity			code/renderergl1/tr_model.cpp:865	Internal: entity being viewed (viewthing).
 viewsize	30	100	code/cgame/cg_main.c:139	Size of the 3D view as a percentage of the screen.
+vm_crawl	0	1	code/cgame/cg_main.c:250	Crawling prone lowers the view weapon and rocks it with the arms.
+vm_crawl_bob	0	3	code/cgame/cg_main.c:257	How hard the view weapon rocks with each pull while crawling.
+vm_crawl_pitch			code/cgame/cg_main.c:251	Degrees the view weapon tips down while crawling.
+vm_crawl_roll			code/cgame/cg_main.c:253	Degrees the view weapon rolls over while crawling.
+vm_crawl_side			code/cgame/cg_main.c:254	Units the view weapon moves to the side while crawling.
+vm_crawl_speed			code/cgame/cg_main.c:256	How fast the view weapon goes down and comes back up (whole poses a second).
+vm_crawl_stride			code/cgame/cg_main.c:258	Units crawled for each pull of the arms.
+vm_crawl_up			code/cgame/cg_main.c:255	Units the view weapon moves up (down if negative) while crawling.
+vm_crawl_yaw			code/cgame/cg_main.c:252	Degrees the view weapon turns across the body while crawling.
 vm_lean_lower			code/cgame/cg_main.c:215	How much the first-person weapon lowers while leaning.
 vm_offset_air_front			code/cgame/cg_main.c:198	First-person weapon offset (front) when in the air.
 vm_offset_air_side			code/cgame/cg_main.c:199	First-person weapon offset (side) when in the air.

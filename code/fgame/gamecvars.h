@@ -378,6 +378,7 @@ extern cvar_t *g_blastpush;
 
 extern cvar_t *g_prone;
 extern cvar_t *g_prone_speed;
+extern cvar_t *g_prone_raise_time;
 extern cvar_t *g_dive_run;
 extern cvar_t *g_dive_run_up;
 extern cvar_t *g_dive_sprint;
@@ -391,6 +392,9 @@ extern cvar_t *g_sprint;
 extern cvar_t *g_sprint_speed;
 extern cvar_t *g_grenade_cone;
 extern cvar_t *g_grenade_cone_min;
+extern cvar_t *g_grenade_prone;
+extern cvar_t *g_grenade_prone_close;
+extern cvar_t *g_grenade_push;
 extern cvar_t *ai_suppress_chance;
 extern cvar_t *ai_rangemult;
 extern cvar_t *ai_grenades;

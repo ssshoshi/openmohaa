@@ -344,6 +344,7 @@ cvar_t *g_blastpush;
 // Prone, diving and sprinting in single player (player_stance.cpp)
 cvar_t *g_prone;
 cvar_t *g_prone_speed;
+cvar_t *g_prone_raise_time;
 cvar_t *g_dive_run;
 cvar_t *g_dive_run_up;
 cvar_t *g_dive_sprint;
@@ -359,6 +360,9 @@ cvar_t *g_sprint_tired_time;
 // A grenade on the ground throws its fragments up and out (RadiusDamage)
 cvar_t *g_grenade_cone;
 cvar_t *g_grenade_cone_min;
+cvar_t *g_grenade_prone;
+cvar_t *g_grenade_prone_close;
+cvar_t *g_grenade_push;
 
 // Enemy AI improvements (see ai_enhance.h)
 cvar_t *ai_enhanced;
@@ -832,6 +836,7 @@ void CVAR_Init(void)
 
     g_prone            = gi.Cvar_Get("g_prone", "1", CVAR_ARCHIVE);
     g_prone_speed      = gi.Cvar_Get("g_prone_speed", "0.3", 0);
+    g_prone_raise_time = gi.Cvar_Get("g_prone_raise_time", "0.35", 0);
     g_dive_run         = gi.Cvar_Get("g_dive_run", "190", 0);
     g_dive_run_up      = gi.Cvar_Get("g_dive_run_up", "155", 0);
     g_dive_sprint      = gi.Cvar_Get("g_dive_sprint", "320", 0);
@@ -845,6 +850,9 @@ void CVAR_Init(void)
     g_sprint_tired_time  = gi.Cvar_Get("g_sprint_tired_time", "3", 0);
     g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
     g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
+    g_grenade_prone       = gi.Cvar_Get("g_grenade_prone", "0.5", 0);
+    g_grenade_prone_close = gi.Cvar_Get("g_grenade_prone_close", "64", 0);
+    g_grenade_push        = gi.Cvar_Get("g_grenade_push", "80", 0);
 
     ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);

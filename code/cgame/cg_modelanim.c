@@ -912,6 +912,84 @@ static void CG_SprintViewModel(refEntity_t *model)
 
 /*
 ======================
+CG_CrawlViewModel
+
+Added in OPM
+  Crawling (STANCE_STAT_CRAWLING) takes both hands: the view weapon goes down
+  and over to the side, vm_crawl_pitch/yaw/roll (degrees) and vm_crawl_side/up
+  (units), and rocks with the arms pulling the body along, one pull for every
+  vm_crawl_stride units crawled, vm_crawl_bob as hard. It comes back up at
+  vm_crawl_speed when the player stops, which g_prone_raise_time on the server
+  waits for before the weapon can fire.
+======================
+*/
+static void CG_CrawlViewModel(refEntity_t *model)
+{
+    static float frac;
+    static float phase;
+    float        target, step, speed, s, c, bob;
+    vec3_t       angles, rot[3], axis[3], pivot;
+    int          i;
+
+    speed = sqrt(
+        cg.predicted_player_state.velocity[0] * cg.predicted_player_state.velocity[0]
+        + cg.predicted_player_state.velocity[1] * cg.predicted_player_state.velocity[1]
+    );
+
+    target = 0;
+    if (vm_crawl->integer && cgs.gametype == GT_SINGLE_PLAYER
+        && (cg.snap->ps.stats[STAT_OPM_STANCE] & STANCE_STAT_CRAWLING) && speed > 15) {
+        target = 1;
+    }
+
+    step = cg.frametime / 1000.0f * vm_crawl_speed->value;
+    if (frac < target) {
+        frac = Q_min(target, frac + step);
+    } else if (frac > target) {
+        frac = Q_max(target, frac - step);
+    }
+
+    if (frac <= 0) {
+        phase = 0;
+        return;
+    }
+
+    if (vm_crawl_stride->value > 0) {
+        phase += speed * cg.frametime / 1000.0f / vm_crawl_stride->value * M_PI * 2;
+        phase = fmod(phase, M_PI * 2);
+    }
+
+    // smooth in and out
+    step = frac * frac * (3.0f - 2.0f * frac);
+    bob  = vm_crawl_bob->value * step;
+    s    = sin(phase);
+    c    = cos(phase);
+
+    // one arm reaches out and pulls, then the other: the weapon rolls from
+    // side to side and dips as each pull lifts the shoulders
+    VectorSet(
+        angles,
+        vm_crawl_pitch->value * step + c * 3.0f * bob,
+        vm_crawl_yaw->value * step + s * 2.0f * bob,
+        vm_crawl_roll->value * step + s * 6.0f * bob
+    );
+    AnglesToAxis(angles, rot);
+    MatrixMultiply(rot, model->axis, axis);
+
+    // about where the weapon is held, as the sprint pose
+    VectorSet(pivot, vm_sprint_pivot->value, -vm_sprint_pivot->value * 0.4f, -vm_sprint_pivot->value * 0.5f);
+    for (i = 0; i < 3; i++) {
+        VectorMA(model->origin, pivot[i], model->axis[i], model->origin);
+        VectorMA(model->origin, -pivot[i], axis[i], model->origin);
+    }
+
+    VectorMA(model->origin, vm_crawl_side->value * step + s * 1.5f * bob, model->axis[1], model->origin);
+    VectorMA(model->origin, vm_crawl_up->value * step - fabs(s) * 1.5f * bob, model->axis[2], model->origin);
+    AxisCopy(axis, model->axis);
+}
+
+/*
+======================
 CG_AttachEntity
 
 Modifies the entities position and axis by the given
@@ -1792,6 +1870,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
                 if (cg.snap->ps.stats[STAT_HEALTH] > 0 && !cg_animationviewmodel->integer) {
                     CG_OffsetFirstPersonView(&model, qfalse);
                     CG_SprintViewModel(&model);
+                    CG_CrawlViewModel(&model);
                 }
 
                 AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);

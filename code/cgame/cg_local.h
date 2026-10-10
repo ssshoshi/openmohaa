@@ -530,6 +530,15 @@ extern "C" {
     extern cvar_t *vm_sprint_up;
     extern cvar_t *vm_sprint_speed;
     extern cvar_t *vm_sprint_pivot;
+    extern cvar_t *vm_crawl;
+    extern cvar_t *vm_crawl_pitch;
+    extern cvar_t *vm_crawl_yaw;
+    extern cvar_t *vm_crawl_roll;
+    extern cvar_t *vm_crawl_side;
+    extern cvar_t *vm_crawl_up;
+    extern cvar_t *vm_crawl_speed;
+    extern cvar_t *vm_crawl_bob;
+    extern cvar_t *vm_crawl_stride;
     extern cvar_t *voiceChat;
     extern cvar_t *cg_shadowscount;
     extern cvar_t *cg_shadowdebug;

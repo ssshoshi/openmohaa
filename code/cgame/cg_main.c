@@ -127,6 +127,15 @@ cvar_t *vm_sprint_side;
 cvar_t *vm_sprint_up;
 cvar_t *vm_sprint_speed;
 cvar_t *vm_sprint_pivot;
+cvar_t *vm_crawl;
+cvar_t *vm_crawl_pitch;
+cvar_t *vm_crawl_yaw;
+cvar_t *vm_crawl_roll;
+cvar_t *vm_crawl_side;
+cvar_t *vm_crawl_up;
+cvar_t *vm_crawl_speed;
+cvar_t *vm_crawl_bob;
+cvar_t *vm_crawl_stride;
 cvar_t *voiceChat;
 cvar_t *cg_shadowscount;
 cvar_t *cg_shadowdebug;
@@ -237,6 +246,16 @@ void CG_RegisterCvars(void)
     vm_sprint_up                  = cgi.Cvar_Get("vm_sprint_up", "-1", 0);
     vm_sprint_speed               = cgi.Cvar_Get("vm_sprint_speed", "7", 0);
     vm_sprint_pivot               = cgi.Cvar_Get("vm_sprint_pivot", "16", 0);
+    // Added in OPM: the view weapon's pose while crawling (CG_CrawlViewModel)
+    vm_crawl                      = cgi.Cvar_Get("vm_crawl", "1", CVAR_ARCHIVE);
+    vm_crawl_pitch                = cgi.Cvar_Get("vm_crawl_pitch", "8", 0);
+    vm_crawl_yaw                  = cgi.Cvar_Get("vm_crawl_yaw", "12", 0);
+    vm_crawl_roll                 = cgi.Cvar_Get("vm_crawl_roll", "30", 0);
+    vm_crawl_side                 = cgi.Cvar_Get("vm_crawl_side", "1", 0);
+    vm_crawl_up                   = cgi.Cvar_Get("vm_crawl_up", "-2", 0);
+    vm_crawl_speed                = cgi.Cvar_Get("vm_crawl_speed", "3.5", 0);
+    vm_crawl_bob                  = cgi.Cvar_Get("vm_crawl_bob", "1", 0);
+    vm_crawl_stride               = cgi.Cvar_Get("vm_crawl_stride", "48", 0);
     voiceChat                     = cgi.Cvar_Get("cg_voicechat", "1", 0);
 
     ui_timemessage = cgi.Cvar_Get("ui_timemessage", "", 0);

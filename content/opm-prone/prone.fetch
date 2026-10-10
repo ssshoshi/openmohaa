@@ -1,0 +1,8 @@
+# The player's stance sounds ubersound/opm_prone.scr plays: <path in the pak> <url>.
+# Fetched by tools/content/pack.py when the pak is built, never kept in the repository.
+# Day of Defeat: Source (Valve), from github.com/sourcesounds/dods.
+sound/opm/player/goprone.wav https://raw.githubusercontent.com/sourcesounds/dods/b57142a9825b8aa762b542a5d6c0388e382e7ba9/sound/player/goprone.wav
+sound/opm/player/moveprone.wav https://raw.githubusercontent.com/sourcesounds/dods/b57142a9825b8aa762b542a5d6c0388e382e7ba9/sound/player/moveprone.wav
+sound/opm/player/reload_rustle.wav https://raw.githubusercontent.com/sourcesounds/dods/b57142a9825b8aa762b542a5d6c0388e382e7ba9/sound/player/reload_rustle.wav
+sound/opm/player/unprone.wav https://raw.githubusercontent.com/sourcesounds/dods/b57142a9825b8aa762b542a5d6c0388e382e7ba9/sound/player/unprone.wav
+sound/opm/player/sprint.wav https://raw.githubusercontent.com/sourcesounds/dods/b57142a9825b8aa762b542a5d6c0388e382e7ba9/sound/player/sprint.wav

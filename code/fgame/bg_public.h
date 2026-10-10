@@ -565,6 +565,7 @@ movement on the server game.
 #define STANCE_STAT_DIVING     0x100 // in the air in a dive
 #define STANCE_STAT_EXHAUSTED  0x200 // out of sprint, or too hurt to sprint
 #define STANCE_STAT_TIRED      0x400 // slowed down, tired out
+#define STANCE_STAT_CRAWLING   0x800 // crawling: weapon down, not to be fired
 
     extern const char *means_of_death_strings[];
 
