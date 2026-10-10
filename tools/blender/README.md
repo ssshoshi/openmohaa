@@ -46,11 +46,19 @@ at once.
 
 ### TRELLIS
 
-TRELLIS needs Linux (WSL works) and an NVIDIA GPU with 16 GB or more. Follow its README
-(`./setup.sh --new-env --basic --xformers --flash-attn --diffoctreerast --spconv --mipgaussian
---kaolin --nvdiffrast`); the model downloads from Hugging Face on first use. Without
-`--trellis-python` (or `$TRELLIS_PYTHON`) the generate step is skipped and only your own meshes,
-or smoothing, are used.
+TRELLIS needs Linux (WSL works) and an NVIDIA GPU. Follow its README
+(`./setup.sh --new-env --basic --xformers --spconv --kaolin`; nvdiffrast, flash-attention and
+the Gaussian-splat extras aren't used); the model downloads from Hugging Face on first use.
+Without `--trellis-python` (or `$TRELLIS_PYTHON`) the generate step is skipped and only your
+own meshes, or smoothing, are used.
+
+TRELLIS is written for Ampere-class GPUs with 16 GB. On older ones (anything before the RTX
+30 series) `remaster/trellis_compat.py` steps in: xformers instead of flash-attention, fp32
+instead of half precision, one model on the GPU at a time, and its sparse convolutions in
+plain PyTorch where spconv has no kernels for the card. On a GTX 1080 (8 GB) a candidate
+takes about 1.5 minutes plus 40 s to load the models, using up to 6 GB of GPU memory and
+about 5 GB of system memory; it stops by itself when system memory runs low (WSL's default
+limit is half the PC's memory, set in `%UserProfile%\.wslconfig`).
 
 ### Tests
 

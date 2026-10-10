@@ -26,7 +26,7 @@ step whose output is there is skipped unless --redo names it.
 TRELLIS: github.com/microsoft/TRELLIS, installed with its own environment (Linux or WSL,
 CUDA). --trellis-python is that environment's python (e.g. ~/miniconda3/envs/trellis/bin/python)
 and --trellis-home its checkout (default: $TRELLIS_HOME); the generator runs with the
-checkout as its working folder so its package imports.
+checkout as its working folder, from which it imports TRELLIS.
 """
 
 import argparse
