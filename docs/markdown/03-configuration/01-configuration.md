@@ -115,7 +115,7 @@ It adds the modern rendering features from ioquake3's OpenGL 2 renderer, all of 
 disabled or conservative by default. The settings below are latched unless noted otherwise:
 
 - `set r_ext_framebuffer_multisample x`: Multisample anti-aliasing, `0` (off) to `16`.
-- `set r_ext_compressed_textures x`: `0` none, `1` DXT/RGTC, `2` BPTC. Reduces video memory use.
+- `set r_ext_compressed_textures x`: how textures are compressed as they load: `0` none, `1` DXT/RGTC, `2` BPTC. Reduces video memory use at some cost in quality. GL2 loads a `.dds` file whenever one exists, whatever the setting.
 - `set r_hdr 1`: Render the scene in high dynamic range, which reduces colour banding.
 - `set r_toneMap 1` / `set r_autoExposure 1`: Tone mapping and automatic exposure. Both require
   `r_hdr` and `r_postProcess`, and neither is latched.
