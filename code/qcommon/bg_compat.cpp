@@ -71,6 +71,13 @@ static uint32_t CPT_NormalizePlayerStateFlags_ver_6(uint32_t flags)
         }
     }
 
+    // Added in OPM
+    //  Sprinting (bit 13) has no room in the shifted range, it goes in bit 1,
+    //  which the AA layout leaves free
+    if (flags & (1 << 1)) {
+        normalizedFlags |= (1 << 13);
+    }
+
     // So that flags are normalized across modules
     return normalizedFlags;
 }
@@ -85,6 +92,12 @@ static uint32_t CPT_DenormalizePlayerStateFlags_ver_6(uint32_t flags)
         if (flags & (1 << i)) {
             normalizedFlags |= (1 << (i + 2));
         }
+    }
+
+    // Added in OPM
+    //  See CPT_NormalizePlayerStateFlags_ver_6
+    if (flags & (1 << 13)) {
+        normalizedFlags |= (1 << 1);
     }
 
     for (size_t i = 15; i < 32; i++) {

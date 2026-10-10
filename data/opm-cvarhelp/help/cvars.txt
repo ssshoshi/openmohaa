@@ -76,6 +76,7 @@ cg_effect_physicsrate			code/cgame/cg_tempmodels.cpp:237	How many times per seco
 cg_effectdetail	0.2	1	code/cgame/cg_tempmodels.cpp:234	Scales how many particles effects spawn: 1 is full detail, lower values thin out smoke, sparks and debris for performance.
 cg_errordecay			code/cgame/cg_main.c:148	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
 cg_firstPersonBody	0	1	code/cgame/cg_main.c:180	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
+cg_firstPersonBodyNeckGap	-100	40	code/cgame/cg_main.c:193	How far below the camera the first person body's neck is kept: the body goes down when jumping, falling or climbing stairs would bring it up into view.
 cg_firstPersonBodyOffset			code/cgame/cg_main.c:181	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
 cg_firstPersonShadow	0	1	code/cgame/cg_main.c:179	Let your own player model cast a shadow in first person, while the model itself stays hidden.
 cg_forceModel	0	1	code/cgame/cg_main.c:177	Multiplayer: draw every player with your chosen player models (dm_playermodel / dm_playergermanmodel) instead of their own.
@@ -164,6 +165,7 @@ cg_showmiss	0	2	code/cgame/cg_main.c:150	Debug: report prediction misses (when t
 cg_showtempmodels	0	1	code/cgame/cg_tempmodels.cpp:231	Debug: print how many temporary models are alive each frame.
 cg_smoothClients	0	1	code/cgame/cg_main.c:166	Smooth other players' movement by extrapolating between server snapshots.
 cg_smoothClientsTime			code/cgame/cg_main.c:167	How far ahead, in milliseconds, other players may be extrapolated when cg_smoothClients is on.
+cg_sprintbar	0	1	code/cgame/cg_main.c:228	The sprint bar low in the middle of the screen: shows while sprint is used or coming back, red when run out or tired.
 cg_stats	0	1	code/cgame/cg_main.c:151	Debug: print the client's current snapshot and frame numbers every frame.
 cg_stereosep			code/cgame/cg_main.c:154	Eye separation for stereoscopic rendering.
 cg_te_accel_x			code/cgame/cg_testemitter.cpp:2002	Test emitter (the effects editor in cg_testemitter): acceleration applied to particles on the X axis.
@@ -480,6 +482,10 @@ g_ddayshingleguys			code/server/sv_init.c:1143	Number of soldiers at the shingle
 g_debugdamage	0	1	code/fgame/gamecvars.cpp:502	Debug: print every damage event with its source and amount.
 g_debugsmoke	0	1	code/fgame/gamecvars.cpp:705	Debug: show smoke sprite volumes. Cheat-protected.
 g_debugtargets	0	1	code/fgame/gamecvars.cpp:501	Debug: print targetname triggers as they fire.
+g_dive_run	0	1000	code/fgame/gamecvars.cpp:835	How fast a dive from a run launches the player forward, in units a second (half the distance of a sprint dive).
+g_dive_run_up	155	500	code/fgame/gamecvars.cpp:836	How fast a dive from a run lifts the player off the ground, in units a second (at least 155, or he stays on the ground).
+g_dive_sprint	0	1000	code/fgame/gamecvars.cpp:837	How fast a dive from a sprint launches the player forward, in units a second.
+g_dive_sprint_up	155	500	code/fgame/gamecvars.cpp:838	How fast a dive from a sprint lifts the player off the ground, in units a second.
 g_door_reopen_blocked	0	1	code/fgame/gamecvars.cpp:800	Doors reopen when blocked by something while closing, instead of pushing or stopping. Server setting.
 g_doWarmup	0	1	code/fgame/gamecvars.cpp:578	Multiplayer: have a warmup period before the match starts. Server setting.
 g_drawattackertime			code/fgame/gamecvars.cpp:647	Seconds your attacker's name stays on screen after you are hit.
@@ -497,6 +503,11 @@ g_forceteamspectate	0	1	code/fgame/gamecvars.cpp:695	Team games: dead players ma
 g_gametype	0	6	code/server/sv_ccmds.c:230	Game type: 0 single player, 1 free-for-all, 2 team match, 3 round-based, 4 objective, 5 tug of war, 6 liberation. Latched: applies on the next map. Server setting.
 g_gametypestring			code/server/sv_init.c:1059	Name of the current game type, shown in server browsers. Server setting.
 g_gotmedal	0	1	code/fgame/gamecvars.cpp:652	Set by the game when a medal was earned on the last mission.
+g_grenade_cone	0	1	code/fgame/gamecvars.cpp:846	A grenade on the ground throws its fragments up and out in a cone: lying flat beside it saves you from most of it, except close in.
+g_grenade_cone_min	0	1	code/fgame/gamecvars.cpp:847	The least of a grenade's damage a man lying flat outside its cone still takes.
+g_grenade_prone	0	1	code/fgame/gamecvars.cpp:853	How much of a grenade's damage a player lying prone or diving takes, on top of the cone.
+g_grenade_prone_close	0	256	code/fgame/gamecvars.cpp:854	Within this many units of a grenade, lying prone or diving saves nothing; the full saving from twice it out.
+g_grenade_push	0	512	code/fgame/gamecvars.cpp:855	A grenade only throws a player within this many units of it, where it kills him anyway.
 g_healrate	0		code/fgame/gamecvars.cpp:568	Health packs heal over time at this many points per second instead of all at once. 0 heals instantly. Server setting.
 g_healthdrop	0	1	code/fgame/gamecvars.cpp:566	Dead players drop a health pack. Server setting.
 g_immediateswitch	0	1	code/fgame/player_conditionals.cpp:134	Multiplayer: weapons switch instantly, without the holster animation. Server setting.
@@ -571,6 +582,9 @@ g_playerdeltamethod	0		code/fgame/gamecvars.cpp:648	How player state is delta-co
 g_playerdmhealth	0		code/fgame/player.cpp:2434	Multiplayer: player maximum health. 0 uses the default of 100. Server setting.
 g_playermodel			code/fgame/gamecvars.cpp:497	Player model in single player (under models/player/). Saved with savegames.
 g_playerStacking	0	1	code/fgame/gamecvars.cpp:776	Multiplayer: allow standing on other players' heads. Server setting.
+g_prone	0	1	code/fgame/gamecvars.cpp:833	Lying prone in single player (the prone command, bound to C): crawl, dive from a run or sprint.
+g_prone_raise_time	0	2	code/fgame/gamecvars.cpp:839	Seconds after the player stops crawling before his weapon is back up and can fire.
+g_prone_speed	0	1	code/fgame/gamecvars.cpp:834	Crawling speed while prone, as a fraction of the run speed.
 g_qunits_to_feet	0	1	code/fgame/gamecvars.cpp:730	Show distances in feet rather than game units.
 g_rankedserver	0	1	code/fgame/gamecvars.cpp:772	Mark the server as ranked. Server setting.
 g_realismmode	0	1	code/fgame/gamecvars.cpp:536	Realism mode: tougher damage and no crosshair. Latched. Server setting.
@@ -616,6 +630,13 @@ g_spiffyvelocity_x			code/fgame/gamecvars.cpp:493	Debug: test spawn velocity X.
 g_spiffyvelocity_y			code/fgame/gamecvars.cpp:494	Debug: test spawn velocity Y.
 g_spiffyvelocity_z			code/fgame/gamecvars.cpp:495	Debug: test spawn velocity Z.
 g_splean			code/fgame/gamecvars.cpp:432	Lets the player lean in single player, which the base game does not. It rides the serverinfo string so the client predicts the same lean.
+g_sprint	0	1	code/fgame/gamecvars.cpp:839	Sprinting in single player (+sprint, bound to Shift): faster forward running with the weapon lowered; firing or aiming stops it.
+g_sprint_minhealth	0	100	code/fgame/gamecvars.cpp:843	Below this percent of his health the player cannot sprint at all.
+g_sprint_recover	0	10	code/fgame/gamecvars.cpp:842	Seconds of sprint that come back each second while not sprinting.
+g_sprint_speed	1	3	code/fgame/gamecvars.cpp:840	Sprint speed, as a multiple of the run speed.
+g_sprint_time	0	60	code/fgame/gamecvars.cpp:841	Seconds of sprint at full health, fewer as the player is hurt; 0 for no limit.
+g_sprint_tired_speed	0.1	1	code/fgame/gamecvars.cpp:844	How slow a player below half health is when he runs out of sprint, as a fraction of his speed; he eases back over g_sprint_tired_time.
+g_sprint_tired_time	0	30	code/fgame/gamecvars.cpp:845	Seconds a player below half health stays tired (slowed) after running out of sprint.
 g_statefile			code/fgame/gamecvars.cpp:498	Base name of the player state machine files (_Legs.st and _Torso.st).
 g_subtitle	0	2	code/cgame/cg_commands.cpp:3873	Subtitles for dialogue: 1 nearby dialogue, 2 all dialogue regardless of distance.
 g_success	0	1	code/cgame/cg_view.c:1217	Set by the game when the mission succeeded; read by the end-of-mission screen.
@@ -1257,6 +1278,15 @@ viewmodelanim			code/cgame/cg_modelanim.c:228	Internal: view model animation bei
 viewmodelanimslot			code/cgame/cg_modelanim.c:305	Internal: animation slot being tested (viewthing).
 viewmodelentity			code/renderergl1/tr_model.cpp:865	Internal: entity being viewed (viewthing).
 viewsize	30	100	code/cgame/cg_main.c:139	Size of the 3D view as a percentage of the screen.
+vm_crawl	0	1	code/cgame/cg_main.c:250	Crawling prone lowers the view weapon and rocks it with the arms.
+vm_crawl_bob	0	3	code/cgame/cg_main.c:257	How hard the view weapon rocks with each pull while crawling.
+vm_crawl_pitch			code/cgame/cg_main.c:251	Degrees the view weapon tips down while crawling.
+vm_crawl_roll			code/cgame/cg_main.c:253	Degrees the view weapon rolls over while crawling.
+vm_crawl_side			code/cgame/cg_main.c:254	Units the view weapon moves to the side while crawling.
+vm_crawl_speed			code/cgame/cg_main.c:256	How fast the view weapon goes down and comes back up (whole poses a second).
+vm_crawl_stride			code/cgame/cg_main.c:258	Units crawled for each pull of the arms.
+vm_crawl_up			code/cgame/cg_main.c:255	Units the view weapon moves up (down if negative) while crawling.
+vm_crawl_yaw			code/cgame/cg_main.c:252	Degrees the view weapon turns across the body while crawling.
 vm_lean_lower			code/cgame/cg_main.c:215	How much the first-person weapon lowers while leaning.
 vm_offset_air_front			code/cgame/cg_main.c:198	First-person weapon offset (front) when in the air.
 vm_offset_air_side			code/cgame/cg_main.c:199	First-person weapon offset (side) when in the air.
@@ -1277,6 +1307,15 @@ vm_offset_vel_base			code/cgame/cg_main.c:210	Speed at which the moving weapon o
 vm_offset_vel_front			code/cgame/cg_main.c:211	First-person weapon offset (front) when moving.
 vm_offset_vel_side			code/cgame/cg_main.c:212	First-person weapon offset (side) when moving.
 vm_offset_vel_up			code/cgame/cg_main.c:213	First-person weapon offset (up) when moving.
+vm_sprint	0	1	code/cgame/cg_main.c:227	The view weapon swings across the body while sprinting.
+vm_sprint_front	-20	20	code/cgame/cg_main.c:232	Sprint pose: units the view weapon moves forward.
+vm_sprint_pitch	-90	90	code/cgame/cg_main.c:229	Sprint pose: degrees the view weapon tips down.
+vm_sprint_pivot	0	64	code/cgame/cg_main.c:236	Sprint pose: how far out from the eye the view weapon turns about.
+vm_sprint_roll	-90	90	code/cgame/cg_main.c:231	Sprint pose: degrees the view weapon rolls.
+vm_sprint_side	-20	20	code/cgame/cg_main.c:233	Sprint pose: units the view weapon moves left.
+vm_sprint_speed	1	30	code/cgame/cg_main.c:235	How quickly the view weapon goes into and out of the sprint pose.
+vm_sprint_up	-20	20	code/cgame/cg_main.c:234	Sprint pose: units the view weapon moves up.
+vm_sprint_yaw	-90	90	code/cgame/cg_main.c:230	Sprint pose: degrees the view weapon turns left.
 vm_sway_front			code/cgame/cg_main.c:195	First-person weapon sway (front) while moving.
 vm_sway_side			code/cgame/cg_main.c:196	First-person weapon sway (side) while moving.
 vm_sway_up			code/cgame/cg_main.c:197	First-person weapon sway (up) while moving.

@@ -1532,6 +1532,86 @@ void CG_DrawVote()
 CG_Draw2D
 ==============
 */
+/*
+==============
+CG_DrawSprintBar
+
+Added in OPM
+  The sprint left (STAT_OPM_STANCE), as a thin bar low in the middle of the
+  screen. It shows while sprint is being used or coming back and fades once
+  it is full; red when it has run out or the player is too hurt to sprint,
+  pulsing while he is tired out. cg_sprintbar 0 hides it.
+==============
+*/
+static void CG_DrawSprintBar(void)
+{
+    static float alpha;
+    int          stat;
+    float        left, target, x, y, w, h, bx, by, bw, bh;
+    vec4_t       color;
+
+    if (!cg.snap || !cg_sprintbar->integer || !cg_hud->integer || cgs.gametype != GT_SINGLE_PLAYER) {
+        alpha = 0;
+        return;
+    }
+
+    if ((cg.snap->ps.pm_flags & (PMF_NO_HUD | PMF_INTERMISSION)) || cg.snap->ps.stats[STAT_HEALTH] <= 0) {
+        alpha = 0;
+        return;
+    }
+
+    stat = cg.snap->ps.stats[STAT_OPM_STANCE];
+    left = (stat & STANCE_STAT_STAMINA) / 100.0f;
+
+    target = (left < 1.0f || (cg.snap->ps.pm_flags & PMF_SPRINTING) || (stat & (STANCE_STAT_EXHAUSTED | STANCE_STAT_TIRED)))
+               ? 1.0f
+               : 0.0f;
+    if (alpha < target) {
+        alpha = Q_min(target, alpha + cg.frametime / 1000.0f * 4.0f);
+    } else {
+        alpha = Q_max(target, alpha - cg.frametime / 1000.0f * 1.0f);
+    }
+
+    if (alpha <= 0) {
+        return;
+    }
+
+    x = 270;
+    y = 452;
+    w = 100;
+    h = 4;
+    CG_AdjustFrom640(&x, &y, &w, &h);
+
+    // the frame
+    bx = x - 1;
+    by = y - 1;
+    bw = w + 2;
+    bh = h + 2;
+    VectorSet4(color, 0, 0, 0, 0.5f * alpha);
+    cgi.R_SetColor(color);
+    cgi.R_DrawBox(bx, by, bw, bh);
+
+    if (stat & STANCE_STAT_TIRED) {
+        float pulse = 0.6f + 0.4f * sin(cg.time / 1000.0f * M_PI * 3.0f);
+        VectorSet4(color, 0.9f, 0.15f, 0.1f, alpha * pulse);
+    } else if (stat & STANCE_STAT_EXHAUSTED) {
+        VectorSet4(color, 0.85f, 0.3f, 0.15f, 0.9f * alpha);
+    } else {
+        VectorSet4(color, 0.9f, 0.88f, 0.75f, 0.85f * alpha);
+    }
+
+    if (left > 0) {
+        cgi.R_SetColor(color);
+        cgi.R_DrawBox(x, y, w * left, h);
+    } else if (stat & (STANCE_STAT_EXHAUSTED | STANCE_STAT_TIRED)) {
+        // nothing left: a red sliver so the empty bar still reads as a warning
+        cgi.R_SetColor(color);
+        cgi.R_DrawBox(x, y, Q_max(1.0f, w * 0.02f), h);
+    }
+
+    cgi.R_SetColor(NULL);
+}
+
 void CG_Draw2D(void)
 {
     CG_UpdateCountdown();
@@ -1549,6 +1629,7 @@ void CG_Draw2D(void)
     CG_DrawInstantMessageMenu();
     CG_DrawCrosshair();
     // Added in OPM
+    CG_DrawSprintBar();
     CG_PhysicsEditDraw2D();
     CG_BugReportDraw2D();
     CG_OrchDraw2D();

@@ -70,6 +70,12 @@ void Player::SetPartAnim(const char *anim, bodypart_t slot)
         anim = "idle";
     }
 
+    if (slot == legs) {
+        // Added in OPM
+        //  Lying down, the legs play the prone animation for where the state is going
+        anim = ProneLegAnim(anim);
+    }
+
     animnum = gi.Anim_NumForName(edict->tiki, anim);
     if (animnum == CurrentAnim(m_iPartSlot[slot]) && partAnim[slot] == anim) {
         return;

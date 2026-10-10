@@ -738,7 +738,8 @@ CG_PlaceFirstPersonBody
 Crouching, jumping and leaning carry the model's neck ahead of the eyes,
 which would put the camera inside the chest. The body is moved across the
 ground so its neck sits cg_firstPersonBodyOffset behind the camera, whatever
-the pose; its height is left alone so the feet stay on the ground.
+the pose; its height is left alone so the feet stay on the ground, unless the
+neck comes up to the camera (see below).
 ======================
 */
 static void CG_PlaceFirstPersonBody(refEntity_t *body)
@@ -746,6 +747,7 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
     orientation_t or;
     vec3_t        neck, forward, target, angles;
     int           tagnum, i;
+    float         drop;
 
     tagnum = cgi.Tag_NumForName(body->tiki, "Bip01 Neck");
     if (tagnum < 0) {
@@ -766,6 +768,19 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
         body->origin[i] += target[i] - neck[i];
         body->oldorigin[i] += target[i] - neck[i];
         body->lightingOrigin[i] += target[i] - neck[i];
+    }
+
+    // Added in OPM
+    //  Jumping and falling lower the eyes (jump start and duck heights) more
+    //  than the animation lowers the neck, and on stairs the smoothed view
+    //  height trails the body as it steps up: either way the camera ends up
+    //  in the chest and pieces of the body flicker into view. The body goes
+    //  down until its neck is cg_firstPersonBodyNeckGap below the camera,
+    //  about where it is standing, and is left alone otherwise.
+    drop = neck[2] - (cg.refdef.vieworg[2] - cg_firstPersonBodyNeckGap->value);
+    if (drop > 0) {
+        body->origin[2] -= drop;
+        body->oldorigin[2] -= drop;
     }
 }
 
@@ -806,6 +821,171 @@ static void CG_LeanViewModelArms(refEntity_t *model, const entityState_t *s1)
     memcpy(armsQuat, model->bone_quat, sizeof(armsQuat));
     MatToQuat(axis, armsQuat[VIEWMODEL_ARMS_TAG]);
     model->bone_quat = armsQuat;
+}
+
+/*
+======================
+CG_FirstPersonBodyHidden
+
+Added in OPM
+  The first person body is left out diving and lying prone, where the camera
+  sits down in it, and on a mounted gun, where it gets in the way of the sights. The
+  shadow body still goes in.
+======================
+*/
+static qboolean CG_FirstPersonBodyHidden(void)
+{
+    int flags = cg.predicted_player_state.pm_flags;
+
+    if (flags & PMF_TURRET) {
+        return qtrue;
+    }
+
+    // diving, on the way down to prone
+    if (cg.snap && (cg.snap->ps.stats[STAT_OPM_STANCE] & STANCE_STAT_DIVING)) {
+        return qtrue;
+    }
+
+    // prone alone (with PMF_DUCKED it is a crouch); a different flag in later protocols
+    if (cg_protocol < PROTOCOL_MOHTA_MIN && (flags & (PMF_DUCKED | PMF_VIEW_PRONE)) == PMF_VIEW_PRONE) {
+        return qtrue;
+    }
+
+    return qfalse;
+}
+
+/*
+======================
+CG_SprintViewModel
+
+Added in OPM
+  While sprinting (PMF_SPRINTING, single player only) the view weapon eases
+  down and across the body, and back up when the sprint ends. The pose is
+  vm_sprint_pitch/yaw/roll (degrees) and vm_sprint_front/side/up (units),
+  turned about a point vm_sprint_pivot units out, and reached at vm_sprint_speed.
+======================
+*/
+static void CG_SprintViewModel(refEntity_t *model)
+{
+    static float frac;
+    float        target, step;
+    vec3_t       angles, rot[3], axis[3], pivot;
+    int          i;
+
+    target = 0;
+    if (vm_sprint->integer && cgs.gametype == GT_SINGLE_PLAYER
+        && (cg.predicted_player_state.pm_flags & PMF_SPRINTING) && !cg.snap->ps.stats[STAT_INZOOM]) {
+        target = 1;
+    }
+
+    step = cg.frametime / 1000.0f * vm_sprint_speed->value;
+    if (frac < target) {
+        frac = Q_min(target, frac + step);
+    } else if (frac > target) {
+        frac = Q_max(target, frac - step);
+    }
+
+    if (frac <= 0) {
+        return;
+    }
+
+    // smooth in and out
+    step = frac * frac * (3.0f - 2.0f * frac);
+
+    VectorSet(angles, vm_sprint_pitch->value * step, vm_sprint_yaw->value * step, vm_sprint_roll->value * step);
+    AnglesToAxis(angles, rot);
+    MatrixMultiply(rot, model->axis, axis);
+
+    // turn it about where the weapon is held, not about the eye, which would
+    // swing it out of sight
+    VectorSet(pivot, vm_sprint_pivot->value, -vm_sprint_pivot->value * 0.4f, -vm_sprint_pivot->value * 0.5f);
+    for (i = 0; i < 3; i++) {
+        VectorMA(model->origin, pivot[i], model->axis[i], model->origin);
+        VectorMA(model->origin, -pivot[i], axis[i], model->origin);
+    }
+
+    VectorMA(model->origin, vm_sprint_front->value * step, model->axis[0], model->origin);
+    VectorMA(model->origin, vm_sprint_side->value * step, model->axis[1], model->origin);
+    VectorMA(model->origin, vm_sprint_up->value * step, model->axis[2], model->origin);
+    AxisCopy(axis, model->axis);
+}
+
+/*
+======================
+CG_CrawlViewModel
+
+Added in OPM
+  Crawling (STANCE_STAT_CRAWLING) takes both hands: the view weapon goes down
+  and over to the side, vm_crawl_pitch/yaw/roll (degrees) and vm_crawl_side/up
+  (units), and rocks with the arms pulling the body along, one pull for every
+  vm_crawl_stride units crawled, vm_crawl_bob as hard. It comes back up at
+  vm_crawl_speed when the player stops, which g_prone_raise_time on the server
+  waits for before the weapon can fire.
+======================
+*/
+static void CG_CrawlViewModel(refEntity_t *model)
+{
+    static float frac;
+    static float phase;
+    float        target, step, speed, s, c, bob;
+    vec3_t       angles, rot[3], axis[3], pivot;
+    int          i;
+
+    speed = sqrt(
+        cg.predicted_player_state.velocity[0] * cg.predicted_player_state.velocity[0]
+        + cg.predicted_player_state.velocity[1] * cg.predicted_player_state.velocity[1]
+    );
+
+    target = 0;
+    if (vm_crawl->integer && cgs.gametype == GT_SINGLE_PLAYER
+        && (cg.snap->ps.stats[STAT_OPM_STANCE] & STANCE_STAT_CRAWLING) && speed > 15) {
+        target = 1;
+    }
+
+    step = cg.frametime / 1000.0f * vm_crawl_speed->value;
+    if (frac < target) {
+        frac = Q_min(target, frac + step);
+    } else if (frac > target) {
+        frac = Q_max(target, frac - step);
+    }
+
+    if (frac <= 0) {
+        phase = 0;
+        return;
+    }
+
+    if (vm_crawl_stride->value > 0) {
+        phase += speed * cg.frametime / 1000.0f / vm_crawl_stride->value * M_PI * 2;
+        phase = fmod(phase, M_PI * 2);
+    }
+
+    // smooth in and out
+    step = frac * frac * (3.0f - 2.0f * frac);
+    bob  = vm_crawl_bob->value * step;
+    s    = sin(phase);
+    c    = cos(phase);
+
+    // one arm reaches out and pulls, then the other: the weapon rolls from
+    // side to side and dips as each pull lifts the shoulders
+    VectorSet(
+        angles,
+        vm_crawl_pitch->value * step + c * 3.0f * bob,
+        vm_crawl_yaw->value * step + s * 2.0f * bob,
+        vm_crawl_roll->value * step + s * 6.0f * bob
+    );
+    AnglesToAxis(angles, rot);
+    MatrixMultiply(rot, model->axis, axis);
+
+    // about where the weapon is held, as the sprint pose
+    VectorSet(pivot, vm_sprint_pivot->value, -vm_sprint_pivot->value * 0.4f, -vm_sprint_pivot->value * 0.5f);
+    for (i = 0; i < 3; i++) {
+        VectorMA(model->origin, pivot[i], model->axis[i], model->origin);
+        VectorMA(model->origin, -pivot[i], axis[i], model->origin);
+    }
+
+    VectorMA(model->origin, vm_crawl_side->value * step + s * 1.5f * bob, model->axis[1], model->origin);
+    VectorMA(model->origin, vm_crawl_up->value * step - fabs(s) * 1.5f * bob, model->axis[2], model->origin);
+    AxisCopy(axis, model->axis);
 }
 
 /*
@@ -1565,7 +1745,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
                     cg.iPlayerShadowBodyTime = cg.time;
                 }
 
-                if (cg_firstPersonBody->integer) {
+                if (cg_firstPersonBody->integer && !CG_FirstPersonBodyHidden()) {
                     // drawn only through the eyes, without the head the camera
                     // sits in or the arms the view model already draws
                     refEntity_t fpsBody = body;
@@ -1689,6 +1869,8 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
             if (!(cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW)) {
                 if (cg.snap->ps.stats[STAT_HEALTH] > 0 && !cg_animationviewmodel->integer) {
                     CG_OffsetFirstPersonView(&model, qfalse);
+                    CG_SprintViewModel(&model);
+                    CG_CrawlViewModel(&model);
                 }
 
                 AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);
