@@ -47,5 +47,5 @@ another 4x RRDBNet checkpoint. A full build is about 1,800 textures and two hour
 - **Check.** `--selftest` round-trips each format through Pillow's DDS reader and checks the
   alpha coverage.
 
-matgen still resolves textures as the renderer does with compressed textures off (a DDS last),
-so its material maps are made from the textures this pk3 replaces, at their old size.
+matgen resolves textures the same way, so once this pk3 is installed, rebuild the material
+maps (`tools/matgen`) to make them from the upscaled textures.
