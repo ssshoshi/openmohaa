@@ -212,7 +212,7 @@ typedef struct {
     goreDent_t     dents[MAX_GORE_DENTS];
     vec3_t         dentOut[MAX_GORE_DENTS]; // the way each opens, in the head bone's frame
     int            numDents;
-    unsigned long long dentPending; // dents whose hollow still needs its decal
+    unsigned int   dentPending; // dents whose hollow still needs its decal
     boneOverride_t ovr[GORE_MAX_OVERRIDES];
     int            numOvr;
 
@@ -347,7 +347,7 @@ static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model);
 static void CG_GoreBlastBody(goreBody_t *body);
 static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model);
 static int  CG_GoreZone(const char *bone);
-static int  CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius);
+static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius);
 static void CG_GoreHeadHit(goreBody_t *body, refEntity_t *model);
 static void CG_GoreChainStart(goreGib_t *gib, const goreRig_t *rig);
 static void CG_GoreSpinAxis(vec3_t axis[3], const vec3_t spin, float dt);
@@ -531,9 +531,6 @@ static goreBody_t *CG_GoreBodyFor(int key, refEntity_t *model, qboolean dead)
     }
 
     if (body->tiki != model->tiki || (body->dead && !dead) || (!dead && cg.time - body->lastSeen > 10000)) {
-        if (cg_gore_debug->integer) {
-            Com_Printf("gore: body %d starts over (%s)\n", key, body->tiki != model->tiki ? "another model" : body->dead && !dead ? "up again" : "away too long");
-        }
         CG_GoreFreeBody(body);
         return NULL;
     }
@@ -896,13 +893,9 @@ static unsigned int CG_GorePoseHash(const refEntity_t *ref)
     GORE_HASH_DIR(ref->scale);
     GORE_HASH_INT(ref->num_bone_overrides);
 
-    // the dents change the mesh as much as the pose does (one grows in
-    // place when there is no room for another)
+    // the dents change the mesh as much as the pose does
     if ((ref->renderfx & RF_GORE_DENTS) && ref->gore_dents) {
         GORE_HASH_INT(ref->num_gore_dents);
-        for (i = 0; i < ref->num_gore_dents && i < MAX_GORE_DENTS; i++) {
-            GORE_HASH_INT((int)floorf(ref->gore_dents[i].radius * 64.0f));
-        }
     }
 
     if (ref->bone_override && ref->num_bone_overrides > 0) {
@@ -3069,46 +3062,25 @@ qboolean CG_GoreHidesAttachment(int parentEntity, int tag)
 
 // A hollow in the head where a round went in or out: centred a little outside
 // the skin, at out, so the sphere carves into it.
-// Each round takes its own chunk out where it hit (a dent of its own, never
-// changed), so the head is broken down a piece at a time like so many voxels.
-// With no room left for another, the nearest dent only grows where it is:
-// more is gone and nothing comes back. Without end, until the neck is all
-// that is left (goreDent_t).
-#define GORE_DENT_MAX_RADIUS 9.0f // world units: past a whole head
-
-static void CG_GoreGrowDent(goreBody_t *body, int into, float addRadius, float scale)
-{
-    goreDent_t *dent = &body->dents[into];
-    float       r    = cbrt(dent->radius * dent->radius * dent->radius + addRadius * addRadius * addRadius);
-
-    dent->radius = Q_min(r, GORE_DENT_MAX_RADIUS / scale);
-    body->dentPending |= 1ull << into;
-}
-
-// A hollow in the head where a round went in or came out; the dent it made,
-// or -1.
-static int CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius)
+static void CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, const vec3_t out, float radius)
 {
     const goreRig_t *rig = CG_GoreRig(model->tiki);
-    float            m[4][3], neck[4][3];
+    float            m[4][3];
     float            scale = CG_GoreModelScale(model);
-    vec3_t           centre, local, raw, outLocal, outModel, up;
-    goreDent_t       dent;
-    int              k, i, nearest = -1;
-    float            best = 0;
+    vec3_t           centre, local, raw, outLocal, outModel;
+    goreDent_t      *dent;
+    int              k;
 
-    if (!rig || !cg_gore_dismember->integer || (body->severed & (1u << GP_HEAD))) {
-        return -1;
+    if (!rig || !cg_gore_dismember->integer || body->numDents >= MAX_GORE_DENTS || (body->severed & (1u << GP_HEAD))) {
+        return;
     }
 
     if (!CG_GoreBoneFrame(model, rig->cut[GP_HEAD], m, NULL) || scale <= 0) {
-        return -1;
+        return;
     }
 
-    // world to model space before the scale, then into the head bone's frame;
-    // the sphere's middle about the skin, so a round takes out a chunk rather
-    // than leaving a dimple
-    VectorMA(at, radius * 0.1f, out, centre);
+    // world to model space before the scale, then into the head bone's frame
+    VectorMA(at, radius * 0.45f, out, centre);
     VectorSubtract(centre, model->origin, centre);
     for (k = 0; k < 3; k++) {
         raw[k] = DotProduct(centre, model->axis[k]) / scale - model->tiki->load_origin[k];
@@ -3122,121 +3094,47 @@ static int CG_GoreDent(goreBody_t *body, refEntity_t *model, const vec3_t at, co
         outLocal[k] = DotProduct(outModel, m[k]);
     }
 
-    dent.boneIndex = rig->cut[GP_HEAD];
-    VectorCopy(local, dent.offset);
-    VectorCopy(outLocal, dent.dir);
-    VectorNormalize(dent.dir);
-    dent.radius = radius / scale;
-
-    // up out of the neck, in the head bone's frame: below it nothing moves
-    VectorSet(dent.up, 1, 0, 0);
-    if (rig->parent[GP_HEAD] >= 0 && CG_GoreBoneFrame(model, rig->parent[GP_HEAD], neck, NULL)) {
-        VectorSubtract(m[3], neck[3], up);
-        for (k = 0; k < 3; k++) {
-            dent.up[k] = DotProduct(up, m[k]);
-        }
-        if (VectorNormalize(dent.up) < 0.001f) {
-            VectorSet(dent.up, 1, 0, 0);
-        }
-    }
-
-    if (body->numDents >= MAX_GORE_DENTS) {
-        for (i = 0; i < body->numDents; i++) {
-            float d = Distance(body->dents[i].offset, dent.offset) - body->dents[i].radius;
-
-            if (nearest < 0 || d < best) {
-                nearest = i;
-                best    = d;
-            }
-        }
-        CG_GoreGrowDent(body, nearest, dent.radius, scale);
-        body->dirty = qtrue;
-        return nearest;
-    }
-
-    body->dents[body->numDents] = dent;
-    VectorCopy(dent.dir, body->dentOut[body->numDents]);
-    body->dentPending |= 1ull << body->numDents;
+    dent            = &body->dents[body->numDents];
+    dent->boneIndex = rig->cut[GP_HEAD];
+    VectorCopy(local, dent->offset);
+    VectorCopy(outLocal, dent->dir);
+    VectorNormalize(dent->dir);
+    dent->radius = radius / scale;
+    VectorCopy(outLocal, body->dentOut[body->numDents]);
+    body->dentPending |= 1u << body->numDents;
+    body->numDents++;
     body->dirty = qtrue;
-    return body->numDents++;
-}
-
-// Whether the hollows have gone right through the head at some height above
-// the neck, so that what is left above has nothing holding it: a ring about
-// the head's axis, at each height, wholly inside the hollows. In the head
-// bone's frame, where its joint is the origin.
-static qboolean CG_GoreHeadCutThrough(const goreBody_t *body, float scale)
-{
-    static const float heights[] = {2.0f, 3.0f, 4.0f, 5.0f, 6.0f}; // world units above the joint
-    static const float rings[]   = {0.0f, 2.0f, 4.0f};              // and out from the axis, to the skin
-    vec3_t             up, side1, side2;
-    int                h, r, a, d;
-
-    if (!body->numDents || scale <= 0) {
-        return qfalse;
-    }
-
-    VectorCopy(body->dents[0].up, up);
-    PerpendicularVector(side1, up);
-    CrossProduct(up, side1, side2);
-
-    for (h = 0; h < (int)ARRAY_LEN(heights); h++) {
-        qboolean through = qtrue;
-
-        for (r = 0; r < (int)ARRAY_LEN(rings) && through; r++) {
-            for (a = 0; a < (r ? 8 : 1) && through; a++) {
-                float  ang = a * (M_PI / 4);
-                vec3_t p;
-                qboolean gone = qfalse;
-
-                VectorScale(up, heights[h] / scale, p);
-                VectorMA(p, rings[r] / scale * cos(ang), side1, p);
-                VectorMA(p, rings[r] / scale * sin(ang), side2, p);
-                for (d = 0; d < body->numDents && !gone; d++) {
-                    gone = DistanceSquared(p, body->dents[d].offset) < body->dents[d].radius * body->dents[d].radius;
-                }
-                through = gone;
-            }
-        }
-        if (through) {
-            return qtrue;
-        }
-    }
-    return qfalse;
 }
 
 // A round into a head: a hollow where it went in and a bigger one where it
-// came out, and the skin of each broken off and thrown. Each round breaks it
-// down further, without end, and once the hollows go right through it what is
-// left above breaks apart; the neck stays (R_GoreDentVertex).
+// came out, and the skin of each broken off and thrown. A head broken often
+// enough comes apart.
 static void CG_GoreHeadHit(goreBody_t *body, refEntity_t *model)
 {
     vec3_t back;
-    int    dent;
+    int    before = body->numDents;
 
     if (!cg_gore_dismember->integer || (body->severed & (1u << GP_HEAD))) {
         return;
     }
 
+    if (body->numDents >= 10) {
+        CG_GoreSever(body, GP_HEAD, qtrue);
+        return;
+    }
+
     VectorNegate(body->lastHitDir, back);
-    dent = CG_GoreDent(body, model, body->lastHitPos, back, body->lastHitLarge ? GoreRand(2.2f, 2.8f) : GoreRand(1.7f, 2.2f));
-    if (dent >= 0) {
-        CG_GoreBreakDent(body, model, dent, body->lastHitLarge ? 6 + rand() % 4 : 3 + rand() % 3);
+    CG_GoreDent(body, model, body->lastHitPos, back, body->lastHitLarge ? GoreRand(2.0f, 2.6f) : GoreRand(1.5f, 1.9f));
+    if (body->numDents > before) {
+        CG_GoreBreakDent(body, model, body->numDents - 1, body->lastHitLarge ? 6 + rand() % 4 : 3 + rand() % 3);
     }
 
     if (body->lastHitExit) {
-        dent = CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, body->lastHitLarge ? GoreRand(2.6f, 3.2f) : GoreRand(2.0f, 2.6f));
-        if (dent >= 0) {
-            CG_GoreBreakDent(body, model, dent, body->lastHitLarge ? 8 + rand() % 5 : 5 + rand() % 4);
+        before = body->numDents;
+        CG_GoreDent(body, model, body->lastHitExitPos, body->lastHitDir, body->lastHitLarge ? GoreRand(2.6f, 3.2f) : GoreRand(1.9f, 2.4f));
+        if (body->numDents > before) {
+            CG_GoreBreakDent(body, model, body->numDents - 1, body->lastHitLarge ? 8 + rand() % 5 : 5 + rand() % 4);
         }
-    }
-
-    // shot through: what is left above breaks apart, the neck stays
-    if (CG_GoreHeadCutThrough(body, CG_GoreModelScale(model))) {
-        if (cg_gore_debug->integer) {
-            Com_Printf("gore: the head is shot through after %d hollows; the rest of it breaks apart\n", body->numDents);
-        }
-        CG_GoreSever(body, GP_HEAD, qtrue);
     }
 }
 
@@ -3500,7 +3398,7 @@ static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
         float       scale = CG_GoreModelScale(&ref);
         int         k;
 
-        if (!(body->dentPending & (1ull << p)) || !CG_GoreBoneFrame(&ref, body->dents[p].boneIndex, m, NULL)) {
+        if (!(body->dentPending & (1u << p)) || !CG_GoreBoneFrame(&ref, body->dents[p].boneIndex, m, NULL)) {
             continue;
         }
 

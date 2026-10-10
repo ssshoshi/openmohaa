@@ -990,11 +990,11 @@ void R_SkelPosesClear(void)
 
 static int R_SkelPoseId(const trRefEntity_t *ent, const skelBoneCache_t *bones, int numBones, const int *morphs, int numMorphs)
 {
-    skelPoseRecord_t *rec       = &skelPoseRecords[ent->e.entityNumber & (MAX_GENTITIES - 1)];
-    const int         boneBytes = numBones * sizeof(skelBoneCache_t);
+    skelPoseRecord_t *rec        = &skelPoseRecords[ent->e.entityNumber & (MAX_GENTITIES - 1)];
+    const int         boneBytes  = numBones * sizeof(skelBoneCache_t);
     const int         morphBytes = numMorphs * sizeof(int);
     // Added in OPM: the gore dents are part of the pose; a new one is a new
-    // pose, or the surfaces skinned before it would be drawn on
+    // pose, or the surfaces skinned before it would go on being drawn
     const int         numDents  = (ent->e.renderfx & RF_GORE_DENTS) && ent->e.gore_dents ? Q_min(Q_max(ent->e.num_gore_dents, 0), MAX_GORE_DENTS) : 0;
     const int         dentBytes = numDents * sizeof(goreDent_t);
     const int         size      = boneBytes + morphBytes + dentBytes;
@@ -1287,46 +1287,30 @@ inline static void SkelWeightMorphGetXyz(skelWeight_t *weight, skelBoneCache_t *
 // Added in OPM
 //  The dents of RF_GORE_DENTS (R_GoreDents), pushed into one vertex in model
 //  space before the scale, for RE_GetSkinnedMesh to hand over the mesh as drawn.
-// world units short of the bone's middle a dent breaks off what it pushes
-#define GORE_DENT_MARGIN 1.5f
+static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, float *xyz, vec3_t normal);
 
-static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, const vec3_t origin, const vec3_t up, float margin, float *xyz, vec3_t normal);
-static qboolean R_GoreDentInside(const vec3_t *centres, const float *radii, int numDents, const vec3_t origin, const vec3_t up, const float *xyz);
-
-static void R_GoreDentSkinned(const refEntity_t *model, const skelAnimFrame_t *frame, int numBones, float scale, vec3_t local)
+static void R_GoreDentSkinned(const refEntity_t *model, const skelAnimFrame_t *frame, int numBones, vec3_t local)
 {
-    vec3_t centres[MAX_GORE_DENTS], origin, up;
-    float  radii[MAX_GORE_DENTS];
-    int    i, k, numDents = 0;
+    int i, k;
 
     for (i = 0; i < model->num_gore_dents && i < MAX_GORE_DENTS; i++) {
         const goreDent_t *dent = &model->gore_dents[i];
-        vec3_t            dir, normal;
+        vec3_t            centre, dir, normal;
 
         if (dent->boneIndex < 0 || dent->boneIndex >= numBones || dent->radius <= 0) {
             continue;
         }
 
         for (k = 0; k < 3; k++) {
-            centres[numDents][k] = dent->offset[0] * frame->bones[dent->boneIndex][0][k]
-                                 + dent->offset[1] * frame->bones[dent->boneIndex][1][k]
-                                 + dent->offset[2] * frame->bones[dent->boneIndex][2][k] + frame->bones[dent->boneIndex][3][k];
+            centre[k] = dent->offset[0] * frame->bones[dent->boneIndex][0][k]
+                      + dent->offset[1] * frame->bones[dent->boneIndex][1][k]
+                      + dent->offset[2] * frame->bones[dent->boneIndex][2][k] + frame->bones[dent->boneIndex][3][k];
             dir[k] = dent->dir[0] * frame->bones[dent->boneIndex][0][k] + dent->dir[1] * frame->bones[dent->boneIndex][1][k]
                    + dent->dir[2] * frame->bones[dent->boneIndex][2][k];
-            up[k] = dent->up[0] * frame->bones[dent->boneIndex][0][k] + dent->up[1] * frame->bones[dent->boneIndex][1][k]
-                  + dent->up[2] * frame->bones[dent->boneIndex][2][k];
-            origin[k] = frame->bones[dent->boneIndex][3][k];
         }
         VectorNormalize(dir);
-        VectorNormalize(up);
-        radii[numDents] = dent->radius;
 
-        R_GoreDentVertex(centres[numDents], dir, dent->radius, origin, up, GORE_DENT_MARGIN / Q_max(scale, 0.01f), local, normal);
-        numDents++;
-    }
-
-    if (numDents && R_GoreDentInside(centres, radii, numDents, origin, up, local)) {
-        VectorCopy(origin, local);
+        R_GoreDentVertex(centre, dir, dent->radius, local, normal);
     }
 }
 
@@ -1436,7 +1420,7 @@ int RE_GetSkinnedMesh(refEntity_t *model, skinnedVert_t *verts, int maxVerts, in
                 }
 
                 if ((model->renderfx & RF_GORE_DENTS) && model->gore_dents) {
-                    R_GoreDentSkinned(model, frame, ri.TIKI_GetNumChannels(tiki), scale, local);
+                    R_GoreDentSkinned(model, frame, ri.TIKI_GetNumChannels(tiki), local);
                 }
 
                 VectorScale(local, scale, local);
@@ -1686,7 +1670,7 @@ dent's middle than its radius goes out to the radius, and faces back towards
 the middle, the inside of the hollow. See goreDent_t.
 =============
 */
-static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones, int numBones, float scale, int i, vec3_t centre, vec3_t dir, float *radius, vec3_t origin, vec3_t up)
+static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones, int numBones, float scale, int i, vec3_t centre, vec3_t dir, float *radius)
 {
     const goreDent_t      *dent = &e->gore_dents[i];
     const skelBoneCache_t *bone;
@@ -1703,29 +1687,17 @@ static void R_GoreDentCentre(const refEntity_t *e, const skelBoneCache_t *bones,
                      + dent->offset[2] * bone->matrix[2][k] + bone->offset[k])
                   * scale;
         dir[k] = dent->dir[0] * bone->matrix[0][k] + dent->dir[1] * bone->matrix[1][k] + dent->dir[2] * bone->matrix[2][k];
-        up[k]  = dent->up[0] * bone->matrix[0][k] + dent->up[1] * bone->matrix[1][k] + dent->up[2] * bone->matrix[2][k];
-        origin[k] = bone->offset[k] * scale;
     }
     VectorNormalize(dir);
-    VectorNormalize(up);
     *radius = dent->radius * scale;
 }
 
 // Pushes a vertex inside the sphere straight in, against dir, to the sphere's
-// far side; the normal there faces back out of the hollow. See goreDent_t for
-// the joint (origin, up).
-static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, const vec3_t origin, const vec3_t up, float margin, float *xyz, vec3_t normal)
+// far side; the normal there faces back out of the hollow.
+static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float radius, float *xyz, vec3_t normal)
 {
-    vec3_t d, rel;
+    vec3_t d;
     float  along, across2, floor;
-
-    VectorSubtract(xyz, origin, rel);
-    if (DotProduct(rel, up) <= 0) {
-        return qfalse; // below the joint: the neck stays
-    }
-    if (DotProduct(rel, dir) <= 0) {
-        return qfalse; // the other side of the middle: a hollow only goes in
-    }
 
     VectorSubtract(xyz, centre, d);
     along   = DotProduct(d, dir);
@@ -1740,46 +1712,14 @@ static qboolean R_GoreDentVertex(const vec3_t centre, const vec3_t dir, float ra
     }
 
     VectorMA(xyz, floor - along, dir, xyz);
-    VectorSubtract(xyz, origin, rel);
-    if (DotProduct(rel, dir) < margin || DotProduct(rel, up) <= 0) {
-        // past the middle (or within margin of it: nothing so thin is left
-        // standing), or below the joint: broken off and gone. Gathered
-        // into the joint, where R_GoreDropFolded leaves out every triangle it
-        // is part of (and the vertex program clips them away)
-        VectorCopy(origin, xyz);
-        VectorCopy(up, normal);
-        return qtrue;
-    }
-
     VectorSubtract(centre, xyz, normal);
     VectorNormalize(normal);
     return qtrue;
 }
 
-// A vertex left inside one of the hollows (pushed there by another), above
-// the joint and not gathered into it already: broken off too.
-static qboolean R_GoreDentInside(const vec3_t *centres, const float *radii, int numDents, const vec3_t origin, const vec3_t up, const float *xyz)
-{
-    vec3_t rel;
-    int    i;
-
-    VectorSubtract(xyz, origin, rel);
-    if (DotProduct(rel, up) <= 0) {
-        return qfalse;
-    }
-    for (i = 0; i < numDents; i++) {
-        if (DistanceSquared(xyz, centres[i]) < radii[i] * radii[i] * 0.95f) {
-            return qtrue;
-        }
-    }
-    return qfalse;
-}
-
 static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, float scale, int first, int count)
 {
-    vec3_t centres[MAX_GORE_DENTS], dirs[MAX_GORE_DENTS], origin, up;
-    float  radii[MAX_GORE_DENTS];
-    int    numBones, numDents = 0, i, v;
+    int numBones, i, v;
 
     if (!(e->renderfx & RF_GORE_DENTS) || !e->gore_dents || e->num_gore_dents <= 0
         || !e->tiki) {
@@ -1788,36 +1728,27 @@ static void R_GoreDents(const refEntity_t *e, const skelBoneCache_t *bones, floa
 
     numBones = ri.TIKI_GetNumChannels(e->tiki);
     for (i = 0; i < e->num_gore_dents && i < MAX_GORE_DENTS; i++) {
-        R_GoreDentCentre(e, bones, numBones, scale, i, centres[numDents], dirs[numDents], &radii[numDents], origin, up);
-        if (radii[numDents] > 0) {
-            numDents++;
+        vec3_t centre, dir, normal;
+        float  radius;
+
+        R_GoreDentCentre(e, bones, numBones, scale, i, centre, dir, &radius);
+        if (radius <= 0) {
+            continue;
         }
-    }
 
-    for (i = 0; i < numDents; i++) {
         for (v = first; v < first + count; v++) {
-            vec3_t normal;
-
-            if (R_GoreDentVertex(centres[i], dirs[i], radii[i], origin, up, GORE_DENT_MARGIN, tess.xyz[v], normal)) {
+            if (R_GoreDentVertex(centre, dir, radius, tess.xyz[v], normal)) {
                 R_VaoPackNormal(tess.normal[v], normal);
             }
-        }
-    }
-
-    // what has ended up inside another hollow is gone as well
-    for (v = first; v < first + count; v++) {
-        if (R_GoreDentInside(centres, radii, numDents, origin, up, tess.xyz[v])) {
-            VectorCopy(origin, tess.xyz[v]);
         }
     }
 }
 
 // Added in OPM
 //  The dents of a model the vertex program poses (tr_skelgpu.cpp), two vec4s
-//  each: its middle and radius, then the way out of the hollow; and the bone's
-//  joint and which way is up from it, once (joint: every dent is in the head
-//  bone's frame), in model space at the model's scale as R_GoreDents has them.
-int R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out, vec4_t *joint)
+//  each: its middle and radius, then the way out of the hollow, in model space
+//  at the model's scale as R_GoreDents has them.
+int R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out)
 {
     const refEntity_t *e = &ent->e;
     float              scale;
@@ -1830,51 +1761,32 @@ int R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out, vec4_t *joint)
     scale    = e->tiki->load_scale * e->scale;
     numBones = ri.TIKI_GetNumChannels(e->tiki);
     for (i = 0; i < e->num_gore_dents && i < MAX_GORE_DENTS; i++) {
-        vec3_t centre, dir, origin, up;
+        vec3_t centre, dir;
         float  radius;
 
-        R_GoreDentCentre(e, &TIKI_Skel_Bones[e->bonestart], numBones, scale, i, centre, dir, &radius, origin, up);
+        R_GoreDentCentre(e, &TIKI_Skel_Bones[e->bonestart], numBones, scale, i, centre, dir, &radius);
         if (radius <= 0) {
             continue;
-        }
-        if (!n) {
-            VectorCopy(origin, joint[0]);
-            VectorCopy(up, joint[1]);
-            joint[0][3] = GORE_DENT_MARGIN; // at the model's scale: world units
-            joint[1][3] = 0;
         }
         VectorCopy(centre, out[n * 2]);
         out[n * 2][3] = radius;
         VectorCopy(dir, out[n * 2 + 1]);
         out[n * 2 + 1][3] = 0;
         n++;
-
     }
     return n;
 }
 
 // Added in OPM
-//  A model the gore system has been at (RF_GORE_DENTS): the triangles of a
-//  part cut off are folded into its joint, and drawn as they are they would
-//  come out with no area and tangents of nothing over nothing; a vertex a dent
-//  has broken off is gathered into the dents' joint (R_GoreDentVertex). Every
-//  such triangle is left out.
-static void R_GoreDropFolded(const refEntity_t *e, const skelBoneCache_t *bones, float scale, int firstIndex)
+//  A model the gore system has cut a part off (RF_GORE_DENTS): the part's
+//  triangles are folded into its joint, and drawn as they are they would come
+//  out with no area and tangents of nothing over nothing. They are left out.
+static void R_GoreDropFolded(const refEntity_t *e, int firstIndex)
 {
-    vec3_t   joint;
-    qboolean dented = qfalse;
-    int      i, kept = firstIndex;
+    int i, kept = firstIndex;
 
     if (!(e->renderfx & RF_GORE_DENTS)) {
         return;
-    }
-
-    if (e->gore_dents && e->num_gore_dents > 0 && e->tiki) {
-        vec3_t centre, dir, up;
-        float  radius;
-
-        R_GoreDentCentre(e, bones, ri.TIKI_GetNumChannels(e->tiki), scale, 0, centre, dir, &radius, joint, up);
-        dented = radius > 0 ? qtrue : qfalse;
     }
 
     for (i = firstIndex; i + 2 < tess.numIndexes; i += 3) {
@@ -1887,11 +1799,6 @@ static void R_GoreDropFolded(const refEntity_t *e, const skelBoneCache_t *bones,
         VectorSubtract(c, a, e2);
         CrossProduct(e1, e2, n);
         if (VectorLengthSquared(n) < 0.0001f) {
-            continue;
-        }
-        if (dented
-            && (DistanceSquared(a, joint) < 0.0001f || DistanceSquared(b, joint) < 0.0001f
-                || DistanceSquared(c, joint) < 0.0001f)) {
             continue;
         }
 
@@ -2218,7 +2125,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
     // skinned for another view of this scene already
     kept     = R_SkinCacheFetch(backEnd.currentEntity->poseId, sf, render_count, baseVertex, tangents);
     if (kept) {
-        R_GoreDropFolded(&backEnd.currentEntity->e, &TIKI_Skel_Bones[backEnd.currentEntity->e.bonestart], scale, baseIndex);
+        R_GoreDropFolded(&backEnd.currentEntity->e, baseIndex);
     }
     if (kept == 1) {
         RB_SkinArenaKeep(backEnd.currentEntity->poseId, sf, render_count, baseVertex, baseIndex, tangents);
@@ -2503,7 +2410,7 @@ void RB_SkelMesh(skelSurfaceGame_t *sf)
 
     // Added in OPM
     R_GoreDents(&backEnd.currentEntity->e, bones, scale, baseVertex, render_count);
-    R_GoreDropFolded(&backEnd.currentEntity->e, bones, scale, baseIndex);
+    R_GoreDropFolded(&backEnd.currentEntity->e, baseIndex);
 
     if (tangents) {
         // the indexes written: fewer than the surface's when the level of

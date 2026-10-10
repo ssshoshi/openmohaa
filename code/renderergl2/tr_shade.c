@@ -1693,11 +1693,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				GLSL_SetUniformSkelLights(sp, UNIFORM_SKELLIGHTS, tess.skelGpu.lights, (int)tess.skelGpu.params[3] * 3);
 			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMDENTS, tess.skelGpu.numDents);
 			if (tess.skelGpu.numDents > 0)
-			{
 				GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, tess.skelGpu.dents, tess.skelGpu.numDents * 2);
-				GLSL_SetUniformVec4(sp, UNIFORM_SKELDENTORIGIN, tess.skelGpu.dentJoint[0]);
-				GLSL_SetUniformVec4(sp, UNIFORM_SKELDENTUP, tess.skelGpu.dentJoint[1]);
-			}
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
@@ -2624,10 +2620,6 @@ void RB_EndSurface( void ) {
 		DrawNormals (input);
 	}
 	RB_SurfProfSwitch(surfProfPrev);
-	if (tess.skelGpu.active && tess.skelGpu.numDents > 0)
-	{
-		qglDisable(GL_CLIP_DISTANCE0); // RB_SkelGpuBind
-	}
 	// clear shader so we can tell we don't have any unclosed surfaces
 	tess.numIndexes = 0;
 	tess.numVertexes = 0;

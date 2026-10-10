@@ -980,8 +980,6 @@ typedef enum
 	UNIFORM_SKELLIGHTS,
 	UNIFORM_SKELNUMDENTS,
 	UNIFORM_SKELDENTS,
-	UNIFORM_SKELDENTORIGIN,
-	UNIFORM_SKELDENTUP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -3276,7 +3274,6 @@ typedef struct shaderCommands_s
 		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
 		int      numDents;     // R_GoreDentsGpu
 		vec4_t   dents[SKEL_GPU_MAX_DENTS * 2];
-		vec4_t   dentJoint[2]; // the joint the dents' bone hangs from, and up from it
 		int      numBones;     // the model's, from params[0]
 	} skelGpu;
 
@@ -3762,7 +3759,7 @@ struct skelHeaderGame_s;
 void    *RB_SkelGpuUsable(dtiki_t *tiki, struct skelSurfaceGame_s *sf, int mesh, struct skelHeaderGame_s *skelmodel);
 void     RB_SkelGpuSubmit(void *mesh);
 void     RB_SkelGpuBind(void);
-int      R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out, vec4_t *joint);
+int      R_GoreDentsGpu(const trRefEntity_t *ent, vec4_t *out);
 void     R_SkelGpuFree(void);
 void     R_SkelGpuInitImage(void);
 void     R_SkelGpuRegisterCvars(void);

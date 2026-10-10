@@ -196,9 +196,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SkelAmbient",     GLSL_VEC4 },
 	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS },
 	{ "u_SkelNumDents",    GLSL_INT },
-	{ "u_SkelDents",       GLSL_VEC4_SKELDENTS },
-	{ "u_SkelDentOrigin",  GLSL_VEC4 },
-	{ "u_SkelDentUp",      GLSL_VEC4 }
+	{ "u_SkelDents",       GLSL_VEC4_SKELDENTS }
 };
 
 typedef enum

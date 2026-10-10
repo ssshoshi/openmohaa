@@ -608,7 +608,7 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
     // a body the gore system has been at: its dents pushed in by the vertex
     // program; the triangles of a part cut off are folded to nothing and
     // draw nothing
-    tess.skelGpu.numDents = R_GoreDentsGpu(ent, tess.skelGpu.dents, tess.skelGpu.dentJoint);
+    tess.skelGpu.numDents = R_GoreDentsGpu(ent, tess.skelGpu.dents);
     return m;
 }
 
@@ -650,11 +650,6 @@ void RB_SkelGpuBind(void)
     m->vao.indexesIBO = buffer;
 
     GL_BindToTMU(tr.skelBoneImage, TMU_SKELBONES);
-
-    // what the gore dents have broken off is clipped away (lightall_vp.glsl)
-    if (tess.skelGpu.numDents > 0) {
-        qglEnable(GL_CLIP_DISTANCE0);
-    }
 
     tess.streamVao        = &m->vao;
     tess.streamBaseVertex = 0;
