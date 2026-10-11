@@ -194,6 +194,20 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 
 	return 1.0;
 }
+
+// Added in OPM: LightRay for a light in tangent space. No direction (a model
+// lit per vertex) or a light at or below the surface's plane casts no relief
+// shadow: dividing by z there made the ray NaN, and whatever that fetch read
+// put black blotches in every crevice. The shadow fades in over the first few
+// degrees above the plane, where the ray would stretch across the texture.
+float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap)
+{
+	float fade = smoothstep(0.0, 0.1, lightDir.z);
+	if (fade <= 0.0)
+		return 1.0;
+
+	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap), fade);
+}
 #endif
 
 vec3 CalcDiffuse(vec3 diffuseAlbedo, float NH, float EH, float roughness)
@@ -323,7 +337,10 @@ void main()
 #if defined(USE_PARALLAXMAP)
 	vec3 offsetDir = E * tangentToWorld;
 
-	offsetDir.xy *= -u_NormalScale.a / offsetDir.z;
+	// Added in OPM: the offset grows as 1/z toward grazing views, without
+	// bound, and slid the texture across the surface as the view moved. Cap
+	// it at 4x the depth, and fade it out where the surface is seen edge on.
+	offsetDir.xy *= -u_NormalScale.a * smoothstep(0.0, 0.25, offsetDir.z) / max(offsetDir.z, 0.25);
 
 	texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap);
 #endif
@@ -392,9 +409,7 @@ void main()
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	offsetDir = L * tangentToWorld;
-	offsetDir.xy *= u_NormalScale.a / offsetDir.z;
-	lightColor *= LightRay(texCoords, offsetDir.xy, u_NormalMap);
+	float parallaxShadow = ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
   #endif
 
 
@@ -414,6 +429,12 @@ void main()
 	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
   #else
 	ambientColor = var_ColorAmbient.rgb;
+  #endif
+
+  #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
+	// Added in OPM: the relief shadows only the direct light, after the
+	// ambient is split off; shadowing it all left lightmapped crevices black
+	lightColor *= parallaxShadow;
   #endif
 
 	NL = clamp(dot(N, L), 0.0, 1.0);
@@ -537,9 +558,7 @@ void main()
 	//lightColor *= CalcLightAttenuation(float(u_PrimaryLightDir.w > 0.0), u_PrimaryLightDir.w / sqrLightDist);
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	offsetDir = L2 * tangentToWorld;
-	offsetDir.xy *= u_NormalScale.a / offsetDir.z;
-	lightColor *= LightRay(texCoords, offsetDir.xy, u_NormalMap);
+	lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;
