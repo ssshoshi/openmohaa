@@ -1595,6 +1595,15 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				}
 			}
 
+			// Added in OPM: static models are TIKI meshes on texture atlases,
+			// whose islands are a few texels wide: any parallax offset reads
+			// a neighbouring island, and the texture swims as the view moves.
+			// Animated models are left without it in GLSL_InitLightallShader.
+			if (backEnd.currentStaticModel)
+			{
+				index &= ~LIGHTDEF_USE_PARALLAXMAP;
+			}
+
 			if (r_sunlightMode->integer && (backEnd.viewParms.flags & VPF_USESUNLIGHT) && (index & LIGHTDEF_LIGHTTYPE_MASK))
 			{
 				index |= LIGHTDEF_USE_SHADOWMAP;

@@ -337,7 +337,10 @@ void main()
 #if defined(USE_PARALLAXMAP)
 	vec3 offsetDir = E * tangentToWorld;
 
-	offsetDir.xy *= -u_NormalScale.a / offsetDir.z;
+	// Added in OPM: the offset grows as 1/z toward grazing views, without
+	// bound, and slid the texture across the surface as the view moved. Cap
+	// it at 4x the depth, and fade it out where the surface is seen edge on.
+	offsetDir.xy *= -u_NormalScale.a * smoothstep(0.0, 0.25, offsetDir.z) / max(offsetDir.z, 0.25);
 
 	texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap);
 #endif
