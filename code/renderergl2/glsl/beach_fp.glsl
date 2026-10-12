@@ -1,8 +1,9 @@
 // Added in OPM: the wet beach (tr_water.c).
 //
 // The tide is going out: the sand it has just left is wet, darker and with the
-// sky in it, and there is water standing in its hollows. Under each body lying
-// on it the sand is soaked red. Drawn over the opaque view in two passes, from
+// sky in it, and there is water standing in its hollows. Each wave that gets
+// to the shore runs on up the sand as a thin sheet with foam at its edge, and
+// drains back. Under each body lying on it the sand is soaked red. Drawn over the opaque view in two passes, from
 // where each pixel is in the world (the prepass's depth): one darkens what is
 // there (multiplied), the other adds the sky (BEACH_ADD).
 
@@ -22,11 +23,14 @@ uniform vec4      u_WaterShore;  // z: whether there is a shore line, w: where
 uniform vec4      u_WaterSky;    // the sky
 uniform vec4      u_WaterBlood;  // the colour of blood
 uniform vec4      u_BeachWet;    // how far inland the sand is wet, the highest it is, puddles (a share), their size
+uniform vec4      u_BeachSwash;  // how far up the sand a wave runs, at most
 uniform vec4      u_WaterBloodZone; // w: how many u_SandStains
 uniform vec4      u_SandStains[WATER_MAX_SPOTS]; // x, y, the ground's height, how far the blood has soaked
 
 varying vec2      var_DepthTex;
 varying vec3      var_ViewDir;
+
+const float PI = 3.14159265;
 
 float LinearDepth(float d)
 {
@@ -98,6 +102,33 @@ void main()
 		puddle = smoothstep(level, level + 0.025, hollow) * wet * smoothstep(0.92, 0.98, N.z);
 	}
 
+	// The swash: each wave runs up the sand in a thin sheet, fast, and
+	// drains back slowly. How far it gets is different from wave to wave and
+	// along the shore, and the waves get there a little apart along it, so
+	// its edge is never one line. Foam rides the edge as it comes up.
+	float sheet = 0.0, swashFoam = 0.0;
+	if (u_BeachSwash.x > 0.0 && inland > -60.0 && inland < u_BeachSwash.x * 1.4)
+	{
+		float across = dot(pos.xy, vec2(dir.y, -dir.x));
+		float cycle  = u_Time / max(u_WaterWaves.w, 0.5) + (Clouds(vec2(across / 900.0, 1.7)) - 0.5) * 1.4;
+		float wave   = floor(cycle);
+		float f      = fract(cycle);
+		float run    = u_BeachSwash.x * (0.3 + 0.85 * Clouds(vec2(across / 380.0 + wave * 3.7, wave * 1.3)));
+		float rising = f < 0.3 ? 1.0 : 0.0;
+		float ahead  = f < 0.3 ? 1.0 - (1.0 - f / 0.3) * (1.0 - f / 0.3) : 1.0 - smoothstep(0.0, 1.0, (f - 0.3) / 0.7);
+		// tongues of it run on further than the rest
+		float front  = mix(-40.0, run, ahead) + (Clouds(vec2(across / 55.0, wave * 2.1)) - 0.5) * run * 0.35;
+
+		sheet = 1.0 - smoothstep(front - 8.0, front, inland);
+		// thinner, and gone glassy, as it drains
+		sheet *= mix(0.65, 1.0, rising) * onGround;
+
+		float lace  = Clouds(pos.xy / 13.0 + dir * u_Time * 0.6) * 0.6 + Clouds(Turn(pos.xy, 0.8) / 34.0) * 0.4;
+		float band  = smoothstep(front - 34.0, front - 3.0, inland) * sheet;
+		float trail = sheet * 0.35 * (1.0 - ahead);
+		swashFoam   = clamp((band * mix(0.25, 1.0, rising) + trail) * smoothstep(0.4, 0.62, lace) * 1.6, 0.0, 0.85);
+	}
+
 	// Soaked red under the bodies, ragged and darkest under them
 	float stain = 0.0;
 	int stains = int(u_WaterBloodZone.w + 0.5);
@@ -119,7 +150,7 @@ void main()
 	}
 	stain *= onGround;
 
-	if (wet + stain <= 0.002)
+	if (wet + stain + sheet <= 0.002)
 		discard;
 
 	float dist      = distance(pos, u_ViewOrigin);
@@ -131,11 +162,12 @@ void main()
 	// stirred by the wind
 	vec2  ripple = Noise(pos.xy / 9.0 + vec2(u_Time * 0.7, u_Time * -0.4)).yz * 0.06
 	             + Noise(Turn(pos.xy, 1.7) / 4.0 + vec2(u_Time * -0.5, u_Time * 0.9)).yz * 0.03;
-	vec3  n      = normalize(N + vec3(-ripple * puddle, 0.0));
+	vec3  n      = normalize(N + vec3(-ripple * clamp(puddle + sheet, 0.0, 1.0), 0.0));
 	vec3  V      = normalize(u_ViewOrigin - pos);
 	float facing = clamp(dot(n, V), 0.0, 1.0);
 	float fresnel = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
-	float shine  = wet * fresnel * 0.45 + puddle * mix(0.08, 0.7, fresnel);
+	float shine  = wet * fresnel * 0.45 + max(puddle, sheet) * mix(0.08, 0.7, fresnel);
+	shine *= 1.0 - swashFoam;
 
 	// What it mirrors: the ray off it, followed through the view's depth
 	// until it goes behind something, which is then what is seen in it;
@@ -171,12 +203,19 @@ void main()
 	}
 	vec3 sheen = mirror * shine;
 	sheen *= mix(vec3(1.0), blood * 1.4, clamp(stain * (0.5 + puddle), 0.0, 1.0));
+
+	// the foam, lit as the sky lights it and pink with the blood in the surf
+	vec3 foamColor = mix(vec3(0.82, 0.84, 0.84), vec3(0.66, 0.42, 0.39), clamp(u_WaterBlood.a * 0.8, 0.0, 1.0));
+	foamColor *= clamp(dot(u_WaterSky.rgb, vec3(0.3)) + 0.1, 0.3, 1.0);
+	sheen += foamColor * swashFoam;
 	gl_FragColor = vec4(sheen * (1.0 - fogFactor), 1.0);
 #else
 	// darker for the water in it, darker still under standing water, and
 	// red-brown where the blood has soaked it
 	vec3 mul = vec3(mix(1.0, 0.6, wet));
-	mul *= mix(1.0, 0.55, puddle);
+	mul *= mix(1.0, 0.55, max(puddle, sheet));
+	mul *= mix(vec3(1.0), blood, sheet * clamp(u_WaterBlood.a, 0.0, 1.0) * 0.5); // the surf's blood in it
+	mul *= 1.0 - swashFoam; // the foam is what is added
 	mul *= mix(vec3(1.0), blood, stain);
 	gl_FragColor = vec4(mix(mul, vec3(1.0), fogFactor), 1.0);
 #endif

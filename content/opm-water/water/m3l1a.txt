@@ -20,6 +20,8 @@ bloodClouds 0.6
 // water standing in its hollows, and red under the dead lying on it
 beach 1200 -440
 puddles 0.3 110
+// each wave runs on up the sand this far at most, and back
+swash 170
 
 chop 1
 foam 1

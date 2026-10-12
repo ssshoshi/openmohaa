@@ -993,6 +993,9 @@ typedef enum
 	UNIFORM_WATERSPOTS,
 	UNIFORM_BEACHWET,
 	UNIFORM_SANDSTAINS,
+	UNIFORM_WORLDVIEWPROJECTION, // what the world is projected by, for a ray to be followed through the view
+	UNIFORM_WATERVIEW,           // the view's box on the screen: x, y, the far x, the far y
+	UNIFORM_BEACHSWASH,
 
 	UNIFORM_COUNT
 } uniform_t;

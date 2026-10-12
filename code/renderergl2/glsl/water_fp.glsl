@@ -1,9 +1,9 @@
 // Added in OPM: water (tr_water.c).
 //
-// What is seen of water is the light it sends back from the sky (more of it
-// the flatter one looks across it) and what comes up through it from the
-// bottom, less what the water takes on the way and plus what it scatters back
-// in its own colour. The bottom is the view as it was drawn before its water,
+// What is seen of water is the light it sends back from the sky and what
+// stands over it (more of it the flatter one looks across it) and what comes
+// up through it from the bottom, less what the water takes on the way and
+// plus what it scatters back in its own colour. The bottom is the view as it was drawn before its water,
 // moved a little by the waves; how much water lies over it comes from the
 // depth the prepass left. Where it is shallow the surf breaks and foams.
 // There is blood in it where the map says (out from its shore line, or to a
@@ -35,6 +35,8 @@ uniform vec4      u_WaterSky;   // the sky it mirrors, and how choppy it is
 uniform vec4      u_WaterLook;  // foam, refraction, sun glints, how much the blood lies in clouds
 uniform vec4      u_WaterBloodZone; // all the blood to, and none past: out from the shore line, else in depth; how many u_WaterSpots
 uniform vec4      u_WaterSpots[WATER_MAX_SPOTS]; // blood round bodies in the water: x, y, how far it has spread, how thick
+uniform mat4      u_WorldViewProjection; // the world's, to follow what it mirrors through the view
+uniform vec4      u_WaterView;           // the view's box on the screen: where it starts, where it ends
 
 varying vec3      var_Position;
 varying vec3      var_Normal;
@@ -209,19 +211,52 @@ void main()
 		alpha = 1.0 - dot(T, vec3(0.333));
 	}
 
-	// The sky in it, more of it the flatter one looks across
+	// What it mirrors, more of it the flatter one looks across: the ray off
+	// the waves followed through the view's depth until it goes behind
+	// something, which is then what is seen in it (as on the wet sand,
+	// beach_fp.glsl); else the sky. The chop only breaks it up a little.
 	vec3  R      = reflect(-V, N);
 	float up     = clamp(R.z, 0.0, 1.0);
 	vec3  sky    = mix(u_WaterSky.rgb, u_WaterSky.rgb * vec3(0.78, 0.85, 0.94), sqrt(up));
 	float cosV   = clamp(dot(N, V), 0.0, 1.0);
-	float fresnel = below ? 0.0 : 0.02 + 0.98 * pow(1.0 - cosV, 5.0);
-	fresnel = min(fresnel, 0.85);
+	float fresnel = below ? 0.0 : 0.03 + 0.97 * pow(1.0 - cosV, 4.0);
+	fresnel = min(fresnel, 0.9);
+
+	vec3 mirror = sky;
+	if (hasDepth && hasView && fresnel > 0.05)
+	{
+		vec3  Rm      = reflect(-V, normalize(var_Normal + vec3(-slope * 0.6, 0.0)));
+		float stepLen = 8.0;
+		vec3  q       = var_Position + Rm * 2.0;
+		for (int i = 0; i < 24; i++)
+		{
+			q += Rm * stepLen;
+			stepLen *= 1.2;
+
+			vec4 clip = u_WorldViewProjection * vec4(q, 1.0);
+			if (clip.w <= 0.0)
+				break;
+			vec2 at   = clip.xy / clip.w * 0.5 + 0.5;
+			if (at.x < 0.0 || at.y < 0.0 || at.x > 1.0 || at.y > 1.0)
+				break;
+			vec2 tc   = mix(u_WaterView.xy, u_WaterView.zw, at);
+
+			float behind = clip.w - LinearDepth(texture2D(u_ScreenDepthMap, tc).r);
+			if (behind > 0.0 && behind < stepLen * 2.0 + 8.0)
+			{
+				// fading towards the edge of the view, where it would run out
+				vec2 edge = min(at, 1.0 - at);
+				mirror = mix(sky, texture2D(u_ScreenImageMap, tc).rgb, smoothstep(0.0, 0.08, min(edge.x, edge.y)));
+				break;
+			}
+		}
+	}
 
 	vec3 L      = normalize(u_PrimaryLightOrigin.xyz);
 	float glint = max(dot(R, L), 0.0);
 	vec3 sun    = u_PrimaryLightColor * (pow(glint, 900.0) * 2.5 + pow(glint, 70.0) * 0.2) * u_WaterLook.z;
 
-	vec3 color = mix(under, sky, fresnel) + (below ? vec3(0.0) : sun);
+	vec3 color = mix(under, mirror, fresnel) + (below ? vec3(0.0) : sun);
 	alpha = mix(alpha, 1.0, fresnel);
 
 	// The surf: crests of the first train breaking as the bottom comes up,
@@ -254,9 +289,14 @@ void main()
 	color = mix(color, foamColor, foam);
 	alpha = max(alpha, foam);
 
-	// Soft where it meets the shore, rather than cut along it
+	// Soft where it meets the shore, and not along a ruled line: how far up
+	// the sand it gets varies along it, and the swash runs on past it
+	// (beach_fp.glsl)
 	if (hasDepth && !below)
-		alpha *= smoothstep(0.0, 3.0, depth);
+	{
+		float edge = 2.5 * Clouds(vec2(dot(p, vec2(dir.y, -dir.x)) / 240.0, t * 0.03));
+		alpha *= smoothstep(edge, edge + 3.0, depth);
+	}
 
 	float fogFactor = clamp((dist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
 	color = mix(color, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);

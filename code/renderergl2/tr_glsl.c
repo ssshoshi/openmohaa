@@ -209,7 +209,10 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_WaterBloodZone",  GLSL_VEC4 },
 	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS },
 	{ "u_BeachWet",        GLSL_VEC4 },
-	{ "u_SandStains",      GLSL_VEC4_WATERSPOTS }
+	{ "u_SandStains",      GLSL_VEC4_WATERSPOTS },
+	{ "u_WorldViewProjection", GLSL_MAT16 },
+	{ "u_WaterView",       GLSL_VEC4 },
+	{ "u_BeachSwash",      GLSL_VEC4 }
 };
 
 typedef enum

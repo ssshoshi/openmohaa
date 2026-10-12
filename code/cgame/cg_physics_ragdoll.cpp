@@ -989,13 +989,13 @@ void CG_JoltRagdollWake(int handle)
 //=============================================================
 
 // How much of a part's weight the water holds up when it is all under. A dead
-// man's chest and belly float (the air in him, and his kit) and his head and
-// limbs not quite, so he comes up and lies low in the water, face down, with
-// them hanging.
+// man's chest and belly float best (the air in him, and his kit), and his head
+// and limbs only a little less: he lies along the top of the water, low in it,
+// rather than folded at the waist with them hanging.
 static const float pr_partFloat[PR_NUM_PARTS] = {
-    1.35f, 1.35f, 1.35f, 1.35f, 1.0f, 1.0f,   // pelvis, spine, spine1, chest, neck, head
-    0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, // the arms
-    0.92f, 0.92f, 0.92f, 0.92f, 0.92f, 0.92f, // the legs
+    1.3f, 1.3f, 1.3f, 1.3f, 1.12f, 1.12f,     // pelvis, spine, spine1, chest, neck, head
+    1.12f, 1.12f, 1.12f, 1.12f, 1.12f, 1.12f, // the arms
+    1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f,       // the legs
 };
 
 // How fast a part comes to go with the water around it, and stops turning in

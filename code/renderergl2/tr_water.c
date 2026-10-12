@@ -52,6 +52,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 //     beach 900 -440          // the sand is wet this far inland of the shore line, and up to this height
 //     puddles 0.3 90          // water stands in its hollows: how much of it, and how big they are
+//     swash 160               // how far up the sand a wave runs, at most, from the shore line
 //
 // The beach is drawn over the opaque view from its depth (RB_BeachDraw,
 // glsl/beach_*.glsl): wet sand darker with the sky in it, the puddles, and the
@@ -85,6 +86,7 @@ typedef struct {
     qboolean beachSet;
     float  beachReach, beachTop;
     float  puddles, puddleSize;
+    float  swash;
     char   file[MAX_QPATH];
     qboolean fromFile;
 } waterParams_t;
@@ -237,6 +239,8 @@ void R_WaterLoadWorld(const char *mapName)
                 water.beachReach = Q_max(v[0], 1.0f);
                 water.beachTop   = v[1];
             }
+        } else if (!Q_stricmp(key, "swash")) {
+            R_WaterNumbers(&text, &water.swash, 1);
         } else if (!Q_stricmp(key, "puddles")) {
             if (R_WaterNumbers(&text, v, 2) == 2) {
                 water.puddles    = Com_Clamp(0.0f, 1.0f, v[0]);
@@ -310,6 +314,16 @@ static void R_WaterFog(shaderProgram_t *sp)
 
 static qboolean RB_WaterCopyView(void);
 
+// The view's box on the screen, a share of it across and up: where it starts,
+// and where it ends
+static void RB_WaterViewBox(vec4_t box)
+{
+    box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+    box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+    box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+    box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+}
+
 // The view as it is before its first water, for the program to see through
 static qboolean RB_WaterCopyView(void)
 {
@@ -382,6 +396,16 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     }
 
     R_WaterFog(sp);
+
+    // to follow what it mirrors through the view
+    {
+        mat4_t worldMvp;
+
+        Mat4Multiply(backEnd.viewParms.projectionMatrix, backEnd.viewParms.world.modelMatrix, worldMvp);
+        GLSL_SetUniformMat4(sp, UNIFORM_WORLDVIEWPROJECTION, worldMvp);
+        RB_WaterViewBox(v);
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERVIEW, v);
+    }
 
     GLSL_SetUniformVec4(sp, UNIFORM_WATERCOLOR, water.color);
 
@@ -466,10 +490,7 @@ void RB_BeachDraw(void)
         return;
     }
 
-    box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
-    box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
-    box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
-    box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+    RB_WaterViewBox(box);
 
     texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
     texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
@@ -519,6 +540,8 @@ void RB_BeachDraw(void)
         GLSL_SetUniformVec4(sp, UNIFORM_WATERBLOOD, water.blood);
         VectorSet4(v, water.beachReach, water.beachTop, water.puddles, water.puddleSize);
         GLSL_SetUniformVec4(sp, UNIFORM_BEACHWET, v);
+        VectorSet4(v, water.swash, 0.0f, 0.0f, 0.0f);
+        GLSL_SetUniformVec4(sp, UNIFORM_BEACHSWASH, v);
 
         {
             const int stains = r_waterBlood->value > 0.0f ? numSandStains : 0;
@@ -562,7 +585,8 @@ void R_WaterInfo_f(void)
         }
     }
     if (water.beachSet) {
-        ri.Printf(PRINT_ALL, "  beach %g %g  puddles %g %g%s\n", water.beachReach, water.beachTop, water.puddles, water.puddleSize,
+        ri.Printf(PRINT_ALL, "  beach %g %g  puddles %g %g  swash %g%s\n", water.beachReach, water.beachTop, water.puddles,
+            water.puddleSize, water.swash,
             water.shoreSet ? "" : "  (no shore line: not drawn)");
     }
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
