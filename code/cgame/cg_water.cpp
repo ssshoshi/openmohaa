@@ -43,9 +43,19 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // move it, and fades once it is out of the water or gone. The renderer draws
 // them (RE_SetWaterBlood): the WATER_BLOOD_SENT nearest the view, of up to
 // WATER_BLOOD_MAX, the newest kept.
+//
+// Where the map has a beach (`beach` in its file: the sand the falling tide
+// has left wet), a body lying on it soaks the sand under it red. The renderer
+// stains the beach round each, out to a radius that grows from when the body
+// came to rest, and is there from the start for the dead the map placed.
+//
+// The dead the map placed are static models (models/static/body_*.tik), and
+// none of them is a ragdoll: read from the map as it loads, each one gets its
+// blood at once, fully spread, in the water or on the sand where it lies.
 
 #include "cg_local.h"
 #include "cg_water.h"
+#include "../qcommon/qfiles.h"
 
 cvar_t *cg_water_float;
 cvar_t *cg_water_blood;
@@ -63,12 +73,20 @@ cvar_t *cg_water_blood;
 #define WATER_BLOOD_FADE    6000    // and then ms to fade
 #define WATER_BLOOD_TRAIL   0.35f   // how fast the cloud follows its body, a share a second
 
+#define WATER_STAIN_MAX     64      // bodies on the sand whose stains are kept
+#define WATER_STAIN_START   0.35f   // how much of its full size a stain has at first
+#define WATER_STAIN_SLOW    14.0f   // seconds for it to spread most of the way
+#define WATER_STAIN_MOVED   24.0f   // how far a body moves before its stain is traced afresh
+#define WATER_STAIN_FADE    4000    // ms a stain lasts after its body is gone
+
 typedef struct {
     char   map[MAX_QPATH];
     vec2_t dir;
     float  length, period, height;
     float  surf;
     float  drift, surge;
+    qboolean beach;
+    qboolean hasFile;
 } cgWater_t;
 
 static cgWater_t cg_water;
@@ -80,9 +98,22 @@ typedef struct {
     int      lastSeen; // when it was last in it
     vec2_t   at;       // the cloud's middle, trailing the body
     vec2_t   bodyAt;   // where the body was last in the water
+    qboolean placed;   // one of the dead the map placed: for good
 } cgWaterBlood_t;
 
 static cgWaterBlood_t cg_waterBlood[WATER_BLOOD_MAX];
+
+typedef struct {
+    qboolean used;
+    int      body, born;
+    int      since;    // when it began to spread
+    int      lastSeen;
+    vec3_t   at;       // on the ground under the body
+    float    radius;   // how far it goes in the end
+    qboolean placed;   // one of the dead the map placed: for good
+} cgWaterStain_t;
+
+static cgWaterStain_t cg_waterStains[WATER_STAIN_MAX];
 static int            cg_waterBloodTime;
 static int            cg_waterBloodSent;
 
@@ -92,6 +123,7 @@ void CG_InitWater(void)
     cg_water_blood = cgi.Cvar_Get("cg_water_blood", "1", CVAR_ARCHIVE);
     cg_water.map[0] = 0;
     memset(cg_waterBlood, 0, sizeof(cg_waterBlood));
+    memset(cg_waterStains, 0, sizeof(cg_waterStains));
     cg_waterBloodTime = 0;
     cg_waterBloodSent = 0;
 }
@@ -107,6 +139,8 @@ static void CG_WaterDefaults(void)
     cg_water.surf   = 18.0f;
     cg_water.drift  = 0.0f;
     cg_water.surge  = 0.0f;
+    cg_water.beach  = qfalse;
+    cg_water.hasFile = qfalse;
 }
 
 static int CG_WaterNumbers(char **text, float *out, int n)
@@ -164,12 +198,15 @@ static void CG_WaterLoad(void)
             CG_WaterNumbers(&text, &cg_water.drift, 1);
         } else if (!Q_stricmp(key, "surge")) {
             CG_WaterNumbers(&text, &cg_water.surge, 1);
+        } else if (!Q_stricmp(key, "beach")) {
+            cg_water.beach = CG_WaterNumbers(&text, v, 2) == 2;
         }
         // the rest is the renderer's
         SkipRestOfLine(&text);
     }
 
     cgi.FS_FreeFile(buf);
+    cg_water.hasFile = qtrue;
 
     {
         const float l = sqrt(cg_water.dir[0] * cg_water.dir[0] + cg_water.dir[1] * cg_water.dir[1]);
@@ -184,11 +221,15 @@ static void CG_WaterLoad(void)
     }
 }
 
+static void CG_WaterPlacedDead(void);
+
 static void CG_WaterCheckMap(void)
 {
     if (Q_stricmp(cg_water.map, cgs.mapname)) {
-        CG_WaterLoad();
         memset(cg_waterBlood, 0, sizeof(cg_waterBlood));
+        memset(cg_waterStains, 0, sizeof(cg_waterStains));
+        CG_WaterLoad();
+        CG_WaterPlacedDead();
     }
 }
 
@@ -265,6 +306,84 @@ void CG_WaterFlow(const vec3_t p, float depth, vec3_t out)
     out[2] = 0.0f;
 }
 
+static qboolean CG_WaterStainGround(const vec3_t at, vec3_t ground);
+
+// The dead the map placed, static models: their blood, there from the start
+static void CG_WaterPlacedDead(void)
+{
+    dheader_t             header;
+    const lump_t         *lump;
+    const cStaticModel_t *in;
+    void                 *buf = NULL;
+    long                  len;
+    int                   count, i, nBlood = 0, nStain = 0;
+
+    if (!cg_water.hasFile || !cg_water_blood->integer || !cgs.mapname[0]) {
+        return;
+    }
+
+    len = cgi.FS_ReadFile(cgs.mapname, &buf, qtrue);
+    if (len < (long)sizeof(dheader_t) || !buf) {
+        if (buf) {
+            cgi.FS_FreeFile(buf);
+        }
+        return;
+    }
+
+    memcpy(&header, buf, sizeof(header));
+    for (i = 0; i < (int)(sizeof(dheader_t) / 4); i++) {
+        ((int *)&header)[i] = LittleLong(((int *)&header)[i]);
+    }
+    lump  = Q_GetLumpByVersion(&header, LUMP_STATICMODELDEF);
+    count = (lump->fileofs > 0 && lump->filelen > 0 && lump->fileofs + lump->filelen <= len)
+              ? lump->filelen / (int)sizeof(cStaticModel_t)
+              : 0;
+    in    = (const cStaticModel_t *)((const byte *)buf + lump->fileofs);
+
+    for (i = 0; i < count; i++) {
+        char            name[sizeof(in[i].model) + 1];
+        vec3_t          at, ground;
+        cgWaterSample_t water;
+
+        memcpy(name, in[i].model, sizeof(in[i].model));
+        name[sizeof(in[i].model)] = 0;
+        if (!Q_stristr(name, "/body_")) {
+            continue;
+        }
+
+        VectorCopy(in[i].origin, at);
+        at[2] += 8.0f;
+
+        if (CG_WaterSample(at, &water) && water.surface > at[2] - 8.0f) {
+            if (nBlood < WATER_BLOOD_MAX / 2) {
+                cgWaterBlood_t *b = &cg_waterBlood[nBlood++];
+
+                b->used     = qtrue;
+                b->body     = -1 - i;
+                b->born     = 0;
+                b->wentIn   = cg.time - 600000;
+                b->lastSeen = cg.time;
+                b->at[0] = b->bodyAt[0] = at[0];
+                b->at[1] = b->bodyAt[1] = at[1];
+                b->placed = qtrue;
+            }
+        } else if (cg_water.beach && nStain < WATER_STAIN_MAX / 2 && CG_WaterStainGround(at, ground)) {
+            cgWaterStain_t *st = &cg_waterStains[nStain++];
+
+            st->used     = qtrue;
+            st->body     = -1 - i;
+            st->born     = 0;
+            st->since    = cg.time - 600000;
+            st->lastSeen = cg.time;
+            VectorCopy(ground, st->at);
+            st->radius = 62.0f + (float)((unsigned)(i * 2654435761u) % 1000) * 0.035f;
+            st->placed = qtrue;
+        }
+    }
+
+    cgi.FS_FreeFile(buf);
+}
+
 void CG_WaterBleed(int body, int born, const vec3_t at)
 {
     cgWaterBlood_t *b, *oldest = NULL, *slot = NULL;
@@ -311,6 +430,77 @@ void CG_WaterBleed(int body, int born, const vec3_t at)
     slot->at[1]    = at[1];
     slot->bodyAt[0] = at[0];
     slot->bodyAt[1] = at[1];
+    slot->placed    = qfalse;
+}
+
+// Where under the body the ground is
+static qboolean CG_WaterStainGround(const vec3_t at, vec3_t ground)
+{
+    trace_t tr;
+    vec3_t  end;
+
+    VectorSet(end, at[0], at[1], at[2] - 64.0f);
+    CG_Trace(&tr, at, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, MASK_SOLID, qfalse, qfalse, "blood on the sand");
+    if (tr.startsolid || tr.fraction >= 1.0f) {
+        return qfalse;
+    }
+    VectorCopy(tr.endpos, ground);
+    return qtrue;
+}
+
+void CG_WaterStain(int body, int born, const vec3_t at, qboolean longDead)
+{
+    cgWaterStain_t *st, *slot = NULL, *oldest = NULL;
+    vec3_t          ground;
+    int             i;
+
+    if (!cg_water_blood->integer) {
+        return;
+    }
+    CG_WaterCheckMap();
+    if (!cg_water.beach) {
+        return;
+    }
+
+    for (i = 0; i < WATER_STAIN_MAX; i++) {
+        st = &cg_waterStains[i];
+        if (st->used && st->body == body && st->born == born) {
+            st->lastSeen = cg.time;
+            // moved on (the waves, a blast): it bleeds where it lies now
+            if (Square(at[0] - st->at[0]) + Square(at[1] - st->at[1]) > Square(WATER_STAIN_MOVED)
+                && CG_WaterStainGround(at, ground)) {
+                VectorCopy(ground, st->at);
+            }
+            return;
+        }
+        if (!st->used) {
+            if (!slot) {
+                slot = st;
+            }
+        } else if (!oldest || st->lastSeen < oldest->lastSeen) {
+            oldest = st;
+        }
+    }
+
+    if (!CG_WaterStainGround(at, ground)) {
+        return;
+    }
+    if (!slot) {
+        if (cg.time - oldest->lastSeen <= WATER_BLOOD_LINGER) {
+            return;
+        }
+        slot = oldest;
+    }
+
+    slot->used     = qtrue;
+    slot->body     = body;
+    slot->born     = born;
+    slot->since    = longDead ? cg.time - 600000 : cg.time;
+    slot->lastSeen = cg.time;
+    VectorCopy(ground, slot->at);
+    // each his own size, from where and when he was
+    slot->radius = 62.0f + (float)((unsigned)(body * 2654435761u + born) % 1000) * 0.035f;
+    slot->placed = qfalse;
 }
 
 // The body's blood follows it, a share of the way a second, so a body the
@@ -323,11 +513,66 @@ static void CG_WaterBloodFollow(cgWaterBlood_t *b, float dt)
     b->at[1] += (b->bodyAt[1] - b->at[1]) * share;
 }
 
+// The stains to send, the nearest the view first: x, y, the ground's height, how far
+static int CG_WaterStainsFrame(float stains[WATER_STAIN_MAX][4])
+{
+    float away[WATER_STAIN_MAX];
+    int   n = 0, i;
+
+    for (i = 0; i < WATER_STAIN_MAX; i++) {
+        cgWaterStain_t *st = &cg_waterStains[i];
+        float           grown, gone = 1.0f;
+
+        if (!st->used) {
+            continue;
+        }
+        if (st->placed) {
+            st->lastSeen = cg.time;
+        }
+        if (cg.time < st->lastSeen) {
+            st->used = qfalse; // a game restored to before it
+            continue;
+        }
+        // its body taken away: the stain goes too, a little after
+        if (cg.time - st->lastSeen > WATER_BLOOD_LINGER) {
+            gone = 1.0f - (float)(cg.time - st->lastSeen - WATER_BLOOD_LINGER) / WATER_STAIN_FADE;
+            if (gone <= 0.0f) {
+                st->used = qfalse;
+                continue;
+            }
+        }
+
+        grown = WATER_STAIN_START + (1.0f - WATER_STAIN_START) * (1.0f - exp(-(cg.time - st->since) * 0.001f / WATER_STAIN_SLOW));
+
+        stains[n][0] = st->at[0];
+        stains[n][1] = st->at[1];
+        stains[n][2] = st->at[2];
+        stains[n][3] = st->radius * grown * gone;
+        away[n]      = Square(st->at[0] - cg.refdef.vieworg[0]) + Square(st->at[1] - cg.refdef.vieworg[1]);
+        n++;
+    }
+
+    while (n > WATER_BLOOD_SENT) {
+        int far = 0;
+
+        for (i = 1; i < n; i++) {
+            if (away[i] > away[far]) {
+                far = i;
+            }
+        }
+        n--;
+        memcpy(stains[far], stains[n], sizeof(stains[far]));
+        away[far] = away[n];
+    }
+    return n;
+}
+
 void CG_WaterBloodFrame(void)
 {
     float spots[WATER_BLOOD_MAX][4];
+    float stains[WATER_STAIN_MAX][4];
     float away[WATER_BLOOD_MAX];
-    int   n = 0, i;
+    int   n = 0, numStains, i;
     float dt;
 
     if (!cgi.R_SetWaterBlood || cgi.apiversion < 7) {
@@ -346,6 +591,9 @@ void CG_WaterBloodFrame(void)
 
         if (!b->used) {
             continue;
+        }
+        if (b->placed) {
+            b->lastSeen = cg.time;
         }
         // a game restored to before it went in
         if (cg.time < b->wentIn) {
@@ -392,12 +640,15 @@ void CG_WaterBloodFrame(void)
         away[far] = away[n];
     }
 
+    numStains = CG_WaterStainsFrame(stains);
+
     if (!cg_water_blood->integer) {
-        n = 0;
+        n         = 0;
+        numStains = 0;
     }
     // nothing to say twice when there is none
-    if (n || cg_waterBloodSent) {
-        cgi.R_SetWaterBlood(&spots[0][0], n);
+    if (n || numStains || cg_waterBloodSent) {
+        cgi.R_SetWaterBlood(&spots[0][0], n, &stains[0][0], numStains);
     }
-    cg_waterBloodSent = n;
+    cg_waterBloodSent = n + numStains;
 }

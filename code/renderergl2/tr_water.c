@@ -48,6 +48,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //     sky 0.5 0.55 0.6        // the sky it mirrors (else the fog's colour)
 //     chop 1  foam 1  refraction 0.03  glints 1
 //
+// And where the map has a beach the tide is going out from (it needs `shore`):
+//
+//     beach 900 -440          // the sand is wet this far inland of the shore line, and up to this height
+//     puddles 0.3 90          // water stands in its hollows: how much of it, and how big they are
+//
+// The beach is drawn over the opaque view from its depth (RB_BeachDraw,
+// glsl/beach_*.glsl): wet sand darker with the sky in it, the puddles, and the
+// sand soaked red under each body lying on it (the cgame says where they lie).
+//
 // The cgame reads the same file for how floating bodies move (cg_water.cpp),
 // and the first wave train is the one it pushes them with. It also says each
 // frame where there are bodies in the water (RE_SetWaterBlood), and the water
@@ -73,6 +82,9 @@ typedef struct {
     vec3_t sky;
     qboolean skySet;
     float  chop, foam, refraction, glints;
+    qboolean beachSet;
+    float  beachReach, beachTop;
+    float  puddles, puddleSize;
     char   file[MAX_QPATH];
     qboolean fromFile;
 } waterParams_t;
@@ -82,6 +94,10 @@ static waterParams_t water;
 // the clouds of blood round bodies in water: x, y, radius, strength
 static vec4_t waterSpots[WATER_MAX_SPOTS];
 static int    numWaterSpots;
+
+// the sand soaked under bodies on a beach: x, y, the ground's height, radius
+static vec4_t sandStains[WATER_MAX_SPOTS];
+static int    numSandStains;
 
 void R_WaterRegisterCvars(void)
 {
@@ -137,11 +153,15 @@ how thick their blood has spread round them (x, y, radius, strength). They
 hold until it says otherwise.
 ===============
 */
-void RE_SetWaterBlood(const float *spots, int numSpots)
+void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains)
 {
     numWaterSpots = Com_Clamp(0, WATER_MAX_SPOTS, numSpots);
     if (numWaterSpots) {
         Com_Memcpy(waterSpots, spots, numWaterSpots * sizeof(vec4_t));
+    }
+    numSandStains = Com_Clamp(0, WATER_MAX_SPOTS, numStains);
+    if (numSandStains) {
+        Com_Memcpy(sandStains, stains, numSandStains * sizeof(vec4_t));
     }
 }
 
@@ -155,6 +175,7 @@ void R_WaterLoadWorld(const char *mapName)
 
     R_WaterDefaults();
     numWaterSpots = 0;
+    numSandStains = 0;
 
     Com_sprintf(water.file, sizeof(water.file), "water/%s.txt", mapName);
     if (ri.FS_ReadFile(water.file, &buffer.v) <= 0) {
@@ -210,6 +231,17 @@ void R_WaterLoadWorld(const char *mapName)
             R_WaterNumbers(&text, &water.refraction, 1);
         } else if (!Q_stricmp(key, "glints")) {
             R_WaterNumbers(&text, &water.glints, 1);
+        } else if (!Q_stricmp(key, "beach")) {
+            if (R_WaterNumbers(&text, v, 2) == 2) {
+                water.beachSet   = qtrue;
+                water.beachReach = Q_max(v[0], 1.0f);
+                water.beachTop   = v[1];
+            }
+        } else if (!Q_stricmp(key, "puddles")) {
+            if (R_WaterNumbers(&text, v, 2) == 2) {
+                water.puddles    = Com_Clamp(0.0f, 1.0f, v[0]);
+                water.puddleSize = Q_max(v[1], 8.0f);
+            }
         }
         // anything else is the cgame's, or unknown: the rest of its line goes
         SkipRestOfLine(&text);
@@ -246,6 +278,37 @@ void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage)
     sh->numDeforms = 0;
     sh->vertexAttribs |= ATTR_POSITION | ATTR_NORMAL;
 }
+
+// The sky water mirrors: the map's, else what the fog is, else a grey one
+static void R_WaterSky(vec4_t out)
+{
+    if (water.skySet) {
+        VectorCopy(water.sky, out);
+    } else if (backEnd.globalFogEnabled) {
+        VectorCopy(backEnd.globalFogColor, out);
+    } else {
+        VectorCopy(water.sky, out);
+    }
+    out[3] = 0.0f;
+}
+
+// The fog, as an opaque stage takes it
+static void R_WaterFog(shaderProgram_t *sp)
+{
+    vec4_t color;
+    vec2_t params = {0.0f, 0.0f};
+
+    VectorClear4(color);
+    if (backEnd.globalFogEnabled && !tess.no_global_fog) {
+        VectorCopy4(backEnd.globalFogColor, color);
+        params[0] = backEnd.globalFogStart;
+        params[1] = backEnd.globalFogInvRange;
+    }
+    GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, color);
+    GLSL_SetUniformVec2(sp, UNIFORM_GLOBALFOGPARAMS, params);
+}
+
+static qboolean RB_WaterCopyView(void);
 
 // The view as it is before its first water, for the program to see through
 static qboolean RB_WaterCopyView(void)
@@ -318,19 +381,7 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
         GLSL_SetUniformVec3(sp, UNIFORM_PRIMARYLIGHTCOLOR, sun);
     }
 
-    // the fog, as an opaque stage takes it
-    if (backEnd.globalFogEnabled && !tess.no_global_fog) {
-        vec2_t params = {backEnd.globalFogStart, backEnd.globalFogInvRange};
-
-        GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, backEnd.globalFogColor);
-        GLSL_SetUniformVec2(sp, UNIFORM_GLOBALFOGPARAMS, params);
-    } else {
-        vec2_t params = {0.0f, 0.0f};
-
-        VectorClear4(v);
-        GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, v);
-        GLSL_SetUniformVec2(sp, UNIFORM_GLOBALFOGPARAMS, params);
-    }
+    R_WaterFog(sp);
 
     GLSL_SetUniformVec4(sp, UNIFORM_WATERCOLOR, water.color);
 
@@ -358,14 +409,7 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
         }
     }
 
-    // the sky it mirrors: the map's, else what the fog is, else a grey one
-    if (water.skySet) {
-        VectorCopy(water.sky, v);
-    } else if (backEnd.globalFogEnabled) {
-        VectorCopy(backEnd.globalFogColor, v);
-    } else {
-        VectorCopy(water.sky, v);
-    }
+    R_WaterSky(v);
     v[3] = water.chop;
     GLSL_SetUniformVec4(sp, UNIFORM_WATERSKY, v);
 
@@ -394,6 +438,108 @@ void R_WaterReload_f(void)
     R_WaterInfo_f();
 }
 
+/*
+===============
+RB_BeachDraw
+
+The beach the tide is leaving, over the opaque view: called once a view,
+between the opaque world and anything blended (RB_RenderDrawSurfList). Two
+passes over the view, each pixel placed in the world from the prepass's depth:
+the first darkens the sand (wet, under water standing in it, soaked red under
+bodies), the second adds the sky it mirrors.
+===============
+*/
+void RB_BeachDraw(void)
+{
+    vec4_t quadVerts[4];
+    vec2_t texCoords[4];
+    vec4_t box, v;
+    vec3_t viewVector;
+    mat4_t worldMvp;
+    float  zmax, xmax, ymax;
+    qboolean hasView;
+    int    pass;
+
+    if (!water.beachSet || !water.shoreSet || !tr.beachShader[1].program || !backEnd.softDepth || !tr.hdrDepthImage
+        || backEnd.projection2D || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+        || (backEnd.refdef.rdflags & RDF_NOWORLDMODEL)) {
+        return;
+    }
+
+    box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+    box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+    box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+    box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+
+    texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
+    texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
+    texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
+    texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
+
+    VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+    VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+    VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+    VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+
+    zmax = backEnd.viewParms.zFar;
+    ymax = zmax * tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+    xmax = zmax * tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+
+    // what the wet sand mirrors: the view as it is now
+    hasView = RB_WaterCopyView();
+    Mat4Multiply(backEnd.viewParms.projectionMatrix, backEnd.viewParms.world.modelMatrix, worldMvp);
+
+    for (pass = 0; pass < 2; pass++) {
+        shaderProgram_t *sp = &tr.beachShader[pass];
+
+        GLSL_BindProgram(sp);
+        GL_BindToTMU(tr.hdrDepthImage, TB_COLORMAP);
+        GL_BindToTMU(hasView ? tr.waterSceneImage : tr.whiteImage, TB_LIGHTMAP);
+        GLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, worldMvp);
+
+        GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.refdef.vieworg);
+        VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+        GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, viewVector);
+        VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+        GLSL_SetUniformVec3(sp, UNIFORM_VIEWLEFT, viewVector);
+        VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+        GLSL_SetUniformVec3(sp, UNIFORM_VIEWUP, viewVector);
+
+        VectorSet4(v, backEnd.viewParms.zNear > 0 ? backEnd.viewParms.zNear : r_znear->value, zmax,
+            box[2] - box[0], box[3] - box[1]);
+        GLSL_SetUniformVec4(sp, UNIFORM_VIEWINFO, v);
+        GLSL_SetUniformFloat(sp, UNIFORM_TIME, backEnd.refdef.floatTime);
+        R_WaterFog(sp);
+
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERWAVES, water.waves);
+        VectorSet4(v, water.height, water.surf, 1.0f, water.shore);
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERSHORE, v);
+        R_WaterSky(v);
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERSKY, v);
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERBLOOD, water.blood);
+        VectorSet4(v, water.beachReach, water.beachTop, water.puddles, water.puddleSize);
+        GLSL_SetUniformVec4(sp, UNIFORM_BEACHWET, v);
+
+        {
+            const int stains = r_waterBlood->value > 0.0f ? numSandStains : 0;
+
+            VectorSet4(v, 0.0f, 0.0f, 0.0f, stains);
+            GLSL_SetUniformVec4(sp, UNIFORM_WATERBLOODZONE, v);
+            if (stains) {
+                GLSL_SetUniformWaterSpots(sp, UNIFORM_SANDSTAINS, sandStains, stains);
+            }
+        }
+
+        GL_State(GLS_DEPTHTEST_DISABLE | (pass ? (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE) : (GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO)));
+        GL_Cull(CT_TWO_SIDED);
+
+        RB_InstantQuad2(quadVerts, texCoords);
+    }
+
+    // the water is to see the beach as it is now
+    backEnd.waterScene = qfalse;
+}
+
 void R_WaterInfo_f(void)
 {
     ri.Printf(PRINT_ALL, "Water: %s, %s\n", r_water->integer && tr.waterShader.program ? "the water program" : "the shaders' stages",
@@ -406,7 +552,19 @@ void R_WaterInfo_f(void)
         water.shoreSet ? va("shore %g  bloodReach %g %g", water.shore, water.reachNear, water.reachFar)
                        : va("bloodDepth %g %g", water.bloodNear, water.bloodFar),
         water.bloodClouds);
-    ri.Printf(PRINT_ALL, "  %d bodies' blood in the water\n", numWaterSpots);
+    ri.Printf(PRINT_ALL, "  %d bodies' blood in the water, %d on the sand\n", numWaterSpots, numSandStains);
+    if (ri.Cmd_Argc() > 1) {
+        int i;
+
+        for (i = 0; i < numSandStains; i++) {
+            ri.Printf(PRINT_ALL, "    on the sand at %.0f %.0f %.0f, %.0f across\n", sandStains[i][0], sandStains[i][1],
+                sandStains[i][2], sandStains[i][3]);
+        }
+    }
+    if (water.beachSet) {
+        ri.Printf(PRINT_ALL, "  beach %g %g  puddles %g %g%s\n", water.beachReach, water.beachTop, water.puddles, water.puddleSize,
+            water.shoreSet ? "" : "  (no shore line: not drawn)");
+    }
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
         water.chop, water.foam, water.refraction, water.glints);
 }

@@ -53,6 +53,8 @@ extern const char *fallbackShader_texturecolor_fp;
 extern const char *fallbackShader_tonemap_vp;
 extern const char *fallbackShader_tonemap_fp;
 extern const char *fallbackShader_water_vp;
+extern const char *fallbackShader_beach_vp;
+extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
 extern const char* fallbackShader_greyscale_vp;
 extern const char* fallbackShader_greyscale_fp;
@@ -205,7 +207,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_WaterSky",        GLSL_VEC4 },
 	{ "u_WaterLook",       GLSL_VEC4 },
 	{ "u_WaterBloodZone",  GLSL_VEC4 },
-	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS }
+	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS },
+	{ "u_BeachWet",        GLSL_VEC4 },
+	{ "u_SandStains",      GLSL_VEC4_WATERSPOTS }
 };
 
 typedef enum
@@ -2186,6 +2190,27 @@ void GLSL_InitGPUShaders(void)
 		{
 			ri.Printf(PRINT_WARNING, "WARNING: the water program did not compile, water keeps its stages\n");
 		}
+
+		// the wet beach the tide leaves: darkened, then the sky in it
+		for (i = 0; i < 2; i++)
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			if (qglesMajorVersion < 3 && glRefConfig.standardDerivatives)
+				Q_strcat(extradefines, 1024, "#extension GL_OES_standard_derivatives : enable\n");
+			Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+			if (i)
+				Q_strcat(extradefines, 1024, "#define BEACH_ADD\n");
+
+			if (!GLSL_InitGPUShader(&tr.beachShader[i], "beach", attribs, qtrue, extradefines, qtrue, fallbackShader_beach_vp, fallbackShader_beach_fp))
+				break;
+
+			GLSL_InitUniforms(&tr.beachShader[i]);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_FinishGPUShader(&tr.beachShader[i]);
+			numEtcShaders++;
+		}
 	}
 
 #if 0
@@ -2253,6 +2278,8 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);
+	GLSL_DeleteGPUShader(&tr.beachShader[0]);
+	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 
 	for ( i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.depthBlurShader[i]);

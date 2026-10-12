@@ -55,6 +55,11 @@ extern "C" {
     // another body starts a cloud of its own.
     void CG_WaterBleed(int body, int born, const vec3_t at);
 
+    // A body is lying on the ground, its middle there. Where the map has a
+    // beach (water/<map>.txt), the sand under it soaks red, spreading from
+    // when it lay down; at once for a body the map placed there long dead.
+    void CG_WaterStain(int body, int born, const vec3_t at, qboolean longDead);
+
     // Once a frame: the clouds grow and drift, those of bodies gone from the
     // water fade, and the renderer is told where they are.
     void CG_WaterBloodFrame(void);

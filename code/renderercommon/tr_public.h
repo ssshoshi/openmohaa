@@ -202,9 +202,10 @@ typedef struct {
 
     // Added in OPM
     //  Where there are bodies in water and how far their blood has spread,
-    //  four floats each: x, y, radius, strength. Held until set again; a
-    //  renderer that draws no blood in water ignores it.
-    void (*SetWaterBlood)(const float *spots, int numSpots);
+    //  four floats each: x, y, radius, strength; and bodies lying on a beach
+    //  and the sand their blood has soaked: x, y, the ground's height, radius.
+    //  Held until set again; a renderer that draws neither ignores them.
+    void (*SetWaterBlood)(const float *spots, int numSpots, const float *stains, int numStains);
 } refexport_t;
 
 //

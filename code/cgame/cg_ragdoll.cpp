@@ -10218,9 +10218,12 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             // (cg_water.cpp), however still it lies between them
             const qboolean afloat = rd->jolt && CG_JoltRagdollFloating(rd->jolt);
 
-            // and it bleeds into the water (cg_water.cpp)
+            // and it bleeds into the water (cg_water.cpp), or lying on the
+            // sand, into that
             if (afloat) {
                 CG_WaterBleed(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p);
+            } else if (rd->restingSince) {
+                CG_WaterStain(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p, CG_RagdollPosedCorpse(model));
             }
 
             if (!supported || afloat) {
@@ -10284,6 +10287,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     // goes there. Nothing is being solved, so only the entity is recorded.
     if (rd->state == RD_SLEEPING) {
         CG_RagdollDumpSleeping(rd);
+        // Added in OPM: on a beach, the sand under it goes red (cg_water.cpp)
+        CG_WaterStain(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p, CG_RagdollPosedCorpse(model));
     }
 
     // A sleeping ragdoll keeps emitting the matrices it settled on. That is

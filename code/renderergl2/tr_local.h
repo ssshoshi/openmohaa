@@ -991,6 +991,8 @@ typedef enum
 	UNIFORM_WATERLOOK,
 	UNIFORM_WATERBLOODZONE,
 	UNIFORM_WATERSPOTS,
+	UNIFORM_BEACHWET,
+	UNIFORM_SANDSTAINS,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2506,6 +2508,7 @@ typedef struct {
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
+	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
 
 	// -----------------------------------------
@@ -3776,9 +3779,10 @@ void R_WaterRegisterCvars(void);
 void R_WaterLoadWorld(const char *mapName);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
+void RB_BeachDraw(void);
 void R_WaterInfo_f(void);
 void R_WaterReload_f(void);
-void RE_SetWaterBlood(const float *spots, int numSpots);
+void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 
 // tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
 struct skelSurfaceGame_s;

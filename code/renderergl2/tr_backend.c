@@ -456,6 +456,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				i;
 	drawSurf_t		*drawSurf;
 	int				oldSort;
+	qboolean		beachDrawn = qfalse;
 	double			originalTime;
 	FBO_t*			fbo = NULL;
 	qboolean		bStaticModel, oldbStaticModel;
@@ -531,6 +532,17 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
         }
         //=========================
 		cubemapIndex = drawSurf->cubemapIndex;
+
+		// Added in OPM: the wet beach, over the opaque world and under
+		// anything blended (tr_water.c)
+		if (!beachDrawn && !backEnd.depthFill && shader && shader->sort > SS_OPAQUE) {
+			if (oldShader != NULL) {
+				RB_EndSurface();
+				oldShader = NULL;
+			}
+			RB_BeachDraw();
+			beachDrawn = qtrue;
+		}
 
 		//
 		// change the tess parameters if needed
@@ -757,6 +769,10 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// draw the contents of the last shader batch
 	if (oldShader != NULL) {
 		RB_EndSurface();
+	}
+	// Added in OPM: the beach, when nothing blended came after the world
+	if (!beachDrawn && !backEnd.depthFill) {
+		RB_BeachDraw();
 	}
 	RB_SurfProfEnd();
 

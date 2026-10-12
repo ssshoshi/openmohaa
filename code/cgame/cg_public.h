@@ -475,9 +475,9 @@ functions exported to the main executable
         void (*CM_EnableBrush)(int brushNum);
 
         // Added in OPM, API version 7
-        //  Bodies' blood in water. See refexport_t. NULL with a renderer that
-        //  draws none.
-        void (*R_SetWaterBlood)(const float *spots, int numSpots);
+        //  Bodies' blood in water, and on the sand. See refexport_t. NULL with
+        //  a renderer that draws none.
+        void (*R_SetWaterBlood)(const float *spots, int numSpots, const float *stains, int numStains);
 
     } clientGameImport_t;
 

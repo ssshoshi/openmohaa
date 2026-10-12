@@ -16,6 +16,11 @@ blood 0.2 0.022 0.016 0.45
 bloodReach 150 520
 bloodClouds 0.6
 
+// the tide is going out: wet sand up the beach from the waterline, with
+// water standing in its hollows, and red under the dead lying on it
+beach 1200 -440
+puddles 0.3 110
+
 chop 1
 foam 1
 refraction 0.03
