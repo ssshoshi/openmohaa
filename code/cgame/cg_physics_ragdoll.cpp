@@ -47,6 +47,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_physics_local.h"
 #include "cg_physics_ragdoll.h"
+#include "cg_water.h"
 
 #include <vector>
 
@@ -200,6 +201,11 @@ typedef struct {
     qboolean contact[RD_NUM_JOINTS];
     vec3_t   contactNormal[RD_NUM_JOINTS];
     int      onBodyMask;
+
+    // In water (CG_JoltRagdollFloat): how thick each part is, metres, and
+    // whether the water held any of it up in the latest step.
+    float    radius[PR_NUM_PARTS];
+    qboolean floating;
 } prRagdoll_t;
 
 static prRagdoll_t pr_ragdolls[PR_MAX_RAGDOLLS];
@@ -528,6 +534,7 @@ int CG_JoltRagdollCreate(
         const float ra = Q_max(radius[def->a], 1.0f) * PHYS_UNITS_TO_METRES;
         const float rb = Q_max(radius[def->b], 1.0f) * PHYS_UNITS_TO_METRES;
         r              = Q_max(ra, rb);
+        pr->radius[i]  = (ra + rb) * 0.5f;
 
         // The pelvis also spans the hips and the chest the shoulders, which is
         // where the legs and arms hang from.
@@ -693,6 +700,7 @@ int CG_JoltRagdollCreate(
     }
 
     pr->used        = qtrue;
+    pr->floating    = qfalse;
     pr->holdJoint   = -1;
     pr->anchor      = JPH::BodyID();
     pr->hold        = NULL;
@@ -976,8 +984,88 @@ void CG_JoltRagdollWake(int handle)
     }
 }
 
-// Each step of the world: the hold on the death pose easing off, and the
-// anchor of a body held by the grabber carried towards the end of the beam.
+//=============================================================
+// In water
+//=============================================================
+
+// How much of a part's weight the water holds up when it is all under. A dead
+// man's chest and belly float (the air in him, and his kit) and his head and
+// limbs not quite, so he comes up and lies low in the water, face down, with
+// them hanging.
+static const float pr_partFloat[PR_NUM_PARTS] = {
+    1.35f, 1.35f, 1.35f, 1.35f, 1.0f, 1.0f,   // pelvis, spine, spine1, chest, neck, head
+    0.90f, 0.90f, 0.90f, 0.90f, 0.90f, 0.90f, // the arms
+    0.92f, 0.92f, 0.92f, 0.92f, 0.92f, 0.92f, // the legs
+};
+
+// How fast a part comes to go with the water around it, and stops turning in
+// it: a share of the difference a second, for a part all under.
+#define PR_WATER_DRAG      3.0f
+#define PR_WATER_SPIN_DRAG 2.5f
+
+// A body in water is held up and carried along by it (cg_water.cpp). Each part
+// is pushed at both its ends, by as much as is under the water there, so the
+// parts that float turn the body over onto them and the swell rolls it.
+static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, float dt)
+{
+    cgWaterSample_t water;
+    vec3_t          at;
+    const float     g = -phys_system->GetGravity().GetZ();
+
+    pr->floating = qfalse;
+    if (!cg_water_float->integer) {
+        return;
+    }
+
+    PhysFromJolt(JPH::Vec3(bodies.GetCenterOfMassPosition(pr->ragdoll->GetBodyID(PR_PELVIS))), at);
+    if (!CG_WaterSample(at, &water)) {
+        return;
+    }
+
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        const JPH::BodyID id    = pr->ragdoll->GetBodyID(i);
+        const JPH::RMat44 t     = bodies.GetWorldTransform(id);
+        const float       r     = Q_max(pr->radius[i] * PHYS_METRES_TO_UNITS, 1.0f);
+        const float       mass  = pr_parts[i].mass * 0.5f;
+        float             under = 0.0f;
+
+        for (int end = 0; end < 2; end++) {
+            const JPH::RVec3 point = t * (end ? pr->localB[i] : pr->localA[i]);
+            vec3_t           q, flow;
+            float            share;
+
+            PhysFromJolt(JPH::Vec3(point), q);
+            share = Com_Clamp(0.0f, 1.0f, (water.surface + CG_WaterSwell(q) - (q[2] - r)) / (2.0f * r));
+            if (share <= 0.0f) {
+                continue;
+            }
+
+            CG_WaterFlow(q, water.depth, flow);
+
+            const JPH::Vec3 along = PhysToJolt(flow) - bodies.GetPointVelocity(id, point);
+            const JPH::Vec3 force = JPH::Vec3(0.0f, 0.0f, mass * g * pr_partFloat[i] * share) + along * (mass * PR_WATER_DRAG * share);
+
+            bodies.AddForce(id, force, point);
+            under += share * 0.5f;
+        }
+
+        if (under > 0.0f) {
+            bodies.SetAngularVelocity(id, bodies.GetAngularVelocity(id) * Q_max(0.0f, 1.0f - PR_WATER_SPIN_DRAG * under * dt));
+            pr->floating = qtrue;
+        }
+    }
+}
+
+qboolean CG_JoltRagdollFloating(int handle)
+{
+    prRagdoll_t *pr = CG_JoltRagdollGet(handle);
+
+    return pr && pr->floating;
+}
+
+// Each step of the world: the hold on the death pose easing off, the anchor
+// of a body held by the grabber carried towards the end of the beam, and the
+// water holding up and carrying the bodies in it.
 void CG_JoltRagdollsStep(float dt)
 {
     if (!phys_system) {
@@ -1014,6 +1102,8 @@ void CG_JoltRagdollsStep(float dt)
             memset(pr->contact, 0, sizeof(pr->contact));
             pr->onBodyMask = 0;
         }
+
+        CG_JoltRagdollFloat(pr, bodies, dt);
 
         if (pr->holdJoint < 0 || pr->anchor.IsInvalid()) {
             continue;

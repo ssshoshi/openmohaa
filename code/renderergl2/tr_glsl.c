@@ -52,6 +52,8 @@ extern const char *fallbackShader_texturecolor_vp;
 extern const char *fallbackShader_texturecolor_fp;
 extern const char *fallbackShader_tonemap_vp;
 extern const char *fallbackShader_tonemap_fp;
+extern const char *fallbackShader_water_vp;
+extern const char *fallbackShader_water_fp;
 extern const char* fallbackShader_greyscale_vp;
 extern const char* fallbackShader_greyscale_fp;
 
@@ -194,7 +196,16 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SkelBones",       GLSL_INT },
 	{ "u_SkelParams",      GLSL_VEC4 },
 	{ "u_SkelAmbient",     GLSL_VEC4 },
-	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS }
+	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS },
+	// Added in OPM: the water program (tr_water.c)
+	{ "u_WaterColor",      GLSL_VEC4 },
+	{ "u_WaterBlood",      GLSL_VEC4 },
+	{ "u_WaterWaves",      GLSL_VEC4 },
+	{ "u_WaterShore",      GLSL_VEC4 },
+	{ "u_WaterSky",        GLSL_VEC4 },
+	{ "u_WaterLook",       GLSL_VEC4 },
+	{ "u_WaterBloodZone",  GLSL_VEC4 },
+	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS }
 };
 
 typedef enum
@@ -1072,6 +1083,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_SKELLIGHTS:
 				size += sizeof(vec4_t) * SKEL_GPU_MAX_LIGHTS * 3;
 				break;
+			case GLSL_VEC4_WATERSPOTS:
+				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
+				break;
 			default:
 				break;
 		}
@@ -1311,6 +1325,36 @@ void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const v
 
 	if (vec4s > SKEL_GPU_MAX_LIGHTS * 3) {
 		vec4s = SKEL_GPU_MAX_LIGHTS * 3;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+The clouds of blood round bodies in water (tr_water.c), vec4s of them; sent
+when they are not what the program has.
+*/
+void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_WATERSPOTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformWaterSpots: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > WATER_MAX_SPOTS) {
+		vec4s = WATER_MAX_SPOTS;
 	}
 	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
 		return;
@@ -2118,6 +2162,32 @@ void GLSL_InitGPUShaders(void)
 		}
 	}
 
+	// Added in OPM: water (tr_water.c). Without it water keeps its own stages.
+	if (r_water->integer && glRefConfig.framebufferObject)
+	{
+		attribs = ATTR_POSITION | ATTR_NORMAL;
+		extradefines[0] = '\0';
+
+		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+
+		if (GLSL_InitGPUShader(&tr.waterShader, "water", attribs, qtrue, extradefines, qtrue, fallbackShader_water_vp, fallbackShader_water_fp))
+		{
+			GLSL_InitUniforms(&tr.waterShader);
+
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
+
+			GLSL_FinishGPUShader(&tr.waterShader);
+
+			numEtcShaders++;
+		}
+		else
+		{
+			ri.Printf(PRINT_WARNING, "WARNING: the water program did not compile, water keeps its stages\n");
+		}
+	}
+
 #if 0
 	attribs = ATTR_POSITION | ATTR_TEXCOORD;
 	extradefines[0] = '\0';
@@ -2182,6 +2252,7 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
+	GLSL_DeleteGPUShader(&tr.waterShader);
 
 	for ( i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.depthBlurShader[i]);

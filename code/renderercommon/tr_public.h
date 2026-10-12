@@ -199,6 +199,12 @@ typedef struct {
     //  A world shader lit by the vertex colours of what it is drawn on (a
     //  poly's), for faces that have no lightmap. 0 if it cannot be found.
     qhandle_t (*RegisterShaderVertexLit)(const char *name);
+
+    // Added in OPM
+    //  Where there are bodies in water and how far their blood has spread,
+    //  four floats each: x, y, radius, strength. Held until set again; a
+    //  renderer that draws no blood in water ignores it.
+    void (*SetWaterBlood)(const float *spots, int numSpots);
 } refexport_t;
 
 //

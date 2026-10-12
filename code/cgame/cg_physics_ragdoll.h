@@ -63,5 +63,9 @@ float    CG_JoltRagdollSpeed(int handle);
 void     CG_JoltRagdollSleep(int handle);
 void     CG_JoltRagdollWake(int handle);
 
+// Whether water held any of it up in the latest step (cg_water.cpp): a body
+// afloat is never put to sleep, as the waves keep moving it.
+qboolean CG_JoltRagdollFloating(int handle);
+
 // Each joint's swing, twist and hinge angle as Jolt has them, for debugging.
 void CG_JoltRagdollReport(int handle, void (*print)(const char *fmt, ...));

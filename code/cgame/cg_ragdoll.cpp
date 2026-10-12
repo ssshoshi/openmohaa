@@ -41,6 +41,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_props.h"
 #include "cg_physics.h"
 #include "cg_physics_ragdoll.h"
+#include "cg_water.h"
 #include "../qcommon/qfiles.h"
 
 #include <chrono>
@@ -9416,7 +9417,10 @@ static cg_ragdoll_t *CG_RagdollAlloc(void)
         // empty, so a corpse that had just come to rest snapped back to the
         // pose its death animation ended on. Only bodies still being solved
         // count now, and settled ones stay until the pool itself is full.
-        if (rd->state != RD_SLEEPING) {
+        // Nor do bodies afloat (cg_water.cpp): the waves keep them moving
+        // for good, and a beach's worth of them would leave none for the
+        // men who die there.
+        if (rd->state != RD_SLEEPING && !(rd->jolt && CG_JoltRagdollFloating(rd->jolt))) {
             solving++;
         }
 
@@ -10210,8 +10214,16 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             // instead of dropping. So it has to be resting on something before
             // it is allowed to sleep at all.
             const qboolean supported = CG_RagdollSupported(rd);
+            // Added in OPM: nor while it is afloat, as the waves keep moving it
+            // (cg_water.cpp), however still it lies between them
+            const qboolean afloat = rd->jolt && CG_JoltRagdollFloating(rd->jolt);
 
-            if (!supported) {
+            // and it bleeds into the water (cg_water.cpp)
+            if (afloat) {
+                CG_WaterBleed(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p);
+            }
+
+            if (!supported || afloat) {
                 rd->quietSince = cg.time;
             }
 
@@ -10223,7 +10235,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 CG_RagdollLog(rd, "asleep after %d ms", elapsed);
                 CG_RagdollNoteMovers(rd);
                 rd->measureClip = qtrue;
-            } else if (cg_ragdoll_duration->integer > 0 && cg.time - Q_max(rd->startTime, rd->lastWake) > cg_ragdoll_duration->integer
+            } else if (!afloat && cg_ragdoll_duration->integer > 0
+                       && cg.time - Q_max(rd->startTime, rd->lastWake) > cg_ragdoll_duration->integer
                        && cg.time > rd->wakeUntil) {
                 // The lifetime cap is a budget, not a statement about the body.
                 // Applied on its own it freezes whatever pose the corpse is in

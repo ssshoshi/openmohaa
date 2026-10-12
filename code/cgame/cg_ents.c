@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_local.h"
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
+#include "cg_water.h"
 #include "cg_radar.h"
 
 /*
@@ -712,6 +713,10 @@ void CG_AddPacketEntities(void)
     //  Corpses the server has culled by where they died rather than where the
     //  ragdoll has taken them.
     CG_RagdollAddUnsent();
+
+    // Added in OPM
+    //  The blood of the bodies in the water, for the renderer.
+    CG_WaterBloodFrame();
 
     // Added in OPM
     //  Client-side props (and later corpses) on Jolt.

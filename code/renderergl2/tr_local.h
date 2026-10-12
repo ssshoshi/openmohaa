@@ -703,6 +703,10 @@ typedef struct shader_s {
     // on a sprite starts when the sprite was spawned, not at an arbitrary
     // point in the level's clock.
     qboolean animMapFromSpawn;
+    // Added in OPM: water drawn by the water program (tr_water.c), and the
+    // texture of its first stage, which the program takes its ripples from
+    qboolean isWater;
+    image_t *waterImage;
 } shader_t;
 
 enum
@@ -836,8 +840,11 @@ enum
 	GLSL_MAT16_BONEMATRIX,
 	GLSL_VEC4_RTLIGHTS, // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
 	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
-	GLSL_VEC4_SKELLIGHTS // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
+	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
+	GLSL_VEC4_WATERSPOTS  // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
 };
+
+#define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
 
 typedef enum
 {
@@ -976,6 +983,14 @@ typedef enum
 	UNIFORM_SKELPARAMS,
 	UNIFORM_SKELAMBIENT,
 	UNIFORM_SKELLIGHTS,
+	UNIFORM_WATERCOLOR,   // Added in OPM: the water program (tr_water.c)
+	UNIFORM_WATERBLOOD,
+	UNIFORM_WATERWAVES,
+	UNIFORM_WATERSHORE,
+	UNIFORM_WATERSKY,
+	UNIFORM_WATERLOOK,
+	UNIFORM_WATERBLOODZONE,
+	UNIFORM_WATERSPOTS,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2337,6 +2352,7 @@ typedef struct {
 	qboolean    depthFill;
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
+	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
 	float       greyscale;
 
 	//
@@ -2423,6 +2439,7 @@ typedef struct {
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
 	image_t					*hdrDepthImage;
+	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t                 *renderCubeImage;
 	
 	image_t					*textureDepthImage;
@@ -2441,6 +2458,7 @@ typedef struct {
 	FBO_t					*screenShadowFbo;
 	FBO_t					*screenSsaoFbo;
 	FBO_t					*hdrDepthFbo;
+	FBO_t					*waterSceneFbo;
 	FBO_t                   *renderCubeFbo;
 
 	shader_t				*defaultShader;
@@ -2487,6 +2505,7 @@ typedef struct {
 	shaderProgram_t depthBlurShader[4];
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
+	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 
 
 	// -----------------------------------------
@@ -3488,6 +3507,7 @@ void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*c
 void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation);
 void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
 void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 
@@ -3745,6 +3765,20 @@ void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
 void RB_GroundCoverBindVao(void);
 void RB_GroundCoverDrawElements(void);
+
+/*
+=============================================================
+WATER (tr_water.c)
+=============================================================
+*/
+extern cvar_t *r_water;
+void R_WaterRegisterCvars(void);
+void R_WaterLoadWorld(const char *mapName);
+void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
+qboolean RB_WaterDraw(shaderCommands_t *input);
+void R_WaterInfo_f(void);
+void R_WaterReload_f(void);
+void RE_SetWaterBlood(const float *spots, int numSpots);
 
 // tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
 struct skelSurfaceGame_s;

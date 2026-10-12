@@ -421,6 +421,13 @@ void FBO_Init(void)
 		R_CheckFBO(tr.hdrDepthFbo);
 	}
 
+	if (tr.waterSceneImage)
+	{
+		tr.waterSceneFbo = FBO_Create("_waterScene", tr.waterSceneImage->width, tr.waterSceneImage->height);
+		FBO_AttachImage(tr.waterSceneFbo, tr.waterSceneImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterSceneFbo);
+	}
+
 	if (tr.screenSsaoImage)
 	{
 		tr.screenSsaoFbo = FBO_Create("_screenssao", tr.screenSsaoImage->width, tr.screenSsaoImage->height);

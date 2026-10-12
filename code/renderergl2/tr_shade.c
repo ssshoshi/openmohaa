@@ -2512,7 +2512,9 @@ void RB_StageIteratorGeneric( void )
 	//
 	// call shader function
 	//
-	RB_IterateStagesGeneric( input );
+	// Added in OPM: water, by the water program if it can (tr_water.c)
+	if ( !input->shader->isWater || !RB_WaterDraw( input ) )
+		RB_IterateStagesGeneric( input );
 
 	//
 	// pshadows!

@@ -1407,6 +1407,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	backEnd.waterScene = qfalse;
 	backEnd.depthPrepassed = qfalse;
 
 	// clear the z buffer, set the modelview, etc
