@@ -40,6 +40,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_gore.h"
+#include "cg_physics.h"
+#include "cg_physics_ragdoll.h"
+#include "cg_ragdoll.h"
+#include "cg_specialfx.h"
 
 #include <algorithm>
 #include <chrono>
@@ -72,6 +76,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define GORE_POOL_DELAY   1200 // ms dead before the pool starts
 #define GORE_SPURT_PERIOD 450
 #define GORE_LIGHT_SCALE  0.5f // decal lighting is overbright next to the model's and the world's
+
+// Where something bloody dragged along a surface last left its smear
+// (CG_GoreStreak), and on what.
+typedef struct {
+    qboolean on;
+    vec3_t   from, normal;
+} goreStreak_t;
 
 typedef enum {
     GK_ENTRY,
@@ -197,6 +208,8 @@ typedef struct {
 
     // Severing and dents (see there)
     qboolean       gib;            // a severed part's own body
+    int            pelvis, chest;  // its pelvis and upper back bones, -1 if none, -2 not looked for yet
+    goreStreak_t   streaks[2];     // the blood they smear along the ground or a wall
     unsigned int   severed;        // parts gone (gorePart_t bits)
     unsigned int   severPending;   // parts to cut off when next drawn
     unsigned int   explodePending; // of those, the ones that go to pieces
@@ -288,6 +301,8 @@ typedef struct {
     float  riderLocal[GORE_MAX_OVERRIDES][4][3];
     float  stepLeft;
     int    still;
+    int    jolt; // its chain in the physics world (CG_JoltChainCreate), or 0
+    goreStreak_t streak; // the blood it smears along the ground or a wall
 } goreGib_t;
 
 typedef struct {
@@ -310,7 +325,7 @@ static cvar_t *cg_gore_maxGibs;
 static cvar_t *com_blood_gore;
 
 static qhandle_t gore_shaders[GK_NUM][GORE_VARIANTS];
-static qhandle_t gore_dropShader, gore_splatShader, gore_poolShader, gore_chunkShader;
+static qhandle_t gore_dropShader, gore_splatShader, gore_poolShader, gore_chunkShader, gore_streakShader;
 
 static goreBody_t  gore_bodies[GORE_MAX_BODIES];
 static goreDrawn_t gore_drawn[GORE_MAX_DRAWN];
@@ -411,10 +426,14 @@ void CG_GoreClear(void)
     gore_splatShader = cgi.R_RegisterShader("gore/splat");
     gore_poolShader  = cgi.R_RegisterShader("gore/pool");
     gore_chunkShader = cgi.R_RegisterShader("gore/chunk");
+    gore_streakShader = cgi.R_RegisterShader("gore/streak");
     CG_GoreRegisterBits();
 
     memset(gore_drops, 0, sizeof(gore_drops));
     memset(gore_pools, 0, sizeof(gore_pools));
+    for (i = 0; i < GORE_MAX_GIBS; i++) {
+        CG_JoltChainDestroy(gore_gibs[i].jolt);
+    }
     memset(gore_gibs, 0, sizeof(gore_gibs));
     gore_rigs.clear();
     gore_layouts.clear();
@@ -493,6 +512,9 @@ static goreBody_t *CG_GoreBody(const goreDrawn_t *drawn)
     body->numOvr         = 0;
     body->lastHitTime    = 0;
     body->blastTime      = 0;
+    body->pelvis         = -2;
+    body->chest          = -2;
+    memset(body->streaks, 0, sizeof(body->streaks));
     memset(body->partHits, 0, sizeof(body->partHits));
     return body;
 }
@@ -1810,6 +1832,9 @@ static void CG_GoreFreeGib(goreGib_t *gib)
 {
     goreBody_t *body = gib->key >= 0 ? CG_GoreFindBody(gib->key) : NULL;
 
+    CG_JoltChainDestroy(gib->jolt);
+    gib->jolt = 0;
+
     if (body) {
         CG_GoreFreeBody(body);
     }
@@ -2037,6 +2062,28 @@ static int CG_GoreChainBones(const goreRig_t *rig, int part, int bones[GORE_CHAI
     return n;
 }
 
+// How thick a part is at each point of its chain, in world units: from the
+// cut to the end, thinner as it goes.
+static float CG_GoreChainRadius(int part, int i, int numPts)
+{
+    float thick;
+
+    if (part == GP_HEAD) {
+        return 4.0f;
+    }
+    thick = part >= GP_L_THIGH ? 3.2f : 2.2f;
+    return Q_max(thick * (1.0f - 0.45f * i / Q_max(numPts - 1, 1)), 1.0f);
+}
+
+// And how heavy, in kilograms: an arm about four, a leg about ten.
+static float CG_GoreChainMass(int part, int numPts)
+{
+    if (part == GP_HEAD) {
+        return 5.0f;
+    }
+    return (part >= GP_L_THIGH ? 3.5f : 1.4f) * Q_max(numPts - 1, 1);
+}
+
 // Sets a gib up as a chain, from the overrides it was given (the part as it
 // was when it came off).
 static void CG_GoreChainStart(goreGib_t *gib, const goreRig_t *rig)
@@ -2165,14 +2212,30 @@ static void CG_GoreChainStart(goreGib_t *gib, const goreRig_t *rig)
         VectorAdd(gib->centre, gib->pt[i], gib->centre);
     }
     VectorScale(gib->centre, 1.0f / gib->numPts, gib->centre);
-    for (i = 0; i < gib->numPts; i++) {
-        vec3_t rel, turn, v;
+    {
+        vec3_t vels[GORE_CHAIN_PTS];
+        float  radii[GORE_CHAIN_PTS];
 
-        VectorSubtract(gib->pt[i], gib->centre, rel);
-        CrossProduct(gib->spin, rel, turn);
-        VectorScale(turn, M_PI / 180.0f, turn);
-        VectorAdd(gib->vel, turn, v);
-        VectorMA(gib->pt[i], -GORE_CHAIN_STEP, v, gib->old[i]);
+        for (i = 0; i < gib->numPts; i++) {
+            vec3_t rel, turn;
+
+            VectorSubtract(gib->pt[i], gib->centre, rel);
+            CrossProduct(gib->spin, rel, turn);
+            VectorScale(turn, M_PI / 180.0f, turn);
+            VectorAdd(gib->vel, turn, vels[i]);
+            VectorMA(gib->pt[i], -GORE_CHAIN_STEP, vels[i], gib->old[i]);
+            radii[i] = CG_GoreChainRadius(gib->part, i, gib->numPts);
+        }
+
+        // A ragdoll of its own in the physics world, if there is one: it
+        // knocks into the world, the props and the bodies, and is pushed by
+        // rounds and blasts. The chain below only without it.
+        // (thrown a little slower: nothing like the chain's bounce takes the
+        // speed off it)
+        for (i = 0; i < gib->numPts; i++) {
+            VectorScale(vels[i], 0.65f, vels[i]);
+        }
+        gib->jolt = CG_JoltChainCreate(gib->numPts, gib->pt, vels, radii, CG_GoreChainMass(gib->part, gib->numPts));
     }
 }
 
@@ -2306,6 +2369,20 @@ static void CG_GoreChainPose(goreGib_t *gib)
 static void CG_GoreUpdateChain(goreGib_t *gib, float dt)
 {
     int steps = 0;
+
+    if (gib->jolt) {
+        if (CG_JoltChainRead(gib->jolt, gib->pt)) {
+            CG_GoreChainPose(gib);
+            return;
+        }
+        // its physics world gone (the map changes): the chain from here
+        gib->jolt = 0;
+        for (steps = 0; steps < gib->numPts; steps++) {
+            VectorCopy(gib->pt[steps], gib->old[steps]);
+        }
+        steps        = 0;
+        gib->resting = qfalse;
+    }
 
     if (gib->resting) {
         return;
@@ -2766,6 +2843,330 @@ static void CG_GoreAddGibs(void)
 // Cutting
 //
 
+//
+// Parts and bodies pushed about
+//
+
+// The closest points of two segments: t along the first, u along the second.
+static float CG_GoreSegmentsClosest(const vec3_t a0, const vec3_t a1, const vec3_t b0, const vec3_t b1, float *t, float *u)
+{
+    vec3_t da, db, r, pa, pb;
+    float  aa, bb, ab, ar, br, den;
+
+    VectorSubtract(a1, a0, da);
+    VectorSubtract(b1, b0, db);
+    VectorSubtract(a0, b0, r);
+    aa  = DotProduct(da, da);
+    bb  = DotProduct(db, db);
+    ab  = DotProduct(da, db);
+    ar  = DotProduct(da, r);
+    br  = DotProduct(db, r);
+    den = aa * bb - ab * ab;
+
+    *t = den > 0.0001f ? Q_bound(0.0f, (ab * br - bb * ar) / den, 1.0f) : 0.0f;
+    *u = bb > 0.0001f ? Q_bound(0.0f, (ab * *t + br) / bb, 1.0f) : 0.0f;
+    *t = aa > 0.0001f ? Q_bound(0.0f, (ab * *u - ar) / aa, 1.0f) : 0.0f;
+
+    VectorMA(a0, *t, da, pa);
+    VectorMA(b0, *u, db, pb);
+    return Distance(pa, pb);
+}
+
+// A push on a part, in game units a second, at a point of it.
+static void CG_GoreGibPush(goreGib_t *gib, const vec3_t point, const vec3_t dv)
+{
+    int i;
+
+    if (gib->jolt) {
+        CG_JoltChainAddVelocity(gib->jolt, point, dv);
+        return;
+    }
+
+    // the chain: its points nearest the push take the most of it
+    for (i = 0; i < gib->numPts; i++) {
+        float share = 1.0f / (1.0f + Distance(gib->pt[i], point) / 8.0f);
+
+        VectorMA(gib->old[i], -GORE_CHAIN_STEP * share, dv, gib->old[i]);
+    }
+    gib->resting = qfalse;
+    gib->still   = 0;
+}
+
+static void CG_GoreBurst(const vec3_t pos, const vec3_t dir, const vec3_t light, int drops, int chunks);
+
+// A round's path: a part it goes through is knocked along it and bleeds.
+void CG_GoreNoteBullet(const vec3_t start, const vec3_t end, int large)
+{
+    vec3_t dir;
+    int    g, i;
+
+    if (!CG_GoreEnabled()) {
+        return;
+    }
+
+    VectorSubtract(end, start, dir);
+    if (VectorNormalize(dir) < 1.0f) {
+        return;
+    }
+
+    for (g = 0; g < GORE_MAX_GIBS; g++) {
+        goreGib_t *gib = &gore_gibs[g];
+
+        for (i = 0; gib->active && i + 1 < gib->numPts; i++) {
+            float  t, u, d;
+            vec3_t at, dv, light;
+
+            d = CG_GoreSegmentsClosest(start, end, gib->pt[i], gib->pt[i + 1], &t, &u);
+            if (d > CG_GoreChainRadius(gib->part, i, gib->numPts) + 1.0f) {
+                continue;
+            }
+
+            VectorSubtract(gib->pt[i + 1], gib->pt[i], at);
+            VectorMA(gib->pt[i], u, at, at);
+            VectorScale(dir, large ? 650.0f : 380.0f, dv);
+            dv[2] += large ? 140.0f : 80.0f;
+            CG_GoreGibPush(gib, at, dv);
+
+            cgi.R_GetLightingForDecal(light, dir, at);
+            VectorScale(light, GORE_LIGHT_SCALE, light);
+            CG_GoreBurst(at, dir, light, large ? 8 : 4, 0);
+            CG_GoreNoteHit(at, dir, large);
+            // heard as a round into a man is (the flesh impacts the server
+            // sends, which keep the way the round went as their normal)
+            sfxManager.MakeEffect_Normal(large ? SFX_BHIT_HUMAN_UNIFORM_HARD : SFX_BHIT_HUMAN_UNIFORM_LITE, at, dir);
+            break;
+        }
+    }
+}
+
+// The part cut off nearest along a ray that passes within reach of it (as
+// thick as it is, and a little more: a limb lying flat is hard to point at
+// exactly), how far along the ray, and the point of it nearest the ray.
+static goreGib_t *CG_GoreGibUnderRay(const vec3_t start, const vec3_t dir, float range, float *entry, vec3_t point)
+{
+    goreGib_t *best = NULL;
+    vec3_t     end;
+    int        g, i;
+
+    VectorMA(start, range, dir, end);
+    for (g = 0; g < GORE_MAX_GIBS; g++) {
+        goreGib_t *gib = &gore_gibs[g];
+
+        for (i = 0; gib->active && i + 1 < gib->numPts; i++) {
+            float  t, u, d;
+            vec3_t seg;
+
+            d = CG_GoreSegmentsClosest(start, end, gib->pt[i], gib->pt[i + 1], &t, &u);
+            if (d > CG_GoreChainRadius(gib->part, i, gib->numPts) + 4.0f || (best && t * range >= *entry)) {
+                continue;
+            }
+            best   = gib;
+            *entry = t * range;
+            VectorSubtract(gib->pt[i + 1], gib->pt[i], seg);
+            VectorMA(gib->pt[i], u, seg, point);
+        }
+    }
+    return best;
+}
+
+qboolean CG_GoreGrabCandidate(const vec3_t start, const vec3_t dir, float range, float *entry)
+{
+    vec3_t point;
+
+    return CG_GoreGibUnderRay(start, dir, range, entry, point) ? qtrue : qfalse;
+}
+
+qboolean CG_GoreGrabStart(const vec3_t start, const vec3_t dir, float range, float minDist)
+{
+    goreGib_t *gib;
+    float      entry;
+    vec3_t     point;
+
+    gib = CG_GoreGibUnderRay(start, dir, range, &entry, point);
+    if (!gib || !gib->jolt) {
+        return qfalse;
+    }
+    return CG_JoltChainGrab(gib->jolt, point, Q_max(entry, minDist));
+}
+
+qboolean CG_GorePunt(const vec3_t start, const vec3_t dir, float range, float speed)
+{
+    goreGib_t *gib;
+    float      entry;
+    vec3_t     point, dv;
+
+    gib = CG_GoreGibUnderRay(start, dir, range, &entry, point);
+    if (!gib) {
+        return qfalse;
+    }
+    VectorScale(dir, speed, dv);
+    CG_GoreGibPush(gib, point, dv);
+    return qtrue;
+}
+
+// A blast throws the parts lying about it.
+static void CG_GoreBlastGibs(const vec3_t pos, int kind)
+{
+    static const float blasts[4][2] = {
+        {220.0f, 520.0f },
+        {280.0f, 680.0f },
+        {360.0f, 840.0f },
+        {440.0f, 1000.0f},
+    };
+    const float radius = blasts[Q_bound(0, kind, 3)][0];
+    const float speed  = blasts[Q_bound(0, kind, 3)][1];
+    int         g, i;
+
+    for (g = 0; g < GORE_MAX_GIBS; g++) {
+        goreGib_t *gib = &gore_gibs[g];
+
+        for (i = 0; gib->active && i < gib->numPts; i++) {
+            vec3_t away;
+            float  d;
+
+            VectorSubtract(gib->pt[i], pos, away);
+            d = VectorNormalize(away);
+            if (d >= radius) {
+                continue;
+            }
+            away[2] += 0.4f;
+            VectorNormalize(away);
+            VectorScale(away, speed * (1.0f - d / radius) / gib->numPts, away);
+            CG_GoreGibPush(gib, gib->pt[i], away);
+        }
+    }
+}
+
+// The way a mark lying on normal has to be turned for its length to run along
+// (CG_ImpactMark: its T axis, from a square of the normal turned so far).
+static float CG_GoreMarkAngle(const vec3_t normal, const vec3_t along)
+{
+    vec3_t n, p, a, c;
+
+    VectorNormalize2(normal, n);
+    PerpendicularVector(p, n);
+    VectorMA(along, -DotProduct(along, n), n, a);
+    if (VectorNormalize(a) < 0.001f) {
+        return 0.001f;
+    }
+    CrossProduct(p, a, c);
+    return atan2(DotProduct(c, n), DotProduct(p, a)) * (180.0f / M_PI) + 0.001f;
+}
+
+// The surface something at pos lies against: the ground under it, or else
+// the nearest wall beside it.
+static qboolean CG_GoreStreakSurface(const vec3_t pos, trace_t *best)
+{
+    static const float dirs[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {0.7f, 0.7f}, {-0.7f, 0.7f}, {0.7f, -0.7f}, {-0.7f, -0.7f}};
+    trace_t            tr;
+    vec3_t             end;
+    int                i;
+
+    VectorCopy(pos, end);
+    end[2] -= 20.0f;
+    CG_Trace(best, pos, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, MASK_SOLID, qfalse, qfalse, "gore streak");
+    if (best->fraction < 1.0f && !best->startsolid && best->plane.normal[2] >= 0.6f) {
+        return qtrue;
+    }
+
+    best->fraction = 1.0f;
+    for (i = 0; i < 8; i++) {
+        VectorSet(end, pos[0] + dirs[i][0] * 16.0f, pos[1] + dirs[i][1] * 16.0f, pos[2]);
+        CG_Trace(&tr, pos, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, MASK_SOLID, qfalse, qfalse, "gore streak");
+        if (!tr.startsolid && tr.fraction < best->fraction && fabs(tr.plane.normal[2]) < 0.6f) {
+            *best = tr;
+        }
+    }
+    return best->fraction < 1.0f ? qtrue : qfalse;
+}
+
+// Something bloody dragged along the ground or a wall leaves a smear: pos is
+// where it is now, a body's pelvis or back, a part's middle. From where its
+// last smear ended to the surface by it now, while it lies against one and
+// moves along it. Laid in pieces of varying width, each a little off the line
+// and turned a little, so it reads as a smear and not a stripe.
+static void CG_GoreStreak(const vec3_t pos, goreStreak_t *st, float width)
+{
+    trace_t tr;
+    vec3_t  along, side, mid;
+    float   len, w;
+
+    if (!CG_GoreStreakSurface(pos, &tr)) {
+        st->on = qfalse;
+        return;
+    }
+
+    // on another surface than before (off the floor onto a wall): it starts again
+    if (!st->on || DotProduct(st->normal, tr.plane.normal) < 0.85f) {
+        VectorCopy(tr.endpos, st->from);
+        VectorCopy(tr.plane.normal, st->normal);
+        st->on = qtrue;
+        return;
+    }
+
+    VectorSubtract(tr.endpos, st->from, along);
+    VectorMA(along, -DotProduct(along, tr.plane.normal), tr.plane.normal, along);
+    len = VectorNormalize(along);
+    if (len < width * 0.35f) {
+        return; // still, or barely moving
+    }
+    if (len > 64.0f) {
+        VectorCopy(tr.endpos, st->from); // thrown, not dragged
+        return;
+    }
+
+    w = width * GoreRand(0.65f, 1.35f);
+    CrossProduct(tr.plane.normal, along, side);
+    VectorAdd(st->from, tr.endpos, mid);
+    VectorScale(mid, 0.5f, mid);
+    VectorMA(mid, crandom() * width * 0.15f, side, mid);
+    CG_ImpactMark(
+        gore_streakShader, mid, tr.plane.normal, CG_GoreMarkAngle(tr.plane.normal, along) + crandom() * 8.0f, w * 0.5f,
+        (len + w * 0.6f) * 0.5f, GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, GORE_LIGHT_SCALE, GoreRand(0.75f, 1.0f), qfalse, qfalse,
+        qtrue, qfalse, 0.5f, 0.5f
+    );
+    VectorCopy(tr.endpos, st->from);
+    VectorCopy(tr.plane.normal, st->normal);
+}
+
+// The bodies and parts sliding along the ground or a wall this frame.
+static void CG_GoreStreaks(void)
+{
+    int i, k;
+
+    for (i = 0; i < gore_numDrawn; i++) {
+        goreDrawn_t *drawn = &gore_drawn[i];
+        goreBody_t  *body  = CG_GoreFindBody(drawn->entityNum);
+        int          bones[2];
+
+        if (!body || !body->dead || body->gib || !drawn->ref.bone_override || !drawn->ref.tiki) {
+            continue;
+        }
+        if (body->pelvis == -2) {
+            body->pelvis = cgi.Tag_NumForName(drawn->ref.tiki, "Bip01 Pelvis");
+            body->chest  = cgi.Tag_NumForName(drawn->ref.tiki, "Bip01 Spine2");
+        }
+        bones[0] = body->pelvis;
+        bones[1] = body->chest;
+        for (k = 0; k < 2; k++) {
+            vec3_t pos;
+            float  m[4][3];
+
+            if (bones[k] >= 0 && CG_GoreBoneFrame(&drawn->ref, bones[k], m, pos)) {
+                CG_GoreStreak(pos, &body->streaks[k], 18.0f);
+            }
+        }
+    }
+
+    for (i = 0; i < GORE_MAX_GIBS; i++) {
+        goreGib_t *gib = &gore_gibs[i];
+
+        if (gib->active && gib->numPts) {
+            CG_GoreStreak(gib->centre, &gib->streak, gib->part >= GP_L_THIGH ? 11.0f : 8.0f);
+        }
+    }
+}
+
 // A burst of blood and bits of a head.
 static void CG_GoreBurst(const vec3_t pos, const vec3_t dir, const vec3_t light, int drops, int chunks)
 {
@@ -3154,17 +3555,9 @@ static void CG_GoreKillShot(goreBody_t *body, refEntity_t *model)
             CG_GoreSever(body, GP_HEAD, qtrue);
         }
         break;
-    case GORE_ZONE_NECK:
-        if (body->lastHitLarge && r < 0.35f) {
-            CG_GoreSever(body, GP_HEAD, qfalse);
-        }
-        break;
-    case GORE_ZONE_NONE:
-        break;
     default:
-        if ((body->lastHitLarge && r < 0.3f) || (!body->lastHitLarge && r < 0.05f)) {
-            CG_GoreSever(body, body->lastHitZone, qfalse);
-        }
+        // a limb, or the head at the neck, comes off only in a blast
+        // (CG_GoreBlastBody)
         break;
     }
 }
@@ -3200,8 +3593,8 @@ static void CG_GoreBlastBody(goreBody_t *body)
     body->blastTime = 0;
 }
 
-// Rounds into a corpse: a limb shot often enough comes off, and a head is
-// opened further each time a heavy round goes through it.
+// Rounds into a corpse: a head is opened further each time a heavy round goes
+// through it (CG_GoreHeadHit). A limb comes off only in a blast.
 static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model)
 {
     int zone = body->lastHitZone;
@@ -3211,14 +3604,6 @@ static void CG_GoreCorpseHit(goreBody_t *body, refEntity_t *model)
     }
 
     body->partHits[zone] += body->lastHitLarge ? 3 : 1;
-
-    if (zone == GP_HEAD) {
-        return; // CG_GoreHeadHit
-    }
-
-    if (body->partHits[zone] >= 6) {
-        CG_GoreSever(body, zone, qfalse);
-    }
 }
 
 // Every entity, just before it is drawn.
@@ -3315,6 +3700,21 @@ void CG_GoreSever_f(void)
     if (p == GP_NUM && Q_stricmp(which, "all")) {
         Com_Printf("gore_sever <head|larm|lforearm|lhand|rarm|rforearm|rhand|lleg|lshin|rleg|rshin|all> [explode], or headshot\n");
     }
+}
+
+void CG_GoreBlast_f(void)
+{
+    const int kind = cgi.Argc() > 1 ? atoi(cgi.Argv(1)) : 0;
+    trace_t   tr;
+    vec3_t    end;
+
+    VectorMA(cg.refdef.vieworg, 4096, cg.refdef.viewaxis[0], end);
+    CG_Trace(&tr, cg.refdef.vieworg, vec3_origin, vec3_origin, end, cg.snap ? cg.snap->ps.clientNum : ENTITYNUM_NONE, MASK_SHOT, qfalse, qfalse, "gore blast");
+    VectorMA(tr.endpos, 8, tr.plane.normal, end);
+
+    CG_RagdollNoteExplosion(end, kind);
+    CG_GoreNoteExplosion(end, kind);
+    CG_PhysicsNoteExplosion(end, kind);
 }
 
 // Where a part's stump is now, on the body as drawn, and which way it faces.
@@ -3539,6 +3939,8 @@ void CG_GoreNoteExplosion(const vec3_t pos, int kind)
     VectorCopy(pos, blast->pos);
     blast->kind = kind;
     blast->time = cg.time;
+
+    CG_GoreBlastGibs(pos, kind);
 }
 
 //=============================================================
@@ -4013,6 +4415,8 @@ void CG_GoreAddToScene(void)
         CG_GorePlaceBlast(&gore_blasts[i]);
     }
     gore_numBlasts = 0;
+
+    CG_GoreStreaks();
 
     // Nearest first, so the budget runs out on the far ones.
     for (i = 0; i < gore_numDrawn; i++) {

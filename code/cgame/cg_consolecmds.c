@@ -502,6 +502,7 @@ static consoleCommand_t commands[] = {
     {"rdgrab_farther",         &CG_RagdollGrabFarther_f    },
     {"rdpunt",                 &CG_RagdollPunt_f           },
     {"gore_sever",             &CG_GoreSever_f             },
+    {"gore_blast",             &CG_GoreBlast_f             },
     //  Client-side physics
     {"phys_selftest",          &CG_PhysicsSelftest_f       },
     {"phys_poke",              &CG_PhysicsPoke_f           },
