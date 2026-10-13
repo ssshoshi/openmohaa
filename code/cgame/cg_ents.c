@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_physics.h"
 #include "cg_water.h"
 #include "cg_scriptblast.h"
+#include "cg_lens.h"
 #include "cg_radar.h"
 
 /*
@@ -717,12 +718,13 @@ void CG_AddPacketEntities(void)
 
     // Added in OPM
     //  The map's static dead under the bodies put in their place, and the
-    //  blasts its script sets off; the blood of the bodies in the water, and
-    //  what disturbs it, for the renderer.
+    //  blasts its script sets off; the blood of the bodies in the water, what
+    //  disturbs it, and what has landed on the lens, for the renderer.
     CG_PlacedDeadFrame();
     CG_ScriptBlastsFrame();
     CG_WaterBloodFrame();
     CG_WaterRipplesFrame();
+    CG_LensFrame();
 
     // Added in OPM
     //  Client-side props (and later corpses) on Jolt.

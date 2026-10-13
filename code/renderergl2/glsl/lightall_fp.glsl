@@ -53,6 +53,59 @@ uniform vec4      u_CubeMapInfo;
 
 uniform int       u_AlphaTest;
 
+// Added in OPM: the wet layer (tr_water.c). What has been in the sea or under
+// the spray, up to the mark the tide reached, is wet: the water in it darkens
+// it, and a film of water over it, smooth whatever is under it, gives back
+// the sky (most at a glancing look) and a glint of the sun.
+uniform vec4      u_Wet;    // how wet, the mark's height, 0, 0
+uniform vec4      u_WetSky; // the sky it gives back
+uniform vec4      u_WetSun; // towards the sun, and how bright it is
+uniform vec3      u_ViewOrigin;
+varying vec3      var_WetPos;
+varying vec3      var_WetNormal;
+
+float WetNoise(vec2 p)
+{
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+	float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+	float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+vec3 WetLayer(vec3 color)
+{
+	// up to the mark, which is not a ruled line
+	float mark = u_Wet.y + (WetNoise(var_WetPos.xy / 70.0 + var_WetPos.z / 50.0) - 0.5) * 16.0;
+	float wet  = u_Wet.x * (1.0 - smoothstep(mark - 8.0, mark + 2.0, var_WetPos.z));
+	if (wet <= 0.001)
+		return color;
+
+	// faces' winding as the rest of this file has it: the front is the back
+	vec3 N = normalize(!gl_FrontFacing ? var_WetNormal : -var_WetNormal);
+	vec3 E = normalize(u_ViewOrigin - var_WetPos);
+	// the ground is the wet beach's (beach_fp.glsl): only what stands up
+	wet *= 1.0 - 0.85 * smoothstep(0.75, 0.95, N.z);
+
+	// water running down it, here thicker, there thinner, in streaks
+	float runs = WetNoise(vec2(dot(var_WetPos.xy, vec2(0.11, 0.08)), var_WetPos.z * 0.03));
+	runs = smoothstep(0.25, 0.85, runs);
+
+	// what the film gives back: the sky above the horizon, the dark beach
+	// and sea below it
+	float fresnel = 0.02 + 0.98 * pow(1.0 - clamp(dot(N, E), 0.0, 1.0), 5.0);
+	vec3  R       = reflect(-E, N);
+	vec3  sky     = u_WetSky.rgb * mix(0.12, 1.0, smoothstep(-0.15, 0.35, R.z));
+	float glint   = pow(max(dot(R, u_WetSun.xyz), 0.0), 120.0) * u_WetSun.w;
+
+	color *= mix(1.0, 0.62, wet);
+	color += wet * (sky * fresnel * (0.2 + 0.3 * runs) + vec3(glint * (0.4 + 0.6 * runs)));
+	return color;
+}
+
 #if defined(USE_RTLIGHT)
 varying vec3      var_RtPos;
 varying vec3      var_RtNormal;
@@ -556,6 +609,10 @@ void main()
 #endif
 
 	gl_FragColor.a = alpha;
+
+	// Added in OPM: wet, below the mark
+	if (u_Wet.x > 0.0)
+		gl_FragColor.rgb = WetLayer(gl_FragColor.rgb);
 
 #if defined(USE_RTLIGHT)
 	// Added in OPM: the realtime lights, on the surface's own colour

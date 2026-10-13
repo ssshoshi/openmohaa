@@ -3,7 +3,9 @@
 // The tide is going out: the sand it has just left is wet, darker and with the
 // sky in it, and there is water standing in its hollows. Each wave that gets
 // to the shore runs on up the sand as a thin sheet with foam at its edge, and
-// drains back. Under each body lying on it the sand is soaked red. Drawn over the opaque view in two passes, from
+// drains back. Under each body lying on it the sand is soaked red. (What
+// stands on it or in the water is wet too: that is its own surface's, in
+// lightall_fp.glsl, where it knows which way it faces.) Drawn over the opaque view in two passes, from
 // where each pixel is in the world (the prepass's depth): one darkens what is
 // there (multiplied), the other adds the sky (BEACH_ADD).
 

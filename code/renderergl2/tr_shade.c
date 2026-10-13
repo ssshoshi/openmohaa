@@ -1836,6 +1836,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
+		// Added in OPM: wet below the tide's mark (lightall)
+		R_WaterSetWet(sp);
 
 		GLSL_SetUniformVec4(sp, UNIFORM_NORMALSCALE, pStage->normalScale);
 

@@ -68,6 +68,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 cvar_t        *r_water;
 cvar_t        *r_waterRipples;
+cvar_t        *r_waterWet;
 static cvar_t *r_waterBlood;
 
 typedef struct {
@@ -128,6 +129,8 @@ void R_WaterRegisterCvars(void)
     r_water      = ri.Cvar_Get("r_water", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterBlood = ri.Cvar_Get("r_waterBlood", "1", CVAR_ARCHIVE);
     r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
+    r_waterWet = ri.Cvar_Get("r_waterWet", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_waterWet, "What stands in the water or on a beach below the tide's mark looks wet: darker, glossy, with the sky in it");
     ri.Cvar_SetDescription(r_waterRipples, "Ripples and wakes on water from men wading, boats, bullets and things falling in (needs vid_restart)");
     ri.Cvar_SetDescription(r_water, "Draws water with the water program: waves, reflection, depth, surf (needs vid_restart)");
     ri.Cvar_SetDescription(r_waterBlood, "How much of the blood a map puts in its water (water/<map>.txt): 0 none, 1 as the map has it");
@@ -774,4 +777,43 @@ void R_WaterInfo_f(void)
     }
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
         water.chop, water.foam, water.refraction, water.glints);
+}
+
+/*
+===============
+R_WaterSetWet
+
+Added in OPM
+  The wet layer (glsl/lightall_fp.glsl) for a draw: on a map with a beach
+  the tide is leaving, what stands below the mark it reached (the wet sand's
+  top) and a little above it, where the spray goes, is wet. None elsewhere.
+===============
+*/
+void R_WaterSetWet(shaderProgram_t *sp)
+{
+    vec4_t v;
+
+    if (!r_waterWet->integer || !water.beachSet || !water.shoreSet || !tr.world
+        || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+        VectorClear4(v);
+        GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
+        return;
+    }
+
+    VectorSet4(v, 1.0f, water.beachTop + 24.0f, 0.0f, 0.0f);
+    GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
+
+    R_WaterSky(v);
+    GLSL_SetUniformVec4(sp, UNIFORM_WETSKY, v);
+
+    // the sun, as on the water: its light at most one, as a glint of the
+    // overbright scene light is a white blot
+    {
+        const float most = Q_max(Q_max(backEnd.refdef.sunCol[0], backEnd.refdef.sunCol[1]), backEnd.refdef.sunCol[2]);
+
+        VectorCopy(backEnd.refdef.sunDir, v);
+        VectorNormalize(v);
+        v[3] = Com_Clamp(0.0f, 1.0f, most) * 0.6f;
+        GLSL_SetUniformVec4(sp, UNIFORM_WETSUN, v);
+    }
 }

@@ -90,10 +90,16 @@ uniform mat4   u_ModelMatrix;
 #endif
 
 // Added in OPM: the realtime lights light the surface in world space
+#if !defined(USE_MODELMATRIX)
+uniform mat4   u_ModelMatrix; // Added in OPM: for the wet layer, at least
+#endif
+
+// Added in OPM: where the surface is in the world, and which way it faces
+// there without its bumps, for the wet layer (lightall_fp.glsl)
+varying vec3   var_WetPos;
+varying vec3   var_WetNormal;
+
 #if defined(USE_RTLIGHT)
-  #if !defined(USE_MODELMATRIX)
-uniform mat4   u_ModelMatrix;
-  #endif
 varying vec3   var_RtPos;
 varying vec3   var_RtNormal;
 #endif
@@ -386,6 +392,8 @@ void main()
 #endif
 
 	gl_Position = u_ModelViewProjectionMatrix * vec4(position, 1.0);
+	var_WetPos    = (u_ModelMatrix * vec4(position, 1.0)).xyz;
+	var_WetNormal = (u_ModelMatrix * vec4(normal, 0.0)).xyz;
 
 #if defined(USE_RTLIGHT)
 	var_RtPos    = (u_ModelMatrix * vec4(position, 1.0)).xyz;

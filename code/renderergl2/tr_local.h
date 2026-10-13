@@ -1002,6 +1002,12 @@ typedef enum
 	UNIFORM_RIPPLESOURCES,
 	UNIFORM_RIPPLEFOAM,
 	UNIFORM_WATERRIPPLES,  // where the ripples' grid lies, for the water
+	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
+	UNIFORM_LENSSPOTS,
+	UNIFORM_LENSLOOK,
+	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
+	UNIFORM_WETSKY,
+	UNIFORM_WETSUN,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2519,6 +2525,7 @@ typedef struct {
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
+	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
@@ -3797,6 +3804,13 @@ void R_WaterInfo_f(void);
 void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
+void R_WaterSetWet(shaderProgram_t *sp);
+
+// Added in OPM: what is on the lens (tr_lens.c)
+extern cvar_t *r_lens;
+void R_LensRegisterCvars(void);
+void RE_SetLensSpots(const float *spots, int num);
+void RB_LensDraw(FBO_t *fbo, ivec4_t box);
 
 // tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
 struct skelSurfaceGame_s;

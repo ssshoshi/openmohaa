@@ -212,6 +212,13 @@ typedef struct {
     //  how deep a dip it presses in, how much foam it leaves. Added to what
     //  was given earlier in the frame; the water's ripples spread from them.
     void (*AddWaterRipples)(const float *ripples, int numRipples);
+
+    // Added in OPM
+    //  What is on the camera's lens, eight floats each: x and y across and
+    //  up the view (0 to 1), how big (a share of its height), how much of it
+    //  is left (0 to 1); what it is (0 water, 1 blood, 2 dirt), a seed, how
+    //  far it has run down (a share of the height), 0. Held until set again.
+    void (*SetLensSpots)(const float *spots, int numSpots);
 } refexport_t;
 
 //

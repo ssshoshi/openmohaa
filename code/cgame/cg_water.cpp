@@ -58,6 +58,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_water.h"
+#include "cg_lens.h"
 #include "../qcommon/qfiles.h"
 
 cvar_t *cg_water_float;
@@ -790,6 +791,8 @@ void CG_WaterSplash(const vec3_t at, float size, float speed)
     int            i;
 
     CG_WaterRipple(at, size, dip, Q_min(1.0f, size * 0.04f * hard + 0.15f));
+    // and close by, some of it on the lens
+    CG_LensSplash(at, size);
 
     // and it rocks on: in the oldest place, if all are taken
     for (i = 1; i < WATER_RINGS && ring->start; i++) {

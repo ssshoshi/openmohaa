@@ -27,8 +27,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // its kind, put where it is to land and told "anim start"; the men it is to
 // kill get a death animation and "radiusdamage". The client is never sent an
 // explosion for it, so nothing that answers one did: the dead were not thrown,
-// lost no limbs, and the water did not heave. When one of these models starts
-// its blast, it is told to all of them here, as a real explosion would be.
+// lost no limbs, the water did not heave and nothing landed on the lens. When
+// one of these models starts its blast, it is told to all of them here, as a
+// real explosion would be. So is the spray a boat throws up meeting a wave
+// (fx_water_spray.tik), to the lens: the water off it lands on whoever is in
+// the boat.
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
@@ -36,6 +39,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_physics.h"
 #include "cg_water.h"
 #include "cg_scriptblast.h"
+#include "cg_lens.h"
 
 typedef struct {
     const char *model; // the effect, from models/animate/
@@ -62,6 +66,10 @@ static struct {
     int time;
 } cg_scriptBlastWas[MAX_GENTITIES];
 
+// the spray a boat throws up as it meets a wave (m3l1a's ride in): no blast,
+// but the water off it lands on the lens of whoever is in the boat
+#define CG_SCRIPT_SPRAY -2
+
 static int CG_ScriptBlastKind(int modelindex)
 {
     const char *name = CG_ConfigString(CS_MODELS + modelindex);
@@ -69,6 +77,9 @@ static int CG_ScriptBlastKind(int modelindex)
 
     if (Q_stricmpn(name, "models/animate/fx_", 18)) {
         return -1;
+    }
+    if (!Q_stricmp(name + 15, "fx_water_spray.tik")) {
+        return CG_SCRIPT_SPRAY;
     }
     for (i = 0; i < ARRAY_LEN(cg_scriptBlastKinds); i++) {
         if (!Q_stricmp(name + 15, cg_scriptBlastKinds[i].model)) {
@@ -109,7 +120,7 @@ void CG_ScriptBlastsFrame(void)
         cg_scriptBlastWas[num].time  = cg.time;
 
         kind = CG_ScriptBlastKind(s->modelindex);
-        if (kind < 0) {
+        if (kind == -1) {
             continue;
         }
         tiki = cgi.R_Model_GetHandle(cgs.model_draw[s->modelindex]);
@@ -125,18 +136,26 @@ void CG_ScriptBlastsFrame(void)
             continue;
         }
 
+        if (kind == CG_SCRIPT_SPRAY) {
+            CG_LensSpray(s->origin);
+            continue;
+        }
+
         CG_RagdollNoteExplosion(s->origin, kind);
         CG_GoreNoteExplosion(s->origin, kind);
         CG_PhysicsNoteExplosion(s->origin, kind);
         {
             cgWaterSample_t water;
+            qboolean        wet = qfalse;
 
             if (CG_WaterSample(s->origin, &water) && s->origin[2] - water.surface < 48.0f) {
                 vec3_t at;
 
                 VectorSet(at, s->origin[0], s->origin[1], water.surface);
                 CG_WaterSplash(at, 80.0f, 900.0f);
+                wet = qtrue;
             }
+            CG_LensBlast(s->origin, kind, wet);
         }
     }
 }

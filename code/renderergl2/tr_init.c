@@ -1817,6 +1817,7 @@ void R_Register( void )
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
+	R_LensRegisterCvars();
 	R_SkelGpuRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
@@ -2449,6 +2450,7 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.RegisterShaderVertexLit = RE_RegisterShaderVertexLit;
 	re.SetWaterBlood = RE_SetWaterBlood;
 	re.AddWaterRipples = RE_AddWaterRipples;
+	re.SetLensSpots = RE_SetLensSpots;
 	re.TIKI_Orientation = RE_TIKI_Orientation;
 	re.TIKI_IsOnGround = RE_TIKI_IsOnGround;
 	re.SetFrameNumber = RE_SetFrameNumber;

@@ -55,6 +55,8 @@ extern const char *fallbackShader_tonemap_fp;
 extern const char *fallbackShader_water_vp;
 extern const char *fallbackShader_beach_vp;
 extern const char *fallbackShader_ripple_vp;
+extern const char *fallbackShader_lens_vp;
+extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_ripple_fp;
 extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
@@ -219,7 +221,13 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RippleDecay",     GLSL_VEC4 },
 	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
 	{ "u_RippleFoam",      GLSL_VEC4_WATERSPOTS },
-	{ "u_WaterRipples",    GLSL_VEC4 }
+	{ "u_WaterRipples",    GLSL_VEC4 },
+	{ "u_LensInfo",        GLSL_VEC4 },
+	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
+	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_Wet",             GLSL_VEC4 },
+	{ "u_WetSky",          GLSL_VEC4 },
+	{ "u_WetSun",          GLSL_VEC4 }
 };
 
 typedef enum
@@ -2203,6 +2211,18 @@ void GLSL_InitGPUShaders(void)
 			ri.Printf(PRINT_WARNING, "WARNING: the water program did not compile, water keeps its stages\n");
 		}
 
+		// what lands on the lens: drawn over the frame, through its copy
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		extradefines[0] = '\0';
+		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+		if (GLSL_InitGPUShader(&tr.lensShader, "lens", attribs, qtrue, extradefines, qtrue, fallbackShader_lens_vp, fallbackShader_lens_fp))
+		{
+			GLSL_InitUniforms(&tr.lensShader);
+			GLSL_SetUniformInt(&tr.lensShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			GLSL_FinishGPUShader(&tr.lensShader);
+			numEtcShaders++;
+		}
+
 		// its ripples, a step of them
 		if (r_waterRipples->integer)
 		{
@@ -2307,6 +2327,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);
 	GLSL_DeleteGPUShader(&tr.rippleShader);
+	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.beachShader[0]);
 	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 

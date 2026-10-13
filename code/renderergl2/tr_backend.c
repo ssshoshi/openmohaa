@@ -2220,6 +2220,10 @@ const void *RB_PostProcess(const void *data)
 	else
 		RB_GaussianBlur(srcFbo, srcFbo, backEnd.refdef.blurFactor);
 
+	// Added in OPM: what has landed on the lens
+	if (srcFbo)
+		RB_LensDraw(srcFbo, srcBox);
+
 	if (srcFbo != dstFbo)
 		FBO_FastBlit(srcFbo, srcBox, dstFbo, dstBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
