@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "entity.h"
 #include "dm_manager.h"
 #include "player.h"
+#include "../qcommon/qfiles.h"
 #include "Entities.h"
 #include "health.h"
 #include "g_physics.h"
@@ -1505,6 +1506,7 @@ void Level::PreSpawnSentient(Event *ev)
         m_LoopProtection = true;
     }
 
+    SpawnPlacedDead();
     StartMapAddon();
 
     PathManager.CreatePaths();
@@ -1536,6 +1538,96 @@ const char *Level::MapAddonName()
     }
 
     return addon;
+}
+
+/*
+===============
+Level::SpawnPlacedDead
+
+Added in OPM
+  The dead a map lays about (Omaha's beach) are static models, drawn by the
+  renderer and nothing else: they lie through every blast and every round.
+  Nor can they be more: models/static/body_us05.tik and its animated twin are
+  one rigid mesh, with no skeleton to make a ragdoll of. So each American one
+  gets a real body put where it lies instead, a man of the 29th lying dead
+  (models/animate/allied_1st-ranger-private_dead.tik, on his side, face down
+  or on his back). The client makes a ragdoll of him once something reaches
+  him, and hides the static one under him (cg_water.cpp). At level start
+  only: a savegame keeps them.
+===============
+*/
+void Level::SpawnPlacedDead()
+{
+    union {
+        byte *b;
+        void *v;
+    } buf;
+    dheader_t             header;
+    const lump_t         *lump;
+    const cStaticModel_t *in;
+    int                   len, count, i, spawned = 0;
+
+    if (!g_placeddead->integer || LoadingSavegame || !m_mapfile.length()) {
+        return;
+    }
+
+    buf.v = NULL;
+    len   = gi.FS_ReadFile(m_mapfile.c_str(), &buf.v, qtrue);
+    if (len < (int)sizeof(dheader_t) || !buf.v) {
+        if (buf.v) {
+            gi.FS_FreeFile(buf.v);
+        }
+        return;
+    }
+
+    memcpy(&header, buf.b, sizeof(header));
+    for (i = 0; i < (int)(sizeof(dheader_t) / 4); i++) {
+        ((int *)&header)[i] = LittleLong(((int *)&header)[i]);
+    }
+    lump  = Q_GetLumpByVersion(&header, LUMP_STATICMODELDEF);
+    count = (lump->fileofs > 0 && lump->filelen > 0 && lump->fileofs + lump->filelen <= len)
+              ? lump->filelen / (int)sizeof(cStaticModel_t)
+              : 0;
+    in    = (const cStaticModel_t *)(buf.b + lump->fileofs);
+
+    for (i = 0; i < count; i++) {
+        char        name[sizeof(in[i].model) + 1];
+        static const char *const twin    = "models/animate/allied_1st-ranger-private_dead.tik";
+        static const char *const poses[] = {"idle", "front", "back"};
+        const char              *body;
+        SpawnArgs                args;
+        Listener                *l;
+
+        memcpy(name, in[i].model, sizeof(in[i].model));
+        name[sizeof(in[i].model)] = 0;
+        body = Q_stristr(name, "/body_");
+        if (!body || !Q_stristr(name, "static/") || (Q_stricmpn(body, "/body_us", 8) && Q_stricmpn(body, "/body_2nd", 9))) {
+            continue;
+        }
+        if (!spawned && gi.FS_ReadFile(twin, NULL, qtrue) < 0) {
+            break;
+        }
+
+        args.setArg("classname", "script_model");
+        args.setArg("model", twin);
+        args.setArg("anim", poses[i % 3]);
+        args.setArg("origin", va("%f %f %f", in[i].origin[0], in[i].origin[1], in[i].origin[2]));
+        args.setArg("angles", va("%f %f %f", in[i].angles[0], in[i].angles[1], in[i].angles[2]));
+        args.setArg("scale", va("%f", in[i].scale > 0.0f ? in[i].scale : 1.0f));
+        args.setArg("targetname", "opm_placed_dead");
+
+        l = args.Spawn();
+        if (l && l->isSubclassOf(Entity)) {
+            ((Entity *)l)->setSolidType(SOLID_NOT);
+            spawned++;
+        }
+    }
+
+    gi.FS_FreeFile(buf.v);
+
+    if (spawned) {
+        gi.DPrintf("%d of the map's dead are bodies now\n", spawned);
+    }
 }
 
 /*

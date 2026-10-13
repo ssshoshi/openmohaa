@@ -50,10 +50,11 @@ extern "C" {
     void CG_WaterFlow(const vec3_t p, float depth, vec3_t out);
 
     // A body is in the water now, its middle there: it bleeds into it, a red
-    // cloud that spreads round it from the moment it went in. body is the
-    // corpse's entity and born when its ragdoll began, so a slot reused for
-    // another body starts a cloud of its own.
-    void CG_WaterBleed(int body, int born, const vec3_t at);
+    // cloud that spreads round it from the moment it went in, or fully spread
+    // at once for a body the map placed there long dead. body is the corpse's
+    // entity and born when its ragdoll began, so a slot reused for another
+    // body starts a cloud of its own.
+    void CG_WaterBleed(int body, int born, const vec3_t at, qboolean longDead);
 
     // A body is lying on the ground, its middle there. Where the map has a
     // beach (water/<map>.txt), the sand under it soaks red, spreading from
@@ -75,6 +76,10 @@ extern "C" {
     // Once a frame: what is wading and sailing through the water disturbs it,
     // and what disturbed it this frame goes to the renderer.
     void CG_WaterRipplesFrame(void);
+
+    // Once a frame: the static dead the map placed go from under the bodies
+    // the game put in their place.
+    void CG_PlacedDeadFrame(void);
 
     extern cvar_t *cg_water_float;
     extern cvar_t *cg_water_blood;

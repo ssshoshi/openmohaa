@@ -2243,6 +2243,9 @@ static qboolean CG_RagdollMeasureHinges(cg_ragdoll_t *rd)
 // animation, extrapolating the tips the model does not carry. Shared between
 // the seed and the frames leading up to it, which need the same positions in
 // order to work out how fast the animation is moving.
+// Added in OPM: why the latest body could not be seeded, for cg_ragdoll_log
+static const char *rd_seedFailure;
+
 static qboolean CG_RagdollReadJoints(
     cg_ragdoll_t *rd, refEntity_t *model, vec3_t worldPos[RD_NUM_JOINTS], vec3_t worldAxis[RD_NUM_JOINTS][3]
 )
@@ -2273,6 +2276,7 @@ static qboolean CG_RagdollReadJoints(
         }
 
         if (!haveJoint[i] && def->required) {
+            rd_seedFailure = def->boneName ? def->boneName : def->tipName;
             return qfalse;
         }
     }
@@ -2382,6 +2386,19 @@ typedef struct {
 } rdBlast_t;
 
 static rdBlast_t rd_blasts[RD_MAX_IMPACTS];
+
+// Added in OPM
+//  The rounds gone by lately, for the dead the map placed that are not yet
+//  ragdolls: one is woken by a round going by it (CG_RagdollPosedDisturbed),
+//  which as a script model it does not stop and is not hit by.
+#define RD_POSED_SHOTS 16
+#define RD_POSED_NEAR  40.0f // how near a round goes to a placed body to wake it
+
+static struct {
+    vec3_t start, end;
+    int    time;
+} rd_posedShots[RD_POSED_SHOTS];
+static int rd_posedShotHead;
 static int       rd_blastHead;
 
 // How far each kind of blast reaches, and how hard it pushes at the centre, in
@@ -2689,6 +2706,7 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
     float    bodyScale;
     int      i, j, k;
 
+    rd_seedFailure = NULL;
     if (!CG_RagdollReadJoints(rd, model, worldPos, worldAxis)) {
         return qfalse;
     }
@@ -2816,6 +2834,7 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
     }
 
     if (!rd->numOverrides) {
+        rd_seedFailure = "no bones to drive";
         return qfalse;
     }
 
@@ -2873,6 +2892,7 @@ static qboolean CG_RagdollSeed(cg_ragdoll_t *rd, centity_t *cent, refEntity_t *m
     CG_RagdollFitToMesh(rd, model);
 
     if (!CG_RagdollMeasureLimits(rd) || !CG_RagdollMeasureClearances(rd) || !CG_RagdollMeasureHinges(rd)) {
+        rd_seedFailure = "its measurements";
         return qfalse;
     }
     return qtrue;
@@ -7847,6 +7867,12 @@ qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large, v
         return qfalse;
     }
 
+    // Added in OPM: for the placed dead it goes by
+    VectorCopy(start, rd_posedShots[rd_posedShotHead].start);
+    VectorCopy(end, rd_posedShots[rd_posedShotHead].end);
+    rd_posedShots[rd_posedShotHead].time = cg.time;
+    rd_posedShotHead                     = (rd_posedShotHead + 1) % RD_POSED_SHOTS;
+
     // The first corpse the round goes into is where it ends. Nothing beyond
     // is shoved or bloodied, and the caller drops the impact on whatever was
     // behind the body: a shot into a corpse lying on the ground must not also
@@ -9604,6 +9630,48 @@ static qboolean CG_RagdollPosedCorpse(const refEntity_t *model)
     return (Q_stristr(base, "_dead") || !Q_stricmpn(base, "body_", 5)) ? qtrue : qfalse;
 }
 
+// Added in OPM
+//  A body the map placed lies still until something reaches it, and spends
+//  no ragdoll (nor cg_ragdoll_maxcount) until then: a blast close enough to
+//  throw it, a round going by it, or water, which moves it for good. Started
+//  together, the dead of a whole beach took every ragdoll there was, and
+//  took them again from each other every frame.
+static qboolean CG_RagdollPosedDisturbed(const centity_t *cent)
+{
+    cgWaterSample_t water;
+    vec3_t          mid;
+    int             i;
+
+    VectorSet(mid, cent->lerpOrigin[0], cent->lerpOrigin[1], cent->lerpOrigin[2] + 8.0f);
+
+    for (i = 0; i < RD_MAX_IMPACTS; i++) {
+        const rdBlast_t *blast = &rd_blasts[i];
+
+        if (blast->used && cg.time - blast->time <= RD_IMPACT_WINDOW && Distance(mid, blast->pos) < blast->radius) {
+            return qtrue;
+        }
+    }
+
+    for (i = 0; i < RD_POSED_SHOTS; i++) {
+        vec3_t along, to, nearest;
+        float  len, t;
+
+        if (!rd_posedShots[i].time || cg.time - rd_posedShots[i].time > RD_IMPACT_WINDOW) {
+            continue;
+        }
+        VectorSubtract(rd_posedShots[i].end, rd_posedShots[i].start, along);
+        len = VectorNormalize(along);
+        VectorSubtract(mid, rd_posedShots[i].start, to);
+        t = Com_Clamp(0.0f, len, DotProduct(to, along));
+        VectorMA(rd_posedShots[i].start, t, along, nearest);
+        if (Distance(nearest, mid) < RD_POSED_NEAR) {
+            return qtrue;
+        }
+    }
+
+    return CG_WaterSample(mid, &water) && water.surface > cent->lerpOrigin[2] + 4.0f;
+}
+
 static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson, qboolean standIn)
 {
     const entityState_t *s1 = &cent->currentState;
@@ -9953,6 +10021,11 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             return;
         }
 
+        // Added in OPM: the placed dead wait for something to reach them
+        if (!(cent->currentState.eFlags & EF_DEAD) && CG_RagdollPosedCorpse(model) && !CG_RagdollPosedDisturbed(cent)) {
+            return;
+        }
+
         if (cg_ragdoll_log->integer) {
             cgi.Printf("ragdoll %d: entity %d died, starting a ragdoll\n", cg.time, cent->currentState.number);
         }
@@ -9972,6 +10045,10 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         rd->quietSince = cg.time;
 
         if (!CG_RagdollSeed(rd, cent, model)) {
+            if (cg_ragdoll_log->integer) {
+                cgi.Printf("ragdoll %d: entity %d (%s) not seeded: %s\n", cg.time, cent->currentState.number,
+                    model->tiki->a->name, rd_seedFailure ? rd_seedFailure : "?");
+            }
             CG_RagdollFree(rd);
             return;
         }
@@ -10221,7 +10298,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             // and it bleeds into the water (cg_water.cpp), or lying on the
             // sand, into that
             if (afloat) {
-                CG_WaterBleed(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p);
+                CG_WaterBleed(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p, CG_RagdollPosedCorpse(model));
             } else if (rd->restingSince) {
                 CG_WaterStain(rd->entityNum, rd->startTime, rd->part[RD_PELVIS].p, CG_RagdollPosedCorpse(model));
             }

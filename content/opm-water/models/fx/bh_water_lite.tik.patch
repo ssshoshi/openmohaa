@@ -165,10 +165,3 @@
  		)
  	}
  }
-@@ -129,5 +101,5 @@
- // This section is just needed to be a valid tiki file
- animations
- {
--	idle dummy2.skc 
--}+	idle dummy2.skc
-+}

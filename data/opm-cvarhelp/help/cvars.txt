@@ -541,6 +541,7 @@ g_m6l1	0	1	code/fgame/gamecvars.cpp:686	Campaign progress: mission 6, level 1 is
 g_m6l2	0	1	code/fgame/gamecvars.cpp:687	Campaign progress: mission 6, level 2 is unlocked. Saved.
 g_m6l3	0	1	code/fgame/gamecvars.cpp:688	Campaign progress: mission 6, level 3 is unlocked. Saved.
 g_mapaddons	0	1	code/fgame/gamecvars.cpp:802	Runs a map's add-on script (maps/<map>_opm.scr) next to the map's own.
+g_placeddead	0	1	code/fgame/gamecvars.cpp:835	Puts a real body where each of the map's static dead lies (Omaha's beach), which the client makes a ragdoll of once a blast or a round reaches him; the static one is hidden under him.
 g_maprotation_filter			code/client/cl_uimaprotationsetup.cpp:64	Which game type the map rotation menu lists maps for (ffa, obj, tow...).
 g_maxintermission	0		code/fgame/gamecvars.cpp:582	Multiplayer: seconds the end-of-map scoreboard stays up before the next map. 0 waits. Server setting.
 g_maxplayerhealth			code/fgame/game.cpp:87	Player maximum health in single player. Set by the difficulty level.

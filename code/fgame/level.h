@@ -313,6 +313,7 @@ public:
     void     PreSpawnSentient(Event *ev);
     const char *MapAddonName();
     void        StartMapAddon();
+    void        SpawnPlacedDead();
     void        MapAddonLoaded();
     void     ServerSpawned();
     qboolean inhibitEntity(int spawnflags);

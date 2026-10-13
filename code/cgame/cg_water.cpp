@@ -49,9 +49,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // stains the beach round each, out to a radius that grows from when the body
 // came to rest, and is there from the start for the dead the map placed.
 //
-// The dead the map placed are static models (models/static/body_*.tik), and
-// none of them is a ragdoll: read from the map as it loads, each one gets its
-// blood at once, fully spread, in the water or on the sand where it lies.
+// The dead the map placed are static models (models/static/body_*.tik): read
+// from the map as it loads, each one gets its blood at once, fully spread, in
+// the water or on the sand where it lies. The game puts a real body in the
+// place of each American one (Level::SpawnPlacedDead), and once he is here the
+// static one goes (CG_PlacedDeadFrame): he is a ragdoll once anything reaches
+// him, and bleeds and stains as any body does.
 
 #include "cg_local.h"
 #include "cg_water.h"
@@ -115,6 +118,19 @@ typedef struct {
 } cgWaterStain_t;
 
 static cgWaterStain_t cg_waterStains[WATER_STAIN_MAX];
+
+// The dead the map placed, static models, and whether each has been hidden
+// under the body put in its place (CG_PlacedDeadFrame)
+#define PLACED_DEAD_MAX 128
+
+typedef struct {
+    int      index; // among the map's static models
+    vec3_t   origin;
+    qboolean hidden;
+} cgPlacedDead_t;
+
+static cgPlacedDead_t cg_placedDead[PLACED_DEAD_MAX];
+static int            cg_numPlacedDead;
 static int            cg_waterBloodTime;
 static int            cg_waterBloodSent;
 
@@ -370,7 +386,8 @@ static void CG_WaterPlacedDead(void)
     long                  len;
     int                   count, i, nBlood = 0, nStain = 0;
 
-    if (!cg_water.hasFile || !cg_water_blood->integer || !cgs.mapname[0]) {
+    cg_numPlacedDead = 0;
+    if (!cgs.mapname[0]) {
         return;
     }
 
@@ -400,6 +417,18 @@ static void CG_WaterPlacedDead(void)
         memcpy(name, in[i].model, sizeof(in[i].model));
         name[sizeof(in[i].model)] = 0;
         if (!Q_stristr(name, "/body_")) {
+            continue;
+        }
+
+        if (cg_numPlacedDead < PLACED_DEAD_MAX) {
+            cgPlacedDead_t *pd = &cg_placedDead[cg_numPlacedDead++];
+
+            pd->index = i;
+            VectorCopy(in[i].origin, pd->origin);
+            pd->hidden = qfalse;
+        }
+
+        if (!cg_water.hasFile || !cg_water_blood->integer) {
             continue;
         }
 
@@ -436,7 +465,7 @@ static void CG_WaterPlacedDead(void)
     cgi.FS_FreeFile(buf);
 }
 
-void CG_WaterBleed(int body, int born, const vec3_t at)
+void CG_WaterBleed(int body, int born, const vec3_t at, qboolean longDead)
 {
     cgWaterBlood_t *b, *oldest = NULL, *slot = NULL;
     int             i;
@@ -476,7 +505,7 @@ void CG_WaterBleed(int body, int born, const vec3_t at)
     slot->used     = qtrue;
     slot->body     = body;
     slot->born     = born;
-    slot->wentIn   = cg.time;
+    slot->wentIn   = longDead ? cg.time - 600000 : cg.time;
     slot->lastSeen = cg.time;
     slot->at[0]    = at[0];
     slot->at[1]    = at[1];
@@ -999,5 +1028,62 @@ void CG_WaterRipplesFrame(void)
 
     if (n) {
         cgi.R_AddWaterRipples(&out[0][0], n);
+    }
+}
+
+//=============================================================
+// The dead the map placed
+//=============================================================
+//
+// The game puts a body where each static one lies (Level::SpawnPlacedDead): a
+// man lying dead (models/animate/*_dead.tik), which the client makes a ragdoll
+// of once something reaches him. Once he is here, the static one under him
+// goes. The stain it had stays, as the sand under him is soaked; the cloud it
+// had in the water goes, as he bleeds into the water as any body does,
+// wherever the waves take him.
+
+void CG_PlacedDeadFrame(void)
+{
+    static const vec3_t gone[3] = {
+        {0.001f, 0.0f,   0.0f  },
+        {0.0f,   0.001f, 0.0f  },
+        {0.0f,   0.0f,   0.001f}
+    };
+    int i, j, k;
+
+    CG_WaterCheckMap();
+    if (!cg_numPlacedDead || !cg.snap || cgi.apiversion < 5 || !cgi.R_SetStaticModelTransform) {
+        return;
+    }
+
+    for (i = 0; i < cg.snap->numEntities; i++) {
+        const entityState_t *s = &cg_entities[cg.snap->entities[i].number].currentState;
+        const char          *name;
+
+        if (s->modelindex <= 0 || s->solid == SOLID_BMODEL) {
+            continue;
+        }
+        name = CG_ConfigString(CS_MODELS + s->modelindex);
+        if (Q_stricmpn(name, "models/animate/", 15) || !Q_stristr(name, "_dead")) {
+            continue;
+        }
+
+        for (j = 0; j < cg_numPlacedDead; j++) {
+            cgPlacedDead_t *pd = &cg_placedDead[j];
+
+            if (pd->hidden || Distance(pd->origin, s->origin) > 8.0f) {
+                continue;
+            }
+
+            cgi.R_SetStaticModelTransform(pd->index, pd->origin, gone);
+            pd->hidden = qtrue;
+
+            for (k = 0; k < WATER_BLOOD_MAX; k++) {
+                if (cg_waterBlood[k].used && cg_waterBlood[k].placed && cg_waterBlood[k].body == -1 - pd->index) {
+                    cg_waterBlood[k].used = qfalse;
+                }
+            }
+            break;
+        }
     }
 }
