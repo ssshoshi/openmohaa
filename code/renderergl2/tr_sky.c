@@ -490,6 +490,10 @@ static void DrawSkySide( struct image_s *image, const int mins[2], const int max
 			GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, noFogColor);
 			GLSL_SetUniformVec2(sp, UNIFORM_GLOBALFOGPARAMS, noFogParams);
 		}
+
+		// Added in OPM: nor is the sky wet (tr_water.c), whatever the last
+		// draw was
+		R_WaterSetDry(sp);
 	}
 
 	R_DrawElements(tess.numIndexes - tess.firstIndex, tess.firstIndex);

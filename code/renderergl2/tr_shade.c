@@ -1209,6 +1209,9 @@ static void ForwardDlight( void ) {
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
+		// Added in OPM: the light's pass adds light only; the wet is in the
+		// surface's own pass
+		R_WaterSetDry(sp);
 
 		if (pStage->bundle[TB_DIFFUSEMAP].image[0])
 			R_BindAnimatedImageToTMU( &pStage->bundle[TB_DIFFUSEMAP], TB_DIFFUSEMAP);

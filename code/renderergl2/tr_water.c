@@ -787,16 +787,26 @@ Added in OPM
   The wet layer (glsl/lightall_fp.glsl) for a draw: on a map with a beach
   the tide is leaving, what stands below the mark it reached (the wet sand's
   top) and a little above it, where the spray goes, is wet. None elsewhere.
+  Every draw with the lightall program sets it, wet or dry: a uniform left
+  as the last draw had it wets whatever comes next (the sky box, below the
+  mark, came out a grey wall round the map).
 ===============
 */
+void R_WaterSetDry(shaderProgram_t *sp)
+{
+    vec4_t v;
+
+    VectorClear4(v);
+    GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
+}
+
 void R_WaterSetWet(shaderProgram_t *sp)
 {
     vec4_t v;
 
     if (!r_waterWet->integer || !water.beachSet || !water.shoreSet || !tr.world
         || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
-        VectorClear4(v);
-        GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
+        R_WaterSetDry(sp);
         return;
     }
 

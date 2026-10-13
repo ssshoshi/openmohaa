@@ -3805,6 +3805,7 @@ void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp);
+void R_WaterSetDry(shaderProgram_t *sp);
 
 // Added in OPM: what is on the lens (tr_lens.c)
 extern cvar_t *r_lens;
