@@ -117,6 +117,10 @@ uniform sampler2D u_SkelBones;
 uniform vec4      u_SkelParams;  // the model's first bone, its scale, its lighting (0 none, 1 one colour, 2 lights), lights
 uniform vec4      u_SkelAmbient; // 0 to 255
 uniform vec4      u_SkelLights[SKEL_MAX_LIGHTS * 3];
+// gore dents (R_GoreDentsGpu): the middle and radius, then the way out of the
+// hollow
+uniform int       u_SkelNumDents;
+uniform vec4      u_SkelDents[SKEL_MAX_DENTS * 2];
 
 vec4 SkelTexel(int bone, int k)
 {
@@ -337,6 +341,22 @@ void main()
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent = attr_Tangent.x * SkelTexel(nb, 1).xyz + attr_Tangent.y * SkelTexel(nb, 2).xyz + attr_Tangent.z * SkelTexel(nb, 3).xyz;
   #endif
+	// pushed into the dents, as R_GoreDentVertex does: straight in, to the
+	// sphere's far side
+	for (int k = 0; k < SKEL_MAX_DENTS; k++)
+	{
+		if (k >= u_SkelNumDents) break;
+		vec4  ds = u_SkelDents[k * 2];
+		vec3  dd = u_SkelDents[k * 2 + 1].xyz;
+		vec3  d  = position - ds.xyz;
+		float along   = dot(d, dd);
+		float across2 = dot(d, d) - along * along;
+		if (across2 >= ds.w * ds.w) continue;
+		float fl = -sqrt(ds.w * ds.w - across2);
+		if (along <= fl) continue;
+		position += (fl - along) * dd;
+		normal = normalize(ds.xyz - position);
+	}
 	vec4 skelColor = SkelLight(position, normal);
 #else
 	vec3 position  = attr_Position;
