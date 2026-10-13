@@ -59,6 +59,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 cvar_t *cg_water_float;
 cvar_t *cg_water_blood;
+cvar_t *cg_water_ripples;
 
 #define WATER_REACH    256.0f // how far above a point its water's top is looked for
 #define WATER_DEEP     1024.0f // how far below it the bottom is
@@ -117,10 +118,61 @@ static cgWaterStain_t cg_waterStains[WATER_STAIN_MAX];
 static int            cg_waterBloodTime;
 static int            cg_waterBloodSent;
 
+// What disturbs the water (see Ripples, below)
+#define WATER_RIPPLE_GATHER 96
+#define WATER_RIPPLE_SENT   32 // as many as the renderer takes (WATER_MAX_SPOTS)
+
+// how deep in it a man is wading, rather than dry or swimming
+#define WATER_WADE_MIN 3.0f
+#define WATER_WADE_MAX 70.0f
+// the widest a thing can be and still be pushed through the water as a man is;
+// wider, it has a hull (a boat)
+#define WATER_WADER_SIZE 48.0f
+#define WATER_HULL_SIZE  700.0f // and no hull is wider than this
+#define WATER_JUMP       200.0f // further in a frame than this, a thing was moved, not going
+
+typedef struct {
+    float r[5]; // x, y, width, dip, foam
+    float away; // from the view, squared
+} cgWaterRipple_t;
+
+static cgWaterRipple_t cg_waterRipples[WATER_RIPPLE_GATHER];
+static int             cg_numWaterRipples;
+static int             cg_waterRippleTime;
+
+// Where something went in, the water rocks up and down there for a moment, and
+// sends out a train of rings rather than one
+#define WATER_RINGS      32
+#define WATER_RING_TIME  0.7f  // seconds it rocks for
+#define WATER_RING_DECAY 0.22f // seconds for it to die down most of the way
+
+typedef struct {
+    vec3_t at;
+    float  size;
+    float  push; // how hard, a second
+    float  freq; // how often, a second
+    int    start;
+} cgWaterRing_t;
+
+static cgWaterRing_t cg_waterRings[WATER_RINGS];
+
+// each entity as it was the frame before
+static struct {
+    int      time;  // cg.time then, or 0
+    int      model; // its modelindex then
+    vec3_t   origin;
+    qboolean wet;   // whether it was in the water
+} cg_waterWas[MAX_GENTITIES];
+
 void CG_InitWater(void)
 {
     cg_water_float = cgi.Cvar_Get("cg_water_float", "1", CVAR_ARCHIVE);
     cg_water_blood = cgi.Cvar_Get("cg_water_blood", "1", CVAR_ARCHIVE);
+    cg_water_ripples = cgi.Cvar_Get("cg_water_ripples", "1", CVAR_ARCHIVE);
+    memset(cg_waterWas, 0, sizeof(cg_waterWas));
+    cg_numWaterRipples = 0;
+    cg_waterRippleTime = 0;
+    memset(cg_waterRings, 0, sizeof(cg_waterRings));
     cg_water.map[0] = 0;
     memset(cg_waterBlood, 0, sizeof(cg_waterBlood));
     memset(cg_waterStains, 0, sizeof(cg_waterStains));
@@ -651,4 +703,301 @@ void CG_WaterBloodFrame(void)
         cgi.R_SetWaterBlood(&spots[0][0], n, &stains[0][0], numStains);
     }
     cg_waterBloodSent = n + numStains;
+}
+
+//=============================================================
+// Ripples
+//=============================================================
+//
+// What goes through the water disturbs it, and the renderer spreads that out
+// in ripples and wakes (RE_AddWaterRipples, glsl/ripple_fp.glsl). Each frame
+// gathers what disturbs it: a dip pressed into the water at a point, so wide,
+// and foam left there. A man wading pushes a little in front of him as he goes;
+// a boat a bow wave, at its shoulders and a wash from its stern; a bullet, a
+// blast or anything falling in, one dip at once. The nearest to the view are
+// sent.
+
+
+
+void CG_WaterRipple(const vec3_t at, float width, float dip, float foam)
+{
+    cgWaterRipple_t *r;
+    float            away;
+    int              i;
+
+    if (!cg_water_ripples || !cg_water_ripples->integer || width <= 0.0f || (dip == 0.0f && foam <= 0.0f)) {
+        return;
+    }
+
+    away = Square(at[0] - cg.refdef.vieworg[0]) + Square(at[1] - cg.refdef.vieworg[1]);
+    if (cg_numWaterRipples < WATER_RIPPLE_GATHER) {
+        r = &cg_waterRipples[cg_numWaterRipples++];
+    } else {
+        // in place of the furthest, if this is nearer
+        r = &cg_waterRipples[0];
+        for (i = 1; i < WATER_RIPPLE_GATHER; i++) {
+            if (cg_waterRipples[i].away > r->away) {
+                r = &cg_waterRipples[i];
+            }
+        }
+        if (r->away <= away) {
+            return;
+        }
+    }
+
+    r->r[0] = at[0];
+    r->r[1] = at[1];
+    r->r[2] = width;
+    r->r[3] = dip;
+    r->r[4] = foam;
+    r->away = away;
+}
+
+void CG_WaterSplash(const vec3_t at, float size, float speed)
+{
+    const float    hard = Com_Clamp(0.3f, 2.5f, speed / 300.0f);
+    const float    dip  = size * 0.18f * hard;
+    cgWaterRing_t *ring = &cg_waterRings[0];
+    int            i;
+
+    CG_WaterRipple(at, size, dip, Q_min(1.0f, size * 0.04f * hard + 0.15f));
+
+    // and it rocks on: in the oldest place, if all are taken
+    for (i = 1; i < WATER_RINGS && ring->start; i++) {
+        if (!cg_waterRings[i].start || cg_waterRings[i].start < ring->start) {
+            ring = &cg_waterRings[i];
+        }
+    }
+    VectorCopy(at, ring->at);
+    ring->size  = size;
+    ring->push  = dip * 9.0f;
+    ring->freq  = Com_Clamp(2.5f, 8.0f, 40.0f / size);
+    ring->start = cg.time ? cg.time : 1;
+}
+
+// The water where things went in, rocking
+static void CG_WaterRings(float dt)
+{
+    int i;
+
+    for (i = 0; i < WATER_RINGS; i++) {
+        cgWaterRing_t *ring = &cg_waterRings[i];
+        float          age;
+
+        if (!ring->start) {
+            continue;
+        }
+        age = (cg.time - ring->start) * 0.001f;
+        if (age < 0.0f || age > WATER_RING_TIME) {
+            ring->start = 0;
+            continue;
+        }
+        CG_WaterRipple(ring->at, ring->size * 0.6f,
+            ring->push * sin(2.0f * M_PI * ring->freq * age) * exp(-age / WATER_RING_DECAY) * dt, 0.0f);
+    }
+}
+
+// A man (or anything about his size) in the water to his waist or so: he
+// rocks it as he sways and strides, more the faster he goes, and as he goes
+// pushes the water in front of him. Rocked, not pressed down: pressed
+// steadily, it would sink into a hole round him.
+static void CG_WaterWade(int who, const vec3_t origin, const vec3_t velocity, float dt)
+{
+    cgWaterSample_t water;
+    vec3_t          feet, at;
+    float           deep, speed, push;
+
+    VectorSet(feet, origin[0], origin[1], origin[2] + 2.0f);
+    if (!CG_WaterSample(feet, &water)) {
+        return;
+    }
+    deep = water.surface - origin[2];
+    if (deep < WATER_WADE_MIN || deep > WATER_WADE_MAX) {
+        return;
+    }
+
+    speed = sqrt(Square(velocity[0]) + Square(velocity[1]));
+    push  = Com_Clamp(0.4f, 1.5f, deep / 24.0f);
+    VectorSet(at, origin[0], origin[1], water.surface);
+    if (speed > 1.0f) {
+        // a little ahead of him, where he meets it
+        at[0] += velocity[0] / speed * 6.0f;
+        at[1] += velocity[1] / speed * 6.0f;
+    }
+
+    {
+        const float stride = 1.2f + speed / 150.0f;
+        const float rock   = sin(2.0f * M_PI * stride * cg.time * 0.001f + who * 1.7f);
+
+        CG_WaterRipple(at, 8.0f + deep * 0.1f, ((0.8f + speed * 0.02f) * rock + speed * 0.004f) * push * dt,
+            speed / 150.0f * 0.8f * dt);
+    }
+}
+
+// A hull going through the water: a bow wave where it meets it, the water
+// thrown off its shoulders, and the wash from its stern; and rings round it
+// as it rises and falls.
+static void CG_WaterHull(const vec3_t origin, const vec3_t angles, const vec3_t mins, const vec3_t maxs,
+    const vec3_t velocity, float dt)
+{
+    cgWaterSample_t water;
+    vec3_t          axis[3], mid, centre, low, at, dir, side;
+    float           speed, along, across, half[3], rate;
+    int             i;
+
+    AnglesToAxis(angles, axis);
+    for (i = 0; i < 3; i++) {
+        mid[i]  = 0.5f * (mins[i] + maxs[i]);
+        half[i] = 0.5f * (maxs[i] - mins[i]);
+    }
+    VectorCopy(origin, centre);
+    for (i = 0; i < 3; i++) {
+        VectorMA(centre, mid[i], axis[i], centre);
+    }
+
+    // in the water: its keel under it, its top out of it
+    VectorSet(low, centre[0], centre[1], centre[2] - half[2] + 2.0f);
+    if (!CG_WaterSample(low, &water) || water.surface > centre[2] + half[2] || water.depth <= 0.0f) {
+        return;
+    }
+
+    speed = sqrt(Square(velocity[0]) + Square(velocity[1]));
+    if (speed > 5.0f) {
+        VectorSet(dir, velocity[0] / speed, velocity[1] / speed, 0.0f);
+        VectorSet(side, -dir[1], dir[0], 0.0f);
+        along  = fabs(half[0] * DotProduct(axis[0], dir)) + fabs(half[1] * DotProduct(axis[1], dir));
+        across = fabs(half[0] * DotProduct(axis[0], side)) + fabs(half[1] * DotProduct(axis[1], side));
+        rate   = speed * 0.05f;
+
+        VectorMA(centre, along * 0.9f, dir, at);
+        at[2] = water.surface;
+        CG_WaterRipple(at, across * 0.7f, rate * dt, speed / 90.0f * 1.5f * dt);
+
+        for (i = -1; i <= 1; i += 2) {
+            VectorMA(centre, along * 0.55f, dir, at);
+            VectorMA(at, i * across * 0.9f, side, at);
+            CG_WaterRipple(at, across * 0.35f, rate * 0.45f * dt, speed / 90.0f * 1.2f * dt);
+        }
+
+        VectorMA(centre, -along * 0.95f, dir, at);
+        CG_WaterRipple(at, across * 0.8f, rate * 0.15f * dt, speed / 90.0f * 1.2f * dt);
+    }
+
+    if (fabs(velocity[2]) > 2.0f) {
+        CG_WaterRipple(centre, Q_max(half[0], half[1]) * 0.6f, -velocity[2] * 0.05f * dt, 0.0f);
+    }
+}
+
+static qboolean CG_WaterWet(const vec3_t p)
+{
+    return (CG_PointContents(p, 0) & MASK_WATER) != 0;
+}
+
+void CG_WaterRipplesFrame(void)
+{
+    float out[WATER_RIPPLE_SENT][5];
+    float dt;
+    int   n, i;
+
+    if (!cgi.R_AddWaterRipples || cgi.apiversion < 7) {
+        return;
+    }
+    CG_WaterCheckMap();
+
+    dt = cg_waterRippleTime ? (cg.time - cg_waterRippleTime) * 0.001f : 0.0f;
+    cg_waterRippleTime = cg.time;
+    if (dt <= 0.0f || dt > 0.25f) {
+        // a frame the game stood still in, or a jump: none from going this time
+        dt = 0.0f;
+    }
+
+    if (dt > 0.0f && cg_water_ripples->integer && cg.snap) {
+        vec3_t mins, maxs, velocity;
+
+        // the player
+        CG_WaterRings(dt);
+        CG_WaterWade(cg.snap->ps.clientNum, cg.predicted_player_state.origin, cg.predicted_player_state.velocity, dt);
+
+        for (i = 0; i < cg.snap->numEntities; i++) {
+            const int  num  = cg.snap->entities[i].number;
+            centity_t *cent = &cg_entities[num];
+            const entityState_t *s = &cent->currentState;
+            float      size;
+            qboolean   wet;
+
+            if (num == cg.snap->ps.clientNum || s->modelindex <= 0) {
+                cg_waterWas[num].time = 0;
+                continue;
+            }
+
+            if (s->solid == SOLID_BMODEL) {
+                cgi.R_ModelBounds(cgs.inlineDrawModel[s->modelindex], mins, maxs);
+            } else {
+                dtiki_t *tiki = cgi.R_Model_GetHandle(cgs.model_draw[s->modelindex]);
+
+                if (!tiki) {
+                    cg_waterWas[num].time = 0;
+                    continue;
+                }
+                cgi.TIKI_CalculateBounds(tiki, s->scale > 0.0f ? s->scale : 1.0f, mins, maxs);
+            }
+            size = Q_max(maxs[0] - mins[0], maxs[1] - mins[1]);
+
+            // how it has moved since the frame before, if it was there then
+            if (cg_waterWas[num].time && cg_waterWas[num].model == s->modelindex
+                && Distance(cg_waterWas[num].origin, cent->lerpOrigin) < WATER_JUMP) {
+                VectorSubtract(cent->lerpOrigin, cg_waterWas[num].origin, velocity);
+                VectorScale(velocity, 1.0f / ((cg.time - cg_waterWas[num].time) * 0.001f), velocity);
+            } else {
+                VectorClear(velocity);
+                cg_waterWas[num].wet = CG_WaterWet(cent->lerpOrigin);
+            }
+
+            if (size >= WATER_WADER_SIZE) {
+                if (size < WATER_HULL_SIZE) {
+                    CG_WaterHull(cent->lerpOrigin, cent->lerpAngles, mins, maxs, velocity, dt);
+                }
+            } else if (s->eType == ET_PLAYER || s->eType == ET_MODELANIM_SKEL
+                       || (s->eType == ET_MODELANIM && maxs[2] - mins[2] > 48.0f)) {
+                CG_WaterWade(num, cent->lerpOrigin, velocity, dt);
+            } else {
+                // a thing falling in: a grenade, a helmet, what was dropped
+                wet = CG_WaterWet(cent->lerpOrigin);
+                if (wet && !cg_waterWas[num].wet && velocity[2] < -40.0f) {
+                    cgWaterSample_t water;
+
+                    if (CG_WaterSample(cent->lerpOrigin, &water)) {
+                        vec3_t at;
+
+                        VectorSet(at, cent->lerpOrigin[0], cent->lerpOrigin[1], water.surface);
+                        CG_WaterSplash(at, Com_Clamp(4.0f, 24.0f, size), -velocity[2]);
+                    }
+                }
+                cg_waterWas[num].wet = wet;
+            }
+
+            cg_waterWas[num].time  = cg.time;
+            cg_waterWas[num].model = s->modelindex;
+            VectorCopy(cent->lerpOrigin, cg_waterWas[num].origin);
+        }
+    }
+
+    // the nearest, to the renderer
+    n = 0;
+    while (cg_numWaterRipples > 0 && n < WATER_RIPPLE_SENT) {
+        int near = 0;
+
+        for (i = 1; i < cg_numWaterRipples; i++) {
+            if (cg_waterRipples[i].away < cg_waterRipples[near].away) {
+                near = i;
+            }
+        }
+        memcpy(out[n++], cg_waterRipples[near].r, sizeof(out[0]));
+        cg_waterRipples[near] = cg_waterRipples[--cg_numWaterRipples];
+    }
+    cg_numWaterRipples = 0;
+
+    if (n) {
+        cgi.R_AddWaterRipples(&out[0][0], n);
+    }
 }

@@ -90,7 +90,8 @@ functions imported from the main executable
 //  5: R_SetStaticModelTransform, CM_DisableBrush, R_DetachWorldSurfaces and
 //  R_RegisterShaderVertexLit are present.
 //  6: CM_EnableBrush is present.
-//  7: R_SetWaterBlood is present (and NULL when the renderer has no use for it).
+//  7: R_SetWaterBlood and R_AddWaterRipples are present (and NULL when the
+//  renderer has no use for them).
 #define CGAME_IMPORT_API_VERSION 7
 
     /*
@@ -478,6 +479,8 @@ functions exported to the main executable
         //  Bodies' blood in water, and on the sand. See refexport_t. NULL with
         //  a renderer that draws none.
         void (*R_SetWaterBlood)(const float *spots, int numSpots, const float *stains, int numStains);
+        //  What disturbs the water this frame: x, y, width, dip, foam.
+        void (*R_AddWaterRipples)(const float *ripples, int numRipples);
 
     } clientGameImport_t;
 

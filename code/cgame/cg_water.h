@@ -64,8 +64,21 @@ extern "C" {
     // water fade, and the renderer is told where they are.
     void CG_WaterBloodFrame(void);
 
+    // Something disturbs the water at a point this frame: a dip so deep and
+    // so wide pressed into it, and foam left there. The renderer spreads it
+    // out in ripples (RE_AddWaterRipples).
+    void CG_WaterRipple(const vec3_t at, float width, float dip, float foam);
+
+    // Something about so big goes into the water at a point, this fast.
+    void CG_WaterSplash(const vec3_t at, float size, float speed);
+
+    // Once a frame: what is wading and sailing through the water disturbs it,
+    // and what disturbed it this frame goes to the renderer.
+    void CG_WaterRipplesFrame(void);
+
     extern cvar_t *cg_water_float;
     extern cvar_t *cg_water_blood;
+    extern cvar_t *cg_water_ripples;
 
     void CG_InitWater(void);
 

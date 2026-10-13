@@ -205,6 +205,7 @@ typedef struct {
     // In water (CG_JoltRagdollFloat): how thick each part is, metres, and
     // whether the water held any of it up in the latest step.
     float    radius[PR_NUM_PARTS];
+    float    wet[PR_NUM_PARTS]; // how much of each was under in the step before
     qboolean floating;
 } prRagdoll_t;
 
@@ -701,6 +702,7 @@ int CG_JoltRagdollCreate(
 
     pr->used        = qtrue;
     pr->floating    = qfalse;
+    memset(pr->wet, 0, sizeof(pr->wet));
     pr->holdJoint   = -1;
     pr->anchor      = JPH::BodyID();
     pr->hold        = NULL;
@@ -1019,6 +1021,7 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
 
     PhysFromJolt(JPH::Vec3(bodies.GetCenterOfMassPosition(pr->ragdoll->GetBodyID(PR_PELVIS))), at);
     if (!CG_WaterSample(at, &water)) {
+        memset(pr->wet, 0, sizeof(pr->wet));
         return;
     }
 
@@ -1048,6 +1051,20 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
             bodies.AddForce(id, force, point);
             under += share * 0.5f;
         }
+
+        // a part that goes in falling splashes, by how big and how fast
+        if (under > 0.0f && pr->wet[i] <= 0.0f) {
+            const float fall = -bodies.GetLinearVelocity(id).GetZ() * PHYS_METRES_TO_UNITS;
+
+            if (fall > 60.0f) {
+                vec3_t q;
+
+                PhysFromJolt(JPH::Vec3(t.GetTranslation()), q);
+                q[2] = water.surface;
+                CG_WaterSplash(q, Com_Clamp(5.0f, 22.0f, r * 2.2f), fall);
+            }
+        }
+        pr->wet[i] = under;
 
         if (under > 0.0f) {
             bodies.SetAngularVelocity(id, bodies.GetAngularVelocity(id) * Q_max(0.0f, 1.0f - PR_WATER_SPIN_DRAG * under * dt));

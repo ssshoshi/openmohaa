@@ -715,8 +715,10 @@ void CG_AddPacketEntities(void)
     CG_RagdollAddUnsent();
 
     // Added in OPM
-    //  The blood of the bodies in the water, for the renderer.
+    //  The blood of the bodies in the water, and what disturbs it, for the
+    //  renderer.
     CG_WaterBloodFrame();
+    CG_WaterRipplesFrame();
 
     // Added in OPM
     //  Client-side props (and later corpses) on Jolt.

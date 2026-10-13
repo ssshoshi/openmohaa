@@ -54,6 +54,8 @@ extern const char *fallbackShader_tonemap_vp;
 extern const char *fallbackShader_tonemap_fp;
 extern const char *fallbackShader_water_vp;
 extern const char *fallbackShader_beach_vp;
+extern const char *fallbackShader_ripple_vp;
+extern const char *fallbackShader_ripple_fp;
 extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
 extern const char* fallbackShader_greyscale_vp;
@@ -212,7 +214,12 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SandStains",      GLSL_VEC4_WATERSPOTS },
 	{ "u_WorldViewProjection", GLSL_MAT16 },
 	{ "u_WaterView",       GLSL_VEC4 },
-	{ "u_BeachSwash",      GLSL_VEC4 }
+	{ "u_BeachSwash",      GLSL_VEC4 },
+	{ "u_RippleSim",       GLSL_VEC4 },
+	{ "u_RippleDecay",     GLSL_VEC4 },
+	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
+	{ "u_RippleFoam",      GLSL_VEC4_WATERSPOTS },
+	{ "u_WaterRipples",    GLSL_VEC4 }
 };
 
 typedef enum
@@ -2176,6 +2183,7 @@ void GLSL_InitGPUShaders(void)
 		extradefines[0] = '\0';
 
 		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+		Q_strcat(extradefines, 1024, va("#define WATER_RIPPLE_SIZE %d\n", WATER_RIPPLE_SIZE));
 
 		if (GLSL_InitGPUShader(&tr.waterShader, "water", attribs, qtrue, extradefines, qtrue, fallbackShader_water_vp, fallbackShader_water_fp))
 		{
@@ -2184,6 +2192,7 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
 
 			GLSL_FinishGPUShader(&tr.waterShader);
 
@@ -2192,6 +2201,22 @@ void GLSL_InitGPUShaders(void)
 		else
 		{
 			ri.Printf(PRINT_WARNING, "WARNING: the water program did not compile, water keeps its stages\n");
+		}
+
+		// its ripples, a step of them
+		if (r_waterRipples->integer)
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+
+			if (GLSL_InitGPUShader(&tr.rippleShader, "ripple", attribs, qtrue, extradefines, qtrue, fallbackShader_ripple_vp, fallbackShader_ripple_fp))
+			{
+				GLSL_InitUniforms(&tr.rippleShader);
+				GLSL_SetUniformInt(&tr.rippleShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+				GLSL_FinishGPUShader(&tr.rippleShader);
+				numEtcShaders++;
+			}
 		}
 
 		// the wet beach the tide leaves: darkened, then the sky in it
@@ -2281,6 +2306,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);
+	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.beachShader[0]);
 	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 

@@ -67,6 +67,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "tr_local.h"
 
 cvar_t        *r_water;
+cvar_t        *r_waterRipples;
 static cvar_t *r_waterBlood;
 
 typedef struct {
@@ -101,10 +102,33 @@ static int    numWaterSpots;
 static vec4_t sandStains[WATER_MAX_SPOTS];
 static int    numSandStains;
 
+// The ripples (glsl/ripple_fp.glsl): a grid of the water's heights round the
+// view, WATER_RIPPLE_SIZE texels across WATER_RIPPLE_SPAN units, stepped
+// WATER_RIPPLE_HZ times a second. Ripples go WATER_RIPPLE_SPEED units a
+// second: a boat at 90 leaves a V of about 20 degrees, as a real one does.
+#define WATER_RIPPLE_SPAN  3072.0f
+#define WATER_RIPPLE_HZ    60.0f
+#define WATER_RIPPLE_SPEED 30.0f
+#define WATER_RIPPLE_STEPS 4 // at most, a frame: a slower frame has fewer
+
+// what disturbs the water, gathered until the next step: x, y, width, dip, foam
+static float waterRipples[WATER_MAX_SPOTS][5];
+static int   numWaterRipples;
+
+static struct {
+    int      current;  // which of the two grids is the latest
+    int      x, y;     // the grid's middle, in texels from the world's origin
+    float    time;     // the frame's time when it was last stepped
+    float    owed;     // time not yet stepped
+    qboolean clear;
+} ripples;
+
 void R_WaterRegisterCvars(void)
 {
     r_water      = ri.Cvar_Get("r_water", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterBlood = ri.Cvar_Get("r_waterBlood", "1", CVAR_ARCHIVE);
+    r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
+    ri.Cvar_SetDescription(r_waterRipples, "Ripples and wakes on water from men wading, boats, bullets and things falling in (needs vid_restart)");
     ri.Cvar_SetDescription(r_water, "Draws water with the water program: waves, reflection, depth, surf (needs vid_restart)");
     ri.Cvar_SetDescription(r_waterBlood, "How much of the blood a map puts in its water (water/<map>.txt): 0 none, 1 as the map has it");
 }
@@ -167,6 +191,15 @@ void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int
     }
 }
 
+void RE_AddWaterRipples(const float *in, int num)
+{
+    int i;
+
+    for (i = 0; i < num && numWaterRipples < WATER_MAX_SPOTS; i++) {
+        Com_Memcpy(waterRipples[numWaterRipples++], in + i * 5, sizeof(waterRipples[0]));
+    }
+}
+
 void R_WaterLoadWorld(const char *mapName)
 {
     union {
@@ -176,8 +209,11 @@ void R_WaterLoadWorld(const char *mapName)
     char *text;
 
     R_WaterDefaults();
-    numWaterSpots = 0;
-    numSandStains = 0;
+    numWaterSpots   = 0;
+    numSandStains   = 0;
+    numWaterRipples = 0;
+    ripples.clear   = qtrue;
+    ripples.time    = -1.0f;
 
     Com_sprintf(water.file, sizeof(water.file), "water/%s.txt", mapName);
     if (ri.FS_ReadFile(water.file, &buffer.v) <= 0) {
@@ -314,6 +350,11 @@ static void R_WaterFog(shaderProgram_t *sp)
 
 static qboolean RB_WaterCopyView(void);
 
+// How the latest water was drawn, for waterinfo: with the depth, with the view
+// before it, and if not, which buffer the view was being drawn to
+static qboolean waterLastDepth, waterLastView;
+static int      waterLastFbo;
+
 // The view's box on the screen, a share of it across and up: where it starts,
 // and where it ends
 static void RB_WaterViewBox(vec4_t box)
@@ -350,6 +391,126 @@ static qboolean RB_WaterCopyView(void)
 
 /*
 ===============
+RB_WaterRipples
+
+Steps the ripples on to now, once a frame, after the opaque surfaces of the
+first view of the world that has them (RB_BeachDraw): between batches, as it
+draws with tess.
+===============
+*/
+static void RB_WaterRipples(void)
+{
+    const float now   = backEnd.refdef.floatTime;
+    const float texel = WATER_RIPPLE_SPAN / WATER_RIPPLE_SIZE;
+    const float speed = WATER_RIPPLE_SPEED / WATER_RIPPLE_HZ / texel;
+    shaderProgram_t *sp = &tr.rippleShader;
+    FBO_t *oldFbo = glState.currentFBO;
+    vec4_t quadVerts[4], v;
+    vec2_t texCoords[4];
+    vec4_t sources[WATER_MAX_SPOTS], foam[WATER_MAX_SPOTS];
+    int    steps, step, x, y, i;
+
+    if (!sp->program || !tr.waterRippleFbo[0] || !tr.waterRippleFbo[1] || now == ripples.time
+        || backEnd.projection2D || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+        || (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || backEnd.viewParms.isPortal
+        || glState.currentFBO != tr.renderFbo) {
+        return;
+    }
+
+    if (ripples.time < 0.0f || now < ripples.time || now - ripples.time > 1.0f) {
+        ripples.owed = 1.0f / WATER_RIPPLE_HZ;
+    } else {
+        ripples.owed += now - ripples.time;
+    }
+    ripples.time = now;
+
+    steps = (int)(ripples.owed * WATER_RIPPLE_HZ);
+    if (!steps) {
+        return;
+    }
+    if (steps > WATER_RIPPLE_STEPS) {
+        steps        = WATER_RIPPLE_STEPS;
+        ripples.owed = 0.0f;
+    } else {
+        ripples.owed -= steps / WATER_RIPPLE_HZ;
+    }
+
+    // the grid goes with the view, a texel at a time
+    x = (int)floor(backEnd.viewParms.ori.origin[0] / texel);
+    y = (int)floor(backEnd.viewParms.ori.origin[1] / texel);
+    if (ripples.clear || abs(x - ripples.x) >= WATER_RIPPLE_SIZE / 2 || abs(y - ripples.y) >= WATER_RIPPLE_SIZE / 2) {
+        for (i = 0; i < 2; i++) {
+            FBO_Bind(tr.waterRippleFbo[i]);
+            qglViewport(0, 0, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+            qglScissor(0, 0, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+            qglClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            qglClear(GL_COLOR_BUFFER_BIT);
+        }
+        ripples.x     = x;
+        ripples.y     = y;
+        ripples.clear = qfalse;
+    }
+
+    // what disturbs it, where it is on the grid as it will be
+    for (i = 0; i < numWaterRipples; i++) {
+        const float *r = waterRipples[i];
+
+        sources[i][0] = (r[0] / texel - (x - WATER_RIPPLE_SIZE / 2)) / WATER_RIPPLE_SIZE;
+        sources[i][1] = (r[1] / texel - (y - WATER_RIPPLE_SIZE / 2)) / WATER_RIPPLE_SIZE;
+        sources[i][2] = r[2] / WATER_RIPPLE_SPAN;
+        sources[i][3] = r[3];
+        VectorSet4(foam[i], r[4], 0.0f, 0.0f, 0.0f);
+    }
+
+    VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+    VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+    VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+    VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+    VectorSet2(texCoords[0], 0.0f, 1.0f);
+    VectorSet2(texCoords[1], 1.0f, 1.0f);
+    VectorSet2(texCoords[2], 1.0f, 0.0f);
+    VectorSet2(texCoords[3], 0.0f, 0.0f);
+
+    GLSL_BindProgram(sp);
+    GL_State(GLS_DEPTHTEST_DISABLE);
+    GL_Cull(CT_TWO_SIDED);
+
+    for (step = 0; step < steps; step++) {
+        const int from = ripples.current, to = !ripples.current;
+        const int disturbed = step ? 0 : numWaterRipples;
+
+        FBO_Bind(tr.waterRippleFbo[to]);
+        qglViewport(0, 0, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+        qglScissor(0, 0, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+        GL_BindToTMU(tr.waterRippleImage[from], TB_DIFFUSEMAP);
+
+        // the grid moved with the view on the first step only
+        VectorSet4(v, 1.0f / WATER_RIPPLE_SIZE, step ? 0.0f : x - ripples.x, step ? 0.0f : y - ripples.y, speed * speed);
+        GLSL_SetUniformVec4(sp, UNIFORM_RIPPLESIM, v);
+        // ripples die away over a few seconds, foam a little slower
+        VectorSet4(v, 0.995f, 0.998f, 0.996f, disturbed);
+        GLSL_SetUniformVec4(sp, UNIFORM_RIPPLEDECAY, v);
+        if (disturbed) {
+            GLSL_SetUniformWaterSpots(sp, UNIFORM_RIPPLESOURCES, sources, disturbed);
+            GLSL_SetUniformWaterSpots(sp, UNIFORM_RIPPLEFOAM, foam, disturbed);
+        }
+
+        RB_InstantQuad2(quadVerts, texCoords);
+        ripples.current = to;
+    }
+    ripples.x = x;
+    ripples.y = y;
+    numWaterRipples = 0;
+
+    FBO_Bind(oldFbo);
+    qglViewport(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+    qglScissor(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+}
+
+/*
+===============
 RB_WaterDraw
 
 Draws tess with the water program. qfalse if it cannot, and the shader's own
@@ -370,6 +531,10 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
 
     hasDepth = backEnd.softDepth && tr.hdrDepthImage;
     hasView  = RB_WaterCopyView();
+
+    waterLastDepth = hasDepth;
+    waterLastView  = hasView;
+    waterLastFbo   = glState.currentFBO == tr.renderFbo ? 0 : glState.currentFBO ? glState.currentFBO->frameBuffer : -1;
     zNear    = backEnd.viewParms.zNear > 0 ? backEnd.viewParms.zNear : r_znear->value;
 
     GLSL_BindProgram(sp);
@@ -440,6 +605,19 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     VectorSet4(v, water.foam, water.refraction, water.glints, water.bloodClouds);
     GLSL_SetUniformVec4(sp, UNIFORM_WATERLOOK, v);
 
+    // where the ripples' grid lies
+    if (tr.rippleShader.program && tr.waterRippleImage[0] && ripples.time >= 0.0f) {
+        const float texel = WATER_RIPPLE_SPAN / WATER_RIPPLE_SIZE;
+
+        VectorSet4(v, (ripples.x - WATER_RIPPLE_SIZE / 2) * texel, (ripples.y - WATER_RIPPLE_SIZE / 2) * texel,
+            1.0f / WATER_RIPPLE_SPAN, 1.0f);
+        GL_BindToTMU(tr.waterRippleImage[ripples.current], TB_SPECULARMAP);
+    } else {
+        VectorClear4(v);
+        GL_BindToTMU(tr.whiteImage, TB_SPECULARMAP); // not read: no grid
+    }
+    GLSL_SetUniformVec4(sp, UNIFORM_WATERRIPPLES, v);
+
     GL_BindToTMU(input->shader->waterImage, TB_DIFFUSEMAP);
     GL_BindToTMU(hasView ? tr.waterSceneImage : tr.whiteImage, TB_LIGHTMAP);
     GL_BindToTMU(hasDepth ? tr.hdrDepthImage : tr.whiteImage, TMU_SOFTDEPTH);
@@ -470,7 +648,8 @@ The beach the tide is leaving, over the opaque view: called once a view,
 between the opaque world and anything blended (RB_RenderDrawSurfList). Two
 passes over the view, each pixel placed in the world from the prepass's depth:
 the first darkens the sand (wet, under water standing in it, soaked red under
-bodies), the second adds the sky it mirrors.
+bodies), the second adds the sky it mirrors. The water's ripples are stepped
+on here first.
 ===============
 */
 void RB_BeachDraw(void)
@@ -483,6 +662,8 @@ void RB_BeachDraw(void)
     float  zmax, xmax, ymax;
     qboolean hasView;
     int    pass;
+
+    RB_WaterRipples();
 
     if (!water.beachSet || !water.shoreSet || !tr.beachShader[1].program || !backEnd.softDepth || !tr.hdrDepthImage
         || backEnd.projection2D || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
@@ -576,6 +757,8 @@ void R_WaterInfo_f(void)
                        : va("bloodDepth %g %g", water.bloodNear, water.bloodFar),
         water.bloodClouds);
     ri.Printf(PRINT_ALL, "  %d bodies' blood in the water, %d on the sand\n", numWaterSpots, numSandStains);
+    ri.Printf(PRINT_ALL, "  last drawn: depth %s, view %s%s\n", waterLastDepth ? "yes" : "no", waterLastView ? "yes" : "no",
+        waterLastFbo ? va(" (drawn to buffer %d, not the scene's)", waterLastFbo) : "");
     if (ri.Cmd_Argc() > 1) {
         int i;
 

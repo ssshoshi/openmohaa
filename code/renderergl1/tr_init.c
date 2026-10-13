@@ -1968,6 +1968,7 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.DetachWorldSurfaces = RE_DetachWorldSurfaces;
 	re.RegisterShaderVertexLit = RE_RegisterShaderVertexLit;
 	re.SetWaterBlood = NULL; // no water program here
+	re.AddWaterRipples = NULL;
 	re.TIKI_Orientation = RE_TIKI_Orientation;
 	re.TIKI_IsOnGround = RE_TIKI_IsOnGround;
 	re.SetFrameNumber = RE_SetFrameNumber;

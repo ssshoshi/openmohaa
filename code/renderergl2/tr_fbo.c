@@ -421,6 +421,16 @@ void FBO_Init(void)
 		R_CheckFBO(tr.hdrDepthFbo);
 	}
 
+	if (tr.waterRippleImage[0] && tr.waterRippleImage[1])
+	{
+		tr.waterRippleFbo[0] = FBO_Create("_waterRipple0", WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+		FBO_AttachImage(tr.waterRippleFbo[0], tr.waterRippleImage[0], GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterRippleFbo[0]);
+		tr.waterRippleFbo[1] = FBO_Create("_waterRipple1", WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+		FBO_AttachImage(tr.waterRippleFbo[1], tr.waterRippleImage[1], GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterRippleFbo[1]);
+	}
+
 	if (tr.waterSceneImage)
 	{
 		tr.waterSceneFbo = FBO_Create("_waterScene", tr.waterSceneImage->width, tr.waterSceneImage->height);

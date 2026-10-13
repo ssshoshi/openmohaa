@@ -845,6 +845,7 @@ enum
 };
 
 #define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
+#define WATER_RIPPLE_SIZE 1024 // Added in OPM: the water's ripples, a grid this many texels across (tr_water.c)
 
 typedef enum
 {
@@ -996,6 +997,11 @@ typedef enum
 	UNIFORM_WORLDVIEWPROJECTION, // what the world is projected by, for a ray to be followed through the view
 	UNIFORM_WATERVIEW,           // the view's box on the screen: x, y, the far x, the far y
 	UNIFORM_BEACHSWASH,
+	UNIFORM_RIPPLESIM,     // the water's ripples (tr_water.c, glsl/ripple_fp.glsl)
+	UNIFORM_RIPPLEDECAY,
+	UNIFORM_RIPPLESOURCES,
+	UNIFORM_RIPPLEFOAM,
+	UNIFORM_WATERRIPPLES,  // where the ripples' grid lies, for the water
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2445,6 +2451,7 @@ typedef struct {
 	image_t                 *screenSsaoImage;
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
+	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
 	image_t					*textureDepthImage;
@@ -2464,6 +2471,7 @@ typedef struct {
 	FBO_t					*screenSsaoFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
+	FBO_t					*waterRippleFbo[2]; // Added in OPM: the ripples' grid, this step and the last
 	FBO_t                   *renderCubeFbo;
 
 	shader_t				*defaultShader;
@@ -2511,6 +2519,7 @@ typedef struct {
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
+	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
 
@@ -3778,6 +3787,7 @@ WATER (tr_water.c)
 =============================================================
 */
 extern cvar_t *r_water;
+extern cvar_t *r_waterRipples;
 void R_WaterRegisterCvars(void);
 void R_WaterLoadWorld(const char *mapName);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
@@ -3786,6 +3796,7 @@ void RB_BeachDraw(void);
 void R_WaterInfo_f(void);
 void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
+void RE_AddWaterRipples(const float *ripples, int numRipples);
 
 // tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
 struct skelSurfaceGame_s;

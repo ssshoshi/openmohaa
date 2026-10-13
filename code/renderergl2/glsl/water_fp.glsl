@@ -16,6 +16,7 @@
 uniform sampler2D u_DiffuseMap;      // the water's own texture: ripples, foam, blood clouds
 uniform sampler2D u_ScreenImageMap;  // the view before its water
 uniform sampler2D u_ScreenDepthMap;  // the view's depth after the prepass
+uniform sampler2D u_SpecularMap;     // its ripples round the view (glsl/ripple_fp.glsl): height, before, foam
 
 uniform vec3      u_ViewOrigin;
 uniform vec4      u_ViewInfo;        // zNear, zFar, whether there is the depth, and the view
@@ -37,6 +38,7 @@ uniform vec4      u_WaterBloodZone; // all the blood to, and none past: out from
 uniform vec4      u_WaterSpots[WATER_MAX_SPOTS]; // blood round bodies in the water: x, y, how far it has spread, how thick
 uniform mat4      u_WorldViewProjection; // the world's, to follow what it mirrors through the view
 uniform vec4      u_WaterView;           // the view's box on the screen: where it starts, where it ends
+uniform vec4      u_WaterRipples;        // where the ripples' grid starts, one over how wide it is, whether there is one
 
 varying vec3      var_Position;
 varying vec3      var_Normal;
@@ -135,6 +137,28 @@ void main()
 	// The chop on them, fading with distance where it would only sparkle
 	float near  = 1.0 / (1.0 + dist / 1400.0);
 	vec2  slope = swell / (1.0 + dist / 6000.0) + Chop(p, dir, t) * (u_WaterSky.a * 2.5) * near;
+
+	// and the ripples and wakes of what goes through it, and their foam
+	float rippleFoam = 0.0;
+	if (u_WaterRipples.w > 0.5)
+	{
+		vec2 at = (p - u_WaterRipples.xy) * u_WaterRipples.z;
+		if (at.x > 0.0 && at.y > 0.0 && at.x < 1.0 && at.y < 1.0)
+		{
+			float texel = 1.0 / float(WATER_RIPPLE_SIZE);
+			float dx    = 1.0 / (u_WaterRipples.z * float(WATER_RIPPLE_SIZE)); // units a texel
+			vec4  here  = texture2D(u_SpecularMap, at);
+			float east  = texture2D(u_SpecularMap, at + vec2(texel, 0.0)).r;
+			float west  = texture2D(u_SpecularMap, at - vec2(texel, 0.0)).r;
+			float north = texture2D(u_SpecularMap, at + vec2(0.0, texel)).r;
+			float south = texture2D(u_SpecularMap, at - vec2(0.0, texel)).r;
+			// fading out toward the grid's edge, where they are cut off
+			vec2  inside = min(at, 1.0 - at);
+			float keep   = smoothstep(0.0, 0.12, min(inside.x, inside.y));
+			slope += vec2(east - west, north - south) / (2.0 * dx) * keep;
+			rippleFoam = here.b * keep;
+		}
+	}
 	vec3 N     = normalize(var_Normal + vec3(-slope, 0.0));
 	if (below)
 		N = -N;
@@ -282,6 +306,14 @@ void main()
 		float lace      = Clouds(p / 46.0 - dir * t * 0.35) * 0.65 + Clouds(Turn(p, 0.9) / 17.0 + dir * t * 0.2) * 0.35;
 		float pattern   = smoothstep(0.42, 0.62, lace) * mix(0.75, 1.2, smoothstep(0.25, 0.5, speckle));
 		foam = clamp((surf * crest * 1.3 + wash * 0.85) * pattern * 1.5, 0.0, 0.8) * u_WaterLook.x;
+	}
+	// what has gone through it churns it white: a boat's wash, a splash
+	if (!below && rippleFoam > 0.0)
+	{
+		// in lace and streaks, thinning to nothing as it fades
+		float churn = Clouds(p / 11.0 + vec2(t * 0.05, -t * 0.04)) * 0.6 + Clouds(Turn(p, 1.3) / 29.0) * 0.4;
+		float lace  = smoothstep(0.62 - 0.3 * rippleFoam, 0.8 - 0.3 * rippleFoam, churn);
+		foam = max(foam, lace * min(rippleFoam * 1.5, 0.8) * u_WaterLook.x);
 	}
 	vec3 foamColor = mix(vec3(0.82, 0.84, 0.84), vec3(0.62, 0.30, 0.27), clamp(blood * 1.4, 0.0, 1.0));
 	// lit as the sky lights it: grey under a grey one

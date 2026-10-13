@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_parsemsg.h"
 #include "cg_specialfx.h"
 #include "cg_radar.h"
+#include "cg_water.h"
 
 #include "../corepp/str.h"
 
@@ -700,6 +701,8 @@ static void CG_MakeBulletTracerInternal(
                             } else if ((trace.contents & CONTENTS_FLUID) || (trace.surfaceFlags & SURF_PUDDLE)) {
                                 VectorCopy(trace.endpos, vTrailStart);
                                 bInWater = qtrue;
+                                // Added in OPM: rings spread from where it went in
+                                CG_WaterSplash(trace.endpos, iLarge ? 6.0f : 4.5f, 1500.0f);
                             }
 
                             VectorMA(trace.endpos, 2.0, vDir, vTraceStart);
@@ -1195,6 +1198,18 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
         CG_RagdollNoteExplosion(vPos, iBlastKind);
         CG_GoreNoteExplosion(vPos, iBlastKind);
         CG_PhysicsNoteExplosion(vPos, iBlastKind);
+    }
+
+    // Added in OPM: a blast in the water, or just over it, heaves it
+    {
+        cgWaterSample_t water;
+
+        if (CG_WaterSample(vPos, &water) && vPos[2] - water.surface < 32.0f) {
+            vec3_t at;
+
+            VectorSet(at, vPos[0], vPos[1], water.surface);
+            CG_WaterSplash(at, 70.0f, 900.0f);
+        }
     }
 
     if ((CG_PointContents(vPos, 0)) & MASK_WATER) {

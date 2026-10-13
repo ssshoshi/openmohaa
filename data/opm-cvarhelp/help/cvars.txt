@@ -266,6 +266,7 @@ cg_traceinfo	0	3	code/cgame/cg_main.c:164	Debug: print information about client-
 cg_treadmark_test	0		code/cgame/cg_marks.c:1045	Debug: draw a test tank tread mark under the crosshair. The value is the tread width.
 cg_voicechat	0	1	code/cgame/cg_main.c:216	Play multiplayer voice chat messages (the voice command menu).
 cg_water_blood	0	1	code/cgame/cg_water.cpp:92	A body in water bleeds into it, a red cloud that spreads round it from when it went in and follows it as the waves move it.
+cg_water_ripples	0	1	code/cgame/cg_water.cpp:62	What goes through water disturbs it: men wading, boats, bullets, blasts and things falling in, each sending out ripples, and boats a wake of foam (r_waterRipples draws them).
 cg_water_float	0	1	code/cgame/cg_water.cpp:91	Corpses float in water and the waves carry them: lifted by the swell, pushed up the beach by the surf. Jolt ragdolls only (cg_ragdoll_solver 1).
 cheats	0	1	code/server/sv_init.c:1082	Allow cheat commands and cheat-protected cvars. In single player use thereisnomonkey 1. Latched. Server setting.
 cl_allowDownload	0		code/client/cl_main.cpp:3628	Download missing files from servers (bit flags: 1 enable, 2 no redirect, 4 no UDP).
@@ -1024,6 +1025,7 @@ r_vidmode1024	0	1	code/renderergl1/tr_init.c:1356	Legacy: the 1024x768 mode is a
 r_vidmodemax	0	1	code/renderergl1/tr_init.c:1357	Legacy: highest video mode available.
 r_water	0	1	code/renderergl2/tr_water.c:88	Draws water with the water program: waves, the sky mirrored in it, the bottom seen through it darkening with depth, surf and foam in the shallows, and blood where a map or a body puts some. How a map's water looks is in water/<map>.txt. Needs vid_restart. (OpenGL 2 renderer.)
 r_waterBlood	0		code/renderergl2/tr_water.c:89	How much of the blood a map puts in its water (water/<map>.txt): 0 none, 1 as the map has it. At 0 bodies in water leave none either.
+r_waterRipples	0	1	code/renderergl2/tr_water.c:70	Ripples and wakes on water, spread from what goes through it (cg_water_ripples). Needs vid_restart.
 r_znear	0.001	200	code/renderergl1/tr_init.c:1398	Near clipping distance: geometry closer to the eye than this is cut off. MOH:AA uses 3; higher values clip close-up ironsight models. Cheat-protected.
 r_zproj			code/renderergl2/tr_init.c:1683	Distance used for projecting the view into the depth buffer in some passes. (OpenGL 2 renderer.)
 rate			code/client/cl_uiserverlist.cpp:663	Maximum bytes per second the server sends you. Higher suits faster connections.

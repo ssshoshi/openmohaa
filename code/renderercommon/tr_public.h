@@ -206,6 +206,12 @@ typedef struct {
     //  and the sand their blood has soaked: x, y, the ground's height, radius.
     //  Held until set again; a renderer that draws neither ignores them.
     void (*SetWaterBlood)(const float *spots, int numSpots, const float *stains, int numStains);
+
+    // Added in OPM
+    //  What disturbs the water this frame, five floats each: x, y, how wide,
+    //  how deep a dip it presses in, how much foam it leaves. Added to what
+    //  was given earlier in the frame; the water's ripples spread from them.
+    void (*AddWaterRipples)(const float *ripples, int numRipples);
 } refexport_t;
 
 //

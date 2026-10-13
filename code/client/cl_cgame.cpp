@@ -861,6 +861,7 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 	cgi->R_RegisterShaderVertexLit	= re.RegisterShaderVertexLit;
 	cgi->CM_EnableBrush				= CM_EnableBrush;
 	cgi->R_SetWaterBlood			= re.SetWaterBlood;
+	cgi->R_AddWaterRipples			= re.AddWaterRipples;
 	cgi->apiversion					= CGAME_IMPORT_API_VERSION;
 	// FIXME
 	//cgi->pUnknownVar				= NULL;

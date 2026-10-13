@@ -2969,6 +2969,13 @@ void R_CreateBuiltinImages( void ) {
 		if (r_water->integer)
 			tr.waterSceneImage = R_CreateImage("*waterScene", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
 
+		// Added in OPM: the water's ripples (tr_water.c)
+		if (r_water->integer && r_waterRipples->integer)
+		{
+			tr.waterRippleImage[0] = R_CreateImage("*waterRipple0", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.waterRippleImage[1] = R_CreateImage("*waterRipple1", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
+
 		if (r_drawSunRays->integer)
 			tr.sunRaysImage = R_CreateImage("*sunRays", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
 
