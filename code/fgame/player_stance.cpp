@@ -496,18 +496,19 @@ const char *Player::ProneLegAnim(const char *anim) const
 
     // the states' anims name their direction (rifle_stand_run_back and so on)
     if (Q_stristr(anim, "back")) {
-        name = "opm_prone_back";
+        name = "zz_opm_prone_back";
     } else if (Q_stristr(anim, "left")) {
-        name = "opm_prone_left";
+        name = "zz_opm_prone_left";
     } else if (Q_stristr(anim, "right")) {
-        name = "opm_prone_right";
+        name = "zz_opm_prone_right";
     } else if (Q_stristr(anim, "run") || Q_stristr(anim, "walk") || Q_stristr(anim, "fwd")) {
-        name = "opm_prone_forward";
+        name = "zz_opm_prone_forward";
     } else {
-        name = "opm_prone_idle";
+        name = "zz_opm_prone_idle";
     }
 
-    // the prone animations come with the opm-prone pak
+    // the prone animations come with the opm-prone pak; their zz_ prefix sorts them
+    // after the stock ones, whose indices go over the network and must not shift
     if (gi.Anim_NumForName(edict->tiki, name) < 0) {
         return anim;
     }
