@@ -67,6 +67,7 @@ cvar_t *r_rtLightLists;
 cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
+cvar_t *r_rtShadowSoft;
 cvar_t *r_rtSkyTile;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
@@ -217,6 +218,9 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtSky, "With r_realtimeLighting 2, how strong the sky's light is, as a part of what the map was compiled with (0: none, the shade takes the ambient light alone)");
 	r_rtSpecular = ri.Cvar_Get("r_rtSpecular", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtSpecular, "With r_realtimeLighting 2, how much the realtime lights and the sun shine on surfaces with specular (0: none)");
+	r_rtShadowSoft = ri.Cvar_Get("r_rtShadowSoft", "2", CVAR_ARCHIVE);
+	ri.Cvar_CheckRange(r_rtShadowSoft, 1, 4, qfalse);
+	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_rtSkyTile, 256, 2048, qtrue);
 	ri.Cvar_SetDescription(r_rtSkyTile, "The size of the sky's depth from each of its directions, which says what sees the sky: the whole map in it");
@@ -1912,7 +1916,7 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, qboolean lightmapped)
 
 			// a lightmap's sky is a pixel's own: its vertexes are a wall's corners
 			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, lightmapped || !R_RtVertexSky() ? 0.0f : 1.0f,
-				Q_max(0.0f, r_rtSpecular->value), 0);
+				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value);
 			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
 		}
 		VectorCopy4(tr.rtParams, params);
