@@ -1,0 +1,131 @@
+//----------------------------------------------------------------------------
+// Added in OPM (content/opm-reactions): a man knocked off his feet by a blast
+// or a heavy round that did not kill him, who gets up again.
+//
+// Called from anim/pain.scr. While he is down he plays an opm_down animation,
+// which the client sees and makes him a ragdoll for (cg_ragdoll.cpp): his body
+// falls where the blow sends it. Once it has settled the client says where it
+// lies (opm_kdpose: opm_kd_face, opm_kd_pelvis, opm_kd_yaw, opm_kd_ready on
+// him), and he is stood up from there by an opm_getup animation, motion
+// captured (generate.py), lined up so that he starts where his body is. His
+// AI waits all the while, as it does through any pain.
+//
+// set g_opm_paindebug 1 prints what is decided; g_opm_knockdown 0 turns it
+// off, 2 knocks a man down at every hit (for testing).
+//----------------------------------------------------------------------------
+
+// Whether this hit knocks him down: 1 or 0.
+should:
+	local.mod = self.fact.meansofdeath
+	local.damage = self.fact.damage
+
+	if (getcvar "g_opm_knockdown" == "0")
+		end 0
+	// for testing: every hit
+	if (getcvar "g_opm_knockdown" == "2")
+		end 1
+
+	switch (self.position)
+	{
+	prone:
+	pronewalk:
+		end 0
+	}
+
+	// a blast
+	if (local.mod == 9 || local.mod == 10 || local.mod == 14 || local.mod == 16 || local.mod == 29)
+	{
+		if (local.damage >= 15)
+			end 1
+		end 0
+	}
+
+	// a heavy round: the harder, the likelier
+	if (local.mod == 18 || local.mod == 19 || local.mod == 27)
+	{
+		if (local.damage >= 40)
+		{
+			local.chance = (local.damage - 30) * 0.01
+			if (local.chance > 0.6)
+				local.chance = 0.6
+			if (randomfloat 1 < local.chance)
+				end 1
+		}
+	}
+end 0
+
+// Down, and up again.
+knockdown:
+	local.yaw = self GetLocalYawFromVector self.fact.direction
+	local.mod = self.fact.meansofdeath
+
+	if (local.mod == 9 || local.mod == 10 || local.mod == 14 || local.mod == 16 || local.mod == 29)
+		local.fall = "opm_down_blast"
+	else if (local.yaw > 135 || local.yaw < -135)
+		local.fall = "opm_down_front"
+	else
+		local.fall = "opm_down_back"
+
+	if (getcvar "g_opm_paindebug" == "1")
+		println ("opm knockdown: " + local.fall + " damage " + self.fact.damage + " mod " + local.mod)
+
+	local.painhandler = self.painhandler
+	self.painhandler = anim/opm_knockdown.scr::down_pain
+	self.opm_kd_ready = 0
+	self.blendtime = 0.15
+	self setmotionanim local.fall
+
+	// Until the client says where his body has come to rest.
+	local.t = 0
+	while (self.opm_kd_ready != 1 && local.t < 5)
+	{
+		wait 0.1
+		local.t = local.t + 0.1
+	}
+
+	if (self.opm_kd_ready == 1)
+	{
+		if (self.opm_kd_face == 1)
+			local.kind = "back"
+		else
+			local.kind = "front"
+
+		// Where the get-up starts his pelvis, and which way his head points,
+		// relative to where he will stand facing (generated).
+		if (local.kind == "back")
+			local.at = waitthread anim/opm_getups.scr::back
+		else
+			local.at = waitthread anim/opm_getups.scr::front
+
+		// Turned so the animation's body lies as his does, and moved so its
+		// pelvis is where his is.
+		local.facing = self.opm_kd_yaw - local.at[2]
+		local.fwd = angles_toforward ( 0 local.facing 0 )
+		local.left = angles_toleft ( 0 local.facing 0 )
+		local.origin = self.opm_kd_pelvis - local.fwd * local.at[0] - local.left * local.at[1]
+		local.origin[2] = self.origin[2]
+
+		self.angles = ( 0 local.facing 0 )
+		self.origin = local.origin
+		self droptofloor
+	}
+	else
+	{
+		local.kind = "back"
+	}
+
+	if (getcvar "g_opm_paindebug" == "1")
+		println ("opm knockdown: getting up (" + local.kind + ")")
+
+	self.blendtime = 0.1
+	self setmotionanim ("opm_getup_" + local.kind)
+	self waittill flaggedanimdone
+
+	self.painhandler = local.painhandler
+	self.opm_kd_ready = 0
+end
+
+// Hit again while he is down: the shot moves his body (the client's), and he
+// stays down.
+down_pain:
+end

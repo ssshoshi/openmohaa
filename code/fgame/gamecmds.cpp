@@ -91,6 +91,8 @@ consolecmd_t G_ConsoleCmds[] = {
     {"scriptinfo",      G_OrchScriptInfoCmd,  qfalse},
     {"orch_runscript",  G_OrchRunScriptCmd,   qfalse},
     {"orch_scripts",    G_OrchScriptsCmd,     qfalse},
+    // Where a man knocked down lies, from the client's ragdoll (single player)
+    {"opm_kdpose",      G_KnockdownPoseCmd,   qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif
@@ -99,6 +101,43 @@ consolecmd_t G_ConsoleCmds[] = {
 };
 
 Container<commandmaster_t> commandMasters;
+
+/*
+=================
+G_KnockdownPoseCmd
+
+Added in OPM
+  opm_kdpose <entity> <face up 0/1> <pelvis x y z> <head yaw>
+
+  A man knocked down is a ragdoll on the client alone (cg_ragdoll.cpp), so
+  where he came to rest, and which way up, is only known there. The client
+  says, once he has settled, and the knockdown script (content/opm-reactions,
+  anim/opm_knockdown.scr) waits for it, to stand him up from where his body
+  is: opm_kd_face, opm_kd_pelvis, opm_kd_yaw and opm_kd_ready on him.
+  Single player only: the server and the client are the same game.
+=================
+*/
+qboolean G_KnockdownPoseCmd(gentity_t *ent)
+{
+    Entity *who;
+    Vector  pelvis;
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER || gi.Argc() < 7) {
+        return qtrue;
+    }
+
+    who = G_GetEntity(atoi(gi.Argv(1)));
+    if (!who || !who->IsSubclassOfActor() || who->IsDead()) {
+        return qtrue;
+    }
+
+    pelvis = Vector(atof(gi.Argv(3)), atof(gi.Argv(4)), atof(gi.Argv(5)));
+    who->Vars()->SetVariable("opm_kd_face", atoi(gi.Argv(2)));
+    who->Vars()->SetVariable("opm_kd_pelvis", pelvis);
+    who->Vars()->SetVariable("opm_kd_yaw", (float)atof(gi.Argv(6)));
+    who->Vars()->SetVariable("opm_kd_ready", 1);
+    return qtrue;
+}
 
 void G_InitConsoleCommands(void)
 {

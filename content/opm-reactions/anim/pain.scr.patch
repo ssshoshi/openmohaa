@@ -1,6 +1,22 @@
 --- a/anim/pain.scr
 +++ b/anim/pain.scr
-@@ -81,8 +81,33 @@
+@@ -44,6 +44,15 @@
+ 	self.blendtime = 0.4
+ 	self.deathhandler = anim/killed.scr
+ 
++	// Added in OPM (content/opm-reactions): a blast, or a heavy round that
++	// did not kill him, can knock him off his feet; he gets up again.
++	local.down = waitthread anim/opm_knockdown.scr::should
++	if (local.down == 1)
++	{
++		waitthread anim/opm_knockdown.scr::knockdown
++		end
++	}
++
+ 	switch (self.position)
+ 		{
+ 		prone:
+@@ -81,8 +90,33 @@
  				case 5: // lower torso
  				case 6: // pelvis
  					//println "Pain stand straight"

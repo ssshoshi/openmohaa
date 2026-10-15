@@ -248,6 +248,21 @@ def ground(chans, foot_ground):
     return dz
 
 
+def ground_lowest(chans, bones, floor=0.5):
+    """Move the clip so its lowest joint over the whole of it is at floor.
+
+    For clips where the man lies down: an ankle says nothing about where the
+    floor is under a man on his back.
+    """
+    lowest = min(min(t[1][2] for t in M.fk(bones, c).values()) for c in chans[::2])
+    dz = floor - lowest
+    for c in chans:
+        for n in ("Bip01 pos", "Bip01 L Foot pos", "Bip01 R Foot pos"):
+            c[n] = np.array(c[n], float)
+            c[n][2] += dz
+    return dz
+
+
 def bounds_of(bones, ch):
     pts = np.array([t[1] for t in M.fk(bones, ch).values()])
     lo, hi = pts.min(0) - 12.0, pts.max(0) + 12.0
@@ -322,6 +337,11 @@ def main():
     ap.add_argument("--repeat", action="store_true", help="mark the anim as looping without blending")
     ap.add_argument("--aim-forward", action="store_true",
                     help="turn the clip so the right arm, where it reaches furthest, points forward")
+    ap.add_argument("--speed", type=float, default=1.0, help="play this many times faster")
+    ap.add_argument("--anchor", choices=("start", "end"), default="start",
+                    help="the frame put over the origin facing forward: the first (an idle) or the last (a get-up)")
+    ap.add_argument("--ground", choices=("feet", "lowest"), default="feet",
+                    help="stand the feet on the floor, or the lowest joint over the clip (lying down)")
     ap.add_argument("--mirror", action="store_true", help="swap left and right (a left-handed take)")
     ap.add_argument("--upper-from", help="game path of a stock .skc whose arms (and weapon grip) to keep; "
                     "its spine and head get the mocap's sway on top")
@@ -337,16 +357,17 @@ def main():
     first = max(1, round(a.start / clip.frame_time))
     last = clip.num_frames - 1 if a.end is None else min(clip.num_frames - 1, round(a.end / clip.frame_time))
     frames = list(range(first, last + 1, step))
-    turn = facing(clip, first)
+    anchor = frames[-1] if a.anchor == "end" else first
+    turn = facing(clip, anchor)
     if a.aim_forward:
         turn = aim_turn(clip, frames, turn) @ turn
-    hp = turn @ (C @ clip.pose(first)["Hips"][1]) * rt.scale
+    hp = turn @ (C @ clip.pose(anchor)["Hips"][1]) * rt.scale
     shift = np.array([-hp[0], -hp[1], 0.0])  # over the origin
-    rt.feet_from(first, turn)
+    rt.feet_from(anchor, turn)
 
     names = tmpl["names"]
     chans = [rt.frame(f, turn, shift) for f in frames]
-    dz = ground(chans, rt.foot_ground)
+    dz = ground(chans, rt.foot_ground) if a.ground == "feet" else ground_lowest(chans, bones)
     if a.upper_from:
         layer_upper(chans, M.read_skc(load_game_file(a.upper_from)), clip.frame_time * step)
 
@@ -372,7 +393,7 @@ def main():
     flags = tmpl["flags"]
     if a.loop or a.repeat:
         flags |= M.ANIM_LOOP
-    anim = dict(flags=flags, frame_time=clip.frame_time * step, total_delta=np.zeros(3),
+    anim = dict(flags=flags, frame_time=clip.frame_time * step / a.speed, total_delta=np.zeros(3),
                 total_angle=0.0, names=names, values=values, meta=meta)
     open(a.out, "wb").write(M.write_skc(anim))
     print("%s: %d frames at %.1f fps, scale %.2f, grounded by %+.1f" % (

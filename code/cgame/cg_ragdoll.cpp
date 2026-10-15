@@ -958,6 +958,13 @@ typedef struct {
     int      orphanTime; // cg.time the owning entity went away
     int      lastEntityNum; // the entity it last belonged to, kept while orphaned
     qboolean standIn;    // carried on by a live entity swapped in for the corpse
+    // Added in OPM
+    //  A living man knocked down (an opm_down animation, content/opm-reactions):
+    //  a stand-in for himself until he gets up. When the client said where he
+    //  lies (opm_kdpose), and when he began to rise (0: not yet).
+    qboolean downed;
+    qboolean reported;
+    int      riseStart;
     qboolean gone;       // its entity has left the snapshot (for the log only)
 
     // The entity as it was last handed to the renderer, pose and all, so a
@@ -9659,6 +9666,65 @@ static qboolean CG_RagdollPosedCorpse(const refEntity_t *model)
     return (Q_stristr(base, "_dead") || !Q_stricmpn(base, "body_", 5)) ? qtrue : qfalse;
 }
 
+// Added in OPM
+//  A man knocked down plays an opm_down animation while he lies, and an
+//  opm_getup one to stand up (content/opm-reactions, anim/opm_knockdown.scr).
+//  1: he is down, 2: getting up, 0: neither.
+#define RD_RISE_TIME   600  // ms from the ragdoll to the get-up animation
+#define RD_DOWN_REPORT 2500 // ms down before saying where, if not asleep yet
+
+static int CG_RagdollDownState(const refEntity_t *model)
+{
+    int i;
+
+    if (!model->tiki) {
+        return 0;
+    }
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        const char *name;
+
+        if (model->frameInfo[i].weight < 0.5f || model->frameInfo[i].index < 0) {
+            continue;
+        }
+        name = cgi.Anim_NameForNum(model->tiki, model->frameInfo[i].index);
+        if (!name) {
+            continue;
+        }
+        if (!Q_stricmpn(name, "opm_down", 8)) {
+            return 1;
+        }
+        if (!Q_stricmpn(name, "opm_getup", 9)) {
+            return 2;
+        }
+    }
+    return 0;
+}
+
+// Where a man knocked down lies, for the server to stand him up there: which
+// way up, his pelvis, and which way his head points.
+static void CG_RagdollReportDown(cg_ragdoll_t *rd)
+{
+    vec3_t along, right, fwd;
+    float  yaw;
+
+    VectorSubtract(rd->part[RD_HEAD].p, rd->part[RD_PELVIS].p, along);
+    VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, right);
+    CrossProduct(along, right, fwd);
+    yaw = RAD2DEG(atan2f(along[1], along[0]));
+
+    cgi.SendClientCommand(va(
+        "opm_kdpose %d %d %.1f %.1f %.1f %.1f",
+        rd->entityNum,
+        fwd[2] > 0.0f ? 1 : 0,
+        rd->part[RD_PELVIS].p[0],
+        rd->part[RD_PELVIS].p[1],
+        rd->part[RD_PELVIS].p[2],
+        yaw
+    ));
+    rd->reported = qtrue;
+    CG_RagdollLog(rd, "down, face %s, head toward %.0f degrees: told the server", fwd[2] > 0.0f ? "up" : "down", yaw);
+}
+
 static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson, qboolean standIn)
 {
     const entityState_t *s1 = &cent->currentState;
@@ -9975,7 +10041,18 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         rd = CG_RagdollAdoptStandIn(cent, model);
     }
 
-    if (!CG_RagdollEligible(cent, model, bThirdPerson, rd ? rd->standIn : qfalse)) {
+    // Added in OPM
+    //  Knocked down: a ragdoll though alive, until he gets up. Dead meanwhile,
+    //  he is a corpse like any other.
+    const int down = (cent->currentState.eFlags & EF_DEAD) ? 0 : CG_RagdollDownState(model);
+
+    if (rd && rd->downed && (cent->currentState.eFlags & EF_DEAD)) {
+        rd->downed    = qfalse;
+        rd->riseStart = 0;
+        CG_RagdollLog(rd, "died while down");
+    }
+
+    if (!CG_RagdollEligible(cent, model, bThirdPerson, rd ? rd->standIn : (down == 1 ? qtrue : qfalse))) {
         if (rd) {
             CG_RagdollLog(rd, "freed: its entity is no longer eligible (eFlags 0x%x)", cent->currentState.eFlags);
             CG_RagdollFree(rd);
@@ -9991,7 +10068,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         rd = NULL;
     }
 
-    if (!rd) {
+    if (!rd && !down) {
         rd = CG_RagdollAdopt(cent, cent->currentState.modelindex);
 
         if (rd && rd->tiki != model->tiki) {
@@ -10057,6 +10134,20 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             }
         }
 
+        // Added in OPM
+        //  Knocked down, not dead: straight into the physics, as a stand-in
+        //  for himself, until his get-up animation takes him back.
+        if (down == 1) {
+            rd->standIn   = qtrue;
+            rd->downed    = qtrue;
+            rd->reported  = qfalse;
+            rd->riseStart = 0;
+            if (!rd->jolt) {
+                rd->startTime = cg.time - Q_max(cg_ragdoll_blendtime->integer, 0);
+            }
+            CG_RagdollLog(rd, "knocked down");
+        }
+
         // Catch the next body to fall, and only that one. Clearing the cvar
         // here rather than making the caller do it means a trace is one command
         // and cannot be left running to fill the disk. Opened after the state
@@ -10102,6 +10193,33 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     weight = Q_clamp_float(weight, 0.0f, 1.0f);
     // Smoothstep, so the hand-off out of the animation has no velocity kink.
     weight = weight * weight * (3.0f - 2.0f * weight);
+
+    // Added in OPM
+    //  A man knocked down: told the server where he lies once he has settled,
+    //  and handed back to his animation as he gets up.
+    if (rd->downed) {
+        if (!rd->reported && (rd->state == RD_SLEEPING || cg.time - rd->startTime > RD_DOWN_REPORT)) {
+            CG_RagdollReportDown(rd);
+        }
+        if (down != 1 && !rd->riseStart) {
+            rd->riseStart = cg.time;
+            CG_RagdollLog(rd, "getting up");
+            if (rd->state == RD_SLEEPING) {
+                CG_RagdollWake(rd);
+            }
+        }
+        if (rd->riseStart) {
+            float t = (float)(cg.time - rd->riseStart) / RD_RISE_TIME;
+
+            if (t >= 1.0f) {
+                CG_RagdollLog(rd, "up again");
+                CG_RagdollFree(rd);
+                return;
+            }
+            t      = Q_clamp_float(t, 0.0f, 1.0f);
+            weight = 1.0f - t * t * (3.0f - 2.0f * t);
+        }
+    }
 
     // Through the blend the references are taken again every frame, from the
     // pose the animation currently has.
