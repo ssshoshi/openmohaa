@@ -193,6 +193,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyColor",      GLSL_VEC4 },
 	{ "u_RtSkyMap",        GLSL_INT },
 	{ "u_RtSurface",       GLSL_VEC4 },
+	{ "u_RtSkyLightmap",   GLSL_INT },
 	{ "u_SoftParticle",    GLSL_VEC4 },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
@@ -329,6 +330,9 @@ static const char *rt_glsl =
 	// comes through the other; y 1 when its vertexes worked out the sky's
 	// light (var_RtSky)
 	"uniform vec4 u_RtSurface;\n"
+	// u_RtSurface.y 2: the sky each texel of the draw's lightmap sees, at rt_skyLM
+	"uniform sampler2D u_RtSkyLightmap;\n"
+	"vec2 rt_skyLM = vec2(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
 	"#endif\n"
@@ -580,6 +584,10 @@ static const char *rt_glsl =
 	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
 	"	{\n"
 	// soft, and the same over a model or a leaf: worked out at its vertexes
+	// on a lightmap, worked out for each of its texels once a map
+	"		if (u_RtSurface.y > 1.5)\n"
+	"			sum += u_RtSkyColor.rgb * (float(RT_SKY_DIRS) * 0.5) * texture2D(u_RtSkyLightmap, rt_skyLM).r;\n"
+	"		else\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"		if (u_RtSurface.y > 0.5)\n"
 	"			sum += var_RtSky;\n"
@@ -645,6 +653,26 @@ static const char *rt_glsl =
 	"	return sum;\n"
 	"}\n"
 	"#endif\n";
+
+static const char *rt_skyBake_vp =
+	"attribute vec3 attr_Position;\n"
+	"attribute vec3 attr_Normal;\n"
+	"attribute vec4 attr_TexCoord0;\n"
+	"varying vec3 var_P;\n"
+	"varying vec3 var_N;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_Position = vec4(attr_TexCoord0.xy * 2.0 - 1.0, 0.0, 1.0);\n"
+	"	var_P = attr_Position;\n"
+	"	var_N = attr_Normal;\n"
+	"}\n";
+static const char *rt_skyBake_fp =
+	"varying vec3 var_P;\n"
+	"varying vec3 var_N;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_FragColor = vec4(RtSky(var_P, normalize(var_N)).r, 0.0, 0.0, 1.0);\n"
+	"}\n";
 
 static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *dest, int size )
 {
@@ -1797,6 +1825,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
@@ -1923,6 +1952,7 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);
@@ -1943,6 +1973,23 @@ void GLSL_InitGPUShaders(void)
 	GLSL_SetUniformInt(&tr.textureColorShader, UNIFORM_TEXTUREMAP, TB_DIFFUSEMAP);
 
 	GLSL_FinishGPUShader(&tr.textureColorShader);
+
+	// Added in OPM: the sky a lightmap texel sees, once a map (R_RtBakeSkyLightmaps)
+	if (r_realtimeLighting->integer == 2)
+	{
+		if (!GLSL_InitGPUShader(&tr.rtSkyBakeShader, "rtskybake", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD,
+			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBake_vp, rt_skyBake_fp))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no program for the sky's lightmaps\n");
+		}
+		else
+		{
+			GLSL_InitUniforms(&tr.rtSkyBakeShader);
+			GLSL_SetUniformInt(&tr.rtSkyBakeShader, UNIFORM_RTSKYMAP, TMU_RTSKY);
+			GLSL_FinishGPUShader(&tr.rtSkyBakeShader);
+			numEtcShaders++;
+		}
+	}
 
 	numEtcShaders++;
 
@@ -2314,6 +2361,7 @@ void GLSL_ShutdownGPUShaders(void)
 		GLSL_DeleteGPUShader(&tr.genericShader[i]);
 
 	GLSL_DeleteGPUShader(&tr.textureColorShader);
+	GLSL_DeleteGPUShader(&tr.rtSkyBakeShader);
 
 	for ( i = 0; i < FOGDEF_COUNT; i++)
 		GLSL_DeleteGPUShader(&tr.fogShader[i]);

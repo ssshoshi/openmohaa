@@ -68,6 +68,7 @@ cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
+cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
@@ -221,6 +222,8 @@ void R_RtRegister(void)
 	r_rtShadowSoft = ri.Cvar_Get("r_rtShadowSoft", "2", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtShadowSoft, 1, 4, qfalse);
 	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
+	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
+	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_rtSkyTile, 256, 2048, qtrue);
 	ri.Cvar_SetDescription(r_rtSkyTile, "The size of the sky's depth from each of its directions, which says what sees the sky: the whole map in it");
@@ -560,6 +563,257 @@ static void R_RtRenderSkyDir(int k)
 	tr.rtSkyGeneration++;
 }
 
+/*
+The sky each texel of a lightmap sees, as RtSky works it out for a pixel,
+worked out once a map: a lightmapped surface then reads it as it reads its
+lightmap (u_RtSurface.y 2), one fetch for the sky's sixteen. The surfaces of
+each page are drawn into a page of their own, at their lightmap coordinates,
+each texel from where it is on its surface (the terrain at its full detail);
+the texels no surface covers take their neighbours', as the lightmap's own
+filtering reads them at the edges.
+*/
+typedef struct {
+	vec3_t xyz;
+	vec3_t normal;
+	vec2_t lm;
+} rtBakeVert_t;
+
+typedef struct {
+	rtBakeVert_t *verts;
+	int           num, max;
+} rtBakeList_t;
+
+static void R_RtBakeAdd(rtBakeList_t *list, const vec3_t xyz, const vec3_t normal, float s, float t)
+{
+	rtBakeVert_t *v;
+
+	if (list->num == list->max) {
+		rtBakeVert_t *grown;
+
+		list->max = Q_max(4096, list->max * 2);
+		grown     = ri.Malloc(sizeof(rtBakeVert_t) * list->max);
+		if (list->verts) {
+			Com_Memcpy(grown, list->verts, sizeof(rtBakeVert_t) * list->num);
+			ri.Free(list->verts);
+		}
+		list->verts = grown;
+	}
+	v = &list->verts[list->num++];
+	VectorCopy(xyz, v->xyz);
+	VectorCopy(normal, v->normal);
+	v->lm[0] = s;
+	v->lm[1] = t;
+}
+
+// The triangles of the surfaces lit by one page of the lightmaps
+static void R_RtBakeGather(int page, rtBakeList_t *list)
+{
+	int i, j, r, c;
+
+	for (i = 0; i < tr.world->numWorldSurfaces; i++) {
+		const msurface_t      *surf = &tr.world->surfaces[i];
+		const srfBspSurface_t *bsp  = (const srfBspSurface_t *)surf->data;
+
+		if (!surf->shader || surf->shader->lightmapIndex != page || !surf->data) {
+			continue;
+		}
+		if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
+			continue;
+		}
+		for (j = 0; j < bsp->numIndexes; j++) {
+			srfVert_t *v = &bsp->verts[bsp->indexes[j]];
+			vec3_t     normal;
+
+			R_VaoUnpackNormal(normal, v->normal);
+			R_RtBakeAdd(list, v->xyz, normal, v->lightmap[0], v->lightmap[1]);
+		}
+	}
+
+	// the terrain, a 9 by 9 grid a patch, its lightmap spread over it as
+	// R_PreTessellateTerrain spreads it
+	for (i = 0; i < tr.world->numTerraPatches; i++) {
+		cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
+		const float            size  = (float)(patch->drawinfo.lmapSize - 1) / 128.0f;
+		const float            sizeS = tr.fatLightmapCols > 0 ? size / tr.fatLightmapCols : size;
+		const float            sizeT = tr.fatLightmapRows > 0 ? size / tr.fatLightmapRows : size;
+
+		if (!patch->shader || patch->shader->lightmapIndex != page) {
+			continue;
+		}
+		for (r = 0; r < 8; r++) {
+			for (c = 0; c < 8; c++) {
+				static const int corner[6][2] = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 1, 0 } };
+
+				for (j = 0; j < 6; j++) {
+					const int rr = r + corner[j][0], cc = c + corner[j][1];
+					vec3_t    xyz, normal;
+
+					VectorSet(xyz, patch->x0 + cc * 64.0f, patch->y0 + rr * 64.0f, patch->heightmap[rr * 9 + cc] * 2.0f + patch->z0);
+					R_VaoUnpackNormal(normal, patch->normals[rr * 9 + cc]);
+					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f, patch->t + sizeT * rr / 8.0f);
+				}
+			}
+		}
+	}
+}
+
+// The texels no surface covered (alpha 0) take the average of the covered
+// ones around them, a ring at a time.
+static void R_RtBakeDilate(byte *texels, int width, int height, int rings)
+{
+	byte *next = ri.Malloc(width * height * 4);
+	int   n, x, y;
+
+	for (n = 0; n < rings; n++) {
+		Com_Memcpy(next, texels, width * height * 4);
+		for (y = 0; y < height; y++) {
+			for (x = 0; x < width; x++) {
+				int sum = 0, count = 0, dx, dy;
+
+				if (texels[(y * width + x) * 4 + 3]) {
+					continue;
+				}
+				for (dy = -1; dy <= 1; dy++) {
+					for (dx = -1; dx <= 1; dx++) {
+						const int nx = x + dx, ny = y + dy;
+
+						if (nx < 0 || ny < 0 || nx >= width || ny >= height || !texels[(ny * width + nx) * 4 + 3]) {
+							continue;
+						}
+						sum += texels[(ny * width + nx) * 4];
+						count++;
+					}
+				}
+				if (count) {
+					next[(y * width + x) * 4]     = sum / count;
+					next[(y * width + x) * 4 + 3] = 255;
+				}
+			}
+		}
+		Com_Memcpy(texels, next, width * height * 4);
+	}
+	ri.Free(next);
+}
+
+static void R_RtBakeSkyLightmaps(void)
+{
+	rtBakeList_t list;
+	vec4_t       color, off = { 0, 0, 0, 0 };
+	int          page, total = 0;
+
+	if (!tr.rtSkyBakeShader.program || !tr.rtSkyBakeFbo || !tr.lightmaps || tr.numLightmaps <= 0 || tr.rtSkyLightmaps) {
+		return;
+	}
+
+	tr.rtNumSkyLightmaps = tr.numLightmaps;
+	tr.rtSkyLightmaps    = ri.Malloc(sizeof(image_t *) * tr.numLightmaps);
+	Com_Memset(tr.rtSkyLightmaps, 0, sizeof(image_t *) * tr.numLightmaps);
+	Com_Memset(&list, 0, sizeof(list));
+
+	// RtSky's sum over an open floor is half its directions: kept in a byte
+	VectorSet4(color, 2.0f / RT_SKY_DIRS, 2.0f / RT_SKY_DIRS, 2.0f / RT_SKY_DIRS, rt_skyTexel);
+
+	for (page = 0; page < tr.numLightmaps; page++) {
+		const image_t *lightmap = tr.lightmaps[page];
+		image_t       *image;
+		byte          *texels;
+		GLuint         vao, vbo;
+
+		if (!lightmap) {
+			continue;
+		}
+		list.num = 0;
+		R_RtBakeGather(page, &list);
+		if (!list.num) {
+			continue;
+		}
+		total += list.num / 3;
+
+		image = R_CreateImage(va("*rtskylm%d", page), NULL, lightmap->width, lightmap->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+
+		FBO_Bind(tr.rtSkyBakeFbo);
+		FBO_AttachImage(tr.rtSkyBakeFbo, image, GL_COLOR_ATTACHMENT0_EXT, 0);
+		qglDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+		if (!R_CheckFBO(tr.rtSkyBakeFbo)) {
+			FBO_Bind(NULL);
+			R_FreeImage(image);
+			break;
+		}
+		qglViewport(0, 0, image->width, image->height);
+		qglScissor(0, 0, image->width, image->height);
+		qglClearColor(0, 0, 0, 0);
+		qglClear(GL_COLOR_BUFFER_BIT);
+
+		GL_State(GLS_DEPTHTEST_DISABLE);
+		GL_Cull(CT_TWO_SIDED);
+		GLSL_BindProgram(&tr.rtSkyBakeShader);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSKYCOLOR, color);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSURFACE, off);
+		GLSL_SetUniformRtSky(&tr.rtSkyBakeShader, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
+		GL_BindToTMU(tr.rtSkyImage, TMU_RTSKY);
+
+		R_BindNullVao();
+		qglGenVertexArrays(1, &vao);
+		qglBindVertexArray(vao);
+		qglGenBuffers(1, &vbo);
+		qglBindBuffer(GL_ARRAY_BUFFER, vbo);
+		qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * list.num, list.verts, GL_STATIC_DRAW);
+		qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+		qglEnableVertexAttribArray(ATTR_INDEX_NORMAL);
+		qglEnableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+		qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
+		qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
+		qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
+
+		// the triangles, then their edges, for the texels along them whose
+		// middles the triangles miss
+		qglDrawArrays(GL_TRIANGLES, 0, list.num);
+		qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+		qglDrawArrays(GL_TRIANGLES, 0, list.num);
+		qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+		texels = ri.Malloc(image->width * image->height * 4);
+		qglReadPixels(0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		R_RtBakeDilate(texels, image->width, image->height, 3);
+		qglTextureSubImage2DEXT(image->texnum, GL_TEXTURE_2D, 0, 0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		ri.Free(texels);
+
+		qglDisableVertexAttribArray(ATTR_INDEX_POSITION);
+		qglDisableVertexAttribArray(ATTR_INDEX_NORMAL);
+		qglDisableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+		qglBindBuffer(GL_ARRAY_BUFFER, 0);
+		qglDeleteBuffers(1, &vbo);
+		qglBindVertexArray(0);
+		qglDeleteVertexArrays(1, &vao);
+		FBO_Bind(NULL);
+
+		tr.rtSkyLightmaps[page] = image;
+	}
+
+	if (list.verts) {
+		ri.Free(list.verts);
+	}
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: the sky over %d triangles of %d lightmap pages\n", total, tr.numLightmaps);
+}
+
+void R_RtFreeSkyLightmaps(void)
+{
+	int i;
+
+	if (!tr.rtSkyLightmaps) {
+		return;
+	}
+	for (i = 0; i < tr.rtNumSkyLightmaps; i++) {
+		if (tr.rtSkyLightmaps[i]) {
+			R_FreeImage(tr.rtSkyLightmaps[i]);
+		}
+	}
+	ri.Free(tr.rtSkyLightmaps);
+	tr.rtSkyLightmaps    = NULL;
+	tr.rtNumSkyLightmaps = 0;
+}
+
 #define RT_SKY_PER_FRAME 4
 #define RT_SKY_WAIT      8 // world frames after a map comes in: the terrain
                            // the main view picked is what the depth views draw
@@ -579,6 +833,7 @@ static void R_RtUpdateSky(float bake, float ease)
 
 	// drawn again into new images (vid_restart)
 	if (rt.skyImage != tr.rtSkyImage) {
+		R_RtFreeSkyLightmaps();
 		rt.skyImage  = tr.rtSkyImage;
 		rt.skyDrawn  = 0;
 		rt.skyWeight = 0;
@@ -594,6 +849,10 @@ static void R_RtUpdateSky(float bake, float ease)
 	}
 	if (rt.skyDrawn < RT_SKY_DIRS) {
 		return;
+	}
+	// a frame after the last of them, which the backend has drawn by now
+	if (!drawn && !tr.rtSkyLightmaps) {
+		R_RtBakeSkyLightmaps();
 	}
 
 	// an open floor sees all of it
@@ -1881,7 +2140,7 @@ qboolean R_RtIsFoliage(const shader_t *shader)
 }
 
 // stage < 0: a view the lights take no part in (2D, shadows, models in menus)
-void R_RtSetUniforms(shaderProgram_t *sp, int stage, qboolean lightmapped)
+void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean lightmapped)
 {
 	static const vec4_t off = { 0, 0, 0, 0 };
 
@@ -1914,8 +2173,22 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, qboolean lightmapped)
 		{
 			vec4_t surface;
 
-			// a lightmap's sky is a pixel's own: its vertexes are a wall's corners
-			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, lightmapped || !R_RtVertexSky() ? 0.0f : 1.0f,
+			float sky = lightmapped || !R_RtVertexSky() ? 0.0f : 1.0f;
+
+			// a lightmap's sky is a pixel's own: its vertexes are a wall's
+			// corners; read from the sky's page for its lightmap's, if there is one
+			if (lightmap && tr.rtSkyLightmaps && r_rtSkyLightmaps->integer && tr.rtSkyColor[3] > 0) {
+				int page;
+
+				for (page = 0; page < tr.rtNumSkyLightmaps && page < tr.numLightmaps; page++) {
+					if (tr.lightmaps[page] == lightmap && tr.rtSkyLightmaps[page]) {
+						GL_BindToTMU(tr.rtSkyLightmaps[page], TMU_RTSKYLM);
+						sky = 2.0f;
+						break;
+					}
+				}
+			}
+			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, sky,
 				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value);
 			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
 		}
