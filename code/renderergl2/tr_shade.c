@@ -1638,10 +1638,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 
 		GLSL_BindProgram(sp);
 
-		// Added in OPM: the realtime lights, in views of the world
+		// Added in OPM: the realtime lights, in views of the world, and not
+		// in the depth prepass: it writes no colour, and every pixel of it
+		// went through all of the lights for nothing
 		if (R_RtActive())
 		{
-			if (!backEnd.projection2D && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+			if (!backEnd.projection2D && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
 				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
 			{
 				R_RtSetUniforms(sp, R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader));
