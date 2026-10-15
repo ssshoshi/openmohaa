@@ -1,0 +1,15 @@
+// m0_techdemo, the pond in the field: still, brown-green water over mud,
+// little swell, the dead in it. See code/renderergl2/tr_water.c.
+
+color 0.06 0.08 0.06
+clarity 90
+waves 1 0.3 260 4.5 1.5
+surf 10
+drift 1
+// no blood but round the bodies in it
+blood 0.22 0.02 0.015 0
+bloodClouds 0.7
+chop 0.5
+foam 0.4
+refraction 0.03
+glints 0.2

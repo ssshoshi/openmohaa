@@ -1,0 +1,122 @@
+// m0_techdemo: a map to look at and measure the fork's features on.
+// Built by tools/techdemo (the map is generated there; see techdemo.py for
+// what is where).
+//
+//   techdemo_bench 1     fly the benchmark camera round the map, again and
+//                        again, the same way every time
+//   techdemo_crowd N     how many soldiers stand in the yard (default 24)
+
+	exec global/ai.scr
+
+main:
+	setcvar g_scoreboardpic "none"
+	level.farplane = 16000
+	level.farplanecolor = "0.66 0.72 0.8"
+
+level waittill prespawn
+
+	exec global/ambient.scr m0_techdemo
+
+level waittill spawn
+
+	$player item weapons/thompsonsmg.tik
+	$player item weapons/kar98.tik
+	$player item weapons/colt45.tik
+	$player item weapons/m2frag_grenade_sp.tik
+	$player ammo smg 600
+	$player ammo rifle 200
+	$player ammo pistol 100
+	$player ammo grenade 10
+	$player useweaponclass smg
+
+	thread range_targets
+	thread crowd
+	thread floaters
+
+	if (getcvar "techdemo_bench" == "1")
+		thread bench
+end
+
+//----------------------------------------------------------------------------
+// a soldier who stands where he is put and fights nobody
+
+passive local.model local.origin local.yaw:
+	local.a = spawn local.model
+	local.a.origin = local.origin
+	local.a.angles = ( 0 local.yaw 0 )
+	local.a.enableEnemy = 0
+	local.a leash 0
+	local.a hearing 0
+	local.a sight 0
+end local.a
+
+//----------------------------------------------------------------------------
+// the range: soldiers at the far end to shoot, among the gas barrels
+
+range_targets:
+	wait 1
+	for (local.i = 0; local.i < 8; local.i++)
+	{
+		local.x = 1984 + local.i * 176
+		local.y = 2880 + (local.i % 2) * 160
+		local.a = waitthread passive models/human/german_wehrmact_soldier.tik ( local.x local.y 8 ) 270
+		local.a.health = 100
+	}
+end
+
+//----------------------------------------------------------------------------
+// the yard: a crowd of a fixed size, as many skeletal models as a busy scene
+
+crowd:
+	wait 1
+	local.n = int (getcvar "techdemo_crowd")
+	if (getcvar "techdemo_crowd" == "")
+		local.n = 24
+	for (local.i = 0; local.i < local.n; local.i++)
+	{
+		local.x = -384 + (local.i % 6) * 288
+		local.y = 640 + int (local.i / 6) * 256
+		if (local.i % 2)
+			local.m = models/human/german_wehrmact_soldier.tik
+		else
+			local.m = models/human/allied_airborne_soldier.tik
+		local.a = waitthread passive local.m ( local.x local.y 0 ) (local.i * 37)
+		local.a.health = 100000
+	}
+end
+
+//----------------------------------------------------------------------------
+// the pond: men dead in the water, floating
+
+floaters:
+	wait 2
+	for (local.i = 0; local.i < 5; local.i++)
+	{
+		local.x = 1300 + local.i * 110
+		local.y = -1800 + (local.i % 2) * 140
+		local.a = waitthread passive models/human/german_wehrmact_soldier.tik ( local.x local.y -30 ) (local.i * 70)
+		local.a damage $world 1000 $world local.a.origin ( 0 0 -1 ) ( 0 0 1 ) 0 0 9 2
+	}
+end
+
+//----------------------------------------------------------------------------
+// the benchmark: a camera along the path the map's bench0, bench1 ... make
+
+bench:
+	$player notarget 1
+	wait 3
+	local.cam = spawn func_camera
+	local.cam.origin = $bench0.origin
+	local.cam.angles = $bench0.angles
+	cuecamera local.cam
+	local.cam follow $bench0
+	local.cam speed (float (getcvar "techdemo_benchspeed"))
+	while (1)
+	{
+		println "techdemo: bench lap start"
+		local.cam follow $bench0
+		waitframe
+		local.cam waittill camera_done
+		println "techdemo: bench lap end"
+	}
+end
