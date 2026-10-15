@@ -20,10 +20,14 @@ and compiled with MOH:AA's own tools.
 
 It needs the MOHTools release (`MOHTOOLS`, default `/mnt/d/MOHTools-master`:
 `Q3map.exe`, `MOHlight.exe`) and the game (`MOHAA_GAME`, default
-`/mnt/d/Medal of Honor`). The compilers stop at a mod's shader file they can't
-parse, so they run in `<game>/techdemo-build`, which holds hard links to the
-retail paks only. The result is `build/techdemo/zzzzzzzzz-opm-techdemo.pk3`:
-the bsp, the map's script, precache and water file, and nothing retail.
+`/mnt/d/Medal of Honor`). The map is compiled against every pak in the game's
+`main`, mods included, so their shaders and textures are the ones it is lit and
+flagged with. The compilers stop at a shader file the game would read past
+(HRRTM's `scripts/new_opelgray.shader` starts with a stray `}`), so they run in
+`<game>/techdemo-build`: hard links to the game's paks, and a pak sorting last
+with a repaired copy of each such file. The result is
+`build/techdemo/zzzzzzzzz-opm-techdemo.pk3`: the bsp, the map's script,
+precache and water file, and nothing retail or from a mod.
 
 - `mapgen.py` writes .map files: brushes from corners (the winding is worked
   out), heightfields as triangular prisms, entities.
