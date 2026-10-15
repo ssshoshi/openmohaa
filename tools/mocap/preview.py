@@ -55,6 +55,7 @@ def main():
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--frames", type=int, default=8)
+    ap.add_argument("--mirror", action="store_true")
     ap.add_argument("--loop", type=float, default=0.0, help="as given to retarget.py: the clip frames are offset by it")
     a = ap.parse_args()
 
@@ -65,6 +66,8 @@ def main():
     picks = np.linspace(0, n - 1, a.frames).round().astype(int)
 
     clip = Bvh(open(a.bvh).read()) if a.bvh else None
+    if clip:
+        clip.mirror = a.mirror
     if clip:
         step = max(1, round(1.0 / (a.fps * clip.frame_time)))
         first = max(1, round(a.start / clip.frame_time))

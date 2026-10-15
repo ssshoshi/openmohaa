@@ -28,6 +28,7 @@ and the loader (SkeletorCacheFileCallback) reads those first.
 """
 import argparse
 import math
+import re
 import os
 import sys
 import zipfile
@@ -191,6 +192,18 @@ def facing(clip, f):
     return yaw(-heading)
 
 
+def aim_turn(clip, frames, turn):
+    """The extra turn pointing the right arm, where it reaches furthest, along +X."""
+    vs = []
+    for f in frames:
+        pose = clip.pose(f)
+        vs.append(turn @ (C @ (pose["RightHand"][1] - pose["RightArm"][1])))
+    vs = np.array(vs)
+    reach = np.linalg.norm(vs, axis=1)
+    aim = vs[reach > 0.9 * reach.max()].mean(0)
+    return yaw(-math.degrees(math.atan2(aim[1], aim[0])))
+
+
 def bounds_of(bones, ch):
     pts = np.array([t[1] for t in M.fk(bones, ch).values()])
     lo, hi = pts.min(0) - 12.0, pts.max(0) + 12.0
@@ -212,6 +225,46 @@ def slerp(a, b, t):
     return q / np.linalg.norm(q)
 
 
+# Channels --upper-from takes as they are: the arms down to the fingertips and
+# the weapon tags, so a stock grip stays on its weapon.
+ARM_CHANNEL = re.compile(r"(Clavicle|UpperArm|Forearm|Hand|Finger|tag_weapon|Dummy(0[1-9]|10)) ")
+# Bones --upper-from layers: the stock pose with the mocap's sway added on.
+LAYERED = ["Bip01 Spine", "Bip01 Spine1", "Bip01 Spine2", "Bip01 Neck", "Bip01 Head"]
+
+
+def mean_quat(qs):
+    qs = np.array(qs, float)
+    qs[np.einsum("ij,j->i", qs, qs[0]) < 0] *= -1
+    m = qs.mean(0)
+    return m / np.linalg.norm(m)
+
+
+def stock_at(anim, t):
+    """A looping stock anim's channels at time t (seconds), slerped between frames."""
+    n = len(anim["values"])
+    x = (t / anim["frame_time"]) % n
+    i, f = int(x), x - int(x)
+    a, b = anim["values"][i], anim["values"][(i + 1) % n]
+    out = {}
+    for c, name in enumerate(anim["names"]):
+        out[name] = slerp(a[c], b[c], f) if name.endswith(" rot") else a[c] * (1 - f) + b[c] * f
+    return out
+
+
+def layer_upper(chans, stock, frame_time):
+    """Arms from the stock anim; spine and head the stock pose plus the mocap's sway."""
+    means = {b: mean_quat([c[b + " rot"] for c in chans]) for b in LAYERED}
+    for k, c in enumerate(chans):
+        s = stock_at(stock, k * frame_time)
+        for name in c:
+            if ARM_CHANNEL.search(name + " ") and name in s:
+                c[name] = s[name]
+        for b in LAYERED:
+            # delta = mean^-1 * mocap, in the bone's own frame, added under the stock pose
+            delta = M.channel_to_rot(means[b]).T @ M.channel_to_rot(c[b + " rot"])
+            c[b + " rot"] = M.rot_to_channel(M.channel_to_rot(s[b + " rot"]) @ delta)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bvh")
@@ -223,9 +276,15 @@ def main():
     ap.add_argument("--loop", type=float, default=0.0,
                     help="seconds at the end blended into the start; also marks the anim as looping")
     ap.add_argument("--repeat", action="store_true", help="mark the anim as looping without blending")
+    ap.add_argument("--aim-forward", action="store_true",
+                    help="turn the clip so the right arm, where it reaches furthest, points forward")
+    ap.add_argument("--mirror", action="store_true", help="swap left and right (a left-handed take)")
+    ap.add_argument("--upper-from", help="game path of a stock .skc whose arms (and weapon grip) to keep; "
+                    "its spine and head get the mocap's sway on top")
     a = ap.parse_args()
 
     clip = Bvh(open(a.bvh).read())
+    clip.mirror = a.mirror
     bones = M.read_skd(load_game_file(SKELETON))
     tmpl = M.read_skc(load_game_file(a.template))
     rt = Retarget(clip, bones, tmpl)
@@ -235,11 +294,15 @@ def main():
     last = clip.num_frames - 1 if a.end is None else min(clip.num_frames - 1, round(a.end / clip.frame_time))
     frames = list(range(first, last + 1, step))
     turn = facing(clip, first)
+    if a.aim_forward:
+        turn = aim_turn(clip, frames, turn) @ turn
     hp = turn @ (C @ clip.pose(first)["Hips"][1]) * rt.scale
     shift = np.array([-hp[0], -hp[1], 0.0])  # over the origin
 
     names = tmpl["names"]
     chans = [rt.frame(f, turn, shift) for f in frames]
+    if a.upper_from:
+        layer_upper(chans, M.read_skc(load_game_file(a.upper_from)), clip.frame_time * step)
 
     n_blend = int(round(a.loop * a.fps))
     if n_blend:

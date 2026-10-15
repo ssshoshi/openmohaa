@@ -18,7 +18,22 @@ def _axis_rot(axis, deg):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
+_S = np.diag([-1.0, 1.0, 1.0])  # the mirror across the body's midplane (X is left/right)
+
+
+def _swap(name):
+    if name.startswith("Left"):
+        return "Right" + name[4:]
+    if name.startswith("Right"):
+        return "Left" + name[5:]
+    if name[:1] in "LR" and name[1:4] == "Hip":  # LHipJoint / RHipJoint
+        return "RL"[name[0] == "R"] + name[1:]
+    return name
+
+
 class Bvh:
+    mirror = False
+
     def __init__(self, text):
         tok = text.split()
         self.joints = []  # dict(name, parent index, offset, channels, end)
@@ -78,9 +93,14 @@ class Bvh:
             else:
                 pr, pp = out[j["parent"]]
                 out.append((pr @ rot, pp + pr @ j["offset"]))
-        return {j["name"]: out[k] for k, j in enumerate(self.joints)}
+        pose = {j["name"]: out[k] for k, j in enumerate(self.joints)}
+        if self.mirror:
+            # Left and right swapped: a left-handed take made right-handed.
+            pose = {_swap(n): (_S @ r @ _S, _S @ p) for n, (r, p) in pose.items()}
+        return pose
 
     def tip(self, pose, name):
         """World position of a joint's end site."""
         r, p = pose[name]
-        return p + r @ self.joints[self.index[name]]["end"]
+        end = self.joints[self.index[_swap(name) if self.mirror else name]]["end"]
+        return p + r @ (_S @ end if self.mirror else end)
