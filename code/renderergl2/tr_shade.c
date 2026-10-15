@@ -1646,12 +1646,15 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			if (!backEnd.projection2D && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
 				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
 			{
-				R_RtSetUniforms(sp, R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader));
+				const int kind = R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader);
+
+				R_RtSetUniforms(sp, kind, kind == RT_STAGE_LIGHTING || kind == RT_STAGE_LIGHTING2
+					|| (pStage->glslShaderGroup == tr.lightallShader && (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP));
 				R_RtBindTextures();
 			}
 			else
 			{
-				R_RtSetUniforms(sp, -1);
+				R_RtSetUniforms(sp, -1, qfalse);
 			}
 		}
 

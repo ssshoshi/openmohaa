@@ -360,6 +360,23 @@ void FBO_Init(void)
 		FBO_Bind(NULL);
 	}
 
+	// Added in OPM
+	//  The sky's depth from each of its directions (tr_rtlight.c), depth alone.
+	if (tr.rtSkyImage && tr.rtShadowFbo[0])
+	{
+		tr.rtSkyFbo = FBO_Create("_rtsky", tr.rtSkyImage->width, tr.rtSkyImage->height);
+		FBO_AttachImage(tr.rtSkyFbo, tr.rtSkyImage, GL_DEPTH_ATTACHMENT, 0);
+		FBO_Bind(tr.rtSkyFbo);
+		qglDrawBuffer(GL_NONE);
+		qglReadBuffer(GL_NONE);
+		if (!R_CheckFBO(tr.rtSkyFbo))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no sky depth, the sky does not light\n");
+			tr.rtSkyFbo = NULL;
+		}
+		FBO_Bind(NULL);
+	}
+
 	if (tr.sunShadowDepthImage[0])
 	{
 		for (i = 0; i < 4; i++)

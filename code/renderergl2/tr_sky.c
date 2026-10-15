@@ -496,7 +496,7 @@ static void DrawSkySide( struct image_s *image, const int mins[2], const int max
 		// has no lightmap, and the box, drawn without normals, took them with
 		// the normal undefined: black wherever the sky lay in a light's reach.
 		if (R_RtActive()) {
-			R_RtSetUniforms(sp, -1);
+			R_RtSetUniforms(sp, -1, qfalse);
 		}
 	}
 

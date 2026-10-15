@@ -320,6 +320,12 @@ void main()
 	var_RtPos    = (u_ModelMatrix * vec4(position, 1.0)).xyz;
 	var_RtNormal = (u_ModelMatrix * vec4(normal,   0.0)).xyz;
 #endif
+#if defined(USE_RTSKY_VERTEX)
+	// Added in OPM: the sky's light, soft: at the vertexes, but for lightmaps
+	var_RtSky = vec3(0.0);
+	if (u_RtSurface.y > 0.5 && u_RtSkyColor.w > 0.0)
+		var_RtSky = RtSky(var_RtPos, normalize(var_RtNormal));
+#endif
 #if defined(USE_RTLIGHT_PARTICLES)
 	var_RtParticleLight = vec3(0.0);
 	if (u_RtStage == RT_STAGE_PARTICLE || u_RtStage == RT_STAGE_PARTICLE_LIT)

@@ -1546,6 +1546,13 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 				   int fogIndex, int dlightMap, int pshadowMap, int cubemap ) {
 	int			index;
 
+	// Added in OPM
+	//  Leaves keep no sky off what is under them, as the compiler had them
+	//  (tr_rtlight.c), nor off each other.
+	if ((tr.viewParms.flags & VPF_RTSKY) && shader->stages[0] && (shader->stages[0]->stateBits & GLS_ATEST_BITS)) {
+		return;
+	}
+
 	// instead of checking for overflow, we just mask the index
 	// so it wraps around
 	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;

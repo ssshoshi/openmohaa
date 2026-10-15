@@ -1426,11 +1426,12 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 		// Only the sun cascades are orthographic depth shadows, so that pair of
 		// flags is what makes sunCascade meaningful (every other view leaves it
-		// at whatever the viewParms memset produced).
-		int sunLevel = (isShadowView && (backEnd.viewParms.flags & VPF_ORTHOGRAPHIC))
+		// at whatever the viewParms memset produced); the sky's depth (OPM) is
+		// one too, and not a cascade.
+		int sunLevel = (isShadowView && (backEnd.viewParms.flags & VPF_ORTHOGRAPHIC) && !(backEnd.viewParms.flags & VPF_RTSKY))
 			? backEnd.viewParms.sunCascade : -1;
 		// Added in OPM: a realtime light's shadow face, timed apart from the sun's
-		const qboolean rtShadow = !!(backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED));
+		const qboolean rtShadow = !!(backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY));
 		const int gpuTimer = rtShadow ? GPUTIMER_RTSHADOW : isShadowView ? GPUTIMER_SUNSHADOW : GPUTIMER_DEPTHPREPASS;
 		const int cpuTimer = rtShadow ? CPUTIMER_RTSHADOW : isShadowView ? CPUTIMER_SUNSHADOW : CPUTIMER_DEPTHPREPASS;
 
