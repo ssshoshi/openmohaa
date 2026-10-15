@@ -93,6 +93,7 @@ consolecmd_t G_ConsoleCmds[] = {
     {"orch_scripts",    G_OrchScriptsCmd,     qfalse},
     // Where a man knocked down lies, from the client's ragdoll (single player)
     {"opm_kdpose",      G_KnockdownPoseCmd,   qfalse},
+    {"opm_kdmove",      G_KnockdownMoveCmd,   qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif
@@ -101,6 +102,74 @@ consolecmd_t G_ConsoleCmds[] = {
 };
 
 Container<commandmaster_t> commandMasters;
+
+/*
+=================
+G_KnockdownMoveCmd
+
+Added in OPM
+  opm_kdmove <entity> <pelvis x y z> <head yaw>
+
+  While a man knocked down falls and settles (a ragdoll on the client alone),
+  the client keeps saying where his body is, and his entity is moved there,
+  onto the floor under it: his box, which is what bullets and people meet,
+  goes with his body instead of staying where he stood. Only while he is down
+  (opm_kd_down, set by anim/opm_knockdown.scr). Single player only.
+
+  He is turned, too, so that the lying pose the server has him in (what it
+  tells where a bullet struck him by) lies the way his body does.
+=================
+*/
+
+// Where the server's lying pose (opm_down_lying, deaths/pose_c(back).skc) has
+// the pelvis, against the entity, and which way it has the head (degrees from
+// his facing): measured with tools/mocap.
+#define KD_POSE_PELVIS_X  1.7f
+#define KD_POSE_PELVIS_Y  -4.1f
+#define KD_POSE_HEAD_YAW  165.5f
+
+qboolean G_KnockdownMoveCmd(gentity_t *ent)
+{
+    Entity         *who;
+    ScriptVariable *down;
+    Vector          pelvis, start, end;
+    trace_t         trace;
+    float           yaw;
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER || gi.Argc() < 6) {
+        return qtrue;
+    }
+
+    who = G_GetEntity(atoi(gi.Argv(1)));
+    if (!who || !who->IsSubclassOfActor() || who->IsDead()) {
+        return qtrue;
+    }
+
+    down = who->Vars()->GetVariable("opm_kd_down");
+    if (!down || down->intValue() != 1) {
+        return qtrue;
+    }
+
+    yaw    = atof(gi.Argv(5)) - KD_POSE_HEAD_YAW;
+    pelvis = Vector(atof(gi.Argv(2)), atof(gi.Argv(3)), atof(gi.Argv(4)));
+    {
+        const float c = cos(DEG2RAD(yaw)), s = sin(DEG2RAD(yaw));
+
+        // the entity, where it puts the pose's pelvis on his
+        pelvis.x -= c * KD_POSE_PELVIS_X - s * KD_POSE_PELVIS_Y;
+        pelvis.y -= s * KD_POSE_PELVIS_X + c * KD_POSE_PELVIS_Y;
+    }
+    start  = pelvis + Vector(0, 0, 16);
+    end    = pelvis - Vector(0, 0, 128);
+    trace  = G_Trace(start, vec_zero, vec_zero, end, who, MASK_PLAYERSOLID, qfalse, "G_KnockdownMoveCmd");
+    if (trace.allsolid || trace.startsolid) {
+        return qtrue;
+    }
+
+    who->setOrigin(trace.endpos);
+    who->setAngles(Vector(0, yaw, 0));
+    return qtrue;
+}
 
 /*
 =================

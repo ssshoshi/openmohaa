@@ -965,6 +965,8 @@ typedef struct {
     qboolean downed;
     qboolean reported;
     int      riseStart;
+    int      movedAt;    // when the server was last told where the body is
+    vec3_t   movedTo;    // and where
     qboolean gone;       // its entity has left the snapshot (for the log only)
 
     // The entity as it was last handed to the renderer, pose and all, so a
@@ -9672,7 +9674,9 @@ static qboolean CG_RagdollPosedCorpse(const refEntity_t *model)
 //  1: he is down, 2: getting up, 0: neither.
 #define RD_RISE_TIME   600  // ms from the ragdoll to the get-up animation
 #define RD_DOWN_REPORT 2500 // ms down before saying where, if not asleep yet
-#define RD_DOWN_PUSH   4.0f // a knocked down man's push from the hit, against a corpse's
+#define RD_DOWN_MOVE_EVERY 100  // ms between telling the server where a body down is
+#define RD_DOWN_MOVE_DIST  4.0f // and only once it has gone this far
+#define RD_DOWN_PUSH   2.5f // a knocked down man's push from the hit, against a corpse's
 
 static int CG_RagdollDownState(const refEntity_t *model)
 {
@@ -10166,6 +10170,8 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             rd->standIn   = qtrue;
             rd->downed    = qtrue;
             rd->reported  = qfalse;
+            rd->movedAt   = 0;
+            VectorCopy(model->origin, rd->movedTo);
             rd->riseStart = 0;
             if (!rd->jolt) {
                 rd->startTime = cg.time - Q_max(cg_ragdoll_blendtime->integer, 0);
@@ -10223,6 +10229,25 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
     //  A man knocked down: told the server where he lies once he has settled,
     //  and handed back to his animation as he gets up.
     if (rd->downed) {
+        // Until he settles, the server is kept told where his body is, so his
+        // box (what bullets and people meet) goes with it rather than staying
+        // where he was standing while his body slides or is thrown away.
+        if (!rd->reported && !rd->riseStart && cg.time - rd->movedAt >= RD_DOWN_MOVE_EVERY
+            && Square(rd->part[RD_PELVIS].p[0] - rd->movedTo[0]) + Square(rd->part[RD_PELVIS].p[1] - rd->movedTo[1])
+                   > Square(RD_DOWN_MOVE_DIST)) {
+            cgi.SendClientCommand(va(
+                "opm_kdmove %d %.1f %.1f %.1f %.1f",
+                rd->entityNum,
+                rd->part[RD_PELVIS].p[0],
+                rd->part[RD_PELVIS].p[1],
+                rd->part[RD_PELVIS].p[2],
+                RAD2DEG(atan2f(
+                    rd->part[RD_HEAD].p[1] - rd->part[RD_PELVIS].p[1], rd->part[RD_HEAD].p[0] - rd->part[RD_PELVIS].p[0]
+                ))
+            ));
+            rd->movedAt = cg.time;
+            VectorCopy(rd->part[RD_PELVIS].p, rd->movedTo);
+        }
         if (!rd->reported && (rd->state == RD_SLEEPING || cg.time - rd->startTime > RD_DOWN_REPORT)) {
             CG_RagdollReportDown(rd);
         }
@@ -10517,7 +10542,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         }
 
         VectorClear(drop);
-        drop[2] = model->origin[2] - rd->sleepOrigin[2];
+        // (Not a man knocked down: his entity is moved to his body, which
+        // the body must not then follow.)
+        drop[2] = rd->downed ? 0.0f : model->origin[2] - rd->sleepOrigin[2];
         rd->sleepDrop = drop[2];
 
         rd->numOverrides = 0;

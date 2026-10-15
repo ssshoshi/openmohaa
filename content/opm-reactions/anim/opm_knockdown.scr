@@ -80,14 +80,15 @@ knockdown:
 		self.opm_kd_down = 1
 		self.opm_kd_ready = 0
 
-		// His box lies down with him: 8 high, as the engine lowers a
-		// corpse's, so he is walked over (at 16 the player stepped up onto
-		// nothing he could see), and wide enough to take in a man lying any
-		// way round, for the shots at him. Left standing, it kept anyone from
+		// His box lies down with him, and the client keeps it under his body
+		// (opm_kdmove): 12 high, as thick as a man lying is, so the shots at
+		// his body meet it and he is stepped over (at 16 the player stepped
+		// up onto nothing he could see), and wide enough for a man lying any
+		// way round. Left standing, it kept anyone from
 		// crossing the spot where he had been.
 		self.opm_kd_mins = self.getmins
 		self.opm_kd_maxs = self.getmaxs
-		self setsize ( -40 -40 0 ) ( 40 40 8 )
+		self setsize ( -40 -40 0 ) ( 40 40 12 )
 		self.blendtime = 0.15
 		self setmotionanim local.fall
 		self waittill flaggedanimdone

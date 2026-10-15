@@ -61,6 +61,7 @@ qboolean G_AddBotNamedCommand(gentity_t *ent);
 qboolean G_RemoveBotCommand(gentity_t *ent);
 // Added in OPM
 qboolean G_KnockdownPoseCmd(gentity_t *ent);
+qboolean G_KnockdownMoveCmd(gentity_t *ent);
 #ifdef _DEBUG
 qboolean G_BotCommand(gentity_t *ent);
 #endif
