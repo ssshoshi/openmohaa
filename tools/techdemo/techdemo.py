@@ -99,8 +99,13 @@ def building(m, x1, y1, x2, y2, height, wall, floor, ceil, doors=()):
     return z0
 
 
+# MOHlight's values suit retail rooms a few hundred units across; these rooms
+# are bigger, so every lamp is turned up by this much
+LIGHT_SCALE = 15
+
+
 def light(m, origin, value, color=(1, 1, 1), spot=None, **keys):
-    e = m.ent("light", origin=origin, light=value, _color=color, **keys)
+    e = m.ent("light", origin=origin, light=value * LIGHT_SCALE, _color=color, **keys)
     if spot:
         pitch, yaw, angle = spot
         e.set("angles", (pitch, yaw, 0)).set("spot_angle", angle)
@@ -250,9 +255,9 @@ def build_physics(m):
     x1, y1, x2, y2, h = PHYS
     z0 = building(m, x1, y1, x2, y2, h, Tex("algiers/plasterwal2", 0.5), Tex("central_europe/flrwood2", 0.5),
                   T_CEIL, doors=[("south", 512, 256, 256)])
-    for lx in (0, 1024):
+    for lx in (0, 512, 1024):
         for ly in (2432, 2944):
-            light(m, (lx, ly, z0 + 260), 50, (1, 0.92, 0.8))
+            light(m, (lx, ly, z0 + 190), 60, (1, 0.92, 0.8))
             static(m, "static/lightbulb_caged.tik", (lx, ly, z0 + h - 4))
     # a ramp to roll and slide things down
     ramp = Tex("central_europe/flrwood2", 0.5)
@@ -277,7 +282,7 @@ def build_physics(m):
         for k, (ox, oy, yaw) in enumerate(((0, -48, 90), (0, 48, 270), (-48, 0, 0), (48, 0, 180))):
             static(m, "furniture/woodchair.tik" if k % 2 else "furniture/simplechair.tik", (tx + ox, ty + oy, z0), yaw=yaw)
     for k in range(6):
-        static(m, "static/woodbucket.tik", (1300 + (k % 3) * 40, 2700 + (k // 3) * 40, z0 + 160))
+        static(m, "static/bucket.tik", (1300 + (k % 3) * 40, 2700 + (k // 3) * 40, z0 + 160))
 
 
 GALLERY_BOX = (1792, 512, 3328, 1024, 256)
@@ -301,8 +306,8 @@ def build_gallery(m):
         m.add(box((a, y2, 0), (b, y2 + WALL, z1), n_tex))
         m.add(box((a, y1 - WALL, 0), (b, y1, z1), s_tex))
         mid = (a + b) / 2
-        light(m, (mid, y2 - 20, z1 - 16), 28, (1, 0.95, 0.88))
-        light(m, (mid, y1 + 20, z1 - 16), 28, (1, 0.95, 0.88))
+        light(m, (mid, y2 - 20, z1 - 16), 12, (1, 0.95, 0.88))
+        light(m, (mid, y1 + 20, z1 - 16), 12, (1, 0.95, 0.88))
 
 
 RANGE = (1792, 1280, 3328, 3328, 320)
@@ -313,7 +318,7 @@ def build_range(m):
     z0 = building(m, x1, y1, x2, y2, h, Tex("algiers/jh_brickwall1", 0.5), Tex("algiers/fort_floor_outside", 0.5),
                   T_CEIL, doors=[("west", 1536, 192, 224)])
     for ly in (1536, 2176, 2816, 3136):
-        light(m, (2560, ly, z0 + 270), 55, (1, 0.93, 0.82))
+        light(m, (2560, ly, z0 + 190), 55, (1, 0.93, 0.82))
         static(m, "static/lightbulb_caged.tik", (2560, ly, z0 + h - 4))
     # sandbags in front of the targets and gas barrels among them
     for sx in (2048, 2400, 2752, 3104):
@@ -366,12 +371,30 @@ BENCH_PATH = [
 ]
 
 
+# how fast the benchmark camera goes, in units a second
+BENCH_SPEED = 256
+
+
 def bench_path(m):
+    """The path's nodes. The camera's spline takes a unit of time from a node
+    to the next, times the node's speed, so each node's speed is set from the
+    distance to the next one: the camera goes at BENCH_SPEED all the way.
+    Returns how long a lap takes, in seconds."""
     n = len(BENCH_PATH)
+    total = 0.0
     for i, (o, (p, y)) in enumerate(BENCH_PATH):
         e = m.ent("info_splinepath", origin=o, angles=(p, y, 0), targetname="bench%d" % i)
         if i + 1 < n:
+            d = math.dist(o, BENCH_PATH[i + 1][0])
+            total += d
             e.set("target", "bench%d" % (i + 1))
+            e.set("speed", round(BENCH_SPEED / d, 4))
+    return total / BENCH_SPEED
+
+
+def bench_script(lap):
+    """maps/m0_techdemo_bench.scr, made with the map: how long a lap is."""
+    return "// made by tools/techdemo/techdemo.py with the map\n\nlap:\nend %.1f\n" % lap
 
 
 def build():
@@ -401,7 +424,7 @@ def build():
     path_nodes(m, -2816, 768, -1280, 2304, 32, step=512)
 
     m.ent("info_player_start", origin=(256, 256, 24), angle=90)
-    bench_path(m)
+    m.bench_lap = bench_path(m)
     return m
 
 

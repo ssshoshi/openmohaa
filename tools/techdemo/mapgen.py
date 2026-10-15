@@ -54,7 +54,8 @@ def tex(t):
 class Brush:
     """A convex brush: faces as (three points on the plane, texture)."""
 
-    def __init__(self, faces, center):
+    def __init__(self, faces, center, detail=False):
+        self.detail = detail
         self.faces = []
         for pts, t in faces:
             a, b, c = pts
@@ -69,7 +70,9 @@ class Brush:
     def text(self):
         out = ["{"]
         for pts, t in self.faces:
-            out.append(" ".join("( %s %s %s )" % tuple(_num(v) for v in p) for p in pts) + " " + t.text())
+            line = " ".join("( %s %s %s )" % tuple(_num(v) for v in p) for p in pts) + " " + t.text()
+            # detail brushes don't split the vis tree (as MOHRadiant marks them)
+            out.append(line + (" +surfaceparm detail" if self.detail else ""))
         out.append("}")
         return "\n".join(out)
 
@@ -93,7 +96,7 @@ def box(mins, maxs, t, top=None, bottom=None, sides=None):
     return Brush(faces, center)
 
 
-def prism(tri, zbottom, t, bottom=None, sides=None):
+def prism(tri, zbottom, t, bottom=None, sides=None, detail=False):
     """A brush under a sloped triangle: the triangle (three xyz points) on top,
     vertical sides, and a flat bottom at `zbottom`. Ground is made of these."""
     p0, p1, p2 = tri
@@ -105,7 +108,7 @@ def prism(tri, zbottom, t, bottom=None, sides=None):
     faces = [((p0, p1, p2), t), (((p0[0], p0[1], zbottom), (p1[0], p1[1], zbottom), (p2[0], p2[1], zbottom)), bottom or s)]
     for a, b in ((p0, p1), (p1, p2), (p2, p0)):
         faces.append((((a[0], a[1], zbottom), (b[0], b[1], zbottom), (b[0], b[1], zbottom + 64)), s))
-    return Brush(faces, center)
+    return Brush(faces, center, detail)
 
 
 def hollow(mins, maxs, wall, floor=None, ceil=None, open_sides=(), thick=16):
@@ -197,7 +200,9 @@ class Map:
 def heightfield(x0, y0, step, heights, t, zbottom):
     """Ground over a grid: heights[j][i] is the height at (x0 + i*step,
     y0 + j*step); each cell is two prisms down to `zbottom`. `t` is a texture
-    or a function (i, j) -> texture for the cell."""
+    or a function (i, j) -> texture for the cell. The prisms are detail: they
+    don't seal the map (something under them must) and vis ignores them, which
+    takes a full vis from many minutes to seconds."""
     out = []
     for j in range(len(heights) - 1):
         for i in range(len(heights[0]) - 1):
@@ -211,7 +216,7 @@ def heightfield(x0, y0, step, heights, t, zbottom):
             else:
                 tris = ((a, b, d), (b, c, d))
             for tri in tris:
-                out.append(prism(tri, zbottom, tt))
+                out.append(prism(tri, zbottom, tt, detail=True))
     return out
 
 

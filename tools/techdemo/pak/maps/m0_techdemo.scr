@@ -3,7 +3,8 @@
 // what is where).
 //
 //   techdemo_bench 1     fly the benchmark camera round the map, again and
-//                        again, the same way every time
+//                        again, the same way every time (a lap's length is in
+//                        m0_techdemo_bench.scr, made with the map)
 //   techdemo_crowd N     how many soldiers stand in the yard (default 24)
 
 	exec global/ai.scr
@@ -104,19 +105,18 @@ end
 
 bench:
 	$player notarget 1
+	local.lap = waitthread maps/m0_techdemo_bench.scr::lap
 	wait 3
 	local.cam = spawn func_camera
 	local.cam.origin = $bench0.origin
 	local.cam.angles = $bench0.angles
 	cuecamera local.cam
-	local.cam follow $bench0
-	local.cam speed (float (getcvar "techdemo_benchspeed"))
 	while (1)
 	{
-		println "techdemo: bench lap start"
+		println ("techdemo: bench lap start, " + local.lap + " s")
 		local.cam follow $bench0
-		waitframe
-		local.cam waittill camera_done
+		// the camera starts two seconds' worth of path before the first node
+		wait (local.lap + 2)
 		println "techdemo: bench lap end"
 	}
 end
