@@ -25,7 +25,11 @@ It needs the MOHTools release (`MOHTOOLS`, default `/mnt/d/MOHTools-master`:
 flagged with. The compilers stop at a shader file the game would read past
 (HRRTM's `scripts/new_opelgray.shader` starts with a stray `}`), so they run in
 `<game>/techdemo-build`: hard links to the game's paks, and a pak sorting last
-with a repaired copy of each such file. The result is
+with a repaired copy of each such file. That pak also holds the retail image of
+each of the map's textures a mod replaces: the compilers work texture
+coordinates out from the image's size, and the HD pack's images are four times
+retail's, which made every texture four times too big. Compiled against the
+retail sizes, as the retail maps were, the HD images draw at the retail scale. The result is
 `build/techdemo/zzzzzzzzz-opm-techdemo.pk3`: the bsp, the map's script,
 precache and water file, and nothing retail or from a mod.
 
