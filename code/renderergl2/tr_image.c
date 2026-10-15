@@ -3027,6 +3027,19 @@ void R_CreateBuiltinImages( void ) {
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			}
+
+			// all of it live (r_realtimeLighting 2): the sky's depth from each
+			// of its directions, a tile each (R_RtRenderSkyDir)
+			if (r_realtimeLighting->integer == 2)
+			{
+				const int skySize = r_rtSkyTile->integer * RT_SKY_TILES;
+
+				tr.rtSkyImage = R_CreateImage("*rtsky", NULL, skySize, skySize, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT16);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			}
 		}
 
 		if (r_sunlightMode->integer)

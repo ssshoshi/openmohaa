@@ -526,6 +526,9 @@ enum
 #define TMU_RTCAPSULES  11
 #define TMU_SOFTDEPTH   12 // Added in OPM: the view's depth, for soft particles
 #define TMU_SKELBONES   13 // Added in OPM: the frame's bones, for the models the vertex program poses
+#define TMU_RTSKY       14 // Added in OPM: the sky's depth from each of its directions (tr_rtlight.c)
+#define RT_SKY_DIRS     16 // Added in OPM: the directions the sky lights from, RT_SKY_TILES squared
+#define RT_SKY_TILES    4
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -837,6 +840,7 @@ enum
 	GLSL_MAT16_BONEMATRIX,
 	GLSL_VEC4_RTLIGHTS, // Added in OPM: the realtime lights, RT_MAX_LIGHTS * RT_LIGHT_VEC4S vec4s
 	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
+	GLSL_VEC4_RTSKY,    // Added in OPM: the sky's directions, RT_SKY_DIRS * 4 vec4s (tr.rtSkyRows)
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 	GLSL_VEC4_SKELDENTS   // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 };
@@ -972,6 +976,10 @@ typedef enum
 	UNIFORM_RTSHADOWBAKED,
 	UNIFORM_RTCAPSULES,
 	UNIFORM_RTLIST,
+	UNIFORM_RTSKY,
+	UNIFORM_RTSKYCOLOR,
+	UNIFORM_RTSKYMAP,
+	UNIFORM_RTSURFACE,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
@@ -1002,6 +1010,7 @@ typedef struct shaderProgram_s
 
 	int   rtLightsGeneration; // Added in OPM: the realtime lights it was last sent (tr.rtLightGeneration)
 	int   rtLightsCount;
+	int   rtSkyGeneration; // Added in OPM: the sky's directions it was last sent (tr.rtSkyGeneration)
 } shaderProgram_t;
 
 // trRefdef_t holds everything that comes in refdef_t,
@@ -1152,7 +1161,10 @@ typedef enum {
 	VPF_RTDYNAMIC       = 0x200,
 	// the world as the map was compiled, for r_realtimeLighting 1: what the
 	// lightmaps' shadows were made of
-	VPF_RTBAKED         = 0x400
+	VPF_RTBAKED         = 0x400,
+	// Added in OPM
+	//  The sky's depth from one of its directions, once a map (tr_rtlight.c).
+	VPF_RTSKY           = 0x800
 } viewParmFlags_t;
 
 typedef struct {
@@ -2598,6 +2610,11 @@ typedef struct {
     vec4_t   rtSunColor;
     vec4_t   rtAmbient;
     image_t *rtCapsuleImage;   // two texels a capsule: (a, radius), (b, 0)
+    image_t *rtSkyImage;       // the sky's depth from each of its directions, a tile each
+    FBO_t   *rtSkyFbo;
+    vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction
+    vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
+    int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
     int rendererhandle;
     qboolean shadersParsed;
@@ -2758,6 +2775,8 @@ extern  cvar_t  *r_realtimeLighting;
 extern  cvar_t  *r_rtScale;
 extern  cvar_t  *r_rtShadows;
 extern  cvar_t  *r_rtShadowTile;
+extern  cvar_t  *r_rtSky;
+extern  cvar_t  *r_rtSkyTile;
 extern  cvar_t  *r_rtFacesPerFrame;
 extern  cvar_t  *r_rtMaxLights;
 extern  cvar_t  *r_rtAmbient;
@@ -2970,13 +2989,15 @@ void R_RtLoadWorld(void);
 void R_RtFreeWorld(void);
 void R_RtRenderShadows(const refdef_t *fd);
 void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs);
-void R_RtSetUniforms(shaderProgram_t *sp, int stage);
+void R_RtSetUniforms(shaderProgram_t *sp, int stage, qboolean lightmapped);
 uint64_t R_RtViewMask(void);
 uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates);
 uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates);
 uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *back);
 int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean lightall);
 qboolean R_RtVertexParticles(void);
+qboolean R_RtIsFoliage(const shader_t *shader);
+qboolean R_RtVertexSky(void);
 qboolean R_RtIsCharacter(const refEntity_t *ent);
 int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
@@ -3019,6 +3040,8 @@ int R_CullPointAndRadius( const vec3_t origin, float radius );
 int R_CullLocalPointAndRadius( const vec3_t origin, float radius );
 
 void R_SetupProjection(viewParms_t *dest, float zProj, float zFar, qboolean computeFrustum);
+void R_SetupProjectionOrtho(viewParms_t *dest, vec3_t viewBounds[2]);
+void R_SortDrawSurfs(drawSurf_t *drawSurfs, int numDrawSurfs, drawSurf_t *spriteSurfs, int numSpriteSurfs);
 void R_RotateForEntity( const trRefEntity_t *ent, const viewParms_t *viewParms, orientationr_t *ori );
 
 /*
@@ -3493,6 +3516,7 @@ void GLSL_SetUniformMat4(shaderProgram_t *program, int uniformNum, const mat4_t 
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies);
 void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation);
 void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
+void GLSL_SetUniformRtSky(shaderProgram_t *program, int uniformNum, const vec4_t *v, int generation);
 void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 

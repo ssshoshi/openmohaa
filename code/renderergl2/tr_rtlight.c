@@ -36,7 +36,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 //   1  the lights' direct light is live, and the map's own lighting keeps
 //      the rest;
-//   2  all of it is live: the map's lighting gives way to its ambient light.
+//   2  all of it is live: the map's lighting gives way to its ambient light
+//      and the sky's.
 //
 // A point light's shadow is a cube: six 90 degree faces, each a tile of an
 // atlas. What stands still (the world, terrain, and static models where the
@@ -64,6 +65,8 @@ cvar_t *r_rtParticles;
 cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
 cvar_t *r_rtCutoff;
+cvar_t *r_rtSky;
+cvar_t *r_rtSkyTile;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
 // sent four indexes a vec4 (u_RtList)
@@ -77,6 +80,10 @@ typedef char rt_maxLightsFit[(RT_MAX_LIGHTS <= 64 && RT_MAX_LIGHTS % 4 == 0) ? 1
 #define RT_CUTOFF 1.0f
 
 #define RT_SQRT1_2 0.70710678f
+
+// Leaves, two sided and cut out by their alpha: how much of the light on one
+// side comes through to the other
+#define RT_FOLIAGE_THROUGH 0.6f
 
 // how long a light takes to come in or go out
 #define RT_EASE_SECONDS 0.5f
@@ -118,6 +125,12 @@ static struct {
 	qboolean   sun;
 	vec3_t     sunDir;   // towards the sun
 	vec3_t     sunColor; // raw
+
+	vec3_t     skyColor;      // raw: what an open floor takes from all of the sky
+	vec3_t     skyDirs[RT_SKY_DIRS]; // towards the sky
+	int        skyDrawn;      // the directions drawn so far
+	image_t   *skyImage;      // what they were drawn into
+	float      skyWeight;     // eases in once they all are
 
 	int        frame;
 	int        active[RT_MAX_LIGHTS];
@@ -199,6 +212,11 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
 	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
 	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
+	r_rtSky = ri.Cvar_Get("r_rtSky", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtSky, "With r_realtimeLighting 2, how strong the sky's light is, as a part of what the map was compiled with (0: none, the shade takes the ambient light alone)");
+	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_CheckRange(r_rtSkyTile, 256, 2048, qtrue);
+	ri.Cvar_SetDescription(r_rtSkyTile, "The size of the sky's depth from each of its directions, which says what sees the sky: the whole map in it");
 }
 
 /*
@@ -216,6 +234,7 @@ static void R_RtParseAmbient(void)
 	qboolean    inWorld = qfalse;
 
 	VectorClear(rt.ambient);
+	VectorClear(rt.skyColor);
 
 	while (p) {
 		const char *token = COM_Parse(&p);
@@ -241,6 +260,8 @@ static void R_RtParseAmbient(void)
 			inWorld = !Q_stricmp(token, "worldspawn") ? qtrue : qfalse;
 		} else if (!Q_stricmp(key, "ambientlight")) {
 			sscanf(token, "%f %f %f", &rt.ambient[0], &rt.ambient[1], &rt.ambient[2]);
+		} else if (!Q_stricmp(key, "sundiffusecolor")) {
+			sscanf(token, "%f %f %f", &rt.skyColor[0], &rt.skyColor[1], &rt.skyColor[2]);
 		}
 	}
 }
@@ -407,6 +428,177 @@ static void R_RtLightsAtFixtures(void)
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d fixtures, %d lights taken into them or their neighbours\n", fixtures, merged);
 }
 
+/*
+=============================================================================
+
+THE SKY
+
+The map was compiled with a sky that lights what is open to it. In the shade
+of the sun, an open wall of a sunlit map has three to six times the
+worldspawn's ambient light in its lightmap, about half of what the sun gives
+it face on, and an open floor all of it: the sky's light is the sun's colour,
+or its sundiffusecolor where the map sets one, from all of the sky. With
+r_realtimeLighting 2 the lightmaps give way to the ambient light, and that
+shade went black.
+
+So the sky lights live too, from RT_SKY_DIRS directions spread evenly over it.
+The depth of the world from each, all of the map in a tile of one atlas, drawn
+once a map, says which of them a pixel sees (RtSky in the shaders): a roof
+keeps the sky off what is under it, a window lets some in.
+
+=============================================================================
+*/
+
+static float rt_skyTexel; // the most world a texel of the sky's depth covers
+
+static void R_RtSetupSky(void)
+{
+	const float golden = M_PI * (3.0f - sqrtf(5.0f));
+	int         k;
+
+	if (VectorCompare(rt.skyColor, vec3_origin) && rt.sun) {
+		VectorCopy(rt.sunColor, rt.skyColor);
+	}
+
+	// as many from each part of the sky: evenly in height is evenly over it
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		const float z = (k + 0.5f) / RT_SKY_DIRS;
+		const float r = sqrtf(1.0f - z * z);
+
+		VectorSet(rt.skyDirs[k], r * cosf(k * golden), r * sinf(k * golden), z);
+	}
+
+	rt.skyDrawn  = 0;
+	rt.skyImage  = NULL;
+	rt.skyWeight = 0;
+	rt_skyTexel  = 0;
+}
+
+// The depth of what stands still, the whole map, looking down from the sky
+// along one of its directions, into its tile.
+static void R_RtRenderSkyDir(int k)
+{
+	const int    size = r_rtSkyTile->integer;
+	const float *mins = tr.world->bmodels[0].bounds[0];
+	const float *maxs = tr.world->bmodels[0].bounds[1];
+	viewParms_t  parms;
+	vec3_t       axis[3], origin, bounds[2];
+	mat4_t       view, mvp;
+	int          c, firstDrawSurf, firstSpriteSurf;
+
+	VectorNegate(rt.skyDirs[k], axis[0]);
+	if (fabsf(axis[0][2]) > 0.9f) {
+		VectorSet(axis[2], 0, 1, 0);
+	} else {
+		VectorSet(axis[2], 0, 0, 1);
+	}
+	CrossProduct(axis[2], axis[0], axis[1]);
+	VectorNormalize(axis[1]);
+	CrossProduct(axis[0], axis[1], axis[2]);
+
+	VectorAdd(mins, maxs, origin);
+	VectorScale(origin, 0.5f, origin);
+
+	Mat4View(axis, origin, view);
+	ClearBounds(bounds[0], bounds[1]);
+	for (c = 0; c < 8; c++) {
+		vec4_t point, viewPoint;
+
+		VectorSet4(point, (c & 1) ? maxs[0] : mins[0], (c & 2) ? maxs[1] : mins[1], (c & 4) ? maxs[2] : mins[2], 1.0f);
+		Mat4Transform(view, point, viewPoint);
+		AddPointToBounds(viewPoint, bounds[0], bounds[1]);
+	}
+	rt_skyTexel = Q_max(rt_skyTexel, Q_max(bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]) / size);
+
+	Com_Memset(&parms, 0, sizeof(parms));
+	parms.viewportX      = (k % RT_SKY_TILES) * size;
+	parms.viewportY      = (k / RT_SKY_TILES) * size;
+	parms.viewportWidth  = size;
+	parms.viewportHeight = size;
+	parms.fovX           = 90;
+	parms.fovY           = 90;
+	parms.targetFbo      = tr.rtSkyFbo;
+	parms.flags          = VPF_DEPTHSHADOW | VPF_DEPTHCLAMP | VPF_ORTHOGRAPHIC | VPF_NOVIEWMODEL | VPF_RTSKY;
+	parms.zFar           = bounds[1][0];
+	VectorCopy(origin, parms.ori.origin);
+	VectorCopy(axis[0], parms.ori.axis[0]);
+	VectorCopy(axis[1], parms.ori.axis[1]);
+	VectorCopy(axis[2], parms.ori.axis[2]);
+	VectorCopy(origin, parms.pvsOrigin);
+
+	// as the sun's cascades are drawn (R_RenderSunShadowMaps), with the
+	// world alone
+	tr.viewCount++;
+	tr.viewParms                = parms;
+	tr.viewParms.frameSceneNum = tr.frameSceneNum;
+	tr.viewParms.frameCount    = tr.frameCount;
+	firstDrawSurf               = tr.refdef.numDrawSurfs;
+	firstSpriteSurf             = tr.refdef.numSpriteSurfs;
+	tr.viewCount++;
+
+	R_RotateForViewer();
+	R_SetupProjectionOrtho(&tr.viewParms, bounds);
+	R_AddWorldSurfaces();
+	R_SortDrawSurfs(tr.refdef.drawSurfs + firstDrawSurf, tr.refdef.numDrawSurfs - firstDrawSurf,
+		tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf);
+
+	// the rows of the projection that give the tile's x, y and depth, for
+	// the shaders, and the direction
+	Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
+	for (c = 0; c < 3; c++) {
+		VectorSet4(tr.rtSkyRows[k * 4 + c], mvp[c], mvp[4 + c], mvp[8 + c], mvp[12 + c]);
+	}
+	VectorCopy(rt.skyDirs[k], tr.rtSkyRows[k * 4 + 3]);
+	tr.rtSkyRows[k * 4 + 3][3] = 0;
+	tr.rtSkyGeneration++;
+}
+
+#define RT_SKY_PER_FRAME 4
+#define RT_SKY_WAIT      8 // world frames after a map comes in: the terrain
+                           // the main view picked is what the depth views draw
+
+// The sky's light for the shaders (tr.rtSkyColor), its directions drawn first,
+// a few a frame.
+static void R_RtUpdateSky(float bake, float ease)
+{
+	float norm = 0;
+	int   k, drawn = 0;
+
+	VectorClear4(tr.rtSkyColor);
+	if (!R_RtLitLive() || !tr.rtSkyFbo || r_rtSky->value <= 0 || VectorCompare(rt.skyColor, vec3_origin)) {
+		rt.skyWeight = 0;
+		return;
+	}
+
+	// drawn again into new images (vid_restart)
+	if (rt.skyImage != tr.rtSkyImage) {
+		rt.skyImage  = tr.rtSkyImage;
+		rt.skyDrawn  = 0;
+		rt.skyWeight = 0;
+		rt_skyTexel  = 0;
+	}
+
+	while (rt.skyDrawn < RT_SKY_DIRS && rt.frame > RT_SKY_WAIT && drawn < RT_SKY_PER_FRAME) {
+		R_RtRenderSkyDir(rt.skyDrawn++);
+		drawn++;
+		if (rt.skyDrawn == RT_SKY_DIRS) {
+			ri.Printf(PRINT_DEVELOPER, "realtime lighting: the sky from %d directions, %.0f units a texel\n", RT_SKY_DIRS, rt_skyTexel);
+		}
+	}
+	if (rt.skyDrawn < RT_SKY_DIRS) {
+		return;
+	}
+
+	// an open floor sees all of it
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		norm += rt.skyDirs[k][2];
+	}
+
+	rt.skyWeight = Q_min(1.0f, rt.skyWeight + ease);
+	VectorScale(rt.skyColor, bake * r_rtSky->value * rt.skyWeight / norm, tr.rtSkyColor);
+	tr.rtSkyColor[3] = rt_skyTexel;
+}
+
 void R_RtLoadWorld(void)
 {
 	int i;
@@ -476,6 +668,7 @@ void R_RtLoadWorld(void)
 	}
 
 	R_RtParseAmbient();
+	R_RtSetupSky();
 
 	rt.loaded = qtrue;
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lights%s\n", rt.numLights, rt.sun ? " and the sun" : "");
@@ -1185,7 +1378,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	rtMover_t movers[RT_MAX_MOVERS];
 	int       numMovers;
 	int       i, budget, dynamicSlots = 0, dynamicLights = 0;
-	float     scale;
+	float     scale, bake;
 	int       shift;
 	qboolean  seen;
 	cplane_t  frustum[5];
@@ -1210,7 +1403,10 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	// lightmap units: what R_ColorShiftLightingBytes does to them, over 255
 	shift = r_mapOverBrightBits->integer - tr.overbrightBits;
-	scale = (float)(1 << Q_max(0, shift)) / 255.0f * r_rtScale->value;
+	// r_rtScale is for the lights' falloff, brighter near a lamp than the
+	// compiler's: the sun, the sky and the ambient light are as the map has them
+	bake  = (float)(1 << Q_max(0, shift)) / 255.0f;
+	scale = bake * r_rtScale->value;
 
 	// the four sides of the view: what moves is drawn into the shadows of the
 	// lights that reach into it alone (the lighting itself does not look at it)
@@ -1442,7 +1638,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	if (rt.sun) {
 		VectorCopy(rt.sunDir, tr.rtSunDir);
 		tr.rtSunDir[3] = 1.0f;
-		VectorScale(rt.sunColor, scale, tr.rtSunColor);
+		VectorScale(rt.sunColor, bake, tr.rtSunColor);
 		// the screen shadow the depth prepass leaves (RB_RenderDrawSurfList)
 		tr.rtSunColor[3] = (tr.screenShadowImage && tr.sunShadows && r_depthPrepass->value && r_sunlightMode->integer) ? 1.0f : 0.0f;
 	} else {
@@ -1450,7 +1646,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorClear4(tr.rtSunColor);
 	}
 
-	VectorScale(rt.ambient, scale * r_rtAmbient->value, tr.rtAmbient);
+	VectorScale(rt.ambient, bake * r_rtAmbient->value, tr.rtAmbient);
+	R_RtUpdateSky(bake, ease);
 	// the least a light may add to a pixel and be looked up there (RtLight)
 	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
 
@@ -1661,8 +1858,23 @@ int R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean 
 	return kind;
 }
 
+// Whether the sky's light is worked out at the vertexes of what has no
+// lightmap (r_realtimeLighting 2): it takes texture fetches in the vertex
+// shader (GLSL 1.30)
+qboolean R_RtVertexSky(void)
+{
+	return r_realtimeLighting->integer == 2 && R_RtVertexParticles();
+}
+
+// Leaves: two sided, and cut out by their alpha
+qboolean R_RtIsFoliage(const shader_t *shader)
+{
+	return (shader && shader->cullType == CT_TWO_SIDED && shader->stages[0] && (shader->stages[0]->stateBits & GLS_ATEST_BITS))
+		? qtrue : qfalse;
+}
+
 // stage < 0: a view the lights take no part in (2D, shadows, models in menus)
-void R_RtSetUniforms(shaderProgram_t *sp, int stage)
+void R_RtSetUniforms(shaderProgram_t *sp, int stage, qboolean lightmapped)
 {
 	static const vec4_t off = { 0, 0, 0, 0 };
 
@@ -1692,6 +1904,13 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage)
 		}
 
 		GLSL_SetUniformInt(sp, UNIFORM_RTSTAGE, stage);
+		{
+			vec4_t surface;
+
+			// a lightmap's sky is a pixel's own: its vertexes are a wall's corners
+			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, lightmapped || !R_RtVertexSky() ? 0.0f : 1.0f, 0, 0);
+			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
+		}
 		VectorCopy4(tr.rtParams, params);
 		params[0] = (float)count;
 		GLSL_SetUniformVec4(sp, UNIFORM_RTPARAMS, params);
@@ -1704,6 +1923,10 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage)
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTAMBIENT, tr.rtAmbient);
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSKYCOLOR, tr.rtSkyColor);
+	if (tr.rtSkyColor[3] > 0) {
+		GLSL_SetUniformRtSky(sp, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
+	}
 }
 
 void R_RtBindTextures(void)
@@ -1715,6 +1938,8 @@ void R_RtBindTextures(void)
 		GL_BindToTMU(tr.rtCapsuleImage, TMU_RTCAPSULES);
 	}
 	GL_BindToTMU(tr.rtSunColor[3] > 0.5f && tr.screenShadowImage ? tr.screenShadowImage : tr.whiteImage, TMU_RTSUNSHADOW);
+	// a depth image either way: a shadow sampler on a colour one reads nothing defined
+	GL_BindToTMU(tr.rtSkyImage ? tr.rtSkyImage : tr.rtShadowImage[0], TMU_RTSKY);
 }
 
 /*

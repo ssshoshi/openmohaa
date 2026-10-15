@@ -189,6 +189,10 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtShadowBaked",   GLSL_INT },
 	{ "u_RtCapsules",      GLSL_INT },
 	{ "u_RtList",          GLSL_VEC4_RTLIST },
+	{ "u_RtSky",           GLSL_VEC4_RTSKY },
+	{ "u_RtSkyColor",      GLSL_VEC4 },
+	{ "u_RtSkyMap",        GLSL_INT },
+	{ "u_RtSurface",       GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
@@ -316,6 +320,18 @@ static const char *rt_glsl =
 	"uniform sampler2DShadow u_RtShadowDynamic;\n"
 	"uniform sampler2D u_RtSunShadow;\n"
 	"uniform sampler2DShadow u_RtShadowBaked;\n"
+	// the sky (R_RtUpdateSky): each direction's projection, three rows, then
+	// the direction; its light, w the most world a texel covers (0: none)
+	"uniform vec4 u_RtSky[RT_SKY_DIRS * 4];\n"
+	"uniform vec4 u_RtSkyColor;\n"
+	"uniform sampler2DShadow u_RtSkyMap;\n"
+	// the draw: x for leaves, two sided, how much of the light on one side
+	// comes through the other; y 1 when its vertexes worked out the sky's
+	// light (var_RtSky)
+	"uniform vec4 u_RtSurface;\n"
+	"#if defined(USE_RTSKY_VERTEX)\n"
+	"varying vec3 var_RtSky;\n"
+	"#endif\n"
 	"#if defined(RT_CAPSULES)\n"
 	"uniform sampler2D u_RtCapsules;\n"
 	"#endif\n"
@@ -439,6 +455,30 @@ static const char *rt_glsl =
 	"#endif\n"
 	"	return vis;\n"
 	"}\n"
+	// How much of the sky a surface at P facing N sees, as an open floor does
+	// all of it: each direction it faces, as much as it faces it, if nothing
+	// is between them in that direction's depth.
+	"vec3 RtSky(vec3 P, vec3 N)\n"
+	"{\n"
+	"	float sum  = 0.0;\n"
+	"	float bias = 1.5 * u_RtSkyColor.w + 2.0;\n"
+	"	for (int k = 0; k < RT_SKY_DIRS; k++)\n"
+	"	{\n"
+	"		vec4  d = u_RtSky[k * 4 + 3];\n"
+	"		float w = dot(N, d.xyz);\n"
+	// a leaf takes what comes through it from behind
+	"		if (w < 0.0) w *= -u_RtSurface.x;\n"
+	"		if (w <= 0.0) continue;\n"
+	"		vec3  Q = P + (N * sign(dot(N, d.xyz)) + d.xyz) * bias;\n"
+	"		vec4  r0 = u_RtSky[k * 4], r1 = u_RtSky[k * 4 + 1], r2 = u_RtSky[k * 4 + 2];\n"
+	"		vec3  c = vec3(dot(r0.xyz, Q) + r0.w, dot(r1.xyz, Q) + r1.w, dot(r2.xyz, Q) + r2.w) * 0.5 + 0.5;\n"
+	"		float t = float(k);\n"
+	"		vec2  tile = vec2(mod(t, RT_SKY_TILES), floor(t / RT_SKY_TILES));\n"
+	"		vec2  st = clamp(c.xy, vec2(1.0 / RT_SKY_TEXELS), vec2(1.0 - 1.0 / RT_SKY_TEXELS));\n"
+	"		sum += w * shadow2D(u_RtSkyMap, vec3((tile + st) / RT_SKY_TILES, c.z));\n"
+	"	}\n"
+	"	return u_RtSkyColor.rgb * sum;\n"
+	"}\n"
 	// the map's lighting and what the lights change of it, never darker than
 	// a part of what it was: the lights' model is too bright near a lamp
 	"vec3 RtDelta(vec3 base, vec3 delta)\n"
@@ -462,6 +502,7 @@ static const char *rt_glsl =
 	"		if (d2 >= r2) continue;\n"
 	"		float d   = sqrt(d2);\n"
 	"		float ndl = dot(N, toLight) / d;\n"
+	"		if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
 	"		if (ndl <= 0.0) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
 	// the compiler's point light: intensity * 7500 / distance squared, never nearer than 16
@@ -489,7 +530,7 @@ static const char *rt_glsl =
 	"		{\n"
 	// off the surface by a texel and a half of the shadow at that distance
 	"			float texelWorld = 2.0 * d / RT_TILE_TEXELS;\n"
-	"			vec3  v = P + N * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
+	"			vec3  v = P + N * sign(dot(N, toLight)) * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
 	"			float now = RtShadow(l3, v, false);\n"
 	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
 	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
@@ -500,6 +541,7 @@ static const char *rt_glsl =
 	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
 	"	{\n"
 	"		float ndl = dot(N, u_RtSunDir.xyz);\n"
+	"		if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
 	"		if (ndl > 0.0)\n"
 	"		{\n"
 	"			float vis = 1.0;\n"
@@ -507,6 +549,16 @@ static const char *rt_glsl =
 	"				vis = texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r;\n"
 	"			sum += u_RtSunColor.rgb * (ndl * vis);\n"
 	"		}\n"
+	"	}\n"
+	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
+	"	{\n"
+	// soft, and the same over a model or a leaf: worked out at its vertexes
+	"#if defined(USE_RTSKY_VERTEX)\n"
+	"		if (u_RtSurface.y > 0.5)\n"
+	"			sum += var_RtSky;\n"
+	"		else\n"
+	"#endif\n"
+	"		sum += RtSky(P, N);\n"
 	"	}\n"
 	"	return sum;\n"
 	"}\n"
@@ -560,6 +612,9 @@ static const char *rt_glsl =
 	"			vis = texture2D(u_RtSunShadow, sunUV).r;\n"
 	"		sum += u_RtSunColor.rgb * vis;\n"
 	"	}\n"
+	// hanging in the air, it is lit as a floor is
+	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
+	"		sum += RtSky(P, vec3(0.0, 0.0, 1.0));\n"
 	"	return sum;\n"
 	"}\n"
 	"#endif\n";
@@ -725,12 +780,14 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 	// Added in OPM: the realtime lights, and for the particles lit at their
 	// corners (USE_RTLIGHT_PARTICLES), the vertex shader too
 	if (extra && ((shaderType == GL_FRAGMENT_SHADER && strstr(extra, "#define USE_RTLIGHT"))
-		|| (shaderType == GL_VERTEX_SHADER && strstr(extra, "#define USE_RTLIGHT_PARTICLES"))))
+		|| (shaderType == GL_VERTEX_SHADER && (strstr(extra, "#define USE_RTLIGHT_PARTICLES") || strstr(extra, "#define USE_RTSKY_VERTEX")))))
 	{
 		if (shaderType == GL_VERTEX_SHADER)
 			Q_strcat(dest, size, "#define RT_VERTEX\n#define texture2D texture\n#define shadow2D texture\n");
 		Q_strcat(dest, size, va("#define RT_MAX_LIGHTS %d\n#define RT_TILES %d.0\n#define RT_TILE_TEXELS %d.0\n#define RT_ZNEAR %f\n",
 			RT_MAX_LIGHTS, RT_ATLAS_TILES, r_rtShadowTile->integer, RT_ZNEAR));
+		Q_strcat(dest, size, va("#define RT_SKY_DIRS %d\n#define RT_SKY_TILES %d.0\n#define RT_SKY_TEXELS %d.0\n",
+			RT_SKY_DIRS, RT_SKY_TILES, r_rtSkyTile->integer));
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
 		if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
 			Q_strcat(dest, size, va("#define RT_CAPSULES\n#define RT_MAX_RUN %d\n", RT_MAX_RUN));
@@ -1071,6 +1128,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_RTLIST:
 				size += sizeof(vec4_t) * (RT_MAX_LIGHTS / 4);
 				break;
+			case GLSL_VEC4_RTSKY:
+				size += sizeof(vec4_t) * RT_SKY_DIRS * 4;
+				break;
 			case GLSL_VEC4_SKELLIGHTS:
 				size += sizeof(vec4_t) * SKEL_GPU_MAX_LIGHTS * 3;
 				break;
@@ -1292,6 +1352,33 @@ void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec
 	program->rtLightsGeneration = generation;
 	program->rtLightsCount      = count;
 	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], count * RT_LIGHT_VEC4S, &v[0][0]);
+}
+
+/*
+Added in OPM
+The sky's directions (tr.rtSkyRows): the same for the whole of a map, so sent
+again only when they are drawn again.
+*/
+void GLSL_SetUniformRtSky(shaderProgram_t *program, int uniformNum, const vec4_t *v, int generation)
+{
+	GLint *uniforms = program->uniforms;
+
+	if (uniforms[uniformNum] == -1) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_RTSKY)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformRtSky: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (program->rtSkyGeneration == generation) {
+		return;
+	}
+
+	program->rtSkyGeneration = generation;
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], RT_SKY_DIRS * 4, &v[0][0]);
 }
 
 /*
@@ -1609,6 +1696,8 @@ static qboolean GLSL_InitLightallShader(int i)
 	//  darkens it as ever.
 	if (r_realtimeLighting->integer)
 		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
+	if (R_RtVertexSky())
+		Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
 
 	if ((i & LIGHTDEF_USE_SHADOWMAP) && r_realtimeLighting->integer != 2)
 	{
@@ -1680,6 +1769,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
@@ -1786,6 +1876,8 @@ void GLSL_InitGPUShaders(void)
 			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
 		if (R_RtVertexParticles())
 			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT_PARTICLES\n");
+		if (R_RtVertexSky())
+			Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
 		if (r_softParticles->value > 0)
 			Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
 
@@ -1803,6 +1895,7 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);
