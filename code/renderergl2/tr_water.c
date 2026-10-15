@@ -737,7 +737,10 @@ void RB_BeachDraw(void)
             }
         }
 
-        GL_State(GLS_DEPTHTEST_DISABLE | (pass ? (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE) : (GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO)));
+        // depth tested, not written: each pixel is at the prepass's depth
+        // (beach_fp.glsl), so where the main pass drew something nearer that
+        // the prepass did not have, the beach is not drawn over it
+        GL_State(pass ? (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE) : (GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO));
         GL_Cull(CT_TWO_SIDED);
 
         RB_InstantQuad2(quadVerts, texCoords);

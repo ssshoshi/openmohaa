@@ -880,8 +880,10 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
         vec3_t centre;
 
         R_LocalPointToWorld(ent->boneCentre, centre);
+        // as big as the larger of its animation's sphere and its bones': a
+        // boat's one bone has no size
         ent->prepassSkip = r_prepassFarModels->value > 0.0f && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))
-                        && Q_max(ent->boneRadius, 1.0f) < r_prepassFarModels->value * Distance(centre, tr.viewParms.ori.origin);
+                        && Q_max(Q_max(ent->boneRadius, radius), 1.0f) < r_prepassFarModels->value * Distance(centre, tr.viewParms.ori.origin);
     }
 
     // Added in OPM

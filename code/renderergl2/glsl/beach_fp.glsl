@@ -77,6 +77,10 @@ void main()
 	float d = texture2D(u_ScreenDepthMap, var_DepthTex).r;
 	if (d >= 0.99999 || u_WaterShore.z < 0.5)
 		discard;
+	// at the prepass's depth, tested against the main pass's: what the main
+	// pass drew in front and the prepass left out (a model far off,
+	// r_prepassFarModels) keeps its own pixels
+	gl_FragDepth = d;
 
 	vec3  pos  = u_ViewOrigin + var_ViewDir * (LinearDepth(d) / u_ViewInfo.y);
 	vec3  N    = normalize(cross(dFdx(pos), dFdy(pos)));
