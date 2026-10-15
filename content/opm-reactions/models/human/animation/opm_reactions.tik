@@ -19,11 +19,11 @@ animations
 	//----------
 	// Knocked down and getting up again (anim/opm_knockdown.scr). The falls
 	// only place him for the server while the client's ragdoll falls; the
-	// get-ups are motion captured (generate.py).
+	// get-ups (opm_getups.tik) are motion captured (generate.py).
 	//----------
 	opm_down_back			deaths/death_fall_back.skc
 	opm_down_front			deaths/back_death01.skc
 	opm_down_blast			deaths/death_knockedup.skc
-	opm_getup_back			opm/getup_back.skc
-	opm_getup_front			opm/getup_front.skc
+	opm_down_lying			deaths/pose_c(back).skc
+
 }

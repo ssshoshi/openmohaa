@@ -22,6 +22,9 @@ should:
 	// Single player only: where he lies is the client's to say (opm_kdpose).
 	if (getcvar "g_gametype" != "0" || getcvar "g_opm_knockdown" == "0")
 		end 0
+	// already down: he stays down
+	if (self.opm_kd_down == 1)
+		end 1
 	// for testing: every hit
 	if (getcvar "g_opm_knockdown" == "2")
 		end 1
@@ -70,63 +73,88 @@ knockdown:
 	if (getcvar "g_opm_paindebug" == "1")
 		println ("opm knockdown: " + local.fall + " damage " + self.fact.damage + " mod " + local.mod)
 
-	local.painhandler = self.painhandler
-	self.painhandler = anim/opm_knockdown.scr::down_pain
-	self.opm_kd_ready = 0
-	self.blendtime = 0.15
-	self setmotionanim local.fall
-
-	// Until the client says where his body has come to rest.
-	local.t = 0
-	while (self.opm_kd_ready != 1 && local.t < 5)
+	// Hit again while down (this thread then starts again from here): he
+	// stays where he is, with no new fall.
+	if (self.opm_kd_down != 1)
 	{
-		wait 0.1
-		local.t = local.t + 0.1
+		self.opm_kd_down = 1
+		self.opm_kd_ready = 0
+		self.blendtime = 0.15
+		self setmotionanim local.fall
+		self waittill flaggedanimdone
 	}
+
+	// Until the client says where his body has come to rest, lying. Each
+	// animation is waited out: one let finish unwatched ends his pain, and
+	// this thread with it.
+	local.start = level.time
+	while (self.opm_kd_ready != 1 && level.time - local.start < 5)
+	{
+		self setmotionanim opm_down_lying
+		self waittill flaggedanimdone
+	}
+	if (getcvar "g_opm_paindebug" == "1")
+		println ("opm knockdown: lay " + (level.time - local.start) + " s, told where: " + self.opm_kd_ready)
 
 	if (self.opm_kd_ready == 1)
 	{
-		if (self.opm_kd_face == 1)
-			local.kind = "back"
-		else
+		switch (self.opm_kd_face)
+		{
+		case 0:
 			local.kind = "front"
-
-		// Where the get-up starts his pelvis, and which way his head points,
-		// relative to where he will stand facing (generated).
-		if (local.kind == "back")
-			local.at = waitthread anim/opm_getups.scr::back
-		else
-			local.at = waitthread anim/opm_getups.scr::front
-
-		// Turned so the animation's body lies as his does, and moved so its
-		// pelvis is where his is.
-		local.facing = self.opm_kd_yaw - local.at[2]
-		local.fwd = angles_toforward ( 0 local.facing 0 )
-		local.left = angles_toleft ( 0 local.facing 0 )
-		local.origin = self.opm_kd_pelvis - local.fwd * local.at[0] - local.left * local.at[1]
-		local.origin[2] = self.origin[2]
-
-		self.angles = ( 0 local.facing 0 )
-		self.origin = local.origin
-		self droptofloor
+			break
+		case 2:
+			local.kind = "left"
+			break
+		case 3:
+			local.kind = "right"
+			break
+		default:
+			local.kind = "back"
+			break
+		}
 	}
 	else
 	{
 		local.kind = "back"
 	}
 
+	// One of the get-ups made for the way he lies, at random (generated,
+	// anim/opm_getups.scr), or one from his back if there is none.
+	local.n = waitthread anim/opm_getups.scr::count local.kind
+	if (local.n < 1)
+	{
+		local.kind = "back"
+		local.n = waitthread anim/opm_getups.scr::count local.kind
+	}
+	local.i = (randomint local.n) + 1
+
+	if (self.opm_kd_ready == 1)
+	{
+		// Where that get-up starts his pelvis, and which way his head points,
+		// relative to where he will stand facing; turned so its body lies as
+		// his does, and moved so its pelvis is where his is.
+		local.at = waitthread anim/opm_getups.scr::data local.kind local.i
+		local.facing = self.opm_kd_yaw - local.at[2]
+		local.fwd = angles_toforward ( 0 local.facing 0 )
+		// (angles_toleft gives the right, whatever its name says: it is
+		// AngleVectors' second vector)
+		local.right = angles_toleft ( 0 local.facing 0 )
+		local.origin = self.opm_kd_pelvis - local.fwd * local.at[0] + local.right * local.at[1]
+		local.origin[2] = self.origin[2]
+
+		self.angles = ( 0 local.facing 0 )
+		self.origin = local.origin
+		self droptofloor
+	}
+
 	if (getcvar "g_opm_paindebug" == "1")
-		println ("opm knockdown: getting up (" + local.kind + ")")
+		println ("opm knockdown: getting up (" + local.kind + " " + local.i + " of " + local.n + ")")
 
 	self.blendtime = 0.1
-	self setmotionanim ("opm_getup_" + local.kind)
+	self setmotionanim ("opm_getup_" + local.kind + local.i)
 	self waittill flaggedanimdone
 
-	self.painhandler = local.painhandler
 	self.opm_kd_ready = 0
-end
-
-// Hit again while he is down: the shot moves his body (the client's), and he
-// stays down.
-down_pain:
+	self.opm_kd_down = 0
 end

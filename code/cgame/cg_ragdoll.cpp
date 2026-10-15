@@ -9672,57 +9672,76 @@ static qboolean CG_RagdollPosedCorpse(const refEntity_t *model)
 //  1: he is down, 2: getting up, 0: neither.
 #define RD_RISE_TIME   600  // ms from the ragdoll to the get-up animation
 #define RD_DOWN_REPORT 2500 // ms down before saying where, if not asleep yet
+#define RD_DOWN_PUSH   4.0f // a knocked down man's push from the hit, against a corpse's
 
 static int CG_RagdollDownState(const refEntity_t *model)
 {
-    int i;
+    qboolean down = qfalse;
+    int      i;
 
     if (!model->tiki) {
         return 0;
     }
+    // Any of a get-up is getting up; any of a fall or of lying is down (the
+    // server goes from one to the next, and halfway through the cross-fade
+    // neither has the most weight).
     for (i = 0; i < MAX_FRAMEINFOS; i++) {
         const char *name;
 
-        if (model->frameInfo[i].weight < 0.5f || model->frameInfo[i].index < 0) {
+        if (model->frameInfo[i].weight < 0.01f || model->frameInfo[i].index < 0) {
             continue;
         }
         name = cgi.Anim_NameForNum(model->tiki, model->frameInfo[i].index);
         if (!name) {
             continue;
         }
-        if (!Q_stricmpn(name, "opm_down", 8)) {
-            return 1;
-        }
         if (!Q_stricmpn(name, "opm_getup", 9)) {
             return 2;
         }
+        if (!Q_stricmpn(name, "opm_down", 8)) {
+            down = qtrue;
+        }
     }
-    return 0;
+    return down ? 1 : 0;
 }
 
 // Where a man knocked down lies, for the server to stand him up there: which
-// way up, his pelvis, and which way his head points.
+// way up (0 face down, 1 on his back, 2 on his left side, 3 on his right: a
+// get-up made for that, as content/opm-reactions/generate.py sorts them), his
+// pelvis, and which way his head points.
 static void CG_RagdollReportDown(cg_ragdoll_t *rd)
 {
-    vec3_t along, right, fwd;
-    float  yaw;
+    static const char *names[] = {"face down", "on his back", "on his left side", "on his right side"};
+    vec3_t              along, right, fwd;
+    float               yaw;
+    int                 lying;
 
     VectorSubtract(rd->part[RD_HEAD].p, rd->part[RD_PELVIS].p, along);
     VectorSubtract(rd->part[RD_RUARM].p, rd->part[RD_LUARM].p, right);
     CrossProduct(along, right, fwd);
+    VectorNormalize(fwd);
+    VectorNormalize(right);
     yaw = RAD2DEG(atan2f(along[1], along[0]));
+
+    if (fwd[2] > 0.5f) {
+        lying = 1;
+    } else if (fwd[2] < -0.5f) {
+        lying = 0;
+    } else {
+        lying = right[2] > 0.0f ? 2 : 3;
+    }
 
     cgi.SendClientCommand(va(
         "opm_kdpose %d %d %.1f %.1f %.1f %.1f",
         rd->entityNum,
-        fwd[2] > 0.0f ? 1 : 0,
+        lying,
         rd->part[RD_PELVIS].p[0],
         rd->part[RD_PELVIS].p[1],
         rd->part[RD_PELVIS].p[2],
         yaw
     ));
     rd->reported = qtrue;
-    CG_RagdollLog(rd, "down, face %s, head toward %.0f degrees: told the server", fwd[2] > 0.0f ? "up" : "down", yaw);
+    CG_RagdollLog(rd, "down, %s, head toward %.0f degrees: told the server", names[lying], yaw);
 }
 
 static qboolean CG_RagdollEligible(centity_t *cent, refEntity_t *model, qboolean bThirdPerson, qboolean standIn)
@@ -10138,6 +10157,12 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         //  Knocked down, not dead: straight into the physics, as a stand-in
         //  for himself, until his get-up animation takes him back.
         if (down == 1) {
+            // Hard enough to put a man on the ground is hard enough to carry
+            // him the way it went: given a dead man's push he crumpled where
+            // he stood, whichever way he was hit.
+            if (rd->hasImpulse) {
+                VectorScale(rd->impulseVel, RD_DOWN_PUSH, rd->impulseVel);
+            }
             rd->standIn   = qtrue;
             rd->downed    = qtrue;
             rd->reported  = qfalse;

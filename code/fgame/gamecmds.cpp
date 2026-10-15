@@ -107,7 +107,9 @@ Container<commandmaster_t> commandMasters;
 G_KnockdownPoseCmd
 
 Added in OPM
-  opm_kdpose <entity> <face up 0/1> <pelvis x y z> <head yaw>
+  opm_kdpose <entity> <lying> <pelvis x y z> <head yaw>
+
+  lying: 0 face down, 1 on his back, 2 on his left side, 3 on his right.
 
   A man knocked down is a ragdoll on the client alone (cg_ragdoll.cpp), so
   where he came to rest, and which way up, is only known there. The client

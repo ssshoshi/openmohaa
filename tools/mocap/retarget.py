@@ -248,13 +248,27 @@ def ground(chans, foot_ground):
     return dz
 
 
-def ground_lowest(chans, bones, floor=0.5):
-    """Move the clip so its lowest joint over the whole of it is at floor.
+# The bones of the body itself, for finding the floor under it: not the weapon
+# tags, the eyes or the Footsteps and ORIGIN helpers, which keep the
+# template's place whatever the body does and so said nothing about where the
+# floor is (a get-up stood a man seventy units in the air).
+BODY_BONES = [
+    "Bip01 Pelvis", "Bip01 Spine", "Bip01 Spine1", "Bip01 Spine2", "Bip01 Neck", "Bip01 Head",
+    "Bip01 L UpperArm", "Bip01 L Forearm", "Bip01 L Hand", "Bip01 R UpperArm", "Bip01 R Forearm", "Bip01 R Hand",
+    "Bip01 L Calf", "Bip01 L Foot", "Bip01 L Toe0", "Bip01 R Calf", "Bip01 R Foot", "Bip01 R Toe0",
+]
+
+
+def ground_lowest(chans, bones, floor=0.2):
+    """Move the clip so the lowest point of the body over the whole of it is
+    at floor (where the game's own standing toes are).
 
     For clips where the man lies down: an ankle says nothing about where the
-    floor is under a man on his back.
+    floor is under a man on his back, but the capture's floor is the same
+    floor all through, so the one shift that stands his toes on it lays his
+    back on it too.
     """
-    lowest = min(min(t[1][2] for t in M.fk(bones, c).values()) for c in chans[::2])
+    lowest = min(min(pose[n][1][2] for n in BODY_BONES) for pose in (M.fk(bones, c) for c in chans[::2]))
     dz = floor - lowest
     for c in chans:
         for n in ("Bip01 pos", "Bip01 L Foot pos", "Bip01 R Foot pos"):
