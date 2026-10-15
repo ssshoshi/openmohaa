@@ -1598,6 +1598,15 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				}
 			}
 
+			// Added in OPM: static models are TIKI meshes on texture atlases,
+			// whose islands are a few texels wide: any parallax offset reads
+			// a neighbouring island, and the texture swims as the view moves.
+			// Animated models are left without it in GLSL_InitLightallShader.
+			if (backEnd.currentStaticModel)
+			{
+				index &= ~LIGHTDEF_USE_PARALLAXMAP;
+			}
+
 			if (r_sunlightMode->integer && (backEnd.viewParms.flags & VPF_USESUNLIGHT) && (index & LIGHTDEF_LIGHTTYPE_MASK))
 			{
 				index |= LIGHTDEF_USE_SHADOWMAP;
@@ -1694,6 +1703,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec4(sp, UNIFORM_SKELAMBIENT, tess.skelGpu.ambient);
 			if (tess.skelGpu.params[3] > 0)
 				GLSL_SetUniformSkelLights(sp, UNIFORM_SKELLIGHTS, tess.skelGpu.lights, (int)tess.skelGpu.params[3] * 3);
+			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMDENTS, tess.skelGpu.numDents);
+			if (tess.skelGpu.numDents > 0)
+				GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, tess.skelGpu.dents, tess.skelGpu.numDents * 2);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
