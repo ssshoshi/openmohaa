@@ -41,6 +41,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_props.h"
 #include "cg_physics.h"
 #include "cg_physics_ragdoll.h"
+#include "cg_ragdoll_live.h"
 #include "../qcommon/qfiles.h"
 
 #include <chrono>
@@ -2314,6 +2315,43 @@ static qboolean CG_RagdollReadJoints(
     return qtrue;
 }
 
+// Added in OPM
+//  For a living body (cg_ragdoll_live.cpp): the rig's joints where the
+//  animation has them, how thick the body is at each, and a bone's frame read
+//  and written, as a corpse's are.
+extern "C" qboolean CG_RagdollAnimJoints(refEntity_t *model, vec3_t p[RD_NUM_JOINTS], float radius[RD_NUM_JOINTS])
+{
+    vec3_t axis[RD_NUM_JOINTS][3];
+    vec3_t d;
+    float  bodyScale;
+    int    i;
+
+    if (!CG_RagdollReadJoints(NULL, model, p, axis)) {
+        return qfalse;
+    }
+
+    // As CG_RagdollSeed scales them.
+    VectorSubtract(p[RD_HEAD], p[RD_PELVIS], d);
+    bodyScale = VectorLength(d) / 28.0f;
+    if (bodyScale < 0.05f) {
+        bodyScale = 1.0f;
+    }
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        radius[i] = rd_joints[i].radius * bodyScale;
+    }
+    return qtrue;
+}
+
+extern "C" qboolean CG_RagdollBoneWorld(refEntity_t *model, int boneIndex, vec3_t pos, vec3_t axis[3])
+{
+    return CG_RagdollReadBoneWorld(model, boneIndex, pos, axis);
+}
+
+extern "C" void CG_RagdollBoneModel(const refEntity_t *model, const vec3_t pos, const vec3_t axis[3], float out[4][3])
+{
+    CG_RagdollWriteBoneModel(model, pos, axis, out);
+}
+
 // Recent flesh hits, so the ragdoll can be pushed by the shot that killed it.
 //
 // The impact messages carry a world position and a direction and are parsed a
@@ -2575,6 +2613,10 @@ static void CG_RagdollFindBlast(cg_ragdoll_t *rd)
 void CG_RagdollNoteFleshImpact(const vec3_t pos, const vec3_t dir, int large)
 {
     rdImpact_t *imp;
+
+    // Added in OPM
+    //  A living man hit flinches (cg_ragdoll_live.cpp).
+    CG_LiveRagdollNoteHit(pos, dir, large);
 
     if (cg_ragdoll_impulse->value <= 0.0f) {
         return;
@@ -8936,6 +8978,8 @@ void CG_InitRagdoll(void)
     rd_debugServerTime = -1;
     rd_debugFrameTime  = -1;
 
+    CG_LiveRagdollInit();
+
     int i;
 
     for (i = 0; i < MAX_RAGDOLLS; i++) {
@@ -9131,6 +9175,8 @@ void CG_InitRagdoll(void)
 
 void CG_ShutdownRagdoll(void)
 {
+    CG_LiveRagdollShutdown();
+
     int i;
 
     for (i = 0; i < MAX_RAGDOLLS; i++) {
@@ -9992,6 +10038,24 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
 
         rd->state     = RD_BLENDING;
         rd->entityNum = cent->currentState.number;
+
+        // Added in OPM
+        //  A man who dies while his living body is in the physics, flinching
+        //  from a shot, falls from there: that body becomes the corpse's, with
+        //  no blend out of the death animation, which would only pull him back
+        //  to where the animation has him and then let go.
+        {
+            const int live = CG_LiveRagdollTakeBody(cent->currentState.number);
+
+            if (live && cg_ragdoll_solver->integer == 1) {
+                rd->jolt      = live;
+                rd->startTime = cg.time - Q_max(cg_ragdoll_blendtime->integer, 0);
+                CG_JoltRagdollSetLive(live, qfalse, Q_max(0, cg_ragdoll_limptime->integer) * 0.001f);
+                CG_RagdollLog(rd, "carried on from its living body");
+            } else if (live) {
+                CG_JoltRagdollDestroy(live);
+            }
+        }
 
         // Catch the next body to fall, and only that one. Clearing the cvar
         // here rather than making the caller do it means a trace is one command

@@ -50,6 +50,16 @@ qboolean CG_JoltRagdollRead(
     vec3_t contactNormal[RD_NUM_JOINTS], int *onBodyMask
 );
 
+// A living body: its pelvis carried along by CG_JoltRagdollDrive, its joints'
+// motors pulling it to the animation's pose. Made dead (live qfalse), it falls
+// from where it is, its joints held in the pose it is in for toneTime seconds,
+// less and less, as a corpse's are (CG_JoltRagdollCreate).
+void CG_JoltRagdollSetLive(int handle, qboolean live, float toneTime);
+
+// A living body after its animation: the joints where the animation has them
+// now (units), and how hard its motors may pull, 0..1.
+void CG_JoltRagdollDrive(int handle, const vec3_t p[RD_NUM_JOINTS], float strength);
+
 // A change of velocity at each joint, units a second: a shot, a blast, a punt.
 void CG_JoltRagdollAddVelocity(int handle, const vec3_t dv[RD_NUM_JOINTS]);
 

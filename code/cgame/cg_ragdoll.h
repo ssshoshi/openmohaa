@@ -85,6 +85,8 @@ extern "C" {
     extern cvar_t *cg_ragdoll_sleeptime;
     extern cvar_t *cg_ragdoll_debug;
     extern cvar_t *cg_ragdoll_stiffness;
+    extern cvar_t *cg_ragdoll_solver;
+    extern cvar_t *cg_ragdoll_limptime;
 
     // Whether the entity's corpse is a ragdoll, whose landings make their own
     // sounds (Added in OPM)

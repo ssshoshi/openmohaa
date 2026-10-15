@@ -48,6 +48,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_physics_local.h"
 #include "cg_physics_ragdoll.h"
 
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
+
 #include <vector>
 
 #define PR_MAX_RAGDOLLS 512
@@ -165,6 +169,26 @@ static const float pr_tone[] = {
     10.0f,  // PR_ANKLE
 };
 
+// A living body's hold on its animation (CG_JoltRagdollDrive): how stiff the
+// motors are (hertz, critically damped) and, per kind of joint, the most torque
+// they have at full strength (newton metres). Strong enough to carry the trunk
+// and arms through the animation and to shrug a shot off in a fraction of a
+// second; weakened for a moment by a hit, the part struck gives way and the back
+// sags a little under its own weight before they take it back.
+#define PR_LIVE_FREQUENCY 8.0f
+
+static const float pr_live[] = {
+    0.0f,   // PR_ROOT (carried along, not driven)
+    500.0f, // PR_BACK
+    120.0f, // PR_NECKJ
+    150.0f, // PR_SHOULDER
+    80.0f,  // PR_ELBOW
+    20.0f,  // PR_WRIST
+    500.0f, // PR_HIP
+    400.0f, // PR_KNEE
+    60.0f,  // PR_ANKLE
+};
+
 // The grabber. The joint held is tied to an anchor carried to the end of the
 // beam, by motors on a six degree of freedom constraint rather than a force of
 // our own: Jolt then solves the pull against the whole body hanging from the
@@ -195,6 +219,20 @@ typedef struct {
 
     // The hold on the death pose: how long it lasts, and how far into it.
     float toneTime, toneElapsed;
+
+    // A living body (CG_JoltRagdollSetLive): its pelvis carried along where
+    // the animation has it, and every joint's motors pulling the rest towards
+    // the animation's pose, as hard as liveStrength (0..1) lets them.
+    qboolean   live;
+    float      liveStrength;
+    JPH::RVec3 pelvisTarget;
+    JPH::Quat  pelvisTargetRot;
+
+    // Each part's rotation against the frame its joints make (PR_PartFrame),
+    // as it was made: how a pose's joints give the rotation the part should
+    // have, roll and all. framed: whether the joints made one then.
+    JPH::Quat partOffset[PR_NUM_PARTS];
+    qboolean  partFramed[PR_NUM_PARTS];
 
     // Gathered from the contacts of the latest step.
     qboolean contact[RD_NUM_JOINTS];
@@ -451,6 +489,85 @@ static void CG_JoltRagdollAimTone(prRagdoll_t *pr)
     }
 }
 
+// The frame a pose's joints make at the hips (chest: at the shoulders): up the
+// back, across to the right, and forward. What the pelvis and the chest are
+// turned by when a living body follows its animation; the other parts are
+// steered by the way they point alone (CG_JoltRagdollDrive).
+static JPH::Quat PR_JointFrame(const JPH::Vec3 jp[RD_NUM_JOINTS], qboolean chest)
+{
+    const JPH::Vec3 up    = chest ? PR_Normalized(jp[RD_NECK] - jp[RD_SPINE2], JPH::Vec3::sAxisZ())
+                                  : PR_Normalized(jp[RD_SPINE1] - jp[RD_PELVIS], JPH::Vec3::sAxisZ());
+    const JPH::Vec3 right = chest ? PR_Across(jp[RD_RUARM] - jp[RD_LUARM], up, PR_AnySquare(up))
+                                  : PR_Across(jp[RD_RTHIGH] - jp[RD_LTHIGH], up, PR_AnySquare(up));
+    const JPH::Vec3 fwd   = up.Cross(right);
+    JPH::Mat44      m     = JPH::Mat44::sIdentity();
+
+    m.SetAxisX(right);
+    m.SetAxisY(fwd);
+    m.SetAxisZ(up);
+    return m.GetQuaternion().Normalized();
+}
+
+// The frame a part's joints make: along the part, and rolled by a second
+// direction the pose fixes it with. The pelvis and chest by the hips and the
+// shoulders; the back and the neck by the line of the hips or shoulders; an
+// upper arm or a thigh by the limb below it and a forearm or a calf by the bone
+// above (the plane the elbow or knee bends in); a foot by the calf. qfalse
+// where the two run too near together to give a roll (a straight arm, the hand).
+static qboolean PR_PartFrame(const JPH::Vec3 jp[RD_NUM_JOINTS], int part, JPH::Quat *out)
+{
+    const prPartDef_t *def = &pr_parts[part];
+    JPH::Vec3          along, ref, right;
+    JPH::Mat44         m = JPH::Mat44::sIdentity();
+
+    if (part == PR_PELVIS || part == PR_CHEST) {
+        *out = PR_JointFrame(jp, part == PR_CHEST ? qtrue : qfalse);
+        return qtrue;
+    }
+
+    along = jp[def->b] - jp[def->a];
+    if (along.LengthSq() < 1e-8f) {
+        return qfalse;
+    }
+    along = along.Normalized();
+
+    switch (def->kind) {
+    case PR_BACK:
+        ref = jp[RD_RTHIGH] - jp[RD_LTHIGH];
+        break;
+    case PR_NECKJ:
+        ref = jp[RD_RUARM] - jp[RD_LUARM];
+        break;
+    case PR_SHOULDER:
+    case PR_HIP: {
+        const int below = def->kind == PR_SHOULDER ? (def->left ? PR_LFARM : PR_RFARM) : (def->left ? PR_LCALF : PR_RCALF);
+        ref             = jp[pr_parts[below].b] - jp[pr_parts[below].a];
+        break;
+    }
+    case PR_ELBOW:
+    case PR_KNEE:
+        ref = jp[pr_parts[def->parent].b] - jp[pr_parts[def->parent].a];
+        break;
+    case PR_ANKLE:
+        ref = jp[pr_parts[def->parent].b] - jp[pr_parts[def->parent].a];
+        break;
+    default:
+        return qfalse;
+    }
+
+    right = ref - along * ref.Dot(along);
+    if (right.LengthSq() < Square(0.26f) * Q_max(ref.LengthSq(), 1e-8f)) { // within 15 degrees
+        return qfalse;
+    }
+    right = right.Normalized();
+
+    m.SetAxisX(right);
+    m.SetAxisY(along);
+    m.SetAxisZ(right.Cross(along));
+    *out = m.GetQuaternion().Normalized();
+    return qtrue;
+}
+
 int CG_JoltRagdollCreate(
     const vec3_t p[RD_NUM_JOINTS], const vec3_t v[RD_NUM_JOINTS], const float radius[RD_NUM_JOINTS], float toneTime
 )
@@ -692,6 +809,20 @@ int CG_JoltRagdollCreate(
         }
     }
 
+    {
+        JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+
+        for (i = 0; i < PR_NUM_PARTS; i++) {
+            JPH::Quat frame;
+
+            pr->partFramed[i] = PR_PartFrame(jp, i, &frame);
+            pr->partOffset[i] = pr->partFramed[i] ? frame.Conjugated() * bodies.GetRotation(pr->ragdoll->GetBodyID(i))
+                                                  : JPH::Quat::sIdentity();
+        }
+    }
+    pr->live         = qfalse;
+    pr->liveStrength = 0.0f;
+
     pr->used        = qtrue;
     pr->holdJoint   = -1;
     pr->anchor      = JPH::BodyID();
@@ -708,6 +839,206 @@ int CG_JoltRagdollCreate(
 }
 
 static void CG_JoltRagdollJoint(const prRagdoll_t *pr, JPH::BodyInterface& bodies, int joint, JPH::RVec3 *point, JPH::BodyID *id);
+
+//=============================================================
+// A living body
+//=============================================================
+
+// Its motors as stiff as a living body's, or as the death pose's hold.
+static void CG_JoltRagdollMotorSettings(prRagdoll_t *pr, float frequency)
+{
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        const int index = pr->settings->GetConstraintIndexForBodyIndex(i);
+
+        if (index < 0) {
+            continue;
+        }
+
+        JPH::TwoBodyConstraint *c = pr->ragdoll->GetConstraint(index);
+
+        if (c->GetSubType() == JPH::EConstraintSubType::SwingTwist) {
+            JPH::SwingTwistConstraint *st = static_cast<JPH::SwingTwistConstraint *>(c);
+
+            st->GetSwingMotorSettings() = JPH::MotorSettings(frequency, 1.0f);
+            st->GetTwistMotorSettings() = JPH::MotorSettings(frequency, 1.0f);
+        } else if (c->GetSubType() == JPH::EConstraintSubType::Hinge) {
+            static_cast<JPH::HingeConstraint *>(c)->GetMotorSettings() = JPH::MotorSettings(frequency, 1.0f);
+        }
+    }
+}
+
+// Whether the parts collide with one another. A living body's do not: where
+// its limbs go is its animation's to say, and an animation that brings the
+// hands in to the belly to hold a rifle had them shoved off the trunk's
+// capsules and left hanging a dozen units out. A dead one's do again, but for
+// a part and its parent and any two parts that overlap as it dies, which would
+// otherwise be flung apart (as CG_JoltRagdollCreate leaves them).
+static void CG_JoltRagdollSelfCollision(prRagdoll_t *pr, qboolean on)
+{
+    JPH::GroupFilterTable *table =
+        const_cast<JPH::GroupFilterTable *>(static_cast<const JPH::GroupFilterTable *>(pr->settings->mParts[0].mCollisionGroup.GetGroupFilter()));
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+
+    if (!table) {
+        return;
+    }
+
+    for (int a = 0; a < PR_NUM_PARTS; a++) {
+        for (int b = a + 1; b < PR_NUM_PARTS; b++) {
+            qboolean collide = on;
+
+            if (collide && (pr_parts[a].parent == b || pr_parts[b].parent == a)) {
+                collide = qfalse;
+            }
+            if (collide) {
+                const JPH::Shape *sa = pr->settings->mParts[a].GetShape();
+                const JPH::Shape *sb = pr->settings->mParts[b].GetShape();
+                const JPH::Mat44  ma = JPH::Mat44(bodies.GetWorldTransform(pr->ragdoll->GetBodyID(a))).PreTranslated(sa->GetCenterOfMass());
+                const JPH::Mat44  mb = JPH::Mat44(bodies.GetWorldTransform(pr->ragdoll->GetBodyID(b))).PreTranslated(sb->GetCenterOfMass());
+                JPH::CollideShapeSettings                                      settings;
+                JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector>     hit;
+
+                settings.mActiveEdgeMode         = JPH::EActiveEdgeMode::CollideWithAll;
+                settings.mBackFaceMode           = JPH::EBackFaceMode::CollideWithBackFaces;
+                settings.mMaxSeparationDistance  = 0.005f;
+                JPH::CollisionDispatch::sCollideShapeVsShape(
+                    sa, sb, JPH::Vec3::sOne(), JPH::Vec3::sOne(), ma, mb, JPH::SubShapeIDCreator(), JPH::SubShapeIDCreator(), settings, hit
+                );
+                collide = hit.HadHit() ? qfalse : qtrue;
+            }
+
+            if (collide) {
+                table->EnableCollision(a, b);
+            } else {
+                table->DisableCollision(a, b);
+            }
+        }
+    }
+}
+
+void CG_JoltRagdollSetLive(int handle, qboolean live, float toneTime)
+{
+    prRagdoll_t *pr = CG_JoltRagdollGet(handle);
+
+    if (!pr || pr->live == live) {
+        return;
+    }
+
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+    const JPH::BodyID   pelvis = pr->ragdoll->GetBodyID(PR_PELVIS);
+
+    pr->live = live;
+
+    if (live) {
+        pr->toneTime        = 0.0f;
+        pr->liveStrength    = 1.0f;
+        pr->pelvisTarget    = bodies.GetPosition(pelvis);
+        pr->pelvisTargetRot = bodies.GetRotation(pelvis);
+        bodies.SetMotionType(pelvis, JPH::EMotionType::Kinematic, JPH::EActivation::Activate);
+        CG_JoltRagdollMotorSettings(pr, PR_LIVE_FREQUENCY);
+        // No weight: what holds a living man up is his animation, which the
+        // motors follow. Under gravity a motor, a spring, settles short of its
+        // target, and the arms hung a few units below where his hands hold his
+        // rifle for as long as he stood there.
+        for (int i = 0; i < PR_NUM_PARTS; i++) {
+            bodies.SetGravityFactor(pr->ragdoll->GetBodyID(i), 0.0f);
+        }
+        CG_JoltRagdollSelfCollision(pr, qfalse);
+    } else {
+        // Dead: the pelvis falls with the rest, moving as it was, and the
+        // motors hold the pose it is in now and let go of it as the death
+        // pose's hold does.
+        const JPH::Vec3 v = bodies.GetLinearVelocity(pelvis), w = bodies.GetAngularVelocity(pelvis);
+
+        bodies.SetMotionType(pelvis, JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
+        bodies.SetLinearAndAngularVelocity(pelvis, v, w);
+        for (int i = 0; i < PR_NUM_PARTS; i++) {
+            bodies.SetGravityFactor(pr->ragdoll->GetBodyID(i), 1.0f);
+        }
+        CG_JoltRagdollSelfCollision(pr, qtrue);
+        pr->toneTime    = toneTime;
+        pr->toneElapsed = 0.0f;
+        CG_JoltRagdollAimTone(pr);
+        CG_JoltRagdollTone(pr, toneTime > 0.0f ? 1.0f : 0.0f);
+    }
+    pr->ragdoll->Activate();
+}
+
+void CG_JoltRagdollDrive(int handle, const vec3_t p[RD_NUM_JOINTS], float strength)
+{
+    prRagdoll_t *pr = CG_JoltRagdollGet(handle);
+    JPH::Vec3    jp[RD_NUM_JOINTS];
+    JPH::Quat    target[PR_NUM_PARTS];
+    int          i;
+
+    if (!pr || !pr->live) {
+        return;
+    }
+
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
+
+    for (i = 0; i < RD_NUM_JOINTS; i++) {
+        jp[i] = PhysToJolt(p[i]);
+    }
+
+    // Where each part should be turned to: by the frame its joints make in the
+    // animation's pose, roll and all, so that a part a hit has rolled is rolled
+    // back. Rolled and left, an upper arm turns the plane its elbow bends in,
+    // and the forearm can then never get back to where the animation has it:
+    // an arm stayed fifty units out. A part whose joints give no roll, now or
+    // as it was made, is only swung round from where it is, to point the way
+    // the animation's does.
+    for (i = 0; i < PR_NUM_PARTS; i++) {
+        const prPartDef_t *def = &pr_parts[i];
+        JPH::Quat          frame;
+
+        if (pr->partFramed[i] && PR_PartFrame(jp, i, &frame)) {
+            target[i] = (frame * pr->partOffset[i]).Normalized();
+        } else {
+            const JPH::Quat cur   = bodies.GetRotation(pr->ragdoll->GetBodyID(i));
+            const JPH::Vec3 along = PR_Normalized(cur * (pr->localB[i] - pr->localA[i]), JPH::Vec3::sAxisZ());
+            const JPH::Vec3 want  = PR_Normalized(jp[def->b] - jp[def->a], along);
+
+            target[i] = (JPH::Quat::sFromTo(along, want) * cur).Normalized();
+        }
+    }
+
+    // The pelvis is carried there, each step (CG_JoltRagdollsStep).
+    pr->pelvisTargetRot = target[PR_PELVIS];
+    pr->pelvisTarget    = JPH::RVec3(jp[RD_PELVIS] - target[PR_PELVIS] * pr->localA[PR_PELVIS]);
+    pr->liveStrength    = Q_clamp_float(strength, 0.0f, 1.0f);
+
+    // Every other part by its joint's motors, to its turn against its parent.
+    for (i = 0; i < PR_NUM_PARTS; i++) {
+        const int index = pr->settings->GetConstraintIndexForBodyIndex(i);
+
+        if (index < 0) {
+            continue;
+        }
+
+        JPH::TwoBodyConstraint *c      = pr->ragdoll->GetConstraint(index);
+        const JPH::Quat         local  = (target[pr_parts[i].parent].Conjugated() * target[i]).Normalized();
+        const float             torque = pr_live[pr_parts[i].kind] * pr->liveStrength;
+
+        if (c->GetSubType() == JPH::EConstraintSubType::SwingTwist) {
+            JPH::SwingTwistConstraint *st = static_cast<JPH::SwingTwistConstraint *>(c);
+
+            st->GetSwingMotorSettings().SetTorqueLimit(torque);
+            st->GetTwistMotorSettings().SetTorqueLimit(torque);
+            st->SetSwingMotorState(JPH::EMotorState::Position);
+            st->SetTwistMotorState(JPH::EMotorState::Position);
+            st->SetTargetOrientationBS(local);
+        } else if (c->GetSubType() == JPH::EConstraintSubType::Hinge) {
+            JPH::HingeConstraint *h = static_cast<JPH::HingeConstraint *>(c);
+
+            h->GetMotorSettings().SetTorqueLimit(torque);
+            h->SetMotorState(JPH::EMotorState::Position);
+            h->SetTargetOrientationBS(local);
+        }
+    }
+
+    pr->ragdoll->Activate();
+}
 
 // Lets go of the joint held.
 static void CG_JoltRagdollDropHold(prRagdoll_t *pr)
@@ -888,7 +1219,7 @@ void CG_JoltRagdollAddVelocity(int handle, const vec3_t dv[RD_NUM_JOINTS])
         const JPH::Vec3   d  = t.Multiply3x3(pr->localB[i] - pr->localA[i]);
         const float       l2 = Q_max(d.LengthSq(), 1e-6f);
 
-        if (va.IsNearZero() && vb.IsNearZero()) {
+        if ((va.IsNearZero() && vb.IsNearZero()) || (pr->live && i == PR_PELVIS)) {
             continue;
         }
 
@@ -996,6 +1327,11 @@ void CG_JoltRagdollsStep(float dt)
 
         if (!pr->used) {
             continue;
+        }
+
+        // A living body's pelvis, carried to where the animation has it.
+        if (pr->live) {
+            bodies.MoveKinematic(pr->ragdoll->GetBodyID(PR_PELVIS), pr->pelvisTarget, pr->pelvisTargetRot, dt);
         }
 
         // The hold on the death pose, easing off as the particle solver's

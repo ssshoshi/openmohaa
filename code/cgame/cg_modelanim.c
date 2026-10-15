@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_ragdoll.h"
+#include "cg_ragdoll_live.h"
 #include "cg_gore.h"
 #include "cg_orch.h"
 #include "../corepp/tiki.h"
@@ -1495,6 +1496,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     //  after the animation parameters are final and before anything queries a
     //  tag, so that attached entities and the shadow follow the simulated pose.
     CG_RagdollUpdateEntity(cent, &model);
+    // Added in OPM
+    //  And a living man shot, in single player (cg_ragdoll_live.cpp).
+    CG_LiveRagdollUpdateEntity(cent, &model);
 
     CGM_BEGIN(CGM_ATTACH);
     if (cent->currentState.parent != ENTITYNUM_NONE) {
