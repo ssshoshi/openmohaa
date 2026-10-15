@@ -63,6 +63,11 @@ extern "C" {
         float       mass;  // kilograms from a rule, or 0 for the physics' own
 
         qboolean dynamic; // small enough to be knocked about
+        // Added in OPM
+        //  A lamp hanging from the ceiling, on a wire or a chain: it swings
+        //  from where it hangs (in its own frame), and is never dropped.
+        qboolean hangs;
+        vec3_t   hangPoint;
         int      clipped; // the map's invisible clip brushes that stand in for it
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers
         int      numStandIns;

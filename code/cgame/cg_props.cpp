@@ -347,6 +347,82 @@ static qboolean CG_PropFit(const cStaticModel_t *in, const char *path, cgProp_t 
     return qtrue;
 }
 
+// Added in OPM
+//  Whether a lamp hangs: a light of some kind (CG_PropSkipped leaves the lights
+//  out, lanterns in) whose top is against something solid above it -- a bulb on
+//  a wire, a lantern on a chain. Where it hangs from is the top of its box, in
+//  the middle.
+#define CG_PROP_HANG_REACH 8.0f
+// the least it hangs below where it hangs from: less is a fitting on the ceiling
+#define CG_PROP_HANG_DROP  16.0f
+
+static qboolean CG_PropHangs(const char *name, cgProp_t *p)
+{
+    static const char *lamps[] = {"light", "lamp", "bulb", "lantern"};
+    static const char *never[] = {"corona", "flare", "fx/"};
+    char               lower[128];
+    vec3_t             top, start, end;
+    trace_t            tr;
+    size_t             i;
+    int                k;
+
+    Q_strncpyz(lower, name, sizeof(lower));
+    Q_strlwr(lower);
+    for (i = 0; i < ARRAY_LEN(never); i++) {
+        if (strstr(lower, never[i])) {
+            return qfalse;
+        }
+    }
+    for (i = 0; i < ARRAY_LEN(lamps); i++) {
+        if (strstr(lower, lamps[i])) {
+            break;
+        }
+    }
+    if (i == ARRAY_LEN(lamps)) {
+        return qfalse;
+    }
+    // hanging straight down
+    if (p->axis[2][2] < 0.9f) {
+        return qfalse;
+    }
+
+    // Up its middle from just above its bottom: where that meets the ceiling,
+    // within a little of its top, is where it hangs from. A lamp the mapper
+    // sank a way into the ceiling hangs from where its wire goes in.
+    {
+        vec3_t local;
+
+        local[0] = (p->mins[0] + p->maxs[0]) * 0.5f;
+        local[1] = (p->mins[1] + p->maxs[1]) * 0.5f;
+        local[2] = p->mins[2] + 1.0f;
+        VectorCopy(p->origin, start);
+        for (k = 0; k < 3; k++) {
+            VectorMA(start, local[k], p->axis[k], start);
+        }
+        VectorCopy(start, end);
+        end[2] += p->maxs[2] - local[2] + CG_PROP_HANG_REACH;
+    }
+    cgi.CM_BoxTrace(&tr, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+
+    if (cg_physics_log->integer > 1) {
+        cgi.Printf("props: %s: bottom at %.0f %.0f %.0f, box z %.0f to %.0f: %s\n", name, start[0], start[1], start[2], p->mins[2], p->maxs[2],
+                   tr.startsolid ? "starts in the world" : tr.fraction < 1.0f ? va("hangs from %.0f", tr.endpos[2]) : "nothing above");
+    }
+    if (tr.startsolid || tr.allsolid || tr.fraction >= 1.0f) {
+        return qfalse;
+    }
+    // something below where it hangs to swing
+    if (tr.endpos[2] - start[2] < CG_PROP_HANG_DROP) {
+        return qfalse;
+    }
+
+    VectorSubtract(tr.endpos, p->origin, top);
+    for (k = 0; k < 3; k++) {
+        p->hangPoint[k] = DotProduct(top, p->axis[k]);
+    }
+    return qtrue;
+}
+
 // Reads the map's static models, once a map.
 void CG_PropsLoad(void)
 {
@@ -419,9 +495,21 @@ void CG_PropsLoad(void)
         p->mass        = 0.0f;
         p->solid       = qtrue;
         p->dynamic     = qfalse;
+        p->hangs       = qfalse;
 
         for (k = 0; k < 3; k++) {
             biggest = Q_max(biggest, p->maxs[k] - p->mins[k]);
+        }
+
+        // A hanging lamp swings, whatever its size
+        if (cg_physics_hanging->integer && CG_PropHangs(name, p)) {
+            p->hangs   = qtrue;
+            p->dynamic = qtrue;
+            p->why     = "hangs: swings from where it hangs";
+            dynamic++;
+            cg_numProps++;
+            kept++;
+            continue;
         }
 
         // Left out, but kept for the physics editor to show.
