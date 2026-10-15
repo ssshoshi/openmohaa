@@ -66,8 +66,10 @@ for _s, _m in (("L", "Left"), ("R", "Right")):
          (("Bip01 %s Forearm" % _s, "Bip01 %s Hand" % _s), (_m + "ForeArm", _m + "Hand"))),
         ("Bip01 %s Hand" % _s, _m + "Hand",
          (("Bip01 %s Hand" % _s, "+X"), (_m + "Hand", _m + "HandIndex1"))),
-        ("Bip01 %s Foot" % _s, _m + "Foot",
-         (("Bip01 %s Foot" % _s, "Bip01 %s Toe0" % _s), (_m + "Foot", _m + "ToeBase"))),
+        # Not aimed: the game's ankle sits far higher over the toe than CMU's, so
+        # matching their directions tips the foot toes-up. Both stand flat in the
+        # reference poses, so the template's foot is the reference as it is.
+        ("Bip01 %s Foot" % _s, _m + "Foot", None),
         ("Bip01 %s Toe0" % _s, _m + "ToeBase", None),
     ]
 LEGS = (("L", "Left"), ("R", "Right"))
@@ -134,16 +136,34 @@ class Retarget:
         chains = M.ik_chains(bones)
         elbow, wrist = chains["Bip01 L Thigh"]
         bip_leg = elbow["length"] + wrist["length"]
-        moc_leg = (np.linalg.norm(tpose["LeftLeg"][1] - tpose["LeftUpLeg"][1])
-                   + np.linalg.norm(tpose["LeftFoot"][1] - tpose["LeftLeg"][1]))
-        self.scale = bip_leg / moc_leg
+        def moc_leg(m):
+            return (np.linalg.norm(tpose[m + "Leg"][1] - tpose[m + "UpLeg"][1])
+                    + np.linalg.norm(tpose[m + "Foot"][1] - tpose[m + "Leg"][1]))
+
+        # Each leg scaled to the game's leg exactly, so a straight mocap leg is a
+        # straight game leg and the IK neither falls short nor overreaches.
+        self.leg_scale = {side: bip_leg / moc_leg(m) for side, m in LEGS}
+        self.scale = (self.leg_scale["L"] + self.leg_scale["R"]) / 2
 
         self.pelvis_local_rot = M.channel_to_rot(self.tmpl_ch["Bip01 Pelvis rot"])
         self.pelvis_local_pos = np.array(self.tmpl_ch["Bip01 Pelvis pos"][:3])
         self.thigh_offset = {s: next(b for b in bones if b["name"] == "Bip01 %s Thigh" % s)["offset"]
                              for s, _ in LEGS}
-        self.foot_ground = stock["Bip01 L Foot"][1][2]
-        self.ankle_ground = (C @ tpose["LeftFoot"][1])[2]
+        self.foot_ground = min(stock["Bip01 L Foot"][1][2], stock["Bip01 R Foot"][1][2])
+        self.stock = stock
+
+    def feet_from(self, f, turn):
+        """Pair the feet against clip frame f instead of the T-pose.
+
+        The T-pose was added to the takes afterwards and its feet are not pitched
+        the way the actor stands, which tips the game's feet toes-up. Frame f
+        (a standing frame) is taken to have the template's flat feet.
+        """
+        pose = self.clip.pose(f)
+        for side, m in LEGS:
+            for bip, moc in (("Bip01 %s Foot" % side, m + "Foot"), ("Bip01 %s Toe0" % side, m + "ToeBase")):
+                self.mref[bip] = C @ pose[moc][0]
+                self.ref[bip] = turn.T @ self.stock[bip][0]
 
     def frame(self, f, turn, shift):
         """Channels for clip frame f, turned by `turn` and moved by `shift` (game units)."""
@@ -154,11 +174,19 @@ class Retarget:
             world[bip] = delta @ self.ref[bip]
 
         s = self.scale
-        hips = turn @ (C @ pose["Hips"][1]) * s + shift
-        hips[2] = (C @ pose["Hips"][1])[2] * s - self.ankle_ground * s + self.foot_ground
+        g_pel = world["Bip01 Pelvis"]
+
+        def place(p):
+            return turn @ (C @ p) * s + shift
+
+        # The pelvis goes where it puts the game's hip joints on the mocap's (the
+        # mocap root sits higher between the hips than Bip01 Pelvis does). Height
+        # is settled afterwards by ground().
+        moc_mid = place((pose["LeftUpLeg"][1] + pose["RightUpLeg"][1]) / 2)
+        game_mid = g_pel @ ((self.thigh_offset["L"] + self.thigh_offset["R"]) / 2)
+        hips = moc_mid - game_mid
 
         ch = dict(self.tmpl_ch)
-        g_pel = world["Bip01 Pelvis"]
         g_bip = g_pel @ self.pelvis_local_rot.T
         p_bip = hips - g_bip @ self.pelvis_local_pos
         ch["Bip01 rot"] = M.rot_to_channel(g_bip)
@@ -174,7 +202,7 @@ class Retarget:
 
         for side, moc in LEGS:
             hip_game = hips + g_pel @ self.thigh_offset[side]
-            leg = turn @ (C @ (pose[moc + "Foot"][1] - pose[moc + "UpLeg"][1])) * s
+            leg = turn @ (C @ (pose[moc + "Foot"][1] - pose[moc + "UpLeg"][1])) * self.leg_scale[side]
             foot = world["Bip01 %s Foot" % side]
             # The wrist (foot) is in model space: no parent.
             ch["Bip01 %s Foot rot" % side] = M.rot_to_channel(foot)
@@ -202,6 +230,22 @@ def aim_turn(clip, frames, turn):
     reach = np.linalg.norm(vs, axis=1)
     aim = vs[reach > 0.9 * reach.max()].mean(0)
     return yaw(-math.degrees(math.atan2(aim[1], aim[0])))
+
+
+def ground(chans, foot_ground):
+    """Move the clip up or down so the lower foot stands where the game's do.
+
+    The feet hang off the hips, and the two skeletons' hips differ, so the
+    height the retarget gives is only roughly right. On the median frame the
+    lower ankle is put at the template's standing ankle height.
+    """
+    lows = [min(c["Bip01 L Foot pos"][2], c["Bip01 R Foot pos"][2]) for c in chans]
+    dz = foot_ground - float(np.median(lows))
+    for c in chans:
+        for n in ("Bip01 pos", "Bip01 L Foot pos", "Bip01 R Foot pos"):
+            c[n] = np.array(c[n], float)
+            c[n][2] += dz
+    return dz
 
 
 def bounds_of(bones, ch):
@@ -298,9 +342,11 @@ def main():
         turn = aim_turn(clip, frames, turn) @ turn
     hp = turn @ (C @ clip.pose(first)["Hips"][1]) * rt.scale
     shift = np.array([-hp[0], -hp[1], 0.0])  # over the origin
+    rt.feet_from(first, turn)
 
     names = tmpl["names"]
     chans = [rt.frame(f, turn, shift) for f in frames]
+    dz = ground(chans, rt.foot_ground)
     if a.upper_from:
         layer_upper(chans, M.read_skc(load_game_file(a.upper_from)), clip.frame_time * step)
 
@@ -329,7 +375,8 @@ def main():
     anim = dict(flags=flags, frame_time=clip.frame_time * step, total_delta=np.zeros(3),
                 total_angle=0.0, names=names, values=values, meta=meta)
     open(a.out, "wb").write(M.write_skc(anim))
-    print("%s: %d frames at %.1f fps, scale %.2f" % (a.out, len(chans), 1.0 / anim["frame_time"], rt.scale))
+    print("%s: %d frames at %.1f fps, scale %.2f, grounded by %+.1f" % (
+        a.out, len(chans), 1.0 / anim["frame_time"], rt.scale, dz))
 
 
 if __name__ == "__main__":
