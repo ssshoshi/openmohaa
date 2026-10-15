@@ -79,6 +79,15 @@ knockdown:
 	{
 		self.opm_kd_down = 1
 		self.opm_kd_ready = 0
+
+		// His box lies down with him: 8 high, as the engine lowers a
+		// corpse's, so he is walked over (at 16 the player stepped up onto
+		// nothing he could see), and wide enough to take in a man lying any
+		// way round, for the shots at him. Left standing, it kept anyone from
+		// crossing the spot where he had been.
+		self.opm_kd_mins = self.getmins
+		self.opm_kd_maxs = self.getmaxs
+		self setsize ( -40 -40 0 ) ( 40 40 8 )
 		self.blendtime = 0.15
 		self setmotionanim local.fall
 		self waittill flaggedanimdone
@@ -150,6 +159,9 @@ knockdown:
 
 	if (getcvar "g_opm_paindebug" == "1")
 		println ("opm knockdown: getting up (" + local.kind + " " + local.i + " of " + local.n + ")")
+
+	// Standing again: his own box back.
+	self setsize self.opm_kd_mins self.opm_kd_maxs
 
 	self.blendtime = 0.1
 	self setmotionanim ("opm_getup_" + local.kind + local.i)
