@@ -346,10 +346,13 @@ static const char *rt_glsl =
 	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth)\n"
 	"{\n"
 	"	vec2  origin = vec2(mod(tile, RT_TILES), floor(tile / RT_TILES));\n"
+	// the four taps (each four texels, filtered) half a texel apart, or as
+	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps
+	"	float spread = max(u_RtSurface.w, 1.0);\n"
 	"	float texel  = 1.0 / RT_TILE_TEXELS;\n"
-	"	vec2  st     = clamp(faceUV, vec2(1.5 * texel), vec2(1.0 - 1.5 * texel));\n"
+	"	vec2  st     = clamp(faceUV, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
 	"	vec2  uv     = (origin + st) / RT_TILES;\n"
-	"	float d      = 0.5 / (RT_TILES * RT_TILE_TEXELS);\n"
+	"	float d      = 0.5 * spread / (RT_TILES * RT_TILE_TEXELS);\n"
 	"	return 0.25 * (shadow2D(atlas, vec3(uv + vec2(-d, -d), depth))\n"
 	"	             + shadow2D(atlas, vec3(uv + vec2( d, -d), depth))\n"
 	"	             + shadow2D(atlas, vec3(uv + vec2(-d,  d), depth))\n"
