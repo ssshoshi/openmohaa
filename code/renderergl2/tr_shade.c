@@ -1490,6 +1490,10 @@ static qboolean RB_DepthPrepassed( const shaderCommands_t *input )
 	if ( input->shader->sort != SS_OPAQUE && input->shader->sort != SS_PORTAL ) {
 		return qfalse;
 	}
+	// Added in OPM: a model left out of the prepass (r_prepassFarModels)
+	if ( backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity && backEnd.currentEntity->prepassSkip ) {
+		return qfalse;
+	}
 	return ( first->stateBits & GLS_DEPTHMASK_TRUE ) ? qtrue : qfalse;
 }
 

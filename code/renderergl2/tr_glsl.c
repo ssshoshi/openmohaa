@@ -875,6 +875,8 @@ static int GLSL_LoadGPUShaderText(const char *name, const char *fallback,
 
 	if (size > destSize)
 	{
+		// Added in OPM: say so, rather than the shader just failing to load
+		ri.Printf(PRINT_WARNING, "GLSL: '%s' is %d bytes, %d more than there is room for after its header\n", filename, size, size - destSize);
 		result = 0;
 	}
 	else
@@ -1008,8 +1010,11 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	int attribs, qboolean fragmentShader, const GLchar *extra, qboolean addHeader,
 	const char *fallback_vp, const char *fallback_fp)
 {
-	char vpCode[32000];
-	char fpCode[32000];
+	// Added in OPM: room for lightall, which with its header outgrew 32000
+	// (it failed to load, saying only that it could not); static, as two
+	// such buffers are a lot of stack and the shaders are built one at a time
+	static char vpCode[65536];
+	static char fpCode[65536];
 	char *postHeader;
 	int size;
 	int result;

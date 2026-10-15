@@ -446,6 +446,7 @@ RB_RenderDrawSurfList
 ==================
 */
 void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
+	qboolean		prepassSkip = qfalse; // Added in OPM: r_prepassFarModels
 	shader_t		*shader = NULL, *oldShader;
 	int				fogNum, oldFogNum;
 	int				entityNum, oldEntityNum;
@@ -508,6 +509,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		if ( drawSurf->sort == (unsigned)oldSort && drawSurf->cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
 				continue;
+			// Added in OPM: a model too small for the prepass (r_prepassFarModels)
+			if (prepassSkip)
+				continue;
 
 			// fast path, same as previous sort
 			tess.rtMask |= drawSurf->rtMask;
@@ -567,6 +571,14 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		}
 
 		if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
+			continue;
+
+		// Added in OPM: a model too small in the view for the depth prepass
+		// (r_prepassFarModels, R_AddSkelSurfaces) is drawn by the main pass alone
+		prepassSkip = backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !bStaticModel
+			&& entityNum != REFENTITYNUM_WORLD && entityNum < backEnd.refdef.num_entities
+			&& backEnd.refdef.entities[entityNum].prepassSkip;
+		if (prepassSkip)
 			continue;
 
 		// OPENMOHAA-specific stuff

@@ -871,6 +871,20 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     }
 
     // Added in OPM
+    //  The main view: a model this small on the screen saves the main pass
+    //  next to nothing by being in the depth prepass first, and costs a whole
+    //  second draw of it. A beach of the dead far off is left out of it
+    //  (RB_RenderDrawSurfList); by the bones, which a ragdoll takes away from
+    //  the entity.
+    if (!(tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !tr.viewParms.isPortal) {
+        vec3_t centre;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        ent->prepassSkip = r_prepassFarModels->value > 0.0f && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))
+                        && Q_max(ent->boneRadius, 1.0f) < r_prepassFarModels->value * Distance(centre, tr.viewParms.ori.origin);
+    }
+
+    // Added in OPM
     //  In a sun cascade, a model whose shadow cannot fall where the view
     //  sees through it (R_SunCasterCulled): the animation's sphere and its
     //  bones' both.

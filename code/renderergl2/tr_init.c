@@ -169,6 +169,7 @@ cvar_t  *r_sunEntityShadowCascades;
 cvar_t  *r_sunCascade2CacheDist;
 cvar_t  *r_sunCascade2CacheAngle;
 cvar_t  *r_skelCull;
+cvar_t  *r_prepassFarModels;
 cvar_t  *r_skinCache;
 cvar_t  *r_softParticles;
 cvar_t  *r_ignoreDstAlpha;
@@ -1682,6 +1683,9 @@ void R_Register( void )
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.
 	r_skelCull = ri.Cvar_Get( "r_skelCull", "1", 0 );
+	// Added in OPM: a beach of the dead each drawn twice, once for depth
+	r_prepassFarModels = ri.Cvar_Get( "r_prepassFarModels", "0.04", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_prepassFarModels, "Leaves out of the depth prepass any animated model smaller in the view than this (its radius over its distance): it is drawn by the main pass alone. 0 puts every model in the prepass." );
 	ri.Cvar_SetDescription( r_skelCull, "Skeletal models wholly outside a view (their animation's sphere and their bones both) are not drawn in it" );
 	// Pose each skeletal model once per scene and skin each of its surfaces
 	// once per pose, rather than again in every view that draws it (prepass,

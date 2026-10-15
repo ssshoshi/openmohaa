@@ -952,6 +952,7 @@ r_portalOnly	0	1	code/renderergl1/tr_init.c:1464	Debug: draw only what portals a
 r_postProcess	0	1	code/renderergl2/tr_init.c:1571	Post-processing (tone mapping, exposure, sun rays, blur). Needs framebuffer objects. (OpenGL 2 renderer.)
 r_precacheimages	0	1	code/renderergl1/tr_init.c:1552	Load all images at map start instead of when first seen. (OpenGL 1 renderer.)
 r_preferOpenGLES	-1	1	code/sdl/sdl_glimp.c:1093	Prefer an OpenGL ES context: -1 auto, 0 desktop OpenGL, 1 OpenGL ES.
+r_prepassFarModels	0		code/renderergl2/tr_init.c:1687	Animated models smaller in the view than this (radius over distance) skip the depth prepass and are drawn by the main pass alone: a beach of the dead far off is not drawn twice. 0 puts every model in the prepass. (OpenGL 2 renderer.)
 r_primitives	0	3	code/renderergl1/tr_init.c:1414	How geometry is sent to the GPU (0 auto, other values force a method). (OpenGL 1 renderer.)
 r_printShaders	0	1	code/renderergl1/tr_init.c:1459	Print each shader as it is loaded.
 r_pshadowDist			code/renderergl2/tr_init.c:1615	Maximum distance at which characters cast projected shadows. (OpenGL 2 renderer.)

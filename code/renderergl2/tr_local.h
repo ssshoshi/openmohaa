@@ -164,6 +164,11 @@ typedef struct {
     int			poseId;
     vec3_t		boneCentre; // the bounds of its bones, in its own space
     float		boneRadius;
+
+    // Added in OPM
+    //  Too small in the main view to be worth the depth prepass
+    //  (r_prepassFarModels): drawn by the main pass alone.
+    qboolean	prepassSkip;
 } trRefEntity_t;
 
 #define RT_CASTS_MOVING   1 // with what moves, every frame
@@ -2820,6 +2825,7 @@ extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
 extern  cvar_t  *r_skelCull;
+extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
 extern  cvar_t  *r_softParticles;
 extern  cvar_t  *r_ignoreDstAlpha;
