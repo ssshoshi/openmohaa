@@ -6,6 +6,7 @@
 //                        again, the same way every time (a lap's length is in
 //                        m0_techdemo_bench.scr, made with the map)
 //   techdemo_crowd N     how many soldiers stand in the yard (default 24)
+//   techdemo_movers 0    leave the hall's moving lights off
 
 	exec global/ai.scr
 
@@ -33,6 +34,8 @@ level waittill spawn
 	thread range_targets
 	thread crowd
 	thread floaters
+	if (getcvar "techdemo_movers" != "0")
+		thread hall_movers
 
 	if (getcvar "techdemo_bench" == "1")
 		thread bench
@@ -97,6 +100,51 @@ floaters:
 		local.y = -1800 + (local.i % 2) * 140
 		local.a = waitthread passive models/human/german_wehrmact_soldier.tik ( local.x local.y -30 ) (local.i * 70)
 		local.a damage $world 1000 $world local.a.origin ( 0 0 -1 ) ( 0 0 1 ) 0 0 9 2
+	}
+end
+
+//----------------------------------------------------------------------------
+// the hall: lights that move among the pillars, for light that changes as
+// you look at it. Each is a bulb carrying a dynamic light, sent round its
+// points again and again; the hall's floor is at 8.
+
+hall_movers:
+	wait 1
+
+	// warm, round the middle pillar at head height
+	local.p[1] = ( -2304 1280 110 )
+	local.p[2] = ( -1792 1280 110 )
+	local.p[3] = ( -1792 1792 110 )
+	local.p[4] = ( -2304 1792 110 )
+	thread mover ( 1 0.85 0.6 ) 900 local.p 4 2.5
+
+	// red, low along the hall from end to end
+	local.q[1] = ( -2950 1280 48 )
+	local.q[2] = ( -1150 1280 48 )
+	thread mover ( 1 0.2 0.15 ) 800 local.q 2 6
+
+	// blue, rising to the ceiling and sinking to the floor
+	local.r[1] = ( -2304 2304 40 )
+	local.r[2] = ( -2304 2304 340 )
+	thread mover ( 0.25 0.45 1 ) 800 local.r 2 3.5
+end
+
+mover local.color local.radius local.points local.count local.leg:
+	local.e = spawn script_model
+	local.e model "lights/lightbulb_caged.tik"
+	local.e notsolid
+	local.e.origin = local.points[1]
+	local.e light local.color[0] local.color[1] local.color[2] local.radius
+	local.e lightOn
+	while (1)
+	{
+		for (local.i = 1; local.i <= local.count; local.i++)
+		{
+			local.next = local.i % local.count + 1
+			local.e time local.leg
+			local.e moveto local.points[local.next]
+			local.e waitmove
+		}
 	}
 end
 
