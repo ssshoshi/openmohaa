@@ -82,6 +82,7 @@ extern "C" {
     void CG_PlacedDeadFrame(void);
 
     extern cvar_t *cg_water_float;
+    extern cvar_t *cg_water_floatrange;
     extern cvar_t *cg_water_blood;
     extern cvar_t *cg_water_ripples;
 

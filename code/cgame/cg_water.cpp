@@ -62,11 +62,16 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/qfiles.h"
 
 cvar_t *cg_water_float;
+cvar_t *cg_water_floatrange;
 cvar_t *cg_water_blood;
 cvar_t *cg_water_ripples;
 
 #define WATER_REACH    256.0f // how far above a point its water's top is looked for
 #define WATER_DEEP     1024.0f // how far below it the bottom is
+// How far from the view anything is looked at for what it does to the water:
+// half the renderer's ripple grid (WATER_RIPPLE_SPAN, round the view) and a
+// hull's length
+#define WATER_RIPPLE_REACH (3072.0f * 0.5f + 700.0f)
 
 #define WATER_BLOOD_MAX     64      // bodies whose blood is kept
 #define WATER_BLOOD_SENT    32      // as many as the renderer takes (WATER_MAX_SPOTS)
@@ -184,6 +189,7 @@ static struct {
 void CG_InitWater(void)
 {
     cg_water_float = cgi.Cvar_Get("cg_water_float", "1", CVAR_ARCHIVE);
+    cg_water_floatrange = cgi.Cvar_Get("cg_water_floatrange", "1500", CVAR_ARCHIVE);
     cg_water_blood = cgi.Cvar_Get("cg_water_blood", "1", CVAR_ARCHIVE);
     cg_water_ripples = cgi.Cvar_Get("cg_water_ripples", "1", CVAR_ARCHIVE);
     memset(cg_waterWas, 0, sizeof(cg_waterWas));
@@ -962,16 +968,34 @@ void CG_WaterRipplesFrame(void)
                 continue;
             }
 
+            // nothing it does reaches the ripples' grid, round the view
+            if (fabs(cent->lerpOrigin[0] - cg.refdef.vieworg[0]) > WATER_RIPPLE_REACH
+                || fabs(cent->lerpOrigin[1] - cg.refdef.vieworg[1]) > WATER_RIPPLE_REACH) {
+                cg_waterWas[num].time = 0;
+                continue;
+            }
+
             if (s->solid == SOLID_BMODEL) {
                 cgi.R_ModelBounds(cgs.inlineDrawModel[s->modelindex], mins, maxs);
             } else {
-                dtiki_t *tiki = cgi.R_Model_GetHandle(cgs.model_draw[s->modelindex]);
+                // a model's bounds, worked out from its animations once
+                static qhandle_t boundsOf[MAX_MODELS];
+                static vec3_t    boundsMins[MAX_MODELS], boundsMaxs[MAX_MODELS];
+                const qhandle_t  h     = cgs.model_draw[s->modelindex];
+                const float      scale = s->scale > 0.0f ? s->scale : 1.0f;
 
-                if (!tiki) {
-                    cg_waterWas[num].time = 0;
-                    continue;
+                if (boundsOf[s->modelindex] != h || !h) {
+                    dtiki_t *tiki = cgi.R_Model_GetHandle(h);
+
+                    if (!tiki) {
+                        cg_waterWas[num].time = 0;
+                        continue;
+                    }
+                    cgi.TIKI_CalculateBounds(tiki, 1.0f, boundsMins[s->modelindex], boundsMaxs[s->modelindex]);
+                    boundsOf[s->modelindex] = h;
                 }
-                cgi.TIKI_CalculateBounds(tiki, s->scale > 0.0f ? s->scale : 1.0f, mins, maxs);
+                VectorScale(boundsMins[s->modelindex], scale, mins);
+                VectorScale(boundsMaxs[s->modelindex], scale, maxs);
             }
             size = Q_max(maxs[0] - mins[0], maxs[1] - mins[1]);
 

@@ -270,6 +270,7 @@ cg_water_ripples	0	1	code/cgame/cg_water.cpp:62	What goes through water disturbs
 cg_lens	0	1	code/cgame/cg_lens.cpp:65	What lands on the camera's lens: water from a splash or a wave over the boat's side close by, blood from a man shot in front of you, dirt from a blast (r_lens draws it).
 cg_lens_test	0	3	code/cgame/cg_lens.cpp:66	Puts a full dose on the lens at once, for working on it: 1 water, 2 blood, 3 dirt. Cheat.
 cg_water_float	0	1	code/cgame/cg_water.cpp:91	Corpses float in water and the waves carry them: lifted by the swell, pushed up the beach by the surf. Jolt ragdolls only (cg_ragdoll_solver 1).
+cg_water_floatrange	0		code/cgame/cg_water.cpp:192	A corpse floating further than this from the view (units) that has settled is let sleep, and bobs again when you come back within most of it; one lying still in the shallows sleeps at any distance. Keeps a sea of the dead from costing most of a frame. 0 keeps them all moving.
 cheats	0	1	code/server/sv_init.c:1082	Allow cheat commands and cheat-protected cvars. In single player use thereisnomonkey 1. Latched. Server setting.
 cl_allowDownload	0		code/client/cl_main.cpp:3628	Download missing files from servers (bit flags: 1 enable, 2 no redirect, 4 no UDP).
 cl_altbindings	0	1	code/client/cl_main.cpp:3633	Allow Alt+key bindings as separate binds.

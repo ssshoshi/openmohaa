@@ -207,6 +207,10 @@ typedef struct {
     float    radius[PR_NUM_PARTS];
     float    wet[PR_NUM_PARTS]; // how much of each was under in the step before
     qboolean floating;
+    // How long it has lain quietly afloat, seconds, and whether it has been
+    // let sleep for being far from the view (CG_JoltRagdollFloat)
+    float    floatCalm;
+    qboolean floatAsleep;
 } prRagdoll_t;
 
 static prRagdoll_t pr_ragdolls[PR_MAX_RAGDOLLS];
@@ -702,6 +706,8 @@ int CG_JoltRagdollCreate(
 
     pr->used        = qtrue;
     pr->floating    = qfalse;
+    pr->floatCalm   = 0.0f;
+    pr->floatAsleep = qfalse;
     memset(pr->wet, 0, sizeof(pr->wet));
     pr->holdJoint   = -1;
     pr->anchor      = JPH::BodyID();
@@ -1014,6 +1020,8 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
     vec3_t          at;
     const float     g = -phys_system->GetGravity().GetZ();
 
+    const qboolean wasFloating = pr->floating;
+
     pr->floating = qfalse;
     if (!cg_water_float->integer) {
         return;
@@ -1022,7 +1030,61 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
     PhysFromJolt(JPH::Vec3(bodies.GetCenterOfMassPosition(pr->ragdoll->GetBodyID(PR_PELVIS))), at);
     if (!CG_WaterSample(at, &water)) {
         memset(pr->wet, 0, sizeof(pr->wet));
+        pr->floatCalm   = 0.0f;
+        pr->floatAsleep = qfalse;
         return;
+    }
+
+    // Far from the view, a body that has lain afloat quietly for a while is
+    // let sleep where it is: the water's push would wake every part of it
+    // every step, so a sea of the dead would never rest and their simulation
+    // is most of a frame. It wakes when the view comes near again, or when
+    // something (a blast, a round) wakes it.
+    {
+        const float range = Q_max(cg_water_floatrange->value, 0.0f);
+        const float dist  = Distance(at, cg.refdef.vieworg);
+        qboolean    awake = qfalse;
+
+        for (int i = 0; i < PR_NUM_PARTS && !awake; i++) {
+            awake = bodies.IsActive(pr->ragdoll->GetBodyID(i));
+        }
+
+        if (pr->floatAsleep) {
+            if (range <= 0.0f || dist < range * 0.85f) {
+                // the view has come back: on with the water
+                for (int i = 0; i < PR_NUM_PARTS; i++) {
+                    bodies.ActivateBody(pr->ragdoll->GetBodyID(i));
+                }
+                pr->floatAsleep = qfalse;
+                pr->floatCalm   = 0.0f;
+            } else if (!awake) {
+                pr->floating = qtrue;
+                return;
+            } else {
+                // woken by something else: let it settle again first
+                pr->floatAsleep = qfalse;
+                pr->floatCalm   = 0.0f;
+            }
+        }
+
+        // and anywhere, a body lying still in the shallows, on the bottom
+        // with the water hardly moving it, is let sleep too
+        if (wasFloating && range > 0.0f) {
+            const float speed = bodies.GetLinearVelocity(pr->ragdoll->GetBodyID(PR_PELVIS)).Length() * PHYS_METRES_TO_UNITS;
+            const float calm  = dist > range ? 40.0f : water.depth < 40.0f ? 6.0f : 0.0f;
+
+            pr->floatCalm = speed < calm ? pr->floatCalm + dt : 0.0f;
+            if (pr->floatCalm > (dist > range ? 2.0f : 4.0f)) {
+                for (int i = 0; i < PR_NUM_PARTS; i++) {
+                    bodies.DeactivateBody(pr->ragdoll->GetBodyID(i));
+                }
+                pr->floatAsleep = qtrue;
+                pr->floating    = qtrue;
+                return;
+            }
+        } else {
+            pr->floatCalm = 0.0f;
+        }
     }
 
     for (int i = 0; i < PR_NUM_PARTS; i++) {
@@ -1069,6 +1131,19 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
         if (under > 0.0f) {
             bodies.SetAngularVelocity(id, bodies.GetAngularVelocity(id) * Q_max(0.0f, 1.0f - PR_WATER_SPIN_DRAG * under * dt));
             pr->floating = qtrue;
+        }
+    }
+}
+
+// For the physics log: bodies in use, afloat, and let sleep afloat far off
+void CG_JoltRagdollCounts(int *used, int *floating, int *asleep)
+{
+    *used = *floating = *asleep = 0;
+    for (int n = 0; n < PR_MAX_RAGDOLLS; n++) {
+        if (pr_ragdolls[n].used) {
+            (*used)++;
+            *floating += pr_ragdolls[n].floating ? 1 : 0;
+            *asleep += pr_ragdolls[n].floatAsleep ? 1 : 0;
         }
     }
 }
