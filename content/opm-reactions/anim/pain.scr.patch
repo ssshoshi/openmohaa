@@ -1,0 +1,37 @@
+--- a/anim/pain.scr
++++ b/anim/pain.scr
+@@ -81,8 +81,33 @@
+ 				case 5: // lower torso
+ 				case 6: // pelvis
+ 					//println "Pain stand straight"
++					// Added in OPM (content/opm-reactions): hit from behind, a
++					// man flinches forward, not back as every pain here does.
++					local.fwd = 0
++					if (local.yaw > 135 || local.yaw < -135)
++					{
++						switch (self.weapongroup)
++						{
++						rifle:
++						thompson:
++						bar:
++						mp40:
++						mp44:
++						pistol:
++						grenade:
++						unarmed:
++							local.fwd = 1
++							break
++						}
++					}
++					if (getcvar "g_opm_paindebug" == "1")
++						println ("opm pain: yaw " + local.yaw + " group " + self.weapongroup + " forward " + local.fwd)
+ 					// Gun down pain is currently broken
+-					if (0)	//self.weaponpos == down)
++					if (local.fwd)
++					{
++						self setmotionanim (self.weapongroup + "_stand_hit_fwd")
++					}
++					else if (0)	//self.weaponpos == down)
+ 					{
+ 					self setmotionanim ( self.weapongroup + "_pain_gundown_stand_head")
+ 					}

@@ -8,8 +8,10 @@ original is taken from the player's own paks, the one the game would load
 applied to it. A *.fetch file lists files that are not ours either and are
 not in the game, one `<path in the pak> <url>` a line: each is downloaded when
 the pak is built (once; kept in ~/.cache/openmohaa-content) and goes in at its
-path. Any other file is our own and goes in as it is, at its path under the
-folder.
+path. A generate.py makes files from the game's (an animation worked out from a
+retail one, say): it is run with --game and --out DIR, and what it writes under
+DIR goes in at those paths. Any other file is our own and goes in as it is, at
+its path under the folder.
 
     pack.py                         build every pak into build/content/
     pack.py opm-cabinet-ragdoll     build just that one
@@ -132,6 +134,17 @@ def build(name, game, out):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, folder).replace(os.sep, "/")
             if rel == "README.md":
+                continue
+            if rel == "generate.py":
+                with tempfile.TemporaryDirectory() as made:
+                    subprocess.run([sys.executable, full, "--game", game, "--out", made], check=True)
+                    for mdir, _, mfiles in os.walk(made):
+                        for mfn in sorted(mfiles):
+                            mfull = os.path.join(mdir, mfn)
+                            mrel  = os.path.relpath(mfull, made).replace(os.sep, "/")
+                            with open(mfull, "rb") as f:
+                                files[mrel] = f.read()
+                            print(f"  {mrel}  (generated)")
                 continue
             if fn.endswith(".patch"):
                 path = patch_target(full)

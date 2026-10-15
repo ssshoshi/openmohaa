@@ -1,0 +1,18 @@
+animations
+{
+	$path models/human/animation
+
+	//----------
+	// Added in OPM (content/opm-reactions): hit in the back, a man flinches
+	// forward (anim/pain.scr). Made by generate.py from each weapon's back
+	// hit, turned round.
+	//----------
+	rifle_stand_hit_fwd		opm/rifle_stand_hit_lower_back_fwd.skc		autosteps_walk
+	thompson_stand_hit_fwd		opm/rifle_stand_hit_lower_back_fwd.skc		autosteps_walk
+	bar_stand_hit_fwd		opm/rifle_stand_hit_lower_back_fwd.skc		autosteps_walk
+	mp40_stand_hit_fwd		opm/mp40_stand_hit_lowerback_fwd.skc		autosteps_walk
+	mp44_stand_hit_fwd		opm/mp44_stand_hit_lowerback_fwd.skc		autosteps_walk
+	pistol_stand_hit_fwd		opm/pistol_stand_hit_lowerback_fwd.skc		autosteps_walk
+	grenade_stand_hit_fwd		weapon_grenade/minor_pain/grenade_stand_hit_lowertorso.skc	autosteps_walk
+	unarmed_stand_hit_fwd		weapon_grenade/minor_pain/grenade_stand_hit_lowertorso.skc	autosteps_walk
+}

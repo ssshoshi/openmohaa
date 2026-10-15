@@ -21,10 +21,15 @@ go in as they are, at their path under the folder.
 
     tools/content/pack.py --diff <folder> <path in the pak> <edited file>
 
+A folder's `generate.py`, if it has one, makes files from the game's own (an
+animation worked out from a retail one): it is run with `--game` and `--out`, and
+what it writes goes into the pak.
+
 | Pak | Needs | What it does |
 |---|---|---|
 | `opm-cabinet-ragdoll` | retail | The man who falls out of a shot hidden cabinet (`global/cabinet.scr`, m3l2, m5l1a, m5l1b) dies once he is clear of it, so the ragdoll takes over his fall. |
 | `opm-hrrtm-blood` | HRRTM Blood Effects Addon | Bullet hits on people splatter the wall behind at once and at full strength, light hits as well as hard ones. Built from the addon's own effect, so without the addon it is not built. |
 | `opm-gore` | nothing | The gore system's shaders and textures (`cg_gore.cpp`): wounds, drops, splashes and pools. All our own; the textures are drawn by `tools/content/gore_textures.py`. |
 | `opm-physics` | internet, once | What corpses and props sound like striking things: the `phys_*` aliases the physics plays (`code/physics/phys_impact.cpp`), on Half-Life 2's and Day of Defeat: Source's physics recordings. Those are Valve's, so `physics.fetch` lists where the build downloads them from (kept in `~/.cache/openmohaa-content`) and only the pak built here has them. |
+| `opm-reactions` | HRRTM | A man shot in the back flinches forward, where every pain animation the game has throws him back (`anim/pain.scr`, picked by the shot's direction; `set g_opm_paindebug 1` prints the choice). The forward flinches are each weapon's back hit turned round, worked out from your paks at build time by `generate.py` (tools/mocap). |
 | `opm-prone` | retail; internet, once | The player model's prone animations (`models/player/base/anims_shared.txt`), which the legs play while lying down and crawling, so the shadow and first-person body lie down too, and the stance sounds (`ubersound/opm_prone.scr`): lying down, getting up, crawling, sprinting and the reload rustle, on Day of Defeat: Source's player recordings. Those are Valve's, so `prone.fetch` lists where the build downloads them from. Without the pak prone still works, standing up in the shadow and silent. |
