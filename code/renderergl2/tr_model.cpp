@@ -156,8 +156,15 @@ void R_RegisterShaders(model_t *mod)
         assert(psurface->numskins <= MAX_TIKI_SHADER);
         for (j = 0; j < psurface->numskins; j++) {
             if (psurface->shader[j][0]) {
+                const int startedAt = ri.Milliseconds();
+
                 sh                   = R_FindShader(psurface->shader[j], LIGHTMAP_NONE, qtrue);
                 psurface->hShader[j] = sh->index;
+
+                // Added in OPM: which of a model's shaders cost it its time (tiki_loadlog 2)
+                if (ri.Milliseconds() - startedAt >= 5 && ri.Cvar_Get("tiki_loadlog", "0", 0)->integer > 1) {
+                    ri.Printf(PRINT_ALL, "tiki_loadlog:   %d ms for shader %s\n", ri.Milliseconds() - startedAt, psurface->shader[j]);
+                }
             } else {
                 psurface->hShader[j] = 0;
             }
@@ -243,12 +250,20 @@ static qhandle_t R_RegisterModelInternal(const char *name, qboolean bBeginTiki, 
                 return mod->index;
             }
         } else if (!stricmp(ptr, "tik")) {
+            // Added in OPM: how long a model new to the renderer takes, its
+            // textures with it (tiki_loadlog)
+            const int startedAt = ri.Milliseconds();
+
             mod->d.tiki = ri.TIKI_RegisterTikiFlags(name, use);
             Q_strncpyz(mod->name, name, sizeof(mod->name));
 
             if (mod->d.tiki) {
                 mod->type = MOD_TIKI;
                 R_RegisterShaders(mod);
+
+                if (ri.Cvar_Get("tiki_loadlog", "0", 0)->integer) {
+                    ri.Printf(PRINT_ALL, "tiki_loadlog: %d ms registering %s with its shaders\n", ri.Milliseconds() - startedAt, name);
+                }
 
                 if (bBeginTiki) {
                     ri.CG_ProcessInitCommands(mod->d.tiki, NULL);

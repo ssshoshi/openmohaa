@@ -1818,6 +1818,131 @@ void Level::LoadAllScripts(const char *name, const char *extension)
     gi.FS_FreeFileList(scriptFiles);
 }
 
+/*
+==============
+Level::PrecacheScriptModels
+
+Added in OPM
+  The models a level's scripts put on its men, cached with the level rather
+  than the first time one is seen. A mod that dresses the AI at random (HRRTM,
+  hrrtm/mapmodels/<map>.scr) names a dozen bodies the precache script never
+  heard of; each was loaded, textures and all, the moment the first man to
+  draw it came into play, and the fighting hitched for a tenth of a second
+  and more each time. Every model named in quotes in the map's script and in
+  such a script is cached here (g_precacheScriptModels).
+==============
+*/
+// One model for PrecacheScriptModels: cached for the server, and given a
+// model index, so it is in the gamestate the client loads with the level (the
+// cache alone loads it for the server only, and the client still loaded it,
+// textures and all, the moment the first man wearing it was sent). 1 if new.
+int Level::PrecacheScriptModel(con_set<str, int>& cached, const char *name)
+{
+    int i;
+
+    if (cached.findKeyValue(name)) {
+        return 0;
+    }
+    cached.addKeyValue(name) = 1;
+    if (strchr(name, '|')) {
+        // a model with keys (weapon|none|models/...): CacheResource would
+        // take it for a path under models/
+        gi.TIKI_RegisterModel(name);
+    } else {
+        CacheResource(name);
+    }
+
+    for (i = 1; i < MAX_MODELS - 128; i++) {
+        const char *cs = gi.getConfigstring(CS_MODELS + i);
+
+        if (!cs || !cs[0]) {
+            gi.setConfigstring(CS_MODELS + i, name);
+            break;
+        }
+        if (!Q_stricmp(cs, name)) {
+            break;
+        }
+    }
+    // a full table keeps its room for the level's own
+    return 1;
+}
+
+void Level::PrecacheScriptModels()
+{
+    const char *scripts[] = {"maps/%s.scr", "hrrtm/mapmodels/%s.scr"};
+    con_set<str, int> cached;
+    int              count = 0;
+
+    if (!g_precacheScriptModels->integer) {
+        return;
+    }
+
+    for (size_t k = 0; k < ARRAY_LEN(scripts); k++) {
+        char *buffer = NULL;
+        int   length = gi.FS_ReadFile(va(scripts[k], mapname.c_str()), (void **)&buffer, qtrue);
+
+        if (length <= 0 || !buffer) {
+            continue;
+        }
+
+        // every "models/..." in quotes (found by its opening, as a quote in
+        // a comment would put a pairing of them out of step)
+        for (const char *p = buffer; (p = strstr(p, "\"models/")) != NULL;) {
+            const char *start = p + 1;
+            const char *end   = strchr(start, '"');
+            char        name[MAX_QPATH];
+            size_t      len;
+
+            if (!end) {
+                break;
+            }
+            len = end - start;
+            p   = end + 1;
+
+            // "models/....tik", or as spawn takes it, without the ".tik"
+            if (len < 8 || len + 4 >= sizeof(name) || Q_stricmpn(start, "models/", 7) || memchr(start, ' ', len)) {
+                continue;
+            }
+            Q_strncpyz(name, start, len + 1);
+            Q_strlwr(name);
+            if (len < 4 || Q_stricmp(name + len - 4, ".tik")) {
+                if (strchr(name + 7, '.')) {
+                    continue; // something else: a sound, an image
+                }
+                Q_strcat(name, sizeof(name), ".tik");
+            }
+            if (gi.FS_ReadFile(name, NULL, qtrue) < 0) {
+                continue;
+            }
+            count += PrecacheScriptModel(cached, name);
+
+            // a man spawned with a gun is drawn as the model with that
+            // weapon's key, whose gear can be other textures again
+            {
+                const char *eol = strchr(p, '\n');
+                const char *gun = strstr(p, "gun \"");
+
+                if (gun && (!eol || gun < eol)) {
+                    const char *g0 = gun + 5, *g1 = strchr(g0, '"');
+                    char        keyed[MAX_QPATH];
+
+                    if (g1 && g1 - g0 > 0 && g1 - g0 < 32) {
+                        Com_sprintf(keyed, sizeof(keyed), "weapon|%.*s|%s", (int)(g1 - g0), g0, name);
+                        Q_strlwr(keyed);
+                        count += PrecacheScriptModel(cached, keyed);
+                    }
+                }
+            }
+        }
+
+        gi.FS_FreeFile(buffer);
+    }
+
+    if (count) {
+        gi.DPrintf("Cached %d models named in the level's scripts\n", count);
+    }
+}
+
 void Level::Precache(void)
 {
     setTime(svsStartTime);
@@ -1835,6 +1960,7 @@ void Level::Precache(void)
 
     if (g_gametype->integer == GT_SINGLE_PLAYER) {
         LoadAllScripts("anim", ".scr");
+        PrecacheScriptModels();
     }
 
     LoadAllScripts("global", ".scr");

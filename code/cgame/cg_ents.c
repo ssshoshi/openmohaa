@@ -724,7 +724,8 @@ void CG_AddPacketEntities(void)
             cg_frameTimers = cgi.Cvar_Get("cg_frameTimers", "0", CVAR_ARCHIVE);
         }
 
-#define CG_TAIL(i, call) call; n = CG_Microseconds(); tailUs[i] += n - t; t = n
+        double frameUs[7] = {0};
+#define CG_TAIL(i, call) call; n = CG_Microseconds(); tailUs[i] += n - t; frameUs[i] = n - t; t = n
         //  Corpses the server has culled by where they died rather than where
         //  the ragdoll has taken them.
         CG_TAIL(0, CG_RagdollAddUnsent());
@@ -741,6 +742,25 @@ void CG_AddPacketEntities(void)
         //  Client-side props and corpses on Jolt.
         CG_TAIL(6, CG_PhysicsFrame());
 #undef CG_TAIL
+
+        // a frame this ran long in, alone (com_hitchLog, ms)
+        {
+            static cvar_t *com_hitchLog;
+            double         sum = 0;
+            int            k;
+
+            if (!com_hitchLog) {
+                com_hitchLog = cgi.Cvar_Get("com_hitchLog", "0", 0);
+            }
+            for (k = 0; k < 7; k++) {
+                sum += frameUs[k];
+            }
+            if (com_hitchLog->integer > 0 && sum >= com_hitchLog->integer * 500.0) {
+                cgi.Printf("hitch cgame tail %.1fms = unsent %.1f placeddead %.1f scriptblasts %.1f waterblood %.1f ripples %.1f lens %.1f physics %.1f\n",
+                    sum / 1000.0, frameUs[0] / 1000.0, frameUs[1] / 1000.0, frameUs[2] / 1000.0, frameUs[3] / 1000.0,
+                    frameUs[4] / 1000.0, frameUs[5] / 1000.0, frameUs[6] / 1000.0);
+            }
+        }
 
         if (cg_frameTimers->integer > 0 && ++tailFrames >= cg_frameTimers->integer) {
             cgi.Printf(

@@ -345,6 +345,7 @@ com_cmddir			code/qcommon/common.c:2020	Only from the command line: a server mus
 com_dropsim	0	100	code/qcommon/common.c:1919	Debug: drop this percentage of packets. Cheat-protected.
 com_frameTimers	0		code/qcommon/common.c:1927	Print a microsecond breakdown of each frame, averaged over this many frames. 0 is off. Not a cheat, so it works in demos.
 com_gamename			code/qcommon/common.c:1957	Game name used to find servers.
+com_hitchLog	0		code/qcommon/common.c:2491	Prints where the time went in any frame longer than this many milliseconds: the engine, the cgame's stages, the renderer's view, and any configstring (a new model or sound) that was slow to take in. 0 is off. For finding hitches.
 com_homepath			code/qcommon/common.c:1773	Folder name for user data in the home path.
 com_legacyprotocol			code/qcommon/common.c:1961	Older network protocol also accepted.
 com_maxfps	0		code/qcommon/common.c:1910	Frame rate cap. 0 is unlimited; MOH:AA's physics prefer values like 60, 85, 125.
@@ -589,6 +590,7 @@ g_playerdeltamethod	0		code/fgame/gamecvars.cpp:648	How player state is delta-co
 g_playerdmhealth	0		code/fgame/player.cpp:2434	Multiplayer: player maximum health. 0 uses the default of 100. Server setting.
 g_playermodel			code/fgame/gamecvars.cpp:497	Player model in single player (under models/player/). Saved with savegames.
 g_playerStacking	0	1	code/fgame/gamecvars.cpp:776	Multiplayer: allow standing on other players' heads. Server setting.
+g_precacheScriptModels	0	1	code/fgame/gamecvars.cpp:837	Loads with the level every model the map's scripts name (its own script, and a mod's that dresses the AI at random, such as HRRTM's), so a new soldier's model and textures are not loaded in the middle of a fight. Single player.
 g_prone	0	1	code/fgame/gamecvars.cpp:833	Lying prone in single player (the prone command, bound to C): crawl, dive from a run or sprint.
 g_prone_raise_time	0	2	code/fgame/gamecvars.cpp:839	Seconds after the player stops crawling before his weapon is back up and can fire.
 g_prone_speed	0	1	code/fgame/gamecvars.cpp:834	Crawling speed while prone, as a fraction of the run speed.
@@ -1220,6 +1222,7 @@ ter_maxlod	3	6	code/renderergl1/tr_terrain.c:1628	Maximum terrain detail level.
 ter_maxtris	16384	65536	code/renderergl1/tr_terrain.c:1639	Maximum terrain triangles.
 ter_minMarkRadius			code/renderergl1/tr_init.c:1553	Decals smaller than this are not placed on terrain.
 thereisnomonkey	0	1	code/fgame/entity.cpp:5152	Single player cheats: dog (god mode), noclip, notarget, give, wuss and the rest of the cheat commands.
+tiki_loadlog	0	2	code/tiki/tiki_cache.cpp:220	Prints how long each model takes to load and register; 2 adds each of its shaders and images that took a while. For finding what a level loads while it is played.
 timedemo	0	1	code/client/cl_main.cpp:3598	Play demos as fast as possible and report the frame rate. Cheat-protected.
 timegraph	0	1	code/client/cl_scrn.cpp:416	Debug: draw the frame time graph. Cheat-protected.
 timelimit	0		code/server/sv_init.c:1049	Multiplayer: minutes per map. 0 no limit. Server setting.

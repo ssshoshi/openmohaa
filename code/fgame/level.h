@@ -298,6 +298,8 @@ public:
     void       LoadAllScripts(const char *name, const char *extension);
     void       Precache();
     void       SetMap(const char *themapname);
+    void       PrecacheScriptModels(); // Added in OPM
+    int        PrecacheScriptModel(con_set<str, int>& cached, const char *name);
     void       FindTeams();
 
     void SpawnEntities(char *entities, int _svsTime_);

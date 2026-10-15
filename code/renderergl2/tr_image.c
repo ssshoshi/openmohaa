@@ -2565,6 +2565,7 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	int picNumMips;
 	long	hash;
 	imgFlags_t checkFlagsTrue, checkFlagsFalse;
+	int		imgStartedAt, imgLoadedAt; // Added in OPM: tiki_loadlog 2
 
 	if (!name) {
 		return NULL;
@@ -2594,8 +2595,13 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	//
 	// load the pic from disk
 	//
+	imgStartedAt = ri.Milliseconds();
 	R_LoadImage( name, &pic, &width, &height, &picFormat, &picNumMips );
+	imgLoadedAt = ri.Milliseconds();
 	if ( pic == NULL ) {
+		if ( imgLoadedAt - imgStartedAt >= 3 && ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 ) {
+			ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms looking for image %s, not found\n", imgLoadedAt - imgStartedAt, name );
+		}
 		return NULL;
 	}
 
@@ -2725,6 +2731,10 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 
 	image = R_CreateImage2( ( char * ) name, pic, width, height, picFormat, picNumMips, type, flags, 0 );
 	ri.Free( pic );
+	if ( ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 && ri.Milliseconds() - imgStartedAt >= 3 ) {
+		ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms image %s (%dx%d, %d mips, format 0x%x): %d reading, %d the rest\n", ri.Milliseconds() - imgStartedAt, name,
+			width, height, picNumMips, picFormat, imgLoadedAt - imgStartedAt, ri.Milliseconds() - imgLoadedAt );
+	}
 	return image;
 }
 

@@ -1821,13 +1821,20 @@ void R_AddEntitySurfaces (void) {
 R_GenerateDrawSurfs
 ====================
 */
+// Added in OPM: where a scene's view went, ms, for com_hitchLog
+int r_viewMs[6]; // world, polygons, entities, sprites, sort, other views
+
 void R_GenerateDrawSurfs( void ) {
+	int at = ri.Milliseconds(), now;
+
 	R_AddWorldSurfaces ();
+	now = ri.Milliseconds(); r_viewMs[0] += now - at; at = now;
 
 	// Added in OPM
 	//  A realtime light's shadow of what stands still has the world alone.
 	if (!(tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)))
 		R_AddPolygonSurfaces();
+	now = ri.Milliseconds(); r_viewMs[1] += now - at; at = now;
 
 	// set the projection matrix with the minimum zfar
 	// now that we have the world bounded
@@ -1849,6 +1856,7 @@ void R_GenerateDrawSurfs( void ) {
 		return;
 
 	R_AddEntitySurfaces ();
+	now = ri.Milliseconds(); r_viewMs[2] += now - at; at = now;
 
 	if (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC))
 		return;
@@ -1858,6 +1866,7 @@ void R_GenerateDrawSurfs( void ) {
     //=========================
     R_AddSpriteSurfaces();
 	//=========================
+	r_viewMs[3] += ri.Milliseconds() - at;
 }
 
 /*
@@ -2201,9 +2210,14 @@ void R_RenderView (viewParms_t *parms) {
 		numDrawSurfs = MAX_DRAWSURFS;
 	}
 
-	R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf,
-        tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf
-	);
+	{
+		const int at = ri.Milliseconds();
+
+		R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf,
+			tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf
+		);
+		r_viewMs[4] += ri.Milliseconds() - at;
+	}
 
 	// draw main system development information (surface outlines, etc)
 	R_DebugGraphics();
