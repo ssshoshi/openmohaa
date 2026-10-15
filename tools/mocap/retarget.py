@@ -19,7 +19,12 @@ way the mocap foot turns. The knee then bends in the plane the engine picks.
 Channels nothing maps (fingers, tags, the eyes and camera bones) keep the
 template's first frame. The clip is turned to face +X at its first frame and
 moved over the origin; root motion stays in the pose (delta 0), which is what
-an idle wants.
+an idle wants. --loop (or --repeat) sets the header's loop bit; without it a
+script_model plays the anim once and holds the last frame.
+
+Write the result to a NEW path and alias it in a TIKI. Overwriting a stock
+anim's .skc does nothing: the paks ship processed copies under newanim/<path>,
+and the loader (SkeletorCacheFileCallback) reads those first.
 """
 import argparse
 import math
@@ -215,7 +220,9 @@ def main():
     ap.add_argument("--start", type=float, default=0.0, help="seconds into the clip (the T-pose frame is skipped)")
     ap.add_argument("--end", type=float, default=None)
     ap.add_argument("--fps", type=float, default=30.0)
-    ap.add_argument("--loop", type=float, default=0.0, help="seconds at the end blended into the start")
+    ap.add_argument("--loop", type=float, default=0.0,
+                    help="seconds at the end blended into the start; also marks the anim as looping")
+    ap.add_argument("--repeat", action="store_true", help="mark the anim as looping without blending")
     a = ap.parse_args()
 
     clip = Bvh(open(a.bvh).read())
@@ -253,7 +260,10 @@ def main():
     for c in chans:
         b, r = bounds_of(bones, c)
         meta.append(dict(bounds=b, radius=r, delta=(0.0, 0.0, 0.0), angle_delta=0.0))
-    anim = dict(flags=tmpl["flags"], frame_time=clip.frame_time * step, total_delta=np.zeros(3),
+    flags = tmpl["flags"]
+    if a.loop or a.repeat:
+        flags |= M.ANIM_LOOP
+    anim = dict(flags=flags, frame_time=clip.frame_time * step, total_delta=np.zeros(3),
                 total_angle=0.0, names=names, values=values, meta=meta)
     open(a.out, "wb").write(M.write_skc(anim))
     print("%s: %d frames at %.1f fps, scale %.2f" % (a.out, len(chans), 1.0 / anim["frame_time"], rt.scale))

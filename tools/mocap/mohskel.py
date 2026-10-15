@@ -20,6 +20,11 @@ ROTATION, POSROT, IKSHOULDER, IKELBOW, IKWRIST, HOSEROT, AVROT, ZERO = range(8)
 SKC_IDENT = b"SKAN"
 SKC_VERSION = 13
 
+# Header flag: the game repeats the anim (fgame/animate.h ANIM_LOOP, checked
+# against Anim_FlagsSkel). Without it a script_model plays it once and holds the
+# last frame; stock anims named "(loop)" don't always carry it.
+ANIM_LOOP = 0x20
+
 
 # ---- quaternions (x, y, z, w), matching q_math.c --------------------------
 
