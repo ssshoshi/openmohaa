@@ -19,7 +19,8 @@ should:
 	local.mod = self.fact.meansofdeath
 	local.damage = self.fact.damage
 
-	if (getcvar "g_opm_knockdown" == "0")
+	// Single player only: where he lies is the client's to say (opm_kdpose).
+	if (getcvar "g_gametype" != "0" || getcvar "g_opm_knockdown" == "0")
 		end 0
 	// for testing: every hit
 	if (getcvar "g_opm_knockdown" == "2")
