@@ -205,6 +205,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS },
 	{ "u_SkelNumDents",    GLSL_INT },
 	{ "u_SkelDents",       GLSL_VEC4_SKELDENTS },
+	{ "u_SkelMorphMap",    GLSL_INT },
+	{ "u_SkelNumMorphs",   GLSL_INT },
+	{ "u_SkelMorphs",      GLSL_VEC4_SKELMORPHS },
 	// Added in OPM: the water program (tr_water.c)
 	{ "u_WaterColor",      GLSL_VEC4 },
 	{ "u_WaterBlood",      GLSL_VEC4 },
@@ -1115,6 +1118,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_SKELDENTS:
 				size += sizeof(vec4_t) * SKEL_GPU_MAX_DENTS * 2;
 				break;
+			case GLSL_VEC4_SKELMORPHS:
+				size += sizeof(vec4_t) * (SKEL_GPU_MAX_MORPHS / 4);
+				break;
 			case GLSL_VEC4_WATERSPOTS:
 				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
 				break;
@@ -1387,6 +1393,36 @@ void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const ve
 
 	if (vec4s > SKEL_GPU_MAX_DENTS * 2) {
 		vec4s = SKEL_GPU_MAX_DENTS * 2;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+A posed model's morph targets' weights, four a vec4. Only the vec4s that hold
+them are sent, and only when they are not what the program has.
+*/
+void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELMORPHS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelMorphs: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_MORPHS / 4) {
+		vec4s = SKEL_GPU_MAX_MORPHS / 4;
 	}
 	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
 		return;
@@ -1705,7 +1741,7 @@ static qboolean GLSL_InitLightallShader(int i)
 
 	if (i & LIGHTDEF_SKEL_GPU)
 	{
-		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n#define SKEL_MAX_DENTS %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW, SKEL_GPU_MAX_DENTS));
+		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n#define SKEL_MAX_DENTS %d\n#define SKEL_MAX_MORPHS %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW, SKEL_GPU_MAX_DENTS, SKEL_GPU_MAX_MORPHS));
 		attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES
 			| ATTR_TANGENT | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR | ATTR_BONE_WEIGHTS | ATTR_LIGHTDIRECTION;
 	}
@@ -1752,6 +1788,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 

@@ -1710,6 +1710,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMDENTS, tess.skelGpu.numDents);
 			if (tess.skelGpu.numDents > 0)
 				GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, tess.skelGpu.dents, tess.skelGpu.numDents * 2);
+			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMMORPHS, tess.skelGpu.numMorphs);
+			if (tess.skelGpu.numMorphs > 0)
+				GLSL_SetUniformSkelMorphs(sp, UNIFORM_SKELMORPHS, tess.skelGpu.morphs, (tess.skelGpu.numMorphs + 3) / 4);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);

@@ -1129,6 +1129,22 @@ static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, flo
         // found morphs
         skeletorMorphCacheIndex += added;
         ent->e.hasMorph = qtrue;
+
+        // Added in OPM
+        //  A model with a face has morph targets whether or not this frame
+        //  moves it: a weight of nothing moves no vertex, so a face at rest
+        //  (most of the living, all of the dead) is skinned as one without,
+        //  which the vertex program can pose (tr_skelgpu.cpp).
+        {
+            const int *w = &skeletorMorphCache[ent->e.morphstart];
+            int        k;
+
+            for (k = 0; k < added && !w[k]; k++) {
+            }
+            if (k == added) {
+                ent->e.hasMorph = qfalse;
+            }
+        }
     }
 
     ent->posedScene = tr.sceneCount;

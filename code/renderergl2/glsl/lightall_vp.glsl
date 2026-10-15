@@ -127,6 +127,31 @@ uniform vec4      u_SkelLights[SKEL_MAX_LIGHTS * 3];
 // hollow
 uniform int       u_SkelNumDents;
 uniform vec4      u_SkelDents[SKEL_MAX_DENTS * 2];
+// a face moving (morphs, tr_skelgpu.cpp): each vertex's morphs a texel each,
+// the offset and which target (the first and how many are its texcoord's zw),
+// and the model's targets' weights, four a vec4
+uniform sampler2D u_SkelMorphMap;
+uniform int       u_SkelNumMorphs;
+uniform vec4      u_SkelMorphs[SKEL_MAX_MORPHS / 4];
+
+// what the face's targets move a vertex by, in its first bone's space
+// (SkelMorphGetXyz, added to the first weight as SkelWeightMorphGetXyz does)
+vec3 SkelMorph(vec2 list)
+{
+	vec3 m = vec3(0.0);
+	int  first = int(list.x + 0.5);
+	int  n     = int(list.y + 0.5);
+
+	for (int k = 0; k < 64; k++)
+	{
+		if (k >= n) break;
+		int  t = first + k;
+		vec4 e = texelFetch(u_SkelMorphMap, ivec2(t - (t / SKEL_BONE_ROW) * SKEL_BONE_ROW, t / SKEL_BONE_ROW), 0);
+		int  i = int(e.w + 0.5);
+		m += u_SkelMorphs[i / 4][i - (i / 4) * 4] * e.xyz;
+	}
+	return m;
+}
 
 vec4 SkelTexel(int bone, int k)
 {
@@ -333,7 +358,10 @@ void main()
 	vec3 tangent   = normalize(nrmMat * attr_Tangent.xyz);
   #endif
 #elif defined(USE_SKEL_GPU)
-	vec3 position = SkelWeight(attr_Position, attr_BoneIndexes.x);
+	vec4 firstWeight = attr_Position;
+	if (u_SkelNumMorphs > 0 && attr_TexCoord0.w > 0.5)
+		firstWeight.xyz += SkelMorph(attr_TexCoord0.zw);
+	vec3 position = SkelWeight(firstWeight, attr_BoneIndexes.x);
 	if (attr_Position2.w != 0.0) position += SkelWeight(attr_Position2, attr_BoneIndexes.y);
 	if (attr_Normal2.w != 0.0)   position += SkelWeight(attr_Normal2, attr_BoneIndexes.z);
 	if (attr_Tangent2.w != 0.0)  position += SkelWeight(attr_Tangent2, attr_BoneIndexes.w);

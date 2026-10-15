@@ -531,9 +531,12 @@ enum
 #define TMU_RTCAPSULES  11
 #define TMU_SOFTDEPTH   12 // Added in OPM: the view's depth, for soft particles
 #define TMU_SKELBONES   13 // Added in OPM: the frame's bones, for the models the vertex program poses
+#define TMU_SKELMORPHS  14 // Added in OPM: the models' morphs, for the same
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
+#define SKEL_GPU_MAX_MORPHS 64 // Added in OPM: the morph targets (a face) a posed model takes in the vertex program
+#define SKEL_GPU_MORPH_ROWS 512 // Added in OPM: rows of tr.skelMorphImage, SKEL_GPU_BONE_ROW texels each
 
 typedef enum
 {
@@ -848,6 +851,7 @@ enum
 	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
+	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
 	GLSL_VEC4_WATERSPOTS  // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
 };
 
@@ -993,6 +997,9 @@ typedef enum
 	UNIFORM_SKELLIGHTS,
 	UNIFORM_SKELNUMDENTS,
 	UNIFORM_SKELDENTS,
+	UNIFORM_SKELMORPHMAP,  // Added in OPM: the morphs of the models the vertex program poses
+	UNIFORM_SKELNUMMORPHS,
+	UNIFORM_SKELMORPHS,
 	UNIFORM_WATERCOLOR,   // Added in OPM: the water program (tr_water.c)
 	UNIFORM_WATERBLOOD,
 	UNIFORM_WATERWAVES,
@@ -2645,6 +2652,7 @@ typedef struct {
     vec4_t   rtAmbient;
     image_t *rtCapsuleImage;   // two texels a capsule: (a, radius), (b, 0)
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
+    image_t *skelMorphImage;   // Added in OPM: each posed surface's vertexes' morphs: offset, which target (tr_skelgpu.c)
     int rendererhandle;
     qboolean shadersParsed;
     int frame_skel_index;
@@ -3321,6 +3329,8 @@ typedef struct shaderCommands_s
 		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
 		int      numDents;     // R_GoreDentsGpu
 		vec4_t   dents[SKEL_GPU_MAX_DENTS * 2];
+		int      numMorphs;    // the face's morph targets' weights, 0 for none
+		vec4_t   morphs[SKEL_GPU_MAX_MORPHS / 4];
 		int      numBones;     // the model's, from params[0]
 	} skelGpu;
 
@@ -3542,6 +3552,7 @@ void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec
 void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count);
 void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
