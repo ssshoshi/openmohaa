@@ -316,6 +316,7 @@ with all their light; and the fixture, which is round the light now, casts no
 shadow of it.
 */
 #define RT_FIXTURE_REACH 40.0f
+#define RT_FIXTURE_TALL  80.0f  // a fixture longer than this keeps its light where the lights are
 #define RT_MERGE_REACH   48.0f // point lights this close are one lamp
 
 static void R_RtLightsAtFixtures(void)
@@ -324,7 +325,8 @@ static void R_RtLightsAtFixtures(void)
 
 	for (i = 0; i < tr.world->numStaticModels; i++) {
 		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
-		vec3_t                  centre, sum, colour;
+		vec3_t                  centre, sum, colour, boxMins, boxMaxs;
+		qboolean                tall;
 		float                   weight = 0;
 		int                     count  = 0, keep = -1;
 
@@ -335,9 +337,11 @@ static void R_RtLightsAtFixtures(void)
 		sm->rtFixture = qtrue;
 		fixtures++;
 
-		// its middle
-		VectorAdd(sm->tiki->a->mins, sm->tiki->a->maxs, centre);
-		VectorScale(centre, 0.5f * sm->tiki->load_scale * sm->scale, centre);
+		// its middle, and its box in its own frame
+		VectorScale(sm->tiki->a->mins, sm->tiki->load_scale * sm->scale, boxMins);
+		VectorScale(sm->tiki->a->maxs, sm->tiki->load_scale * sm->scale, boxMaxs);
+		VectorAdd(boxMins, boxMaxs, centre);
+		VectorScale(centre, 0.5f, centre);
 		{
 			vec3_t local;
 
@@ -347,6 +351,11 @@ static void R_RtLightsAtFixtures(void)
 				VectorMA(centre, local[j], sm->axis[j], centre);
 			}
 		}
+		// A long one -- a bulb at the end of a wire two hundred units long --
+		// takes the lights near any of it, and its light stays where they
+		// are, at the bulb, rather than going to the middle of the wire.
+		tall = (boxMaxs[0] - boxMins[0] > RT_FIXTURE_TALL || boxMaxs[1] - boxMins[1] > RT_FIXTURE_TALL
+				|| boxMaxs[2] - boxMins[2] > RT_FIXTURE_TALL) ? qtrue : qfalse;
 
 		if (!r_rtLightsAtFixtures->integer) {
 			continue;
@@ -358,7 +367,25 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *l = &rt.lights[j];
 			float      w;
 
-			if (l->spot || l->range <= 0 || Distance(l->origin, centre) > RT_FIXTURE_REACH) {
+			if (l->spot || l->range <= 0) {
+				continue;
+			}
+			if (tall) {
+				vec3_t d;
+				float  out = 0;
+				int    k;
+
+				// how far outside its box
+				VectorSubtract(l->origin, sm->origin, d);
+				for (k = 0; k < 3; k++) {
+					const float v = DotProduct(d, sm->axis[k]);
+
+					out += Square(v < boxMins[k] ? boxMins[k] - v : v > boxMaxs[k] ? v - boxMaxs[k] : 0);
+				}
+				if (out > Square(RT_FIXTURE_REACH)) {
+					continue;
+				}
+			} else if (Distance(l->origin, centre) > RT_FIXTURE_REACH) {
 				continue;
 			}
 
@@ -383,7 +410,11 @@ static void R_RtLightsAtFixtures(void)
 			float      brightest;
 
 			l->fixture = i;
-			VectorCopy(centre, l->origin);
+			if (tall) {
+				VectorScale(sum, 1.0f / Q_max(weight, 1e-6f), l->origin);
+			} else {
+				VectorCopy(centre, l->origin);
+			}
 			VectorCopy(colour, l->color);
 			brightest = Q_max(l->color[0], Q_max(l->color[1], l->color[2]));
 			l->range  = Q_min(4096.0f, sqrt(brightest / RT_CUTOFF));

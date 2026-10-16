@@ -37,6 +37,7 @@ cvar_t *cg_physics;
 cvar_t *cg_physics_log;
 cvar_t *cg_physics_debug;
 cvar_t *cg_physics_props;
+cvar_t *cg_physics_hanging;
 cvar_t *cg_physics_clipped;
 
 // The simulation's clock: a fixed step, as the ragdolls use, with a few steps
@@ -80,6 +81,7 @@ void CG_InitPhysics(void)
     cg_physics_log   = cgi.Cvar_Get("cg_physics_log", "0", CVAR_ARCHIVE);
     cg_physics_debug = cgi.Cvar_Get("cg_physics_debug", "0", 0);
     cg_physics_props = cgi.Cvar_Get("cg_physics_props", "1", CVAR_ARCHIVE | CVAR_LATCH);
+    cg_physics_hanging = cgi.Cvar_Get("cg_physics_hanging", "1", CVAR_ARCHIVE | CVAR_LATCH);
     // Props the map wraps in invisible clip brushes (most furniture), on a
     // server elsewhere: 0 keeps them fixed, 1 moves them anyway, leaving the
     // clip brush where the prop was for the server to go on colliding players
