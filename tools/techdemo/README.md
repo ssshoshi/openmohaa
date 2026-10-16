@@ -5,7 +5,7 @@ and compiled with MOH:AA's own tools.
 
 | Zone | Where | For |
 |---|---|---|
-| Lighting hall | west | 16 coloured lamps and two spots among pillars: realtime lights and their shadows |
+| Lighting hall | west | 16 coloured lamps and two spots among pillars: realtime lights and their shadows; three lights moving among them (`techdemo_movers 0` stops them) |
 | Physics room | north | crates, chairs, tables, bottles, buckets and a ramp: physics props and impact sounds |
 | Firing range | north-east | 8 passive soldiers and gas barrels (`func_barrel`) behind sandbags: gore, blasts, ragdolls |
 | Gallery | east | 12 wall textures that have material maps, lamps raking down them: normal and parallax maps |

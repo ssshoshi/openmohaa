@@ -255,6 +255,9 @@ def build_hall(m):
 
 PHYS = (-512, 2048, 1536, 3328, 320)
 
+# how high static/square_table.tik's top is
+TABLE_TOP = 48
+
 
 def build_physics(m):
     x1, y1, x2, y2, h = PHYS
@@ -283,11 +286,16 @@ def build_physics(m):
     for tx, ty in ((256, 2432), (768, 2560), (128, 2752)):
         static(m, "static/square_table.tik", (tx, ty, z0))
         for k, model in enumerate(("static/bottle_large.tik", "static/bottle_small.tik", "static/jug.tik", "static/bucket.tik")):
-            static(m, model, (tx - 18 + (k % 2) * 36, ty - 12 + (k // 2) * 24, z0 + 30), yaw=k * 40)
+            static(m, model, (tx - 18 + (k % 2) * 36, ty - 12 + (k // 2) * 24, z0 + TABLE_TOP), yaw=k * 40)
         for k, (ox, oy, yaw) in enumerate(((0, -48, 90), (0, 48, 270), (-48, 0, 0), (48, 0, 180))):
             static(m, "furniture/woodchair.tik" if k % 2 else "furniture/simplechair.tik", (tx + ox, ty + oy, z0), yaw=yaw)
     for k in range(6):
         static(m, "static/bucket.tik", (1300 + (k % 3) * 40, 2700 + (k // 3) * 40, z0 + 160))
+    # a lantern on a table of its own, alight: a prop that carries its light
+    # (knock it over and the light, and its shadows, go with it)
+    static(m, "static/square_table.tik", (900, 2850, z0))
+    static(m, "static/german_lantern.tik", (900, 2850, z0 + TABLE_TOP))
+    light(m, (900, 2850, z0 + TABLE_TOP + 12), 10, (1, 0.7, 0.4))
 
 
 GALLERY_BOX = (1792, 512, 3328, 1024, 256)
