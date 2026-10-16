@@ -1670,9 +1670,18 @@ static void R_RtFollowFixtures(void)
 			VectorMA(origin, l->fixtureLocal[j], sm->axis[j], origin);
 			VectorMA(dir, l->spotDirLocal[j], sm->axis[j], dir);
 		}
-		// a spot light turns with it (the axes may be scaled down to almost
-		// nothing, for a model the client draws in its place)
-		if (l->spot && VectorNormalize(dir) > 0.0f && DotProduct(dir, l->spotDir) < 0.9998f) {
+		// a spot light turns with it. The axes may be scaled down to almost
+		// nothing, for a model the client draws in its place, and
+		// VectorNormalize leaves a vector that short as it is: brought back
+		// to their length first.
+		{
+			const float length = VectorLength(sm->axis[2]);
+
+			if (length > 0.0f) {
+				VectorScale(dir, 1.0f / length, dir);
+			}
+		}
+		if (l->spot && VectorNormalize(dir) > 0.5f && DotProduct(dir, l->spotDir) < 0.9998f) {
 			VectorCopy(dir, l->spotDir);
 			turned = qtrue;
 		}
