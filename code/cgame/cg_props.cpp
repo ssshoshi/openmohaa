@@ -656,7 +656,7 @@ void CG_PropsLoad(void)
         p->dynamic     = qfalse;
         p->hangs       = qfalse;
         p->corded      = qfalse;
-        p->cordCorona  = -1;
+        p->numCordCoronas = 0;
 
         for (k = 0; k < 3; k++) {
             biggest = Q_max(biggest, p->maxs[k] - p->mins[k]);
@@ -727,8 +727,8 @@ void CG_PropsLoad(void)
         kept++;
     }
 
-    // Each lamp on a cord takes the corona at its bulb with it, the nearest
-    // within a little of it, one corona a lamp.
+    // Each lamp on a cord takes the coronas at its bulb with it: those within
+    // a little of it (a map may put two there, a glow and a flare).
     {
         static qboolean taken[CG_MAX_CORONAS];
         int             j, k;
@@ -737,8 +737,6 @@ void CG_PropsLoad(void)
         for (i = 0; i < cg_numProps; i++) {
             cgProp_t *lamp = &cg_props[i];
             vec3_t    light, d;
-            float     best  = Square(32.0f);
-            int       found = -1;
 
             if (!lamp->corded) {
                 continue;
@@ -747,22 +745,19 @@ void CG_PropsLoad(void)
             for (k = 0; k < 3; k++) {
                 VectorMA(light, lamp->cordLight[k], lamp->axis[k], light);
             }
-            for (j = 0; j < cg_numCoronas; j++) {
-                const float d2 = DistanceSquared(cg_coronas[j].origin, light);
+            for (j = 0; j < cg_numCoronas && lamp->numCordCoronas < CG_PROP_MAX_CORONAS; j++) {
+                const int n = lamp->numCordCoronas;
 
-                if (!taken[j] && d2 < best) {
-                    best  = d2;
-                    found = j;
+                if (taken[j] || DistanceSquared(cg_coronas[j].origin, light) > Square(32.0f)) {
+                    continue;
                 }
-            }
-            if (found < 0) {
-                continue;
-            }
-            taken[found]     = qtrue;
-            lamp->cordCorona = found;
-            VectorSubtract(cg_coronas[found].origin, lamp->origin, d);
-            for (k = 0; k < 3; k++) {
-                lamp->cordCoronaLocal[k] = DotProduct(d, lamp->axis[k]);
+                taken[j]              = qtrue;
+                lamp->cordCoronas[n]  = j;
+                VectorSubtract(cg_coronas[j].origin, lamp->origin, d);
+                for (k = 0; k < 3; k++) {
+                    lamp->cordCoronaLocal[n][k] = DotProduct(d, lamp->axis[k]);
+                }
+                lamp->numCordCoronas++;
             }
         }
     }
