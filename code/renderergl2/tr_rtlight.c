@@ -123,6 +123,7 @@ typedef struct {
 	int      visFrame;     // the frame a leaf the view may see listed it
 	int      fixture;      // the static model it is the light of (R_RtLightsAtFixtures), -1 none
 	vec3_t   fixtureLocal; // where it is in that model's frame
+	vec3_t   spotDirLocal; // a spot light's direction in that model's frame
 	int      movedFrame;   // the frame it last moved with its fixture
 } rtLight_t;
 
@@ -367,7 +368,7 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *l = &rt.lights[j];
 			float      w;
 
-			if (l->spot || l->range <= 0) {
+			if (l->range <= 0) {
 				continue;
 			}
 			if (tall) {
@@ -386,6 +387,15 @@ static void R_RtLightsAtFixtures(void)
 					continue;
 				}
 			} else if (Distance(l->origin, centre) > RT_FIXTURE_REACH) {
+				continue;
+			}
+
+			// A spot light at a lamp (a shaded lamp's cone down onto what it
+			// lights) stays one of its own, and goes and turns with the lamp
+			if (l->spot) {
+				if (l->fixture < 0) {
+					l->fixture = i;
+				}
 				continue;
 			}
 
@@ -477,6 +487,7 @@ static void R_RtLightsAtFixtures(void)
 		VectorSubtract(l->origin, sm->origin, d);
 		for (j = 0; j < 3; j++) {
 			l->fixtureLocal[j] = DotProduct(d, sm->axis[j]);
+			l->spotDirLocal[j] = DotProduct(l->spotDir, sm->axis[j]);
 		}
 	}
 
@@ -1643,7 +1654,8 @@ static void R_RtFollowFixtures(void)
 	for (i = 0; i < rt.numLights; i++) {
 		rtLight_t                    *l = &rt.lights[i];
 		const cStaticModelUnpacked_t *sm;
-		vec3_t                        origin;
+		vec3_t                        origin, dir;
+		qboolean                      turned = qfalse;
 
 		if (l->fixture < 0 || l->fixture >= tr.world->numStaticModels) {
 			continue;
@@ -1653,10 +1665,18 @@ static void R_RtFollowFixtures(void)
 			continue;
 		}
 		VectorCopy(sm->origin, origin);
+		VectorClear(dir);
 		for (j = 0; j < 3; j++) {
 			VectorMA(origin, l->fixtureLocal[j], sm->axis[j], origin);
+			VectorMA(dir, l->spotDirLocal[j], sm->axis[j], dir);
 		}
-		if (DistanceSquared(origin, l->origin) < Square(RT_LIGHT_MOVE_EPSILON)) {
+		// a spot light turns with it (the axes may be scaled down to almost
+		// nothing, for a model the client draws in its place)
+		if (l->spot && VectorNormalize(dir) > 0.0f && DotProduct(dir, l->spotDir) < 0.9998f) {
+			VectorCopy(dir, l->spotDir);
+			turned = qtrue;
+		}
+		if (!turned && DistanceSquared(origin, l->origin) < Square(RT_LIGHT_MOVE_EPSILON)) {
 			continue;
 		}
 		VectorCopy(origin, l->origin);

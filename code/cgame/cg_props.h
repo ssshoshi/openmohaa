@@ -82,8 +82,10 @@ extern "C" {
         vec3_t    cordLight;          // its middle, where its light is
         vec3_t    cordAnchor;
         float     cordLength;
-        int       cordCorona;      // the glow at its bulb (cg_coronas), carried with it, or -1
-        vec3_t    cordCoronaLocal; // where that is in its frame
+#define CG_PROP_MAX_CORONAS 4
+        int       cordCoronas[CG_PROP_MAX_CORONAS];      // the glows at its bulb (cg_coronas), carried with it
+        vec3_t    cordCoronaLocal[CG_PROP_MAX_CORONAS];  // where each is in its frame
+        int       numCordCoronas;
         int      clipped; // the map's invisible clip brushes that stand in for it
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers
         int      numStandIns;

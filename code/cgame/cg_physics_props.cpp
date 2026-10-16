@@ -158,9 +158,11 @@ typedef struct {
 static std::vector<ppCord_t> pp_cords;
 
 // Where the renderer is to draw a prop. A lamp on a cord drawn as its lamp
-// without a wire (CG_PhysicsDrawCords) has its own model, wire and all, made
-// a point where the lamp's middle is: it draws nothing, and the realtime light
-// of the fixture, which follows it, stays in the lamp.
+// without a wire (CG_PhysicsDrawCords) has its own model, wire and all, shrunk
+// to a speck at the lamp's middle: it shows nothing, and the realtime light of
+// the fixture, which follows it, stays in the lamp, its spot light turned as
+// the lamp is (the axes keep their directions, scaled down).
+#define PP_CORD_HIDDEN_SCALE 0.0001f
 static void CG_PhysicsAxisFromQuat(JPH::QuatArg q, vec3_t axis[3]);
 
 static void CG_PhysicsSendPose(const cgProp_t *p, const vec3_t origin, const vec3_t axis[3])
@@ -173,9 +175,9 @@ static void CG_PhysicsSendPose(const cgProp_t *p, const vec3_t origin, const vec
         for (k = 0; k < 3; k++) {
             VectorMA(light, p->cordLight[k], axis[k], light);
         }
-        VectorClear(none[0]);
-        VectorClear(none[1]);
-        VectorClear(none[2]);
+        VectorScale(axis[0], PP_CORD_HIDDEN_SCALE, none[0]);
+        VectorScale(axis[1], PP_CORD_HIDDEN_SCALE, none[1]);
+        VectorScale(axis[2], PP_CORD_HIDDEN_SCALE, none[2]);
         cgi.R_SetStaticModelTransform(p->staticIndex, light, none);
         return;
     }
@@ -788,14 +790,14 @@ void CG_PhysicsDrawCords(float frac)
         // after a vid_restart the renderer has the model where the map put it
         CG_PhysicsSendPose(p, origin, axis);
 
-        // the glow at its bulb goes with it
-        if (p->cordCorona >= 0 && p->cordCorona < cg_numCoronas) {
-            const cgCorona_t *corona = &cg_coronas[p->cordCorona];
+        // the glows at its bulb go with it
+        for (int n = 0; n < p->numCordCoronas; n++) {
+            const cgCorona_t *corona = &cg_coronas[p->cordCoronas[n]];
             vec3_t            at;
 
             VectorCopy(origin, at);
             for (k = 0; k < 3; k++) {
-                VectorMA(at, p->cordCoronaLocal[k], axis[k], at);
+                VectorMA(at, p->cordCoronaLocal[n][k], axis[k], at);
             }
             cgi.R_SetStaticModelTransform(corona->staticIndex, at, corona->axis);
         }
