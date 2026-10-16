@@ -904,7 +904,16 @@ static void CVB_Close(void)
     // Back to the game, unless a menu is up.
     if (clc.state == CA_ACTIVE && !UI_MenuActive()) {
         UI_ActivateView3D();
+        // The mouse back to looking around, unless the console still has it.
+        if (!UI_ConsoleIsVisible()) {
+            IN_MouseOff();
+        }
     }
+}
+
+void UI_CloseCvarBrowser(void)
+{
+    CVB_Close();
 }
 
 // cvarbrowser [name]: opens the window, or closes it when open. With a name,
@@ -934,6 +943,9 @@ void UI_CvarBrowser_f(void)
         cvb_window->Select(name);
     }
     uWinMan.ActivateControl(cvb_window);
+    // A cursor for it, as a menu has: opened from a key in game, the mouse
+    // would still turn the view.
+    IN_MouseOn();
 }
 
 // cvarbrowser_view <all|changed|latched|cheats>

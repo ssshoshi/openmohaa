@@ -29,6 +29,8 @@ what is written to home\\main\\orch\\say.
                                      models where the player looks, in a row facing
                                      them; --compare puts each remaster beside its
                                      original (after remaster-pak and a relaunch)
+  orch.py soldier <name> [--noai] [--noattack] [--health N] [--weapon W]
+                                     a soldier where the player looks (spawnactor)
   orch.py remaster-pak <pk3|work>    the comparison pak, into the install's home
   orch.py stop                       close the live game (never any other)
 
@@ -1250,6 +1252,45 @@ def cmd_spawn(args):
         print("each original with its remaster on its right (as the player sees them)")
 
 
+def cmd_soldier(args):
+    """A soldier where the player looks, facing them: the game's spawnactor,
+    as the model browser's Soldiers view does."""
+    sys.path.insert(0, os.path.dirname(HERE))
+    import paks
+    pool = sorted({f for files in paks.index().values() for f in files
+                   if re.fullmatch(r"models/human/[^/]+\.tik", f, re.I) and not f.lower().endswith("/deaths.tik")})
+    if args.list:
+        print("\n".join(pool))
+        return
+    if not args.model:
+        sys.exit("which soldier? (--list shows them)")
+    found = match_models([args.model], pool)
+    # The weapons it has gear for, as the model browser lists them.
+    winner = None
+    for pak, files in paks.index().items():
+        if found[0] in files:
+            winner = pak
+    text = (paks.read(winner, found[0]) or b"").decode("latin-1") if winner else ""
+    weapons = re.findall(r'case\s+weapon\s+"([^"]*)"', text, re.I)
+    if args.weapons:
+        print("\n".join(weapons) or "(none listed)")
+        return
+    weapon = args.weapon or next((w for w in weapons if w.lower() != "none"), None)
+    if args.weapon and weapons and args.weapon.lower() not in [w.lower() for w in weapons]:
+        sys.exit(f"{found[0]} has no weapon {args.weapon!r}: " + ", ".join(weapons))
+    cmd = ["spawnactor"] + (["-noai"] if args.noai else []) + (["-noattack"] if args.noattack else [])
+    if args.health:
+        cmd += ["-health", "%g" % args.health]
+    if weapon:
+        cmd += ["-weapon", quote(weapon)]
+    if args.at:
+        cmd += ["-at"] + ["%g" % v for v in args.at]
+    out = run_commands(" ".join(cmd + [quote(found[0])]), 5.0)
+    if out is None:
+        sys.exit("the game didn't take the command (not running, or still loading?)")
+    sys.stdout.write(out)
+
+
 def cmd_status(args):
     procs = live_processes()
     live = [p for p in procs if p[2]]
@@ -1392,6 +1433,17 @@ def main():
     p.add_argument("--gap", type=float, default=16.0, help="units between an original and its remaster")
     p.add_argument("--max", type=int, default=32, help="at most this many models (the game takes 32)")
     p.set_defaults(fn=cmd_spawn)
+
+    p = sub.add_parser("soldier", help="a soldier where the player looks (spawnactor)")
+    p.add_argument("model", nargs="?", help="a models/human/ .tik or its name, e.g. german_wehrmacht_soldier")
+    p.add_argument("--noai", action="store_true", help="stands still (it still dies)")
+    p.add_argument("--noattack", action="store_true", help="its AI runs but it never fights")
+    p.add_argument("--health", type=float, help="its health (default: the model's own)")
+    p.add_argument("--weapon", help="one of its model's weapons (default: its first but none)")
+    p.add_argument("--weapons", action="store_true", help="the weapons its model has")
+    p.add_argument("--at", type=float, nargs=3, metavar=("X", "Y", "Z"))
+    p.add_argument("--list", action="store_true", help="the soldiers there are")
+    p.set_defaults(fn=cmd_soldier)
 
     p = sub.add_parser("remaster-pak", help="build the comparison pak (remasters beside the originals)")
     p.add_argument("source", help="a remaster pk3 or a mohaa_remaster.py work folder (its out/)")

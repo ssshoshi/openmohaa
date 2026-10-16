@@ -74,3 +74,8 @@ qboolean G_OrchScriptsCmd(struct gentity_s *ent);
 // models where the player looks, in a row facing them (the model browser,
 // orch.py spawn). Single player.
 qboolean G_OrchSpawnModelCmd(struct gentity_s *ent);
+// spawnactor [-noai] [-noattack] [-health n] [-weapon name] [-at x y z] <model.tik>: a soldier
+// where the player looks, facing them. Single player.
+qboolean G_OrchSpawnActorCmd(struct gentity_s *ent);
+// Whether spawnmodel or spawnactor made it.
+bool G_OrchSpawned(class Entity *ent);

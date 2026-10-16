@@ -1160,7 +1160,17 @@ void CL_KeyEvent(int key, qboolean down, unsigned time)
     // escape is always handled special
     if (key == K_ESCAPE) {
         if (down) {
-            qboolean wasup = UI_MenuUp();
+            qboolean wasup;
+
+            // Added in OPM
+            //  Escape closes the cvar or model browser, not the game.
+            if (UI_CvarBrowserOpen() || UI_ModelBrowserOpen()) {
+                UI_CloseModelBrowser();
+                UI_CloseCvarBrowser();
+                return;
+            }
+
+            wasup = UI_MenuUp();
             UI_DeactiveFloatingWindows();
 
             if (clc.state == CA_CINEMATIC) {

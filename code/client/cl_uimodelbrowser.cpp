@@ -26,12 +26,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // every model (.tik) the game can load, filtered by name. Spawn original puts
 // the selected one where the player looks, Spawn remaster its remaster
 // (models/remaster/..., the pak orch.py remaster-pak builds), and Spawn both
-// the two side by side, the remaster on the right. All go through the game's
-// spawnmodel command (fgame/g_orch.cpp), in single player.
+// the two side by side, the remaster on the right. The Soldiers view lists the
+// soldiers (models/human/) and spawns one with or without AI, attacking or
+// not, at a set health. All go through the game's spawnmodel and spawnactor
+// commands (fgame/g_orch.cpp), in single player.
 
 #include "cl_ui.h"
 #include "client.h"
 
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -251,10 +254,76 @@ CLASS_DECLARATION(UIWidget, UIModelInfo, NULL) {
 
 enum {
     MDB_VIEW_ALL,
-    MDB_VIEW_REMASTERED
+    MDB_VIEW_REMASTERED,
+    MDB_VIEW_SOLDIERS,
+    MDB_NUM_VIEWS
 };
 
-static const char *mdb_viewNames[] = {"all", "remastered"};
+static const char *mdb_viewNames[] = {"all", "remastered", "soldiers"};
+
+// A soldier: a model straight in models/human/ (all actors, but deaths.tik).
+static bool MDB_IsSoldier(const char *path)
+{
+    return !Q_stricmpn(path, "models/human/", 13) && !strchr(path + 13, '/') && Q_stricmp(path + 13, "deaths.tik");
+}
+
+static std::map<std::string, std::vector<std::string>> mdb_weapons;
+
+// The weapons a soldier's model has gear for: its 'case weapon "..."' lines,
+// the names a map's spawner gives (and spawnactor -weapon takes).
+static const std::vector<std::string>& MDB_Weapons(const char *path)
+{
+    const std::string key = MDB_Lower(path);
+    std::map<std::string, std::vector<std::string>>::iterator it = mdb_weapons.find(key);
+
+    if (it != mdb_weapons.end()) {
+        return it->second;
+    }
+
+    std::vector<std::string>& out = mdb_weapons[key];
+    void                     *buf = NULL;
+    const long                len = FS_ReadFile(path, &buf);
+
+    if (len > 0 && buf) {
+        const std::string text((const char *)buf, (size_t)len);
+        const std::string low = MDB_Lower(text);
+        size_t            pos = 0;
+
+        while ((pos = low.find("case weapon", pos)) != std::string::npos) {
+            const size_t open  = text.find('"', pos);
+            const size_t close = open == std::string::npos ? open : text.find('"', open + 1);
+            const size_t eol   = text.find('\n', pos);
+
+            pos += 11;
+            if (close == std::string::npos || (eol != std::string::npos && open > eol)) {
+                continue;
+            }
+            out.push_back(text.substr(open + 1, close - open - 1));
+        }
+        FS_FreeFile(buf);
+    }
+    return out;
+}
+
+// The weapon a soldier would get: the last one picked, when its model has it,
+// else its first that isn't "none".
+static str MDB_Weapon(const char *path)
+{
+    const std::vector<std::string>& list   = MDB_Weapons(path);
+    const char                     *picked = Cvar_VariableString("ui_mdb_weapon");
+
+    for (size_t i = 0; i < list.size(); i++) {
+        if (!Q_stricmp(list[i].c_str(), picked)) {
+            return list[i].c_str();
+        }
+    }
+    for (size_t i = 0; i < list.size(); i++) {
+        if (Q_stricmp(list[i].c_str(), "none")) {
+            return list[i].c_str();
+        }
+    }
+    return "";
+}
 
 static Event W_ModelBrowser_ChildSizeChanged(
     "modelbrowser_childsizechanged", EV_DEFAULT, NULL, NULL, "Signal that the child area of the model browser changed size"
@@ -274,8 +343,12 @@ public:
     UIModelInfo *info;
     UIField     *filter;
     UILabel     *filterLabel, *countLabel, *selectedLabel;
-    UIButton    *views[2];
+    UIButton    *views[MDB_NUM_VIEWS];
     UIButton    *spawnButton, *remasterButton, *compareButton, *clearButton, *cvarsButton;
+    // The Soldiers view's own row.
+    UIButton    *aiButton, *attackButton, *weaponButton, *soldierButton;
+    UILabel     *healthLabel;
+    UIField     *health;
 
     str lastFilter;
 
@@ -324,6 +397,7 @@ public:
 
         views[0] = MakeButton("All", "modelbrowser_view all");
         views[1] = MakeButton("Remastered", "modelbrowser_view remastered");
+        views[2] = MakeButton("Soldiers", "modelbrowser_view soldiers");
         countLabel = MakeLabel("");
 
         list = new UIModelList();
@@ -348,6 +422,17 @@ public:
         clearButton   = MakeButton("Clear", "spawnmodel -clear");
         cvarsButton   = MakeButton("Cvars", "modelbrowser; cvarbrowser");
 
+        aiButton      = MakeButton("", "toggle ui_mdb_noai");
+        attackButton  = MakeButton("", "toggle ui_mdb_noattack");
+        weaponButton  = MakeButton("", "modelbrowser_weapon");
+        healthLabel   = MakeLabel("Health");
+        health        = new UIField();
+        health->InitFrame(getChildSpace(), 0, 0, 60, 22, border_indent, "verdana-14");
+        health->setBackgroundColor(UColor(0.0f, 0.0f, 0.0f, 1.0f), true);
+        health->setForegroundColor(UWhite);
+        health->LinkCvar("ui_mdb_health");
+        soldierButton = MakeButton("Spawn soldier", "modelbrowser_spawn soldier");
+
         getChildSpace()->Connect(this, W_SizeChanged, W_ModelBrowser_ChildSizeChanged);
         Layout();
         Refill();
@@ -369,6 +454,8 @@ public:
         x += 54;
         views[1]->setFrame(UIRect2D(x, pad, 90, rowH));
         x += 94;
+        views[2]->setFrame(UIRect2D(x, pad, 70, rowH));
+        x += 74;
         countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 12, rowH));
 
         const float listTop = pad * 2 + rowH;
@@ -386,6 +473,20 @@ public:
         remasterButton->setFrame(UIRect2D(x, editTop, 120, rowH));
         x += 124;
         compareButton->setFrame(UIRect2D(x, editTop, 120, rowH));
+
+        // In the same place, for the Soldiers view.
+        x = pad;
+        aiButton->setFrame(UIRect2D(x, editTop, 74, rowH));
+        x += 78;
+        attackButton->setFrame(UIRect2D(x, editTop, 94, rowH));
+        x += 98;
+        weaponButton->setFrame(UIRect2D(x, editTop, 220, rowH));
+        x += 226;
+        healthLabel->setFrame(UIRect2D(x, editTop, 44, rowH));
+        x += 46;
+        health->setFrame(UIRect2D(x, editTop, 64, rowH));
+        x += 70;
+        soldierButton->setFrame(UIRect2D(x, editTop, 110, rowH));
         clearButton->setFrame(UIRect2D(s.width - pad - 148, editTop, 70, rowH));
         cvarsButton->setFrame(UIRect2D(s.width - pad - 74, editTop, 70, rowH));
     }
@@ -413,6 +514,9 @@ public:
             if (mdb_view == MDB_VIEW_REMASTERED && !remaster) {
                 continue;
             }
+            if (mdb_view == MDB_VIEW_SOLDIERS && !MDB_IsSoldier(p)) {
+                continue;
+            }
             if (needle.length() && !Q_stristr(p, needle.c_str())) {
                 continue;
             }
@@ -423,7 +527,8 @@ public:
         list->SortByColumn(MDB_COL_NAME);
         lastFilter = needle;
         countLabel->SetLabel(
-            mdb_remastered.size() ? va("%d shown, %d with a remaster", count, (int)mdb_remastered.size())
+            mdb_view == MDB_VIEW_SOLDIERS ? va("%d soldiers", count)
+            : mdb_remastered.size() ? va("%d shown, %d with a remaster", count, (int)mdb_remastered.size())
                                   : va("%d shown; no remaster pak loaded", count)
         );
 
@@ -465,7 +570,7 @@ public:
 
         if (item) {
             mdb_selected = item->path;
-            Cbuf_AddText("modelbrowser_spawn\n");
+            Cbuf_AddText(mdb_view == MDB_VIEW_SOLDIERS ? "modelbrowser_spawn soldier\n" : "modelbrowser_spawn\n");
         }
     }
 
@@ -489,16 +594,20 @@ public:
 
                 info->title = slash ? slash + 1 : item->path.c_str();
                 info->line1 = item->path;
-                info->line2 = item->remaster ? va("Has a remaster: %s", MDB_REMASTER) : "No remaster.";
-                if (item->remaster) {
-                    info->line2 += str(item->path.c_str() + 7) + "   Spawn both puts it on the original's right.";
+                if (mdb_view == MDB_VIEW_SOLDIERS) {
+                    info->line2 = "Set AI, Attack, Weapon and Health below (Health empty: the model's own), then Spawn soldier.";
+                } else {
+                    info->line2 = item->remaster ? va("Has a remaster: %s", MDB_REMASTER) : "No remaster.";
+                    if (item->remaster) {
+                        info->line2 += str(item->path.c_str() + 7) + "   Spawn both puts it on the original's right.";
+                    }
                 }
             } else {
                 info->title = "";
             }
         }
 
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < MDB_NUM_VIEWS; i++) {
             views[i]->setBackgroundColor(
                 i == mdb_view ? UColor(0.25f, 0.32f, 0.45f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true
             );
@@ -509,6 +618,25 @@ public:
         Dim(spawnButton, mdb_selected.length() != 0);
         Dim(remasterButton, remaster);
         Dim(compareButton, remaster);
+
+        const bool soldiers = mdb_view == MDB_VIEW_SOLDIERS;
+        spawnButton->setShow(!soldiers);
+        remasterButton->setShow(!soldiers);
+        compareButton->setShow(!soldiers);
+        aiButton->setShow(soldiers);
+        attackButton->setShow(soldiers);
+        healthLabel->setShow(soldiers);
+        health->setShow(soldiers);
+        soldierButton->setShow(soldiers);
+        weaponButton->setShow(soldiers);
+        aiButton->setTitle(Cvar_VariableIntegerValue("ui_mdb_noai") ? "AI: off" : "AI: on");
+        attackButton->setTitle(Cvar_VariableIntegerValue("ui_mdb_noattack") ? "Attack: off" : "Attack: on");
+        Dim(soldierButton, MDB_IsSoldier(mdb_selected));
+        {
+            const str w = MDB_IsSoldier(mdb_selected) ? MDB_Weapon(mdb_selected) : str();
+            weaponButton->setTitle(str("Weapon: ") + (w.length() ? w : str("-")));
+            Dim(weaponButton, MDB_Weapons(mdb_selected).size() > 1);
+        }
     }
 };
 
@@ -536,7 +664,16 @@ static void MDB_Close(void)
     }
     if (clc.state == CA_ACTIVE && !UI_MenuActive()) {
         UI_ActivateView3D();
+        // The mouse back to looking around, unless the console still has it.
+        if (!UI_ConsoleIsVisible()) {
+            IN_MouseOff();
+        }
     }
+}
+
+void UI_CloseModelBrowser(void)
+{
+    MDB_Close();
 }
 
 // The listed model a name means: a path (models/ and .tik optional), or a
@@ -591,7 +728,7 @@ void UI_ModelBrowser_f(void)
         return;
     }
 
-    const float w = Q_min(760.0f, uid.vidWidth * 0.9f);
+    const float w = Q_min(900.0f, uid.vidWidth * 0.9f);
     const float h = Q_min(700.0f, uid.vidHeight * 0.9f);
 
     mdb_window = new UIModelBrowser();
@@ -600,6 +737,9 @@ void UI_ModelBrowser_f(void)
     );
     mdb_window->Build();
     uWinMan.ActivateControl(mdb_window);
+    // A cursor for it, as a menu has: opened from a key in game, the mouse
+    // would still turn the view.
+    IN_MouseOn();
 }
 
 // modelbrowser_view <all|remastered>
@@ -608,21 +748,42 @@ static void UI_ModelBrowserView_f(void)
     if (!mdb_window) {
         return;
     }
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < MDB_NUM_VIEWS; i++) {
         if (!Q_stricmp(Cmd_Argv(1), mdb_viewNames[i])) {
             mdb_window->SetView(i);
         }
     }
 }
 
-// modelbrowser_spawn [remaster|both]: the selected model where the player
-// looks, its remaster instead, or both (the remaster on the original's
-// right); the window closes so they can be seen.
+// modelbrowser_spawn [remaster|both|soldier]: the selected model where the
+// player looks, its remaster instead, both (the remaster on the original's
+// right), or as a soldier with the Soldiers view's settings; the window closes
+// so they can be seen.
 static void UI_ModelBrowserSpawn_f(void)
 {
     const char *which = Cmd_Argv(1);
 
     if (!mdb_selected.length()) {
+        return;
+    }
+    if (!Q_stricmp(which, "soldier")) {
+        const int hp = Cvar_VariableIntegerValue("ui_mdb_health");
+
+        if (!MDB_IsSoldier(mdb_selected)) {
+            Com_Printf("modelbrowser: %s isn't a soldier\n", mdb_selected.c_str());
+            return;
+        }
+        MDB_Close();
+        const str weapon = MDB_Weapon(mdb_selected);
+
+        Cbuf_AddText(va(
+            "spawnactor %s%s%s%s\"%s\"\n",
+            Cvar_VariableIntegerValue("ui_mdb_noai") ? "-noai " : "",
+            Cvar_VariableIntegerValue("ui_mdb_noattack") ? "-noattack " : "",
+            hp > 0 ? va("-health %d ", hp) : "",
+            weapon.length() ? va("-weapon \"%s\" ", weapon.c_str()) : "",
+            mdb_selected.c_str()
+        ));
         return;
     }
     if ((!Q_stricmp(which, "remaster") || !Q_stricmp(which, "both")) && !MDB_HasRemaster(mdb_selected)) {
@@ -637,13 +798,33 @@ static void UI_ModelBrowserSpawn_f(void)
     }
 }
 
+// modelbrowser_weapon: the selected soldier's next weapon.
+static void UI_ModelBrowserWeapon_f(void)
+{
+    const std::vector<std::string>& list = MDB_Weapons(mdb_selected);
+    const str                       cur  = MDB_Weapon(mdb_selected);
+    size_t                          i;
+
+    if (list.empty()) {
+        return;
+    }
+    for (i = 0; i < list.size() && Q_stricmp(list[i].c_str(), cur); i++) {}
+    Cvar_Set("ui_mdb_weapon", list[(i + 1) % list.size()].c_str());
+}
+
 void UI_InitModelBrowser(void)
 {
     Cvar_Get("ui_mdb_filter", "", CVAR_TEMP);
+    // The Soldiers view's settings, kept: health empty or 0 is the model's own.
+    Cvar_Get("ui_mdb_noai", "0", CVAR_ARCHIVE);
+    Cvar_Get("ui_mdb_noattack", "0", CVAR_ARCHIVE);
+    Cvar_Get("ui_mdb_health", "", CVAR_ARCHIVE);
+    Cvar_Get("ui_mdb_weapon", "", CVAR_ARCHIVE);
 
     Cmd_AddCommand("modelbrowser", UI_ModelBrowser_f);
     Cmd_AddCommand("modelbrowser_view", UI_ModelBrowserView_f);
     Cmd_AddCommand("modelbrowser_spawn", UI_ModelBrowserSpawn_f);
+    Cmd_AddCommand("modelbrowser_weapon", UI_ModelBrowserWeapon_f);
 }
 
 void UI_ShutdownModelBrowser(void)
@@ -656,9 +837,11 @@ void UI_ShutdownModelBrowser(void)
     Cmd_RemoveCommand("modelbrowser");
     Cmd_RemoveCommand("modelbrowser_view");
     Cmd_RemoveCommand("modelbrowser_spawn");
+    Cmd_RemoveCommand("modelbrowser_weapon");
 
     // The pk3s may change with the next game.
     mdb_models.clear();
     mdb_remastered.clear();
+    mdb_weapons.clear();
     mdb_listed = false;
 }

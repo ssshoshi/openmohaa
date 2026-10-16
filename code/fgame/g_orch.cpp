@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "scriptthread.h"
 #include "scriptexception.h"
 #include "scriptslave.h"
+#include "g_spawn.h"
 #include "../script/scriptvm.h"
 #include "../script/scriptclass.h"
 
@@ -963,5 +964,161 @@ qboolean G_OrchSpawnModelCmd(gentity_t *ent)
         gi.Printf("spawnmodel: %s at (%.0f %.0f %.0f)\n", m->model.c_str(), tr.endpos[0], tr.endpos[1], tr.endpos[2]);
         cursor += Q_max(m->maxs[1] - m->mins[1], 8.0f) + (compare && (i % 2) ? gap : gap * 3);
     }
+    return qtrue;
+}
+
+// For the model browser's soldiers; actor.cpp declares it.
+extern Event EV_Actor_AIOff;
+extern Event EV_Actor_EnableEnemy;
+
+bool G_OrchSpawned(Entity *ent)
+{
+    return ent && !Q_stricmp(ent->TargetName().c_str(), ORCH_SPAWN_NAME);
+}
+
+// spawnactor [-noai] [-noattack] [-health n] [-weapon name] [-at x y z] <model.tik>
+// A soldier where the player looks, facing them. -noai: stands still (ai_off;
+// it still dies, see Actor::EventKilled). -noattack: its AI runs but it never
+// fights: it takes no enemy (enableEnemy 0). -health: its health and
+// max health (the model's own otherwise). -weapon: one of the model's
+// "case weapon" names; without it, unarmed. -clear goes through spawnmodel.
+// Single player.
+qboolean G_OrchSpawnActorCmd(gentity_t *ent)
+{
+    Player   *player = ent && ent->entity && ent->entity->IsSubclassOfPlayer() ? (Player *)ent->entity : NULL;
+    bool      noAI = false, noAttack = false, haveAt = false;
+    float     health = 0;
+    Vector    at;
+    str       path, weapon;
+    SpawnArgs args;
+    Listener *l;
+    Actor    *actor;
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER) {
+        gi.Printf("spawnactor: single player only\n");
+        return qtrue;
+    }
+
+    for (int i = 1; i < gi.Argc(); i++) {
+        const char *a = gi.Argv(i);
+
+        if (!Q_stricmp(a, "-noai")) {
+            noAI = true;
+        } else if (!Q_stricmp(a, "-noattack")) {
+            noAttack = true;
+        } else if (!Q_stricmp(a, "-health") && i + 1 < gi.Argc()) {
+            health = atof(gi.Argv(++i));
+        } else if (!Q_stricmp(a, "-weapon") && i + 1 < gi.Argc()) {
+            weapon = gi.Argv(++i);
+        } else if (!Q_stricmp(a, "-at") && i + 3 < gi.Argc()) {
+            at     = Vector(atof(gi.Argv(i + 1)), atof(gi.Argv(i + 2)), atof(gi.Argv(i + 3)));
+            haveAt = true;
+            i += 3;
+        } else {
+            path = a;
+        }
+    }
+
+    if (!path.length()) {
+        gi.Printf("Usage: spawnactor [-noai] [-noattack] [-health n] [-weapon name] [-at x y z] <model.tik>\n");
+        return qtrue;
+    }
+    if (!player && g_entities[0].entity && g_entities[0].entity->IsSubclassOfPlayer()) {
+        player = (Player *)g_entities[0].entity;
+    }
+    if (!player) {
+        gi.Printf("spawnactor: no player\n");
+        return qtrue;
+    }
+
+    const Vector eye    = player->EyePosition();
+    const Vector vangle = player->GetViewAngles();
+    Vector       look, fwd;
+
+    vangle.AngleVectors(&look);
+    Vector(0, vangle[1], 0).AngleVectors(&fwd);
+
+    if (!haveAt) {
+        trace_t tr = G_Trace(eye, vec_zero, vec_zero, eye + look * 8192, player, MASK_SOLID, false, "spawnactor");
+
+        if (tr.fraction < 1 && (Vector(tr.endpos) - eye).length() < ORCH_SPAWN_DIST * 3) {
+            // Back from a wall, a body's width.
+            at = Vector(tr.endpos) - fwd * 32;
+        } else {
+            at    = eye + fwd * ORCH_SPAWN_DIST;
+            at[2] = player->origin[2];
+        }
+        // Not inside the player.
+        if ((at - player->origin) * fwd < 64) {
+            at = player->origin + fwd * 64;
+        }
+    }
+    {
+        trace_t tr = G_Trace(at + Vector(0, 0, 48), vec_zero, vec_zero, at - Vector(0, 0, 256), NULL, MASK_SOLID, false, "spawnactor");
+        at = tr.endpos;
+    }
+
+    args.setArg("model", path.c_str());
+    args.setArg("origin", va("%f %f %f", at[0], at[1], at[2] + 1));
+    args.setArg("angle", va("%f", anglemod(vangle[1] + 180)));
+    args.setArg("targetname", ORCH_SPAWN_NAME);
+    if (weapon.length()) {
+        // As a map's spawner gives it: the model's "case weapon" gear too.
+        args.setArg("weapon", weapon.c_str());
+    }
+
+    if (!args.getClassDef()) {
+        gi.Printf("spawnactor: %s isn't a model\n", path.c_str());
+        return qtrue;
+    }
+
+    level.spawnflags     = 0;
+    level.m_bScriptSpawn = true;
+    l                    = args.Spawn();
+    level.m_bScriptSpawn = false;
+    level.m_bRejectSpawn = false;
+
+    if (!l || !checkInheritance(&Actor::ClassInfo, l->classinfo())) {
+        gi.Printf("spawnactor: %s isn't a soldier\n", path.c_str());
+        if (l && l->isSubclassOf(Entity)) {
+            ((Entity *)l)->PostEvent(EV_Remove, 0);
+        }
+        return qtrue;
+    }
+    actor = (Actor *)l;
+
+    if (health > 0) {
+        Event *ev = new Event(EV_SetHealth);
+
+        actor->health     = health;
+        actor->max_health = health;
+        // Again once a mod's script has swapped its model (HRRTM does, a frame
+        // in), which sets the model's health again.
+        ev->AddFloat(health);
+        actor->PostEvent(ev, 0.5f);
+    }
+    if (noAttack) {
+        // Never takes an enemy (a script's "enableEnemy 0"); stock AI turns
+        // it back on only if the player blocks its way.
+        Event *ev = new Event(EV_Actor_EnableEnemy);
+        ev->AddInteger(0);
+        actor->ProcessEvent(ev);
+    }
+    if (noAI) {
+        // After it has settled into its first pose.
+        actor->PostEvent(EV_Actor_AIOff, level.frametime);
+    }
+
+    gi.Printf(
+        "spawnactor: %s at (%.0f %.0f %.0f), weapon %s, health %.0f%s%s\n",
+        path.c_str(),
+        at[0],
+        at[1],
+        at[2],
+        weapon.length() ? weapon.c_str() : "none",
+        actor->health,
+        noAI ? ", no AI" : "",
+        noAttack ? ", no attack" : ""
+    );
     return qtrue;
 }

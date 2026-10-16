@@ -196,13 +196,31 @@ pak goes in the install's home (`zzzzzzzzzzzz-orch-remaster.pk3`); it holds
 game data, so it is never committed, and `reset` leaves it alone. With
 `--compare` each original stands on the left and its remaster on its right.
 
-In game, `modelbrowser` (or the Models button in the F7 cvar browser) opens a
-window with every model, filtered by name; "Remastered" lists only those with a
-remaster. Spawn original (or a double-click), Spawn remaster and Spawn both
+In game, HOME (bound on the first run; `modelbrowser`, or the Models button in
+the F7 cvar browser) opens a window with every model, filtered by name; it has
+the mouse and keyboard without the console, and HOME or Escape closes it.
+"Remastered" lists only those with a remaster. Spawn original (or a double-click), Spawn remaster and Spawn both
 (the remaster on the original's right) close the window and put the model where
 you look; the remaster buttons are dimmed for a model without one. Clear
 removes them. `modelbrowser <name>` opens it on
-that model, selected. Bind it to a key with
+that model, selected.
+
+"Soldiers" lists the soldiers (`models/human/`) and swaps the spawn buttons for
+AI on/off, Attack on/off, Weapon (cycles through the model's own `case weapon`
+names) and Health (empty: the model's own), kept between sessions, and Spawn
+soldier. That is the game's `spawnactor [-noai] [-noattack] [-health n]
+[-weapon name] <model.tik>`, or from here:
+
+```bash
+tools/orchestrator/orch.py soldier german_wehrmact_soldier --weapon MP40 --health 250
+tools/orchestrator/orch.py soldier german_wehrmact_soldier --noai      # a target that stands still
+tools/orchestrator/orch.py soldier german_wehrmact_soldier --weapons   # what it can carry
+```
+
+No AI is `ai_off` (the soldier stands; unlike a map's `ai_off` actor it still
+dies). No attack is `enableEnemy 0`: its AI runs but it takes no enemy, unless
+the player blocks its way (stock behaviour). On m0_techdemo soldiers stand
+frozen whatever the settings: test fighting on a campaign map. Bind it to a key with
 `bind <key> modelbrowser`, and the same key closes it.
 
 ## Testing without a microphone

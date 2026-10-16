@@ -1704,7 +1704,7 @@ void UI_KeyEvent(int key, unsigned int time)
         const char *binding = Key_GetBinding(key);
 
         if (binding && !Q_stricmp(binding, "cvarbrowser")) {
-            UI_CvarBrowser_f();
+            UI_CloseCvarBrowser();
             return;
         }
     }
@@ -1712,7 +1712,7 @@ void UI_KeyEvent(int key, unsigned int time)
         const char *binding = Key_GetBinding(key);
 
         if (binding && !Q_stricmp(binding, "modelbrowser")) {
-            UI_ModelBrowser_f();
+            UI_CloseModelBrowser();
             return;
         }
     }
