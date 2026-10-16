@@ -589,6 +589,9 @@ void main()
   #else
 		vec3 rtNormal = normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal);
   #endif
+  #if defined(USE_LIGHTMAP)
+		rt_skyLM = var_TexCoords.zw;
+  #endif
   #if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
 		// the map's own lighting: with the direct light live alone
 		// (r_realtimeLighting 1), what the lights change of it

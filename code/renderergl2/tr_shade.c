@@ -1648,13 +1648,19 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			{
 				const int kind = R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader);
 
-				R_RtSetUniforms(sp, kind, kind == RT_STAGE_LIGHTING || kind == RT_STAGE_LIGHTING2
-					|| (pStage->glslShaderGroup == tr.lightallShader && (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP));
+				const qboolean lightallLightmap = pStage->glslShaderGroup == tr.lightallShader
+					&& (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP;
+				// the lightmap the stage reads, for the sky's page of it
+				image_t *lightmap = lightallLightmap ? pStage->bundle[TB_LIGHTMAP].image[0]
+					: kind == RT_STAGE_LIGHTING ? pStage->bundle[0].image[0]
+					: kind == RT_STAGE_LIGHTING2 ? pStage->bundle[1].image[0] : NULL;
+
+				R_RtSetUniforms(sp, kind, lightmap, lightallLightmap || kind == RT_STAGE_LIGHTING || kind == RT_STAGE_LIGHTING2);
 				R_RtBindTextures();
 			}
 			else
 			{
-				R_RtSetUniforms(sp, -1, qfalse);
+				R_RtSetUniforms(sp, -1, NULL, qfalse);
 			}
 		}
 

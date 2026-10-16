@@ -375,6 +375,10 @@ void FBO_Init(void)
 			tr.rtSkyFbo = NULL;
 		}
 		FBO_Bind(NULL);
+
+		// the sky's lightmaps: a colour page at a time is attached (R_RtBakeSkyLightmaps)
+		if (tr.rtSkyFbo)
+			tr.rtSkyBakeFbo = FBO_Create("_rtskybake", glConfig.maxTextureSize, glConfig.maxTextureSize);
 	}
 
 	if (tr.sunShadowDepthImage[0])
