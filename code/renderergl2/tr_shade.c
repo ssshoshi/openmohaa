@@ -1137,7 +1137,14 @@ static void ForwardDlight( void ) {
 			index &= ~LIGHTDEF_LIGHTTYPE_MASK;
 			index |= LIGHTDEF_USE_LIGHT_VECTOR;
 
-			sp = &tr.lightallShader[index];
+			// Added in OPM: permutations with material maps are built when
+			// first asked for, so this one may not exist yet
+			sp = GLSL_GetLightallShader(index);
+		}
+
+		if (!sp->program)
+		{
+			continue;
 		}
 
 		backEnd.pc.c_lightallDraws++;
