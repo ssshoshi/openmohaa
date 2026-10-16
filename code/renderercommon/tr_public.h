@@ -199,6 +199,26 @@ typedef struct {
     //  A world shader lit by the vertex colours of what it is drawn on (a
     //  poly's), for faces that have no lightmap. 0 if it cannot be found.
     qhandle_t (*RegisterShaderVertexLit)(const char *name);
+
+    // Added in OPM
+    //  Where there are bodies in water and how far their blood has spread,
+    //  four floats each: x, y, radius, strength; and bodies lying on a beach
+    //  and the sand their blood has soaked: x, y, the ground's height, radius.
+    //  Held until set again; a renderer that draws neither ignores them.
+    void (*SetWaterBlood)(const float *spots, int numSpots, const float *stains, int numStains);
+
+    // Added in OPM
+    //  What disturbs the water this frame, five floats each: x, y, how wide,
+    //  how deep a dip it presses in, how much foam it leaves. Added to what
+    //  was given earlier in the frame; the water's ripples spread from them.
+    void (*AddWaterRipples)(const float *ripples, int numRipples);
+
+    // Added in OPM
+    //  What is on the camera's lens, eight floats each: x and y across and
+    //  up the view (0 to 1), how big (a share of its height), how much of it
+    //  is left (0 to 1); what it is (0 water, 1 blood, 2 dirt), a seed, how
+    //  far it has run down (a share of the height), 0. Held until set again.
+    void (*SetLensSpots)(const float *spots, int numSpots);
 } refexport_t;
 
 //

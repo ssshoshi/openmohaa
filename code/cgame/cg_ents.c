@@ -25,6 +25,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_local.h"
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
+#include "cg_water.h"
+#include "cg_scriptblast.h"
+#include "cg_lens.h"
 #include "cg_radar.h"
 
 /*
@@ -709,13 +712,67 @@ void CG_AddPacketEntities(void)
     }
 
     // Added in OPM
-    //  Corpses the server has culled by where they died rather than where the
-    //  ragdoll has taken them.
-    CG_RagdollAddUnsent();
+    //  What follows the entities, timed for cg_frameTimers: the ragdolls the
+    //  server no longer sends, the water and the lens, the physics.
+    {
+        static cvar_t *cg_frameTimers;
+        static double  tailUs[7];
+        static int     tailFrames;
+        double         t = CG_Microseconds(), n;
 
-    // Added in OPM
-    //  Client-side props (and later corpses) on Jolt.
-    CG_PhysicsFrame();
+        if (!cg_frameTimers) {
+            cg_frameTimers = cgi.Cvar_Get("cg_frameTimers", "0", CVAR_ARCHIVE);
+        }
+
+        double frameUs[7] = {0};
+#define CG_TAIL(i, call) call; n = CG_Microseconds(); tailUs[i] += n - t; frameUs[i] = n - t; t = n
+        //  Corpses the server has culled by where they died rather than where
+        //  the ragdoll has taken them.
+        CG_TAIL(0, CG_RagdollAddUnsent());
+
+        //  The map's static dead under the bodies put in their place, and the
+        //  blasts its script sets off; the blood of the bodies in the water,
+        //  what disturbs it, and what has landed on the lens, for the renderer.
+        CG_TAIL(1, CG_PlacedDeadFrame());
+        CG_TAIL(2, CG_ScriptBlastsFrame());
+        CG_TAIL(3, CG_WaterBloodFrame());
+        CG_TAIL(4, CG_WaterRipplesFrame());
+        CG_TAIL(5, CG_LensFrame());
+
+        //  Client-side props and corpses on Jolt.
+        CG_TAIL(6, CG_PhysicsFrame());
+#undef CG_TAIL
+
+        // a frame this ran long in, alone (com_hitchLog, ms)
+        {
+            static cvar_t *com_hitchLog;
+            double         sum = 0;
+            int            k;
+
+            if (!com_hitchLog) {
+                com_hitchLog = cgi.Cvar_Get("com_hitchLog", "0", 0);
+            }
+            for (k = 0; k < 7; k++) {
+                sum += frameUs[k];
+            }
+            if (com_hitchLog->integer > 0 && sum >= com_hitchLog->integer * 500.0) {
+                cgi.Printf("hitch cgame tail %.1fms = unsent %.1f placeddead %.1f scriptblasts %.1f waterblood %.1f ripples %.1f lens %.1f physics %.1f\n",
+                    sum / 1000.0, frameUs[0] / 1000.0, frameUs[1] / 1000.0, frameUs[2] / 1000.0, frameUs[3] / 1000.0,
+                    frameUs[4] / 1000.0, frameUs[5] / 1000.0, frameUs[6] / 1000.0);
+            }
+        }
+
+        if (cg_frameTimers->integer > 0 && ++tailFrames >= cg_frameTimers->integer) {
+            cgi.Printf(
+                "cgame tail = unsent %.2f placeddead %.2f scriptblasts %.2f waterblood %.2f ripples %.2f lens %.2f physics %.2f  (avg of %i frames)\n",
+                tailUs[0] / tailFrames / 1000.0, tailUs[1] / tailFrames / 1000.0, tailUs[2] / tailFrames / 1000.0,
+                tailUs[3] / tailFrames / 1000.0, tailUs[4] / tailFrames / 1000.0, tailUs[5] / tailFrames / 1000.0,
+                tailUs[6] / tailFrames / 1000.0, tailFrames
+            );
+            memset(tailUs, 0, sizeof(tailUs));
+            tailFrames = 0;
+        }
+    }
 
     // Add in the multibeams at the end
     for (num = 0; num < cg.snap->numEntities; num++) {

@@ -265,6 +265,12 @@ cg_te_zangles			code/cgame/cg_testemitter.cpp:2083	Test emitter (the effects edi
 cg_traceinfo	0	3	code/cgame/cg_main.c:164	Debug: print information about client-side collision traces. 3 prints every trace.
 cg_treadmark_test	0		code/cgame/cg_marks.c:1045	Debug: draw a test tank tread mark under the crosshair. The value is the tread width.
 cg_voicechat	0	1	code/cgame/cg_main.c:216	Play multiplayer voice chat messages (the voice command menu).
+cg_water_blood	0	1	code/cgame/cg_water.cpp:92	A body in water bleeds into it, a red cloud that spreads round it from when it went in and follows it as the waves move it.
+cg_water_ripples	0	1	code/cgame/cg_water.cpp:62	What goes through water disturbs it: men wading, boats, bullets, blasts and things falling in, each sending out ripples, and boats a wake of foam (r_waterRipples draws them).
+cg_lens	0	1	code/cgame/cg_lens.cpp:65	What lands on the camera's lens: water from a splash or a wave over the boat's side close by, blood from a man shot in front of you, dirt from a blast (r_lens draws it).
+cg_lens_test	0	3	code/cgame/cg_lens.cpp:66	Puts a full dose on the lens at once, for working on it: 1 water, 2 blood, 3 dirt. Cheat.
+cg_water_float	0	1	code/cgame/cg_water.cpp:91	Corpses float in water and the waves carry them: lifted by the swell, pushed up the beach by the surf. Jolt ragdolls only (cg_ragdoll_solver 1).
+cg_water_floatrange	0		code/cgame/cg_water.cpp:192	A corpse floating further than this from the view (units) that has settled is let sleep, and bobs again when you come back within most of it; one lying still in the shallows sleeps at any distance. Keeps a sea of the dead from costing most of a frame. 0 keeps them all moving.
 cheats	0	1	code/server/sv_init.c:1082	Allow cheat commands and cheat-protected cvars. In single player use thereisnomonkey 1. Latched. Server setting.
 cl_allowDownload	0		code/client/cl_main.cpp:3628	Download missing files from servers (bit flags: 1 enable, 2 no redirect, 4 no UDP).
 cl_altbindings	0	1	code/client/cl_main.cpp:3633	Allow Alt+key bindings as separate binds.
@@ -339,6 +345,7 @@ com_cmddir			code/qcommon/common.c:2020	Only from the command line: a server mus
 com_dropsim	0	100	code/qcommon/common.c:1919	Debug: drop this percentage of packets. Cheat-protected.
 com_frameTimers	0		code/qcommon/common.c:1927	Print a microsecond breakdown of each frame, averaged over this many frames. 0 is off. Not a cheat, so it works in demos.
 com_gamename			code/qcommon/common.c:1957	Game name used to find servers.
+com_hitchLog	0		code/qcommon/common.c:2491	Prints where the time went in any frame longer than this many milliseconds: the engine, the cgame's stages, the renderer's view, and any configstring (a new model or sound) that was slow to take in. 0 is off. For finding hitches.
 com_homepath			code/qcommon/common.c:1773	Folder name for user data in the home path.
 com_legacyprotocol			code/qcommon/common.c:1961	Older network protocol also accepted.
 com_maxfps	0		code/qcommon/common.c:1910	Frame rate cap. 0 is unlimited; MOH:AA's physics prefer values like 60, 85, 125.
@@ -538,6 +545,7 @@ g_m6l1	0	1	code/fgame/gamecvars.cpp:686	Campaign progress: mission 6, level 1 is
 g_m6l2	0	1	code/fgame/gamecvars.cpp:687	Campaign progress: mission 6, level 2 is unlocked. Saved.
 g_m6l3	0	1	code/fgame/gamecvars.cpp:688	Campaign progress: mission 6, level 3 is unlocked. Saved.
 g_mapaddons	0	1	code/fgame/gamecvars.cpp:802	Runs a map's add-on script (maps/<map>_opm.scr) next to the map's own.
+g_placeddead	0	1	code/fgame/gamecvars.cpp:835	Puts a real body where each of the map's static dead lies (Omaha's beach), which the client makes a ragdoll of once a blast or a round reaches him; the static one is hidden under him.
 g_maprotation_filter			code/client/cl_uimaprotationsetup.cpp:64	Which game type the map rotation menu lists maps for (ffa, obj, tow...).
 g_maxintermission	0		code/fgame/gamecvars.cpp:582	Multiplayer: seconds the end-of-map scoreboard stays up before the next map. 0 waits. Server setting.
 g_maxplayerhealth			code/fgame/game.cpp:87	Player maximum health in single player. Set by the difficulty level.
@@ -582,6 +590,7 @@ g_playerdeltamethod	0		code/fgame/gamecvars.cpp:648	How player state is delta-co
 g_playerdmhealth	0		code/fgame/player.cpp:2434	Multiplayer: player maximum health. 0 uses the default of 100. Server setting.
 g_playermodel			code/fgame/gamecvars.cpp:497	Player model in single player (under models/player/). Saved with savegames.
 g_playerStacking	0	1	code/fgame/gamecvars.cpp:776	Multiplayer: allow standing on other players' heads. Server setting.
+g_precacheScriptModels	0	1	code/fgame/gamecvars.cpp:837	Loads with the level every model the map's scripts name (its own script, and a mod's that dresses the AI at random, such as HRRTM's), so a new soldier's model and textures are not loaded in the middle of a fight. Single player.
 g_prone	0	1	code/fgame/gamecvars.cpp:833	Lying prone in single player (the prone command, bound to C): crawl, dive from a run or sprint.
 g_prone_raise_time	0	2	code/fgame/gamecvars.cpp:839	Seconds after the player stops crawling before his weapon is back up and can fire.
 g_prone_speed	0	1	code/fgame/gamecvars.cpp:834	Crawling speed while prone, as a fraction of the run speed.
@@ -945,6 +954,7 @@ r_portalOnly	0	1	code/renderergl1/tr_init.c:1464	Debug: draw only what portals a
 r_postProcess	0	1	code/renderergl2/tr_init.c:1571	Post-processing (tone mapping, exposure, sun rays, blur). Needs framebuffer objects. (OpenGL 2 renderer.)
 r_precacheimages	0	1	code/renderergl1/tr_init.c:1552	Load all images at map start instead of when first seen. (OpenGL 1 renderer.)
 r_preferOpenGLES	-1	1	code/sdl/sdl_glimp.c:1093	Prefer an OpenGL ES context: -1 auto, 0 desktop OpenGL, 1 OpenGL ES.
+r_prepassFarModels	0		code/renderergl2/tr_init.c:1687	Animated models smaller in the view than this (radius over distance) skip the depth prepass and are drawn by the main pass alone: a beach of the dead far off is not drawn twice. 0 puts every model in the prepass. (OpenGL 2 renderer.)
 r_primitives	0	3	code/renderergl1/tr_init.c:1414	How geometry is sent to the GPU (0 auto, other values force a method). (OpenGL 1 renderer.)
 r_printShaders	0	1	code/renderergl1/tr_init.c:1459	Print each shader as it is loaded.
 r_pshadowDist			code/renderergl2/tr_init.c:1615	Maximum distance at which characters cast projected shadows. (OpenGL 2 renderer.)
@@ -1020,6 +1030,11 @@ r_verbose	0	1	code/renderergl1/tr_init.c:1492	Print extra renderer information. 
 r_vertexLight	0	1	code/renderergl1/tr_init.c:1374	Light the world by vertex instead of lightmaps: faster and much flatter.
 r_vidmode1024	0	1	code/renderergl1/tr_init.c:1356	Legacy: the 1024x768 mode is available.
 r_vidmodemax	0	1	code/renderergl1/tr_init.c:1357	Legacy: highest video mode available.
+r_water	0	1	code/renderergl2/tr_water.c:88	Draws water with the water program: waves, the sky mirrored in it, the bottom seen through it darkening with depth, surf and foam in the shallows, and blood where a map or a body puts some. How a map's water looks is in water/<map>.txt. Needs vid_restart. (OpenGL 2 renderer.)
+r_lens	0	1	code/renderergl2/tr_lens.c:41	Draws what lands on the camera's lens (cg_lens): water drops that bend the view, blood that runs, dirt.
+r_waterBlood	0		code/renderergl2/tr_water.c:89	How much of the blood a map puts in its water (water/<map>.txt): 0 none, 1 as the map has it. At 0 bodies in water leave none either.
+r_waterRipples	0	1	code/renderergl2/tr_water.c:70	Ripples and wakes on water, spread from what goes through it (cg_water_ripples). Needs vid_restart.
+r_waterWet	0	1	code/renderergl2/tr_water.c:132	What stands in the water, or on a beach below the tide's mark, looks wet: darker, with a glossy film that gives back the sky and the sun.
 r_znear	0.001	200	code/renderergl1/tr_init.c:1398	Near clipping distance: geometry closer to the eye than this is cut off. MOH:AA uses 3; higher values clip close-up ironsight models. Cheat-protected.
 r_zproj			code/renderergl2/tr_init.c:1683	Distance used for projecting the view into the depth buffer in some passes. (OpenGL 2 renderer.)
 rate			code/client/cl_uiserverlist.cpp:663	Maximum bytes per second the server sends you. Higher suits faster connections.
@@ -1207,6 +1222,7 @@ ter_maxlod	3	6	code/renderergl1/tr_terrain.c:1628	Maximum terrain detail level.
 ter_maxtris	16384	65536	code/renderergl1/tr_terrain.c:1639	Maximum terrain triangles.
 ter_minMarkRadius			code/renderergl1/tr_init.c:1553	Decals smaller than this are not placed on terrain.
 thereisnomonkey	0	1	code/fgame/entity.cpp:5152	Single player cheats: dog (god mode), noclip, notarget, give, wuss and the rest of the cheat commands.
+tiki_loadlog	0	2	code/tiki/tiki_cache.cpp:220	Prints how long each model takes to load and register; 2 adds each of its shaders and images that took a while. For finding what a level loads while it is played.
 timedemo	0	1	code/client/cl_main.cpp:3598	Play demos as fast as possible and report the frame rate. Cheat-protected.
 timegraph	0	1	code/client/cl_scrn.cpp:416	Debug: draw the frame time graph. Cheat-protected.
 timelimit	0		code/server/sv_init.c:1049	Multiplayer: minutes per map. 0 no limit. Server setting.

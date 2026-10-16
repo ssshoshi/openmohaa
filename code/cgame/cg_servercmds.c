@@ -233,11 +233,23 @@ CG_ConfigStringModified
 */
 static void CG_ConfigStringModified(int num, qboolean modelOnly)
 {
+    // Added in OPM: a configstring that took long to take in (com_hitchLog):
+    // a model or sound new to the client, loaded in the middle of play
+    static cvar_t *com_hitchLog;
+    const int      startedAt = cgi.Milliseconds();
+
     // get the gamestate from the client system, which will have the
     // new configstring already integrated
     cgi.GetGameState(&cgs.gameState);
 
     CG_ProcessConfigString(num, modelOnly);
+
+    if (!com_hitchLog) {
+        com_hitchLog = cgi.Cvar_Get("com_hitchLog", "0", 0);
+    }
+    if (com_hitchLog->integer > 0 && cgi.Milliseconds() - startedAt >= 10) {
+        cgi.Printf("hitch configstring %d took %d ms: %s\n", num, cgi.Milliseconds() - startedAt, CG_ConfigString(num));
+    }
 }
 
 /*

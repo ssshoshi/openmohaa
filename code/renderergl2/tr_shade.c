@@ -1209,6 +1209,9 @@ static void ForwardDlight( void ) {
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
+		// Added in OPM: the light's pass adds light only; the wet is in the
+		// surface's own pass
+		R_WaterSetDry(sp);
 
 		if (pStage->bundle[TB_DIFFUSEMAP].image[0])
 			R_BindAnimatedImageToTMU( &pStage->bundle[TB_DIFFUSEMAP], TB_DIFFUSEMAP);
@@ -1487,6 +1490,10 @@ static qboolean RB_DepthPrepassed( const shaderCommands_t *input )
 	if ( input->shader->sort != SS_OPAQUE && input->shader->sort != SS_PORTAL ) {
 		return qfalse;
 	}
+	// Added in OPM: a model left out of the prepass (r_prepassFarModels)
+	if ( backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity && backEnd.currentEntity->prepassSkip ) {
+		return qfalse;
+	}
 	return ( first->stateBits & GLS_DEPTHMASK_TRUE ) ? qtrue : qfalse;
 }
 
@@ -1714,6 +1721,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMDENTS, tess.skelGpu.numDents);
 			if (tess.skelGpu.numDents > 0)
 				GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, tess.skelGpu.dents, tess.skelGpu.numDents * 2);
+			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMMORPHS, tess.skelGpu.numMorphs);
+			if (tess.skelGpu.numMorphs > 0)
+				GLSL_SetUniformSkelMorphs(sp, UNIFORM_SKELMORPHS, tess.skelGpu.morphs, (tess.skelGpu.numMorphs + 3) / 4);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
@@ -1859,6 +1869,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
+		// Added in OPM: wet below the tide's mark (lightall)
+		R_WaterSetWet(sp);
 
 		GLSL_SetUniformVec4(sp, UNIFORM_NORMALSCALE, pStage->normalScale);
 
@@ -2535,7 +2547,9 @@ void RB_StageIteratorGeneric( void )
 	//
 	// call shader function
 	//
-	RB_IterateStagesGeneric( input );
+	// Added in OPM: water, by the water program if it can (tr_water.c)
+	if ( !input->shader->isWater || !RB_WaterDraw( input ) )
+		RB_IterateStagesGeneric( input );
 
 	//
 	// pshadows!
