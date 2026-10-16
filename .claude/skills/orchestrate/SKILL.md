@@ -24,6 +24,9 @@ Tools live in `tools/orchestrator/` (README.md there has the details):
 - `orch.py` (WSL): `setup`, `seed`, `launch`, `cmd`, `say`, `state`, `status`, `stop`,
   `offline`, `backlog`; for checking a change: `wait`, `view x y z --pitch --yaw`,
   `frames N --every s --script '...'` (one contact sheet), `reset` (loose overrides)
+- `orch.py spawn <model...>` puts models where the player looks, facing them;
+  `spawn --compare <name>` an original beside its remaster (after `remaster-pak`
+  and a relaunch); `spawn --clear`
 - `sidecar.py` (Windows Python): voice in/out, shots, turn grouping
 
 Paths:

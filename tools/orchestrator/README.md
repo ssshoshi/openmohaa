@@ -170,6 +170,30 @@ compile errors come back. `--file x.scr --label main` runs a file from a label.
 without recompiling it (recompiling ends a script's running threads, so only
 files under `orch/` are recompiled).
 
+## Spawning models (remaster comparisons)
+
+`orch.py spawn <model...>` puts models where the player looks, in a row facing
+them, on the floor, not solid. A model is a `.tik` path (globs allowed;
+`models/` and `.tik` may be left off) or just a file name (`cart`, `*crate*`).
+The row backs off until all of it is in view; `--at x y z` and `--face <yaw>`
+place it by hand. `--clear` removes everything spawned (a load does too).
+
+To compare remastered props with the originals in game:
+
+```bash
+tools/orchestrator/orch.py remaster-pak ~/remaster-all/zzz-remaster-all.pk3   # or a work folder
+tools/orchestrator/orch.py stop; tools/orchestrator/orch.py launch --save X     # loads the pak
+tools/orchestrator/orch.py spawn --compare cart armchairposh '*crate*'
+tools/orchestrator/orch.py spawn --list '*chair*'                              # what has a remaster
+```
+
+`remaster-pak` copies each remastered `.skd` and each `.tik` that uses one
+under `models/remaster/`, with the path switched around that `skelmodel` line
+only, so both versions load at once and the originals stay as they are. The
+pak goes in the install's home (`zzzzzzzzzzzz-orch-remaster.pk3`); it holds
+game data, so it is never committed, and `reset` leaves it alone. With
+`--compare` each original stands on the left and its remaster on its right.
+
 ## Testing without a microphone
 
 ```bash

@@ -25,6 +25,11 @@ what is written to home\\main\\orch\\say.
                                      player's trail and gaze, long frames, damage,
                                      triggers, AI think changes, move orders
   orch.py status                     is the game / the sidecar running
+  orch.py spawn <model...> [--compare] | --clear | --list
+                                     models where the player looks, in a row facing
+                                     them; --compare puts each remaster beside its
+                                     original (after remaster-pak and a relaunch)
+  orch.py remaster-pak <pk3|work>    the comparison pak, into the install's home
   orch.py stop                       close the live game (never any other)
 
 Without an agent (a usage limit reached, or just to note things down):
@@ -72,6 +77,11 @@ INTERFACES = {
     "game": ["code/fgame/g_public.h", "code/fgame/bg_public.h", "code/qcommon/q_shared.h"],
     "renderer": ["code/renderercommon/tr_public.h", "code/renderercommon/tr_types.h", "code/qcommon/q_shared.h"],
 }
+# Remastered props beside the originals: each remastered .tik copied under
+# models/remaster/ with its skelmodel pointed at a copy of the new .skd, so both
+# load at once. Built from game data, so it stays in the install, never in git.
+COMPARE_PAK = "zzzzzzzzzzzz-orch-remaster.pk3"
+REMASTER = "models/remaster/"
 FOCUS = os.path.join(os.path.dirname(HERE), "win-bench", "focus.ps1")
 
 
@@ -960,7 +970,7 @@ def cmd_frames(args):
 
 # What the game writes into its home path itself; anything else there is a
 # loose override from a test (a .tik, a .scr, a shader) that shadows the paks.
-OWN = {"orch", "save", "screenshots", "configs", "demos", "physics.txt", "qconsole.log"}
+OWN = {"orch", "save", "screenshots", "configs", "demos", "physics.txt", "qconsole.log", COMPARE_PAK}
 
 
 def cmd_reset(args):
@@ -1049,6 +1059,272 @@ def cmd_promote(args):
         os.remove(path)
         done += 1
     print(f"promoted {done} of {len(plan)}; commit them in {repo}")
+
+
+# ---------------------------------------------------------------- spawning models
+
+def remaster_name(path):
+    """models/static/cart.tik -> models/remaster/static/cart.tik"""
+    return REMASTER + path[len("models/"):] if path.lower().startswith("models/") else REMASTER + path
+
+
+def remaster_tiki(text, skds, include, path=""):
+    """The TIKI's lines with each skelmodel that has a remastered .skd loaded
+    from models/remaster/ instead: the path is switched around that one line,
+    so the animations and anything after still load from the original folder.
+    An $include that holds such a skelmodel is inlined. Returns (lines, path
+    after it, whether anything changed)."""
+    out, hit = [], False
+    for line in text.splitlines():
+        toks = line.split("//")[0].split()
+        key = toks[0].lower() if toks else ""
+        if key == "$include" and len(toks) > 1:
+            sub = include(toks[1].strip('"'))
+            if sub is not None:
+                lines, path, changed = remaster_tiki(sub, skds, include, path)
+                if changed:
+                    out += lines
+                    hit = True
+                    continue
+        elif key == "path" and len(toks) > 1:
+            path = toks[1].rstrip("/\\") + "/"
+        elif key == "skelmodel" and len(toks) > 1 and (path + toks[1]).lower() in skds:
+            indent = line[:len(line) - len(line.lstrip())]
+            out += [f"{indent}path {remaster_name(path)}", line, f"{indent}path {path}"]
+            hit = True
+            continue
+        out.append(line)
+    return out, path, hit
+
+
+def cmd_remaster_pak(args):
+    """The comparison pak, from a remaster pk3 or work folder (its out/), into
+    the install's home: needs a relaunch to be loaded."""
+    import fnmatch
+    import zipfile
+    sys.path.insert(0, os.path.dirname(HERE))
+    import paks
+
+    src = os.path.expanduser(args.source)
+    new = {}
+    if os.path.isdir(src):
+        top = os.path.join(src, "out")
+        for root, _, files in os.walk(top):
+            for f in files:
+                if f.lower().endswith(".skd"):
+                    full = os.path.join(root, f)
+                    with open(full, "rb") as fh:
+                        new[os.path.relpath(full, top).replace(os.sep, "/")] = fh.read()
+    else:
+        with zipfile.ZipFile(src) as z:
+            for name in z.namelist():
+                if name.lower().endswith(".skd"):
+                    new[name] = z.read(name)
+    if not new:
+        sys.exit(f"no .skd files in {src}")
+    skds = {p.lower() for p in new}
+
+    winner = {}
+    for pak, files in paks.index().items():
+        for f in files:
+            winner[f.lower()] = (pak, f)
+
+    opened, texts = {}, {}
+
+    def include(path):
+        # Each pak opened once: reopening a big one per file takes minutes.
+        found = winner.get(path.lower())
+        if not found:
+            return None
+        if found not in texts:
+            pak, name = found
+            if pak not in opened:
+                opened[pak] = zipfile.ZipFile(os.path.join(paks.MAIN, pak))
+            texts[found] = opened[pak].read(name).decode("latin-1")
+        return texts[found]
+
+    tikis = {}
+    for low, (pak, path) in sorted(winner.items()):
+        if not low.endswith(".tik") or not low.startswith("models/") or low.startswith(REMASTER):
+            continue
+        if args.only and not any(fnmatch.fnmatch(low, m.lower()) for m in args.only):
+            continue
+        text = include(path)
+        lines, _, changed = remaster_tiki(text, skds, include)
+        if changed:
+            tikis[path] = "\n".join(lines) + "\n"
+
+    out = os.path.join(MAIN, COMPARE_PAK)
+    tmp = out + ".part"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for path, data in sorted(new.items()):
+            z.writestr(remaster_name(path), data)
+        for path, text in tikis.items():
+            z.writestr(remaster_name(path), text.encode("latin-1"))
+    os.replace(tmp, out)
+    print(f"wrote {out}: {len(tikis)} models ({len(new)} .skd)")
+    print("relaunch the game to load it; then: orch.py spawn --compare <name>")
+
+
+def compare_list():
+    """The originals the comparison pak has remasters of."""
+    import zipfile
+
+    path = os.path.join(MAIN, COMPARE_PAK)
+    if not os.path.isfile(path):
+        return []
+    with zipfile.ZipFile(path) as z:
+        return sorted("models/" + n[len(REMASTER):] for n in z.namelist()
+                      if n.lower().endswith(".tik") and n.lower().startswith(REMASTER))
+
+
+def match_models(names, pool):
+    """Each name as a path (globs allowed, models/ and .tik optional) or a bare
+    file name, matched against pool; in the order asked, without repeats."""
+    import fnmatch
+
+    found = []
+    for name in names:
+        n = name.lower().replace("\\", "/")
+        pats = [n, n + ".tik"]
+        if "/" in n:
+            pats = [p if p.startswith("models/") else "models/" + p for p in pats]
+            hits = [p for p in pool if any(fnmatch.fnmatch(p.lower(), q) for q in pats)]
+        else:
+            hits = [p for p in pool if any(fnmatch.fnmatch(p.lower().rsplit("/", 1)[-1], q) for q in pats)]
+        if not hits:
+            sys.exit(f"no model matches {name}")
+        found += [h for h in hits if h not in found]
+    return found
+
+
+SPAWN_CLEAR = """local.a = $orch_spawn
+if (local.a != NULL)
+{
+	for (local.i = local.a.size; local.i >= 1; local.i--)
+		local.a[local.i] remove
+}
+"""
+
+
+def io_capture(fn, args):
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(args)
+    return buf.getvalue()
+
+
+def cmd_spawn(args):
+    """Models put where the player looks, in a row facing them: any .tik, or
+    with --compare each original with its remaster on its right. They stay
+    until --clear (or a load)."""
+    import math
+
+    if args.clear:
+        args.code, args.file, args.label, args.timeout = [SPAWN_CLEAR], None, None, 5.0
+        return cmd_script(args)
+    remastered = compare_list()
+    if args.list:
+        if not remastered:
+            sys.exit(f"no comparison pak in the install yet: orch.py remaster-pak <pk3 or work folder>")
+        for p in (match_models(args.models, remastered) if args.models else remastered):
+            print(p)
+        return
+    if not args.models:
+        sys.exit("which model? (a .tik path or a file name; --list shows the remastered ones)")
+
+    if args.compare:
+        if not remastered:
+            sys.exit("no comparison pak in the install: orch.py remaster-pak <pk3 or work folder>, then relaunch")
+        originals = match_models(args.models, remastered)
+        models = [m for o in originals for m in (o, remaster_name(o))]
+    else:
+        sys.path.insert(0, os.path.dirname(HERE))
+        import paks
+        pool = {f for files in paks.index().values() for f in files if f.lower().endswith(".tik")}
+        pool |= {remaster_name(p) for p in remastered}
+        models = match_models(args.models, sorted(pool))
+    if len(models) > args.max:
+        sys.exit(f"{len(models)} models match, more than --max {args.max}: "
+                 + ", ".join(models[:8]) + (" ..." if len(models) > 8 else ""))
+
+    state = json.loads(next((l for l in (run_commands("orch_state", 5.0) or "").splitlines()
+                             if l.startswith("{")), "{}"))
+    if not state.get("in_game"):
+        sys.exit("the game isn't in a level")
+    # yaw: the way the player looks at the row.
+    yaw = state["view_angles"][1] if args.face is None else args.face + 180
+    fwd = (math.cos(math.radians(yaw)), math.sin(math.radians(yaw)))
+    right = (fwd[1], -fwd[0])
+    if args.at:
+        base = list(args.at)
+    else:
+        eye = state["view_origin"]
+        aim = state.get("aim_position")
+        if aim and math.dist(aim, eye) < args.dist * 3:
+            # Back from a wall a little, toward the player.
+            base = [aim[0] - fwd[0] * 24, aim[1] - fwd[1] * 24, aim[2]]
+        else:
+            base = [eye[0] + fwd[0] * args.dist, eye[1] + fwd[1] * args.dist, state["player_origin"][2]]
+    face = (yaw + 180) % 360
+
+    # Spawned at the aim point first, then measured: their bounds space the row.
+    code = []
+    for i, m in enumerate(models):
+        code += [f'local.e = spawn script_model model "{m}"',
+                 f"local.e.origin = ( {base[0]:.1f} {base[1]:.1f} {base[2] + 16:.1f} )",
+                 f"local.e.angles = ( 0 {face:.1f} 0 )",
+                 'local.e.targetname = "orch_spawn"',
+                 "local.e notsolid",
+                 f"level.orch_spawn_new[{i}] = local.e",
+                 f'println ("ORCHSPAWN {i} " + local.e.getmins + " " + local.e.getmaxs)']
+    args.code, args.file, args.label, args.timeout = ["\n".join(code)], None, None, 5.0
+    out = io_capture(cmd_script, args)
+    num = r"(-?[\d.e+-]+)"
+    vec = rf"\(?\s*{num}\s+{num}\s+{num}\s*\)?"
+    bounds = {}
+    for line in out.splitlines():
+        m = re.search(rf"ORCHSPAWN (\d+) {vec}\s+{vec}", line)
+        if m:
+            v = [float(x) for x in m.groups()[1:]]
+            bounds[int(m.group(1))] = (v[:3], v[3:])
+    if len(bounds) != len(models):
+        sys.stdout.write(out)
+        sys.exit("not every model spawned (a wrong path shows as an error above)")
+
+    # Left to right as the player sees it; a model facing them has its +y on their right.
+    widths = [max(bounds[i][1][1] - bounds[i][0][1], 8) for i in range(len(models))]
+    gaps = [args.gap if args.compare and i % 2 == 0 else args.gap * 3 for i in range(len(models) - 1)]
+    cursor = -(sum(widths) + sum(gaps)) / 2
+    if not args.at:
+        # Far enough back that the whole row is in view (80 degrees wide, a margin).
+        eye = state["view_origin"]
+        need = -cursor / math.tan(math.radians(40)) * 1.15 + max(mx[0] - mn[0] for mn, mx in bounds.values()) / 2
+        ahead = (base[0] - eye[0]) * fwd[0] + (base[1] - eye[1]) * fwd[1]
+        if ahead < need:
+            base = [base[0] + fwd[0] * (need - ahead), base[1] + fwd[1] * (need - ahead), base[2]]
+    code = []
+    for i, m in enumerate(models):
+        mn, mx = bounds[i]
+        side = cursor - mn[1]
+        # Its middle on the aim point, not its origin; the model's +x points back at the player.
+        depth = (mn[0] + mx[0]) / 2
+        x = base[0] + right[0] * side + fwd[0] * depth
+        y = base[1] + right[1] * side + fwd[1] * depth
+        # On the floor below: a line trace, which the AI walking about doesn't stop.
+        z = base[2]
+        code.append(f"level.orch_spawn_new[{i}].origin = trace ( {x:.1f} {y:.1f} {z + 48:.1f} ) ( {x:.1f} {y:.1f} {z - 256:.1f} )")
+        if i < len(gaps):
+            cursor += widths[i] + gaps[i]
+        print(m)
+    code.append("level.orch_spawn_new = NIL")
+    args.code = ["\n".join(code)]
+    io_capture(cmd_script, args)
+    if args.compare:
+        print("each original with its remaster on its right (as the player sees them)")
 
 
 def cmd_status(args):
@@ -1182,6 +1458,23 @@ def main():
     p.add_argument("--cols", type=int, default=2)
     p.add_argument("--name", help="file name prefix")
     p.set_defaults(fn=cmd_frames)
+
+    p = sub.add_parser("spawn", help="models where the player looks, in a row facing them")
+    p.add_argument("models", nargs="*", help="a .tik path (globs allowed; models/ and .tik optional) or a file name")
+    p.add_argument("--compare", action="store_true", help="each original with its remaster on its right")
+    p.add_argument("--list", action="store_true", help="the models the comparison pak has remasters of")
+    p.add_argument("--clear", action="store_true", help="remove every spawned model")
+    p.add_argument("--at", type=float, nargs=3, metavar=("X", "Y", "Z"), help="instead of where the player looks")
+    p.add_argument("--face", type=float, help="the yaw the models face (default: the player)")
+    p.add_argument("--gap", type=float, default=16.0, help="units between an original and its remaster")
+    p.add_argument("--dist", type=float, default=192.0, help="how far ahead when the aim is far or on the sky")
+    p.add_argument("--max", type=int, default=12, help="at most this many models")
+    p.set_defaults(fn=cmd_spawn)
+
+    p = sub.add_parser("remaster-pak", help="build the comparison pak (remasters beside the originals)")
+    p.add_argument("source", help="a remaster pk3 or a mohaa_remaster.py work folder (its out/)")
+    p.add_argument("--only", action="append", help="only these .tik paths (globs)")
+    p.set_defaults(fn=cmd_remaster_pak)
 
     p = sub.add_parser("promote", help="loose overrides in the install's home made into repo files")
     p.add_argument("--pak", help="data/<pak> or content/<pak> for files no pak of ours has")
