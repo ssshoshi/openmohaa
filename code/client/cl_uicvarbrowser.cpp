@@ -523,7 +523,7 @@ public:
     UIField    *filter, *value;
     UILabel    *filterLabel, *valueLabel, *countLabel, *selectedLabel;
     UIButton   *views[4];
-    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton;
+    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton, *modelsButton;
 
     int view;
     str lastFilter;
@@ -582,7 +582,8 @@ public:
             static const char *titles[] = {"All", "Changed", "Latched", "Cheats"};
             views[i] = MakeButton(titles[i], va("cvarbrowser_view %s", cvb_viewNames[i]));
         }
-        countLabel = MakeLabel("");
+        countLabel   = MakeLabel("");
+        modelsButton = MakeButton("Models", "cvarbrowser; modelbrowser");
 
         list = new UICvarList();
         list->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
@@ -640,7 +641,8 @@ public:
             views[i]->setFrame(UIRect2D(x, pad, 74, rowH));
             x += 78;
         }
-        countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 12, rowH));
+        countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 92, rowH));
+        modelsButton->setFrame(UIRect2D(s.width - pad - 74, pad, 74, rowH));
 
         const float listTop = pad * 2 + rowH;
         const float editTop = s.height - pad - rowH;

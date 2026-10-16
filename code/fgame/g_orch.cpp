@@ -38,6 +38,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "scriptmaster.h"
 #include "scriptthread.h"
 #include "scriptexception.h"
+#include "scriptslave.h"
 #include "../script/scriptvm.h"
 #include "../script/scriptclass.h"
 
@@ -768,5 +769,199 @@ qboolean G_OrchScriptsCmd(gentity_t *ent)
     }
 
     gi.SendServerCommand(ent - g_entities, "orch_scripts \"%s\"", out.c_str());
+    return qtrue;
+}
+
+//=============================================================
+// Spawning models
+//=============================================================
+
+#define ORCH_SPAWN_NAME     "orch_spawn"
+#define ORCH_SPAWN_REMASTER "models/remaster/"
+#define ORCH_SPAWN_MAX      32
+#define ORCH_SPAWN_DIST     192.0f // ahead, when the aim is far or on the sky
+#define ORCH_SPAWN_HALF_FOV 40.0f  // the row is backed off until it fits in this
+
+// models/static/cart.tik -> models/remaster/static/cart.tik
+static str G_OrchRemasterName(const str& path)
+{
+    if (!Q_stricmpn(path.c_str(), "models/", 7)) {
+        return str(ORCH_SPAWN_REMASTER) + (path.c_str() + 7);
+    }
+    return str(ORCH_SPAWN_REMASTER) + path;
+}
+
+static int G_OrchSpawnClear(void)
+{
+    int count = 0;
+
+    for (int i = 0; i < globals.num_entities; i++) {
+        Entity *e = g_entities[i].entity;
+
+        if (e && !Q_stricmp(e->TargetName().c_str(), ORCH_SPAWN_NAME)) {
+            e->PostEvent(EV_Remove, 0);
+            count++;
+        }
+    }
+    return count;
+}
+
+// A model on its own, not solid, named so it can be cleared; NULL when it
+// doesn't load.
+static ScriptModel *G_OrchSpawnOne(const str& path, const Vector& at, float face)
+{
+    ScriptModel *m  = new ScriptModel();
+    Event       *ev = new Event(EV_Model);
+
+    ev->AddString(path);
+    m->ProcessEvent(ev);
+    if (!m->edict->tiki) {
+        m->PostEvent(EV_Remove, 0);
+        return NULL;
+    }
+    m->setSolidType(SOLID_NOT);
+    m->setAngles(Vector(0, face, 0));
+    m->setOrigin(at);
+    m->SetTargetName(ORCH_SPAWN_NAME);
+    return m;
+}
+
+// spawnmodel [-compare] [-at x y z] [-face yaw] [-gap units] <model.tik>...
+// spawnmodel -clear
+// Puts the models where the player looks, in a row facing them, on the floor,
+// not solid. -compare follows each with its remaster (models/remaster/...,
+// from orch.py remaster-pak) on its right. Single player.
+qboolean G_OrchSpawnModelCmd(gentity_t *ent)
+{
+    Player              *player = ent && ent->entity && ent->entity->IsSubclassOfPlayer() ? (Player *)ent->entity : NULL;
+    bool                 compare = false, haveAt = false, haveFace = false;
+    Vector               at;
+    float                faceYaw = 0, gap = 16.0f;
+    Container<str>       paths;
+    Container<ScriptModel *> models;
+    int                  i;
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER) {
+        gi.Printf("spawnmodel: single player only\n");
+        return qtrue;
+    }
+
+    for (i = 1; i < gi.Argc(); i++) {
+        const char *a = gi.Argv(i);
+
+        if (!Q_stricmp(a, "-clear")) {
+            gi.Printf("spawnmodel: removed %d\n", G_OrchSpawnClear());
+            return qtrue;
+        } else if (!Q_stricmp(a, "-compare")) {
+            compare = true;
+        } else if (!Q_stricmp(a, "-at") && i + 3 < gi.Argc()) {
+            at     = Vector(atof(gi.Argv(i + 1)), atof(gi.Argv(i + 2)), atof(gi.Argv(i + 3)));
+            haveAt = true;
+            i += 3;
+        } else if (!Q_stricmp(a, "-face") && i + 1 < gi.Argc()) {
+            faceYaw  = atof(gi.Argv(++i));
+            haveFace = true;
+        } else if (!Q_stricmp(a, "-gap") && i + 1 < gi.Argc()) {
+            gap = atof(gi.Argv(++i));
+        } else {
+            paths.AddObject(a);
+            if (compare) {
+                paths.AddObject(G_OrchRemasterName(a));
+            }
+        }
+    }
+
+    if (!paths.NumObjects()) {
+        gi.Printf("Usage: spawnmodel [-compare] [-at x y z] [-face yaw] [-gap units] <model.tik>... | -clear\n");
+        return qtrue;
+    }
+    if (paths.NumObjects() > ORCH_SPAWN_MAX) {
+        gi.Printf("spawnmodel: at most %d at a time\n", ORCH_SPAWN_MAX);
+        return qtrue;
+    }
+    if (!player && g_entities[0].entity && g_entities[0].entity->IsSubclassOfPlayer()) {
+        // From the server's console (the orchestrator's command files): the one player.
+        player = (Player *)g_entities[0].entity;
+    }
+    if (!player) {
+        gi.Printf("spawnmodel: no player\n");
+        return qtrue;
+    }
+
+    // The way the player looks at the row, flat.
+    const Vector eye    = player->EyePosition();
+    const Vector vangle = player->GetViewAngles();
+    const float  yaw    = haveFace ? faceYaw + 180 : vangle[1];
+    Vector       look, fwd, right;
+    Vector       base;
+
+    vangle.AngleVectors(&look);
+    Vector(0, yaw, 0).AngleVectors(&fwd, &right);
+
+    if (haveAt) {
+        base = at;
+    } else {
+        trace_t tr = G_Trace(eye, vec_zero, vec_zero, eye + look * 8192, player, MASK_SOLID, false, "spawnmodel");
+
+        if (tr.fraction < 1 && (Vector(tr.endpos) - eye).length() < ORCH_SPAWN_DIST * 3) {
+            // Back from a wall a little, toward the player.
+            base = Vector(tr.endpos) - fwd * 24;
+        } else {
+            base    = eye + fwd * ORCH_SPAWN_DIST;
+            base[2] = player->origin[2];
+        }
+    }
+
+    for (i = 1; i <= paths.NumObjects(); i++) {
+        ScriptModel *m = G_OrchSpawnOne(paths.ObjectAt(i), base, anglemod(yaw + 180));
+
+        if (!m) {
+            gi.Printf("spawnmodel: %s didn't load\n", paths.ObjectAt(i).c_str());
+            continue;
+        }
+        models.AddObject(m);
+    }
+    if (!models.NumObjects()) {
+        return qtrue;
+    }
+
+    // Left to right as the player sees it: facing them, a model's left (+y)
+    // is on their right.
+    float total = 0, deepest = 0;
+    for (i = 1; i <= models.NumObjects(); i++) {
+        ScriptModel *m = models.ObjectAt(i);
+        total += Q_max(m->maxs[1] - m->mins[1], 8.0f);
+        deepest = Q_max(deepest, m->maxs[0] - m->mins[0]);
+        if (i < models.NumObjects()) {
+            total += compare && (i % 2) ? gap : gap * 3;
+        }
+    }
+
+    if (!haveAt) {
+        // Far enough back that the whole row is in view.
+        const float need  = total / 2 / tan(DEG2RAD(ORCH_SPAWN_HALF_FOV)) * 1.15f + deepest / 2;
+        const float ahead = (base - eye) * fwd;
+
+        if (ahead < need) {
+            base += fwd * (need - ahead);
+        }
+    }
+
+    float cursor = -total / 2;
+    for (i = 1; i <= models.NumObjects(); i++) {
+        ScriptModel *m     = models.ObjectAt(i);
+        const float  side  = cursor - m->mins[1];
+        // Its middle on the aim point, not its origin: its +x points back at the player.
+        const float  depth = (m->mins[0] + m->maxs[0]) / 2;
+        Vector       pos   = base + right * side + fwd * depth;
+        // On the floor below: a line trace, which the AI walking about doesn't stop.
+        trace_t      tr    = G_Trace(
+            pos + Vector(0, 0, 48), vec_zero, vec_zero, pos - Vector(0, 0, 256), NULL, MASK_SOLID, false, "spawnmodel"
+        );
+
+        m->setOrigin(tr.endpos);
+        gi.Printf("spawnmodel: %s at (%.0f %.0f %.0f)\n", m->model.c_str(), tr.endpos[0], tr.endpos[1], tr.endpos[2]);
+        cursor += Q_max(m->maxs[1] - m->mins[1], 8.0f) + (compare && (i % 2) ? gap : gap * 3);
+    }
     return qtrue;
 }

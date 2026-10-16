@@ -1198,38 +1198,21 @@ def match_models(names, pool):
     return found
 
 
-SPAWN_CLEAR = """local.a = $orch_spawn
-if (local.a != NULL)
-{
-	for (local.i = local.a.size; local.i >= 1; local.i--)
-		local.a[local.i] remove
-}
-"""
-
-
-def io_capture(fn, args):
-    import contextlib
-    import io
-
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        fn(args)
-    return buf.getvalue()
-
-
 def cmd_spawn(args):
     """Models put where the player looks, in a row facing them: any .tik, or
-    with --compare each original with its remaster on its right. They stay
-    until --clear (or a load)."""
-    import math
-
+    with --compare each original with its remaster on its right. The game's
+    spawnmodel command places them (fgame/g_orch.cpp, as the model browser
+    does); they stay until --clear (or a load)."""
     if args.clear:
-        args.code, args.file, args.label, args.timeout = [SPAWN_CLEAR], None, None, 5.0
-        return cmd_script(args)
+        out = run_commands("spawnmodel -clear", 5.0)
+        if out is None:
+            sys.exit("the game didn't take the command (not running, or still loading?)")
+        sys.stdout.write(out)
+        return
     remastered = compare_list()
     if args.list:
         if not remastered:
-            sys.exit(f"no comparison pak in the install yet: orch.py remaster-pak <pk3 or work folder>")
+            sys.exit("no comparison pak in the install yet: orch.py remaster-pak <pk3 or work folder>")
         for p in (match_models(args.models, remastered) if args.models else remastered):
             print(p)
         return
@@ -1239,90 +1222,30 @@ def cmd_spawn(args):
     if args.compare:
         if not remastered:
             sys.exit("no comparison pak in the install: orch.py remaster-pak <pk3 or work folder>, then relaunch")
-        originals = match_models(args.models, remastered)
-        models = [m for o in originals for m in (o, remaster_name(o))]
+        models = match_models(args.models, remastered)
     else:
         sys.path.insert(0, os.path.dirname(HERE))
         import paks
         pool = {f for files in paks.index().values() for f in files if f.lower().endswith(".tik")}
         pool |= {remaster_name(p) for p in remastered}
         models = match_models(args.models, sorted(pool))
-    if len(models) > args.max:
-        sys.exit(f"{len(models)} models match, more than --max {args.max}: "
+    count = len(models) * (2 if args.compare else 1)
+    if count > args.max:
+        sys.exit(f"{count} models, more than --max {args.max}: "
                  + ", ".join(models[:8]) + (" ..." if len(models) > 8 else ""))
 
-    state = json.loads(next((l for l in (run_commands("orch_state", 5.0) or "").splitlines()
-                             if l.startswith("{")), "{}"))
-    if not state.get("in_game"):
-        sys.exit("the game isn't in a level")
-    # yaw: the way the player looks at the row.
-    yaw = state["view_angles"][1] if args.face is None else args.face + 180
-    fwd = (math.cos(math.radians(yaw)), math.sin(math.radians(yaw)))
-    right = (fwd[1], -fwd[0])
+    cmd = ["spawnmodel"]
+    if args.compare:
+        cmd.append("-compare")
     if args.at:
-        base = list(args.at)
-    else:
-        eye = state["view_origin"]
-        aim = state.get("aim_position")
-        if aim and math.dist(aim, eye) < args.dist * 3:
-            # Back from a wall a little, toward the player.
-            base = [aim[0] - fwd[0] * 24, aim[1] - fwd[1] * 24, aim[2]]
-        else:
-            base = [eye[0] + fwd[0] * args.dist, eye[1] + fwd[1] * args.dist, state["player_origin"][2]]
-    face = (yaw + 180) % 360
-
-    # Spawned at the aim point first, then measured: their bounds space the row.
-    code = []
-    for i, m in enumerate(models):
-        code += [f'local.e = spawn script_model model "{m}"',
-                 f"local.e.origin = ( {base[0]:.1f} {base[1]:.1f} {base[2] + 16:.1f} )",
-                 f"local.e.angles = ( 0 {face:.1f} 0 )",
-                 'local.e.targetname = "orch_spawn"',
-                 "local.e notsolid",
-                 f"level.orch_spawn_new[{i}] = local.e",
-                 f'println ("ORCHSPAWN {i} " + local.e.getmins + " " + local.e.getmaxs)']
-    args.code, args.file, args.label, args.timeout = ["\n".join(code)], None, None, 5.0
-    out = io_capture(cmd_script, args)
-    num = r"(-?[\d.e+-]+)"
-    vec = rf"\(?\s*{num}\s+{num}\s+{num}\s*\)?"
-    bounds = {}
-    for line in out.splitlines():
-        m = re.search(rf"ORCHSPAWN (\d+) {vec}\s+{vec}", line)
-        if m:
-            v = [float(x) for x in m.groups()[1:]]
-            bounds[int(m.group(1))] = (v[:3], v[3:])
-    if len(bounds) != len(models):
-        sys.stdout.write(out)
-        sys.exit("not every model spawned (a wrong path shows as an error above)")
-
-    # Left to right as the player sees it; a model facing them has its +y on their right.
-    widths = [max(bounds[i][1][1] - bounds[i][0][1], 8) for i in range(len(models))]
-    gaps = [args.gap if args.compare and i % 2 == 0 else args.gap * 3 for i in range(len(models) - 1)]
-    cursor = -(sum(widths) + sum(gaps)) / 2
-    if not args.at:
-        # Far enough back that the whole row is in view (80 degrees wide, a margin).
-        eye = state["view_origin"]
-        need = -cursor / math.tan(math.radians(40)) * 1.15 + max(mx[0] - mn[0] for mn, mx in bounds.values()) / 2
-        ahead = (base[0] - eye[0]) * fwd[0] + (base[1] - eye[1]) * fwd[1]
-        if ahead < need:
-            base = [base[0] + fwd[0] * (need - ahead), base[1] + fwd[1] * (need - ahead), base[2]]
-    code = []
-    for i, m in enumerate(models):
-        mn, mx = bounds[i]
-        side = cursor - mn[1]
-        # Its middle on the aim point, not its origin; the model's +x points back at the player.
-        depth = (mn[0] + mx[0]) / 2
-        x = base[0] + right[0] * side + fwd[0] * depth
-        y = base[1] + right[1] * side + fwd[1] * depth
-        # On the floor below: a line trace, which the AI walking about doesn't stop.
-        z = base[2]
-        code.append(f"level.orch_spawn_new[{i}].origin = trace ( {x:.1f} {y:.1f} {z + 48:.1f} ) ( {x:.1f} {y:.1f} {z - 256:.1f} )")
-        if i < len(gaps):
-            cursor += widths[i] + gaps[i]
-        print(m)
-    code.append("level.orch_spawn_new = NIL")
-    args.code = ["\n".join(code)]
-    io_capture(cmd_script, args)
+        cmd += ["-at"] + ["%g" % v for v in args.at]
+    if args.face is not None:
+        cmd += ["-face", "%g" % args.face]
+    cmd += ["-gap", "%g" % args.gap] + [quote(m) for m in models]
+    out = run_commands(" ".join(cmd), 5.0)
+    if out is None:
+        sys.exit("the game didn't take the command (not running, or still loading?)")
+    sys.stdout.write(out)
     if args.compare:
         print("each original with its remaster on its right (as the player sees them)")
 
@@ -1467,8 +1390,7 @@ def main():
     p.add_argument("--at", type=float, nargs=3, metavar=("X", "Y", "Z"), help="instead of where the player looks")
     p.add_argument("--face", type=float, help="the yaw the models face (default: the player)")
     p.add_argument("--gap", type=float, default=16.0, help="units between an original and its remaster")
-    p.add_argument("--dist", type=float, default=192.0, help="how far ahead when the aim is far or on the sky")
-    p.add_argument("--max", type=int, default=12, help="at most this many models")
+    p.add_argument("--max", type=int, default=32, help="at most this many models (the game takes 32)")
     p.set_defaults(fn=cmd_spawn)
 
     p = sub.add_parser("remaster-pak", help="build the comparison pak (remasters beside the originals)")
