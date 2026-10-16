@@ -82,6 +82,8 @@ extern "C" {
         vec3_t    cordLight;          // its middle, where its light is
         vec3_t    cordAnchor;
         float     cordLength;
+        int       cordCorona;      // the glow at its bulb (cg_coronas), carried with it, or -1
+        vec3_t    cordCoronaLocal; // where that is in its frame
         int      clipped; // the map's invisible clip brushes that stand in for it
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers
         int      numStandIns;
@@ -96,6 +98,19 @@ extern "C" {
 
     extern cgProp_t cg_props[CG_MAX_PROPS];
     extern int      cg_numProps;
+
+    // Added in OPM
+    //  The map's coronas (static/corona_util.tik): the glow the maps put at
+    //  a lamp's bulb, a sprite and no prop, which a lamp on a cord carries.
+#define CG_MAX_CORONAS 1024
+    typedef struct {
+        int    staticIndex;
+        vec3_t origin;
+        vec3_t axis[3];
+    } cgCorona_t;
+
+    extern cgCorona_t cg_coronas[CG_MAX_CORONAS];
+    extern int        cg_numCoronas;
 
     // Reads the current map's props, once a map.
     void CG_PropsLoad(void);

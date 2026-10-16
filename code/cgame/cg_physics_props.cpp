@@ -788,6 +788,18 @@ void CG_PhysicsDrawCords(float frac)
         // after a vid_restart the renderer has the model where the map put it
         CG_PhysicsSendPose(p, origin, axis);
 
+        // the glow at its bulb goes with it
+        if (p->cordCorona >= 0 && p->cordCorona < cg_numCoronas) {
+            const cgCorona_t *corona = &cg_coronas[p->cordCorona];
+            vec3_t            at;
+
+            VectorCopy(origin, at);
+            for (k = 0; k < 3; k++) {
+                VectorMA(at, p->cordCoronaLocal[k], axis[k], at);
+            }
+            cgi.R_SetStaticModelTransform(corona->staticIndex, at, corona->axis);
+        }
+
         if (DistanceSquared(cg.refdef.vieworg, p->cordAnchor) > Square(PP_CORD_VIEW)) {
             c->live = qfalse;
             continue;
