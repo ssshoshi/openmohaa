@@ -23,11 +23,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Added in OPM
 // DESCRIPTION:
 // The model browser (modelbrowser, or the Models button in the cvar browser):
-// every model (.tik) the game can load, filtered by name. Spawn puts the
-// selected one where the player looks; Compare puts it beside its remaster
-// (models/remaster/..., the pak orch.py remaster-pak builds), the remaster on
-// its right. Both go through the game's spawnmodel command (fgame/g_orch.cpp),
-// in single player.
+// every model (.tik) the game can load, filtered by name. Spawn original puts
+// the selected one where the player looks, Spawn remaster its remaster
+// (models/remaster/..., the pak orch.py remaster-pak builds), and Spawn both
+// the two side by side, the remaster on the right. All go through the game's
+// spawnmodel command (fgame/g_orch.cpp), in single player.
 
 #include "cl_ui.h"
 #include "client.h"
@@ -275,7 +275,7 @@ public:
     UIField     *filter;
     UILabel     *filterLabel, *countLabel, *selectedLabel;
     UIButton    *views[2];
-    UIButton    *spawnButton, *compareButton, *clearButton, *cvarsButton;
+    UIButton    *spawnButton, *remasterButton, *compareButton, *clearButton, *cvarsButton;
 
     str lastFilter;
 
@@ -342,8 +342,9 @@ public:
         info->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
 
         selectedLabel = MakeLabel("");
-        spawnButton   = MakeButton("Spawn", "modelbrowser_spawn");
-        compareButton = MakeButton("Compare", "modelbrowser_spawn compare");
+        spawnButton    = MakeButton("Spawn original", "modelbrowser_spawn");
+        remasterButton = MakeButton("Spawn remaster", "modelbrowser_spawn remaster");
+        compareButton  = MakeButton("Spawn both", "modelbrowser_spawn both");
         clearButton   = MakeButton("Clear", "spawnmodel -clear");
         cvarsButton   = MakeButton("Cvars", "modelbrowser; cvarbrowser");
 
@@ -357,7 +358,7 @@ public:
         const UISize2D s     = getChildSpace()->getSize();
         const float    pad   = 6.0f;
         const float    rowH  = 22.0f;
-        const float    infoH = 96.0f;
+        const float    infoH = 92.0f;
         float          x     = pad;
 
         filterLabel->setFrame(UIRect2D(x, pad, 40, rowH));
@@ -372,20 +373,30 @@ public:
 
         const float listTop = pad * 2 + rowH;
         const float editTop = s.height - pad - rowH;
-        const float infoTop = editTop - pad - infoH;
+        const float selTop  = editTop - 4 - rowH;
+        const float infoTop = selTop - pad - infoH;
 
         list->setFrame(UIRect2D(pad, listTop, s.width - pad * 2, infoTop - pad - listTop));
         info->setFrame(UIRect2D(pad, infoTop, s.width - pad * 2, infoH));
 
-        selectedLabel->setFrame(UIRect2D(pad, editTop, s.width - pad * 2 - 296, rowH));
-        x = s.width - pad - 292;
-        spawnButton->setFrame(UIRect2D(x, editTop, 70, rowH));
-        compareButton->setFrame(UIRect2D(x + 74, editTop, 70, rowH));
-        clearButton->setFrame(UIRect2D(x + 148, editTop, 70, rowH));
-        cvarsButton->setFrame(UIRect2D(x + 222, editTop, 70, rowH));
+        selectedLabel->setFrame(UIRect2D(pad, selTop, s.width - pad * 2, rowH));
+        x = pad;
+        spawnButton->setFrame(UIRect2D(x, editTop, 120, rowH));
+        x += 124;
+        remasterButton->setFrame(UIRect2D(x, editTop, 120, rowH));
+        x += 124;
+        compareButton->setFrame(UIRect2D(x, editTop, 120, rowH));
+        clearButton->setFrame(UIRect2D(s.width - pad - 148, editTop, 70, rowH));
+        cvarsButton->setFrame(UIRect2D(s.width - pad - 74, editTop, 70, rowH));
     }
 
     void OnChildSizeChanged(Event *ev) { Layout(); }
+
+    void Dim(UIButton *b, bool usable)
+    {
+        b->setForegroundColor(usable ? UHudColor : UColor(0.4f, 0.4f, 0.4f, 1.0f));
+        b->setBackgroundColor(usable ? UColor(0.12f, 0.16f, 0.24f, 1.0f) : UColor(0.08f, 0.09f, 0.11f, 1.0f), true);
+    }
 
     void Refill(void)
     {
@@ -436,9 +447,12 @@ public:
         return n > 0 && n <= list->getNumItems() ? (ModelBrowserItem *)list->GetItem(n) : NULL;
     }
 
+    // The row an event is about: forwarded signals can come without it.
+    int EventItem(Event *ev) { return ev->NumArgs() > 0 ? ev->GetInteger(1) : list->getCurrentItem(); }
+
     void OnItemSelected(Event *ev)
     {
-        ModelBrowserItem *item = Item(ev->GetInteger(1));
+        ModelBrowserItem *item = Item(EventItem(ev));
 
         if (item) {
             mdb_selected = item->path;
@@ -447,7 +461,7 @@ public:
 
     void OnItemDoubleClicked(Event *ev)
     {
-        ModelBrowserItem *item = Item(ev->GetInteger(1));
+        ModelBrowserItem *item = Item(EventItem(ev));
 
         if (item) {
             mdb_selected = item->path;
@@ -477,7 +491,7 @@ public:
                 info->line1 = item->path;
                 info->line2 = item->remaster ? va("Has a remaster: %s", MDB_REMASTER) : "No remaster.";
                 if (item->remaster) {
-                    info->line2 += str(item->path.c_str() + 7) + "   Compare puts it on the right.";
+                    info->line2 += str(item->path.c_str() + 7) + "   Spawn both puts it on the original's right.";
                 }
             } else {
                 info->title = "";
@@ -491,8 +505,10 @@ public:
         }
 
         selectedLabel->SetLabel(mdb_selected.length() ? str("Selected: ") + mdb_selected : str("Click a model to select it"));
-        spawnButton->setShow(mdb_selected.length() != 0);
-        compareButton->setShow(remaster);
+        // Always there; dimmed while there is nothing for them to spawn.
+        Dim(spawnButton, mdb_selected.length() != 0);
+        Dim(remasterButton, remaster);
+        Dim(compareButton, remaster);
     }
 };
 
@@ -599,17 +615,26 @@ static void UI_ModelBrowserView_f(void)
     }
 }
 
-// modelbrowser_spawn [compare]: the selected model where the player looks
-// (with its remaster beside it); the window closes so it can be seen.
+// modelbrowser_spawn [remaster|both]: the selected model where the player
+// looks, its remaster instead, or both (the remaster on the original's
+// right); the window closes so they can be seen.
 static void UI_ModelBrowserSpawn_f(void)
 {
-    const bool compare = !Q_stricmp(Cmd_Argv(1), "compare");
+    const char *which = Cmd_Argv(1);
 
     if (!mdb_selected.length()) {
         return;
     }
+    if ((!Q_stricmp(which, "remaster") || !Q_stricmp(which, "both")) && !MDB_HasRemaster(mdb_selected)) {
+        Com_Printf("modelbrowser: %s has no remaster\n", mdb_selected.c_str());
+        return;
+    }
     MDB_Close();
-    Cbuf_AddText(va("spawnmodel %s\"%s\"\n", compare ? "-compare " : "", mdb_selected.c_str()));
+    if (!Q_stricmp(which, "remaster")) {
+        Cbuf_AddText(va("spawnmodel \"%s%s\"\n", MDB_REMASTER, mdb_selected.c_str() + 7));
+    } else {
+        Cbuf_AddText(va("spawnmodel %s\"%s\"\n", !Q_stricmp(which, "both") ? "-compare " : "", mdb_selected.c_str()));
+    }
 }
 
 void UI_InitModelBrowser(void)

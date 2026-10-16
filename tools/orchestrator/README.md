@@ -198,8 +198,10 @@ game data, so it is never committed, and `reset` leaves it alone. With
 
 In game, `modelbrowser` (or the Models button in the F7 cvar browser) opens a
 window with every model, filtered by name; "Remastered" lists only those with a
-remaster. Spawn (or a double-click) and Compare close the window and put the
-model where you look; Clear removes them. `modelbrowser <name>` opens it on
+remaster. Spawn original (or a double-click), Spawn remaster and Spawn both
+(the remaster on the original's right) close the window and put the model where
+you look; the remaster buttons are dimmed for a model without one. Clear
+removes them. `modelbrowser <name>` opens it on
 that model, selected. Bind it to a key with
 `bind <key> modelbrowser`, and the same key closes it.
 
