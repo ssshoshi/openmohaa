@@ -141,7 +141,8 @@ static char                    pp_map[MAX_QPATH];
 // A lamp on a cord (cgProp_t.corded): the cord is a rope of a few points, its
 // ends held at the anchor and at the lamp, which falls and swings under them
 // and so sags when the lamp is knocked up into it, and lags as it swings.
-#define PP_CORD_POINTS 14
+#define PP_CORD_POINTS 40
+#define PP_CORD_SMOOTH 4  // drawn pieces between two of its points, along a curve through them
 #define PP_CORD_WIDTH  0.35f // half its thickness
 #define PP_CORD_VIEW   3072.0f
 #define PP_CORD_SHADER "opm/lampcord"
@@ -665,14 +666,20 @@ static void CG_PhysicsCordStep(ppCord_t *c, const cgProp_t *p, const vec3_t top)
     // held at both ends, each length as long as it is
     VectorCopy(p->cordAnchor, c->p[0]);
     VectorCopy(top, c->p[PP_CORD_POINTS]);
-    for (n = 0; n < 20; n++) {
-        for (i = 0; i < PP_CORD_POINTS; i++) {
-            vec3_t d;
-            float  len, share;
+    // both ways in turn, so that a pull at one end reaches the other
+    for (n = 0; n < 40; n++) {
+        for (int j = 0; j < PP_CORD_POINTS; j++) {
+            const int i = (n & 1) ? PP_CORD_POINTS - 1 - j : j;
+            vec3_t    d;
+            float     len, share;
 
             VectorSubtract(c->p[i + 1], c->p[i], d);
             len = VectorLength(d);
             if (len < 0.0001f) {
+                continue;
+            }
+            // a cord pulls but does not push: shorter, it folds and droops
+            if (len <= rest) {
                 continue;
             }
             share = (len - rest) / len;
@@ -690,19 +697,44 @@ static void CG_PhysicsCordStep(ppCord_t *c, const cgProp_t *p, const vec3_t top)
     }
 }
 
+// The point t of the way from c->p[i] to c->p[i + 1], on a curve through the
+// points around them (Catmull-Rom), so that the cord bends smoothly between
+// its points rather than in straight pieces.
+static void CG_PhysicsCordCurve(const ppCord_t *c, int i, float t, vec3_t out)
+{
+    const float *p0 = c->p[Q_max(i - 1, 0)];
+    const float *p1 = c->p[i];
+    const float *p2 = c->p[i + 1];
+    const float *p3 = c->p[Q_min(i + 2, PP_CORD_POINTS)];
+    const float  t2 = t * t, t3 = t2 * t;
+    int          k;
+
+    for (k = 0; k < 3; k++) {
+        out[k] = 0.5f * (2.0f * p1[k] + (p2[k] - p0[k]) * t + (2.0f * p0[k] - 5.0f * p1[k] + 4.0f * p2[k] - p3[k]) * t2
+                         + (3.0f * p1[k] - p0[k] - 3.0f * p2[k] + p3[k]) * t3);
+    }
+}
+
 // A strip along the cord, face on to the eye wherever it is, as the grabber's
 // beam is drawn (CG_RagdollDrawGrabBeam).
 static void CG_PhysicsCordDraw(const ppCord_t *c, qhandle_t shader)
 {
+    const int  n = PP_CORD_POINTS * PP_CORD_SMOOTH;
     polyVert_t quad[4];
+    vec3_t     points[PP_CORD_POINTS * PP_CORD_SMOOTH + 1];
     vec3_t     side, prevSide;
     int        i, k;
 
-    for (i = 0; i <= PP_CORD_POINTS; i++) {
+    for (i = 0; i < n; i++) {
+        CG_PhysicsCordCurve(c, i / PP_CORD_SMOOTH, (float)(i % PP_CORD_SMOOTH) / PP_CORD_SMOOTH, points[i]);
+    }
+    VectorCopy(c->p[PP_CORD_POINTS], points[n]);
+
+    for (i = 0; i <= n; i++) {
         vec3_t tangent, toEye;
 
-        VectorSubtract(c->p[Q_min(i + 1, PP_CORD_POINTS)], c->p[Q_max(i - 1, 0)], tangent);
-        VectorSubtract(cg.refdef.vieworg, c->p[i], toEye);
+        VectorSubtract(points[Q_min(i + 1, n)], points[Q_max(i - 1, 0)], tangent);
+        VectorSubtract(cg.refdef.vieworg, points[i], toEye);
         CrossProduct(tangent, toEye, side);
         if (VectorNormalize(side) < 0.0001f) {
             VectorCopy(cg.refdef.viewaxis[1], side);
@@ -710,12 +742,12 @@ static void CG_PhysicsCordDraw(const ppCord_t *c, qhandle_t shader)
         VectorScale(side, PP_CORD_WIDTH, side);
 
         if (i) {
-            VectorAdd(c->p[i - 1], prevSide, quad[0].xyz);
-            VectorSubtract(c->p[i - 1], prevSide, quad[1].xyz);
-            VectorSubtract(c->p[i], side, quad[2].xyz);
-            VectorAdd(c->p[i], side, quad[3].xyz);
+            VectorAdd(points[i - 1], prevSide, quad[0].xyz);
+            VectorSubtract(points[i - 1], prevSide, quad[1].xyz);
+            VectorSubtract(points[i], side, quad[2].xyz);
+            VectorAdd(points[i], side, quad[3].xyz);
             for (k = 0; k < 4; k++) {
-                quad[k].st[0]       = (k == 0 || k == 1) ? (float)(i - 1) / PP_CORD_POINTS : (float)i / PP_CORD_POINTS;
+                quad[k].st[0]       = (k == 0 || k == 1) ? (float)(i - 1) / n : (float)i / n;
                 quad[k].st[1]       = (k == 1 || k == 2) ? 1.0f : 0.0f;
                 quad[k].modulate[0] = quad[k].modulate[1] = quad[k].modulate[2] = quad[k].modulate[3] = 255;
             }
