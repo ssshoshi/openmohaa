@@ -68,6 +68,20 @@ extern "C" {
         //  from where it hangs (in its own frame), and is never dropped.
         qboolean hangs;
         vec3_t   hangPoint;
+        // Added in OPM
+        //  A lamp on a cord (CG_PropCorded): drawn as cordModel (the same lamp
+        //  with no wire, 0 for its own model) at cordOffset and cordScale in its
+        //  frame, and held by a cord of cordLength from cordAnchor in the world
+        //  to cordTop in its frame, which goes slack when the lamp is knocked up.
+        qboolean  corded;
+        qhandle_t cordModel;
+        vec3_t    cordOffset;
+        float     cordScale;
+        vec3_t    cordMins, cordMaxs; // the lamp, without its wire, in its frame
+        vec3_t    cordTop;
+        vec3_t    cordLight;          // its middle, where its light is
+        vec3_t    cordAnchor;
+        float     cordLength;
         int      clipped; // the map's invisible clip brushes that stand in for it
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers
         int      numStandIns;
