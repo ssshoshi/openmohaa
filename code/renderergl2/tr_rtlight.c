@@ -71,6 +71,7 @@ cvar_t *r_rtShadowSoft;
 cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
+cvar_t *r_rtMovingLights;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
 // sent four indexes a vec4 (u_RtList)
@@ -92,6 +93,14 @@ typedef char rt_maxLightsFit[(RT_MAX_LIGHTS <= 64 && RT_MAX_LIGHTS % 4 == 0) ? 1
 // how long a light takes to come in or go out
 #define RT_EASE_SECONDS 0.5f
 
+// a lamp's light moved less than this with its lamp stays where it is
+#define RT_LIGHT_MOVE_EPSILON 0.25f
+
+// frames a moved light's faces out of the view wait before they are drawn
+// again, so that one still moving does not spend the budget every frame on
+// faces it will move away from before they are seen
+#define RT_LIGHT_SETTLE_FRAMES 3
+
 typedef struct {
 	vec3_t   origin;
 	vec3_t   color;        // raw lightmap units: intensity * 7500 * colour
@@ -112,6 +121,9 @@ typedef struct {
 	int      source;       // its sphere light (tr.sLights)
 	int      mergedInto;   // while loading: the light at its fixture it went into, -1 none
 	int      visFrame;     // the frame a leaf the view may see listed it
+	int      fixture;      // the static model it is the light of (R_RtLightsAtFixtures), -1 none
+	vec3_t   fixtureLocal; // where it is in that model's frame
+	int      movedFrame;   // the frame it last moved with its fixture
 } rtLight_t;
 
 static struct {
@@ -148,6 +160,7 @@ static struct {
 	int        facesDrawn; // this frame, for r_rtDebug
 	int        staticDrawn;
 	int        invalidated;
+	int        movingDrawn;  // this frame, for r_rtDebug: faces drawn for lights that moved
 	int        moverPairs;   // this frame, for r_rtDebug: movers in a dynamic light's range
 	int        moverCulled;  // of those, out of its reach or its light lists
 } rt;
@@ -217,6 +230,9 @@ void R_RtRegister(void)
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
+	r_rtMovingLights = ri.Cvar_Get("r_rtMovingLights", "4", CVAR_ARCHIVE);
+	ri.Cvar_CheckRange(r_rtMovingLights, 0, RT_MAX_LIGHTS, qtrue);
+	ri.Cvar_SetDescription(r_rtMovingLights, "How many of the nearest lamps moving with their models (a lantern knocked over, a lamp swinging) draw their shadows again every frame as they move; the rest catch up once they stop");
 	r_rtShadowCull = ri.Cvar_Get("r_rtShadowCull", "1", 0);
 	ri.Cvar_SetDescription(r_rtShadowCull, "What moves is drawn into a realtime light's shadow only within the light's reach (r_rtCutoff) and where the map lists the light as reaching (0: anywhere in its range). Not archived: an A/B switch");
 	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
@@ -366,6 +382,7 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *l = &rt.lights[keep];
 			float      brightest;
 
+			l->fixture = i;
 			VectorCopy(centre, l->origin);
 			VectorCopy(colour, l->color);
 			brightest = Q_max(l->color[0], Q_max(l->color[1], l->color[2]));
@@ -412,6 +429,23 @@ static void R_RtLightsAtFixtures(void)
 			brightest = Q_max(l->color[0], Q_max(l->color[1], l->color[2]));
 			l->range  = Q_min(4096.0f, sqrt(brightest / RT_CUTOFF));
 			merged += count;
+		}
+	}
+
+	// where each lamp's light is on its lamp, so that it goes where the lamp
+	// is moved (R_RtFollowFixtures)
+	for (i = 0; i < rt.numLights; i++) {
+		rtLight_t                    *l = &rt.lights[i];
+		const cStaticModelUnpacked_t *sm;
+		vec3_t                        d;
+
+		if (l->fixture < 0 || l->range <= 0) {
+			continue;
+		}
+		sm = &tr.world->staticModels[l->fixture];
+		VectorSubtract(l->origin, sm->origin, d);
+		for (j = 0; j < 3; j++) {
+			l->fixtureLocal[j] = DotProduct(d, sm->axis[j]);
 		}
 	}
 
@@ -903,6 +937,7 @@ void R_RtLoadWorld(void)
 		Com_Memset(l, 0, sizeof(*l));
 		l->source     = i;
 		l->mergedInto = -1;
+		l->fixture    = -1;
 		VectorCopy(sl->origin, l->origin);
 		VectorScale(sl->color, sl->intensity * 7500.0f, l->color);
 		l->spot         = sl->spot_light ? qtrue : qfalse;
@@ -1566,6 +1601,40 @@ static uint64_t R_RtLeafLights(const mnode_t *node, const vec3_t mins, const vec
 }
 
 /*
+A lamp's light goes where its lamp is: a lantern knocked off a table, a lamp
+set swinging. Its shadow of what stands still was drawn from where it was, and
+is drawn again from where it is (R_RtRenderShadows).
+*/
+static void R_RtFollowFixtures(void)
+{
+	int i, j;
+
+	for (i = 0; i < rt.numLights; i++) {
+		rtLight_t                    *l = &rt.lights[i];
+		const cStaticModelUnpacked_t *sm;
+		vec3_t                        origin;
+
+		if (l->fixture < 0 || l->fixture >= tr.world->numStaticModels) {
+			continue;
+		}
+		sm = &tr.world->staticModels[l->fixture];
+		if (!sm->moved) {
+			continue;
+		}
+		VectorCopy(sm->origin, origin);
+		for (j = 0; j < 3; j++) {
+			VectorMA(origin, l->fixtureLocal[j], sm->axis[j], origin);
+		}
+		if (DistanceSquared(origin, l->origin) < Square(RT_LIGHT_MOVE_EPSILON)) {
+			continue;
+		}
+		VectorCopy(origin, l->origin);
+		l->movedFrame  = rt.frame;
+		l->staticFaces = 0;
+	}
+}
+
+/*
 ===============
 R_RtRenderShadows
 
@@ -1700,7 +1769,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	int       numBodies;
 	rtMover_t movers[RT_MAX_MOVERS];
 	int       numMovers;
-	int       i, budget, dynamicSlots = 0, dynamicLights = 0;
+	int       i, budget, dynamicSlots = 0, dynamicLights = 0, movingLights = 0;
 	float     scale, bake, reach;
 	int       shift;
 	qboolean  seen;
@@ -1723,6 +1792,9 @@ void R_RtRenderShadows(const refdef_t *fd)
 	rt.facesDrawn  = 0;
 	rt.staticDrawn = 0;
 	rt.invalidated = 0;
+	rt.movingDrawn = 0;
+
+	R_RtFollowFixtures();
 
 	// lightmap units: what R_ColorShiftLightingBytes does to them, over 255
 	shift = r_mapOverBrightBits->integer - tr.overbrightBits;
@@ -1846,7 +1918,22 @@ void R_RtRenderShadows(const refdef_t *fd)
 				l->weight = 0;
 				continue;
 			}
-			for (f = 0; f < 6 && budget > 0; f++) {
+			// a lamp that moved this frame: the faces the view reads, now,
+			// for the nearest few (r_rtMovingLights); the rest of its faces
+			// once it has come to rest
+			if (l->movedFrame == rt.frame && chosen && movingLights < r_rtMovingLights->integer && l->staticReady) {
+				const int inView = R_RtFacesInView(l, l->range, frustum);
+
+				movingLights++;
+				for (f = 0; f < 6; f++) {
+					if (inView & (1 << f)) {
+						R_RtRenderFace(l, 0, l->staticSlot * 6 + f, f);
+						rt.movingDrawn++;
+						l->staticFaces |= 1 << f;
+					}
+				}
+			}
+			for (f = 0; f < 6 && budget > 0 && rt.frame - l->movedFrame > RT_LIGHT_SETTLE_FRAMES; f++) {
 				if (l->staticFaces & (1 << f)) {
 					continue;
 				}
@@ -2027,8 +2114,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
 
 	if (r_rtDebug->integer) {
-		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights), %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
-			tr.rtNumActive, numChosen, numSorted, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn, dynamicSlots, rt.invalidated, numBodies, rt.numPacked,
+		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
+			tr.rtNumActive, numChosen, numSorted, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
 		rt.particleDraws = rt.particleVerts = 0;
 		for (i = 0; r_rtDebug->integer > 2 && i < numBodies; i += 1 + (int)bodies[i * 2 + 1][0]) {
