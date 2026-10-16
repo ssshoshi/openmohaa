@@ -154,6 +154,9 @@ typedef struct {
     //  In which of the realtime lights' shadows it is drawn this frame
     //  (RT_CASTS_*, tr_rtlight.c).
     int			rtCaster;
+    //  Moving, the lights it can shadow anything for: a bit each of this
+    //  frame's candidates (R_RtRenderShadows), the rest pass it over.
+    uint64_t	rtLights;
 
     // Added in OPM
     //  The scene a skeletal model was posed for (tr.sceneCount) and which pose
@@ -1636,6 +1639,7 @@ typedef struct cStaticModelUnpacked_s {
     vec3_t baseAxis[3];
     qboolean moved;
     int rtCaster; // once moved, RT_CASTS_*
+    uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
 } cStaticModelUnpacked_t;
 
@@ -2604,6 +2608,7 @@ typedef struct {
     image_t *rtShadowImage[3]; // what stands still, what moves, the world as compiled
     FBO_t   *rtShadowFbo[3];
     int      rtNumActive;      // lights in rtLightData this frame
+    int      rtCandidate;      // the light whose faces of what moves are being drawn, its bit in rtLights
     vec4_t   rtLightData[RT_MAX_LIGHTS * RT_LIGHT_VEC4S];
     int      rtLightGeneration; // a new one each time rtLightData is written
     float    rtLightReach[RT_MAX_LIGHTS]; // how far each gives more than r_rtCutoff, < 0: nowhere

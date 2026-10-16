@@ -1810,7 +1810,8 @@ void R_AddEntitySurfaces (void) {
 			//  A realtime light's shadow of what stands still, or of what moves.
 			if ((tr.viewParms.flags & VPF_RTSTATIC) && !(tr.refdef.entities[i].rtCaster & RT_CASTS_STANDING))
 				continue;
-			if ((tr.viewParms.flags & VPF_RTDYNAMIC) && !(tr.refdef.entities[i].rtCaster & RT_CASTS_MOVING))
+			if ((tr.viewParms.flags & VPF_RTDYNAMIC) && (!(tr.refdef.entities[i].rtCaster & RT_CASTS_MOVING)
+				|| !(tr.refdef.entities[i].rtLights & ((uint64_t)1 << tr.rtCandidate))))
 				continue;
 
 			R_AddEntitySurface(i);

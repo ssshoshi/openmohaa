@@ -342,7 +342,8 @@ void R_AddStaticModelSurfaces(void)
         if ((tr.viewParms.flags & VPF_RTSTATIC) && SM->moved && !(SM->rtCaster & RT_CASTS_STANDING)) {
             continue;
         }
-        if ((tr.viewParms.flags & VPF_RTDYNAMIC) && !(SM->moved && (SM->rtCaster & RT_CASTS_MOVING))) {
+        if ((tr.viewParms.flags & VPF_RTDYNAMIC) && !(SM->moved && (SM->rtCaster & RT_CASTS_MOVING)
+            && (SM->rtLights & ((uint64_t)1 << tr.rtCandidate)))) {
             continue;
         }
 

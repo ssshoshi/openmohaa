@@ -70,6 +70,7 @@ cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
 cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
+cvar_t *r_rtShadowCull;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
 // sent four indexes a vec4 (u_RtList)
@@ -121,6 +122,7 @@ static struct {
 	qboolean   leafLights; // the map lists the lights reaching each leaf
 	int        seenCluster;  // the view's cluster the list below is for, -1 none
 	int       *seenLights;   // the lights listed for the leaves it can see
+	int       *candidateOf;  // each light's place among this frame's candidates, -1 none
 	int        numSeen;
 	int        staticOwner[RT_SLOTS]; // the light in each slot, -1 none
 
@@ -146,6 +148,8 @@ static struct {
 	int        facesDrawn; // this frame, for r_rtDebug
 	int        staticDrawn;
 	int        invalidated;
+	int        moverPairs;   // this frame, for r_rtDebug: movers in a dynamic light's range
+	int        moverCulled;  // of those, out of its reach or its light lists
 } rt;
 
 // Something that casts a shadow, followed from frame to frame: once it has
@@ -213,6 +217,8 @@ void R_RtRegister(void)
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
+	r_rtShadowCull = ri.Cvar_Get("r_rtShadowCull", "1", 0);
+	ri.Cvar_SetDescription(r_rtShadowCull, "What moves is drawn into a realtime light's shadow only within the light's reach (r_rtCutoff) and where the map lists the light as reaching (0: anywhere in its range). Not archived: an A/B switch");
 	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
 	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
 	r_rtSky = ri.Cvar_Get("r_rtSky", "1", CVAR_ARCHIVE);
@@ -924,6 +930,10 @@ void R_RtLoadWorld(void)
 
 	rt.seenLights  = ri.Malloc(sizeof(int) * Q_max(1, rt.numLights));
 	rt.seenCluster = -1;
+	rt.candidateOf = ri.Malloc(sizeof(int) * Q_max(1, rt.numLights));
+	for (i = 0; i < rt.numLights; i++) {
+		rt.candidateOf[i] = -1;
+	}
 
 	// the sun as worldspawn has it (R_Sphere_InitLights scaled it for models)
 	rt.sun = s_sun.exists;
@@ -950,6 +960,9 @@ void R_RtFreeWorld(void)
 	}
 	if (rt.seenLights) {
 		ri.Free(rt.seenLights);
+	}
+	if (rt.candidateOf) {
+		ri.Free(rt.candidateOf);
 	}
 	Com_Memset(&rt, 0, sizeof(rt));
 	tr.rtNumActive = 0;
@@ -1037,13 +1050,13 @@ static void R_RtRenderFace(const rtLight_t *l, int atlas, int tile, int face)
 }
 
 // Is a sphere in any of a light's faces? A bit a face.
-static int R_RtFacesTouched(const rtLight_t *l, const vec3_t centre, float radius)
+static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre, float radius)
 {
 	vec3_t v;
 	int    faces = 0, f;
 
 	VectorSubtract(centre, l->origin, v);
-	if (DotProduct(v, v) > Square(l->range + radius)) {
+	if (DotProduct(v, v) > Square(range + radius)) {
 		return 0;
 	}
 
@@ -1074,8 +1087,10 @@ static int R_RtFacesTouched(const rtLight_t *l, const vec3_t centre, float radiu
 
 // Things that move this frame, as spheres.
 typedef struct {
-	vec3_t centre;
-	float  radius;
+	vec3_t   centre;
+	float    radius;
+	uint64_t lights; // the candidates (R_RtRenderShadows) that reach it, a bit each
+	uint64_t *casts; // its entity's or static model's rtLights
 } rtMover_t;
 
 #define RT_MAX_MOVERS 1024
@@ -1090,7 +1105,7 @@ static void R_RtStandingSphere(const vec3_t centre, float radius)
 		rtLight_t *l = &rt.lights[i];
 
 		if (l->staticSlot >= 0 && l->staticFaces) {
-			l->staticFaces &= ~R_RtFacesTouched(l, centre, radius);
+			l->staticFaces &= ~R_RtFacesTouched(l, l->range, centre, radius);
 		}
 	}
 }
@@ -1185,6 +1200,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		float          radius, pose[10];
 
 		ent->rtCaster = 0;
+		ent->rtLights = ~(uint64_t)0;
 		if (ent->e.reType != RT_MODEL) {
 			continue;
 		}
@@ -1253,6 +1269,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		if ((ent->rtCaster & RT_CASTS_MOVING) && count < RT_MAX_MOVERS) {
 			VectorCopy(centre, movers[count].centre);
 			movers[count].radius = radius;
+			movers[count].casts  = &ent->rtLights;
 			count++;
 		}
 	}
@@ -1271,6 +1288,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
 		float                   pose[10];
 
+		sm->rtLights = ~(uint64_t)0;
 		if (!sm->moved || !sm->tiki) {
 			continue;
 		}
@@ -1284,6 +1302,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		if ((sm->rtCaster & RT_CASTS_MOVING) && count < RT_MAX_MOVERS) {
 			VectorCopy(sm->origin, movers[count].centre);
 			movers[count].radius = sm->cull_radius;
+			movers[count].casts  = &sm->rtLights;
 			count++;
 		}
 	}
@@ -1509,6 +1528,44 @@ static float R_RtReach(const vec4_t colorRange, float cutoff)
 }
 
 /*
+The candidate lights that reach a mover: those the map lists for any leaf its
+bounds touch (the lists R_RtMarkSeenLights reads). A lamp behind a wall from it
+is not among them, and a shadow is cast only between a light and what it
+lights: the mover can darken nothing for that lamp, and its faces need not be
+drawn again as it moves. All of them where the map has no such lists.
+*/
+static uint64_t R_RtLeafLights(const mnode_t *node, const vec3_t mins, const vec3_t maxs, const int *candidateOf)
+{
+	uint64_t lights = 0;
+	int      k;
+
+	while (node->contents == CONTENTS_NODE) {
+		const int side = BoxOnPlaneSide(mins, maxs, node->plane);
+
+		if (side == 3) {
+			lights |= R_RtLeafLights(node->children[0], mins, maxs, candidateOf);
+			node = node->children[1];
+		} else {
+			node = node->children[side == 1 ? 0 : 1];
+		}
+	}
+
+	for (k = 0; k < node->numlights; k++) {
+		const spherel_t *sl = node->lights[k];
+		int              index, c;
+
+		if (sl == &tr.sSunLight) {
+			continue;
+		}
+		index = rt.fromSphere[sl - tr.sLights];
+		if (index >= 0 && (c = candidateOf[index]) >= 0) {
+			lights |= (uint64_t)1 << c;
+		}
+	}
+	return lights;
+}
+
+/*
 ===============
 R_RtRenderShadows
 
@@ -1517,12 +1574,12 @@ their shadows, and what the shaders are told of them.
 ===============
 */
 // Whether a light reaches into the view's four sides at all
-static qboolean R_RtReachesView(const rtLight_t *l, const cplane_t frustum[4])
+static qboolean R_RtReachesView(const rtLight_t *l, float range, const cplane_t frustum[4])
 {
 	int k;
 
 	for (k = 0; k < 4; k++) {
-		if (DotProduct(l->origin, frustum[k].normal) - frustum[k].dist < -l->range) {
+		if (DotProduct(l->origin, frustum[k].normal) - frustum[k].dist < -range) {
 			return qfalse;
 		}
 	}
@@ -1540,7 +1597,7 @@ taps' spread.
 */
 #define RT_FACE_VIEW_MARGIN 32.0f
 
-static int R_RtFacesInView(const rtLight_t *l, const cplane_t frustum[5])
+static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frustum[5])
 {
 	int faces = 0, f, c, k;
 
@@ -1550,9 +1607,9 @@ static int R_RtFacesInView(const rtLight_t *l, const cplane_t frustum[5])
 		R_RtFaceAxes(f, axis);
 		VectorCopy(l->origin, points[0]);
 		for (c = 0; c < 4; c++) {
-			VectorMA(l->origin, l->range, axis[0], points[c + 1]);
-			VectorMA(points[c + 1], (c & 1) ? l->range : -l->range, axis[1], points[c + 1]);
-			VectorMA(points[c + 1], (c & 2) ? l->range : -l->range, axis[2], points[c + 1]);
+			VectorMA(l->origin, range, axis[0], points[c + 1]);
+			VectorMA(points[c + 1], (c & 1) ? range : -range, axis[1], points[c + 1]);
+			VectorMA(points[c + 1], (c & 2) ? range : -range, axis[2], points[c + 1]);
 		}
 
 		for (k = 0; k < 5; k++) {
@@ -1644,7 +1701,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	rtMover_t movers[RT_MAX_MOVERS];
 	int       numMovers;
 	int       i, budget, dynamicSlots = 0, dynamicLights = 0;
-	float     scale, bake;
+	float     scale, bake, reach;
 	int       shift;
 	qboolean  seen;
 	cplane_t  frustum[5];
@@ -1748,6 +1805,26 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	numMovers = r_rtShadows->integer ? R_RtTrackCasters(movers) : 0;
 	budget    = r_rtFacesPerFrame->integer;
+	rt.moverPairs = rt.moverCulled = 0;
+
+	// which of the candidates reach each mover, by the map's light lists
+	for (i = 0; i < numCandidates; i++) {
+		rt.candidateOf[candidates[i]] = i;
+	}
+	for (i = 0; i < numMovers; i++) {
+		if (rt.leafLights && r_rtShadowCull->integer) {
+			vec3_t mins, maxs;
+
+			VectorSet(mins, movers[i].centre[0] - movers[i].radius, movers[i].centre[1] - movers[i].radius, movers[i].centre[2] - movers[i].radius);
+			VectorSet(maxs, movers[i].centre[0] + movers[i].radius, movers[i].centre[1] + movers[i].radius, movers[i].centre[2] + movers[i].radius);
+			movers[i].lights = R_RtLeafLights(tr.world->nodes, mins, maxs, rt.candidateOf);
+		} else {
+			movers[i].lights = ~(uint64_t)0;
+		}
+	}
+	for (i = 0; i < numCandidates; i++) {
+		rt.candidateOf[candidates[i]] = -1;
+	}
 	numBodies = R_RtGatherBodies(bodies);
 	rt.numPacked = 0;
 
@@ -1797,13 +1874,44 @@ void R_RtRenderShadows(const refdef_t *fd)
 			ready = l->staticReady;
 
 			// what moves: drawn every frame, in the faces it is in, for the
-			// nearest lights
-			if (ready && chosen && dynamicLights < r_rtDynamicLights->integer && R_RtReachesView(l, frustum))
+			// nearest lights. A shadow falls between a light and what it
+			// lights, so what is past the light's reach (where it gives a
+			// pixel less than r_rtCutoff, R_RtReach), or that its light does
+			// not reach (the map's light lists), darkens nothing that shows.
+			if (r_rtShadowCull->integer) {
+				vec4_t colorRange;
+
+				VectorScale(l->color, scale, colorRange);
+				colorRange[3] = l->range;
+				reach = R_RtReach(colorRange, r_rtCutoff->value);
+			} else {
+				reach = l->range;
+			}
+			if (ready && chosen && reach > 0 && dynamicLights < r_rtDynamicLights->integer && R_RtReachesView(l, reach, frustum))
 			{
 				int faces = 0, m;
 
 				for (m = 0; m < numMovers; m++) {
-					faces |= R_RtFacesTouched(l, movers[m].centre, movers[m].radius);
+					int touched;
+
+					if (!(movers[m].lights & ((uint64_t)1 << i))) {
+						if (r_rtDebug->integer && R_RtFacesTouched(l, l->range, movers[m].centre, movers[m].radius)) {
+							rt.moverPairs++;
+							rt.moverCulled++;
+						}
+						// nor is it drawn in the faces the others need
+						*movers[m].casts &= ~((uint64_t)1 << i);
+						continue;
+					}
+					touched = R_RtFacesTouched(l, reach, movers[m].centre, movers[m].radius);
+					if (!touched && r_rtShadowCull->integer) {
+						*movers[m].casts &= ~((uint64_t)1 << i);
+					}
+					if (r_rtDebug->integer && R_RtFacesTouched(l, l->range, movers[m].centre, movers[m].radius)) {
+						rt.moverPairs++;
+						rt.moverCulled += !touched;
+					}
+					faces |= touched;
 				}
 				if (faces && dynamicSlots < RT_SLOTS) {
 					const int slot = dynamicSlots++;
@@ -1812,9 +1920,10 @@ void R_RtRenderShadows(const refdef_t *fd)
 					// few all the same: had the faces out of view not counted,
 					// the places went round the lights as the view turned, and
 					// what moves lost and found its shadows in patches.
-					const int drawn = faces & R_RtFacesInView(l, frustum);
+					const int drawn = faces & R_RtFacesInView(l, reach, frustum);
 
 					dynamicLights++;
+					tr.rtCandidate = i;
 					for (f = 0; f < 6; f++) {
 						if (drawn & (1 << f)) {
 							R_RtRenderFace(l, 1, slot * 6 + f, f);
@@ -1918,8 +2027,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
 
 	if (r_rtDebug->integer) {
-		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers, faces drawn %d standing %d moving (%d lights), %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
-			tr.rtNumActive, numChosen, numSorted, numMovers, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn, dynamicSlots, rt.invalidated, numBodies, rt.numPacked,
+		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights), %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
+			tr.rtNumActive, numChosen, numSorted, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn, dynamicSlots, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
 		rt.particleDraws = rt.particleVerts = 0;
 		for (i = 0; r_rtDebug->integer > 2 && i < numBodies; i += 1 + (int)bodies[i * 2 + 1][0]) {
