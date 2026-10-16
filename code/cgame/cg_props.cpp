@@ -58,6 +58,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define CG_PROP_DYNAMIC_SIZE  80.0f
 
 cgProp_t cg_props[CG_MAX_PROPS];
+cgCorona_t cg_coronas[CG_MAX_CORONAS];
+int        cg_numCoronas;
 int      cg_numProps;
 
 static char     cg_propsMap[MAX_QPATH];
@@ -157,6 +159,7 @@ void CG_PropsReset(void)
 {
     cg_propsLoaded = qfalse;
     cg_numProps    = 0;
+    cg_numCoronas  = 0;
 }
 
 // Whether a static model is left without a box, by its name: foliage, whose
@@ -582,6 +585,7 @@ void CG_PropsLoad(void)
     cg_propsLoaded = qtrue;
     Q_strncpyz(cg_propsMap, cgs.mapname, sizeof(cg_propsMap));
     cg_numProps = 0;
+    cg_numCoronas = 0;
 
     if (!cgs.mapname[0] || !cgi.FS_ReadFile) {
         return;
@@ -616,6 +620,19 @@ void CG_PropsLoad(void)
         memcpy(name, in[i].model, sizeof(in[i].model));
         name[sizeof(in[i].model)] = 0;
 
+        // a corona: no prop, but a lamp on a cord may carry it
+        if (Q_stristr(name, "corona") && cg_numCoronas < CG_MAX_CORONAS) {
+            cgCorona_t *c = &cg_coronas[cg_numCoronas++];
+            vec3_t      angles;
+
+            c->staticIndex = i;
+            for (k = 0; k < 3; k++) {
+                c->origin[k] = LittleFloat(in[i].origin[k]);
+                angles[k]    = LittleFloat(in[i].angles[k]);
+            }
+            AnglesToAxis(angles, c->axis);
+        }
+
         const qboolean left = CG_PropSkipped(name);
 
         if (!Q_stricmpn(name, "models", 6)) {
@@ -639,6 +656,7 @@ void CG_PropsLoad(void)
         p->dynamic     = qfalse;
         p->hangs       = qfalse;
         p->corded      = qfalse;
+        p->cordCorona  = -1;
 
         for (k = 0; k < 3; k++) {
             biggest = Q_max(biggest, p->maxs[k] - p->mins[k]);
@@ -707,6 +725,46 @@ void CG_PropsLoad(void)
 
         cg_numProps++;
         kept++;
+    }
+
+    // Each lamp on a cord takes the corona at its bulb with it, the nearest
+    // within a little of it, one corona a lamp.
+    {
+        static qboolean taken[CG_MAX_CORONAS];
+        int             j, k;
+
+        memset(taken, 0, sizeof(taken));
+        for (i = 0; i < cg_numProps; i++) {
+            cgProp_t *lamp = &cg_props[i];
+            vec3_t    light, d;
+            float     best  = Square(32.0f);
+            int       found = -1;
+
+            if (!lamp->corded) {
+                continue;
+            }
+            VectorCopy(lamp->origin, light);
+            for (k = 0; k < 3; k++) {
+                VectorMA(light, lamp->cordLight[k], lamp->axis[k], light);
+            }
+            for (j = 0; j < cg_numCoronas; j++) {
+                const float d2 = DistanceSquared(cg_coronas[j].origin, light);
+
+                if (!taken[j] && d2 < best) {
+                    best  = d2;
+                    found = j;
+                }
+            }
+            if (found < 0) {
+                continue;
+            }
+            taken[found]     = qtrue;
+            lamp->cordCorona = found;
+            VectorSubtract(cg_coronas[found].origin, lamp->origin, d);
+            for (k = 0; k < 3; k++) {
+                lamp->cordCoronaLocal[k] = DotProduct(d, lamp->axis[k]);
+            }
+        }
     }
 
     cgi.FS_FreeFile(buf);
