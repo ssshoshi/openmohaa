@@ -790,6 +790,17 @@ qboolean CG_PhysicsGrabBodyAt(JPH::BodyID id, const vec3_t point, float dist)
     return qtrue;
 }
 
+// The body the grabber holds on the client, if any (the water lets a hand
+// move it freely, CG_PhysicsPropsWater)
+qboolean CG_PhysicsGrabbedBody(JPH::BodyID *id)
+{
+    if (!CG_PhysicsGrabHeld() || pg.server) {
+        return qfalse;
+    }
+    *id = pg.id;
+    return qtrue;
+}
+
 qboolean CG_PhysicsGrabHeld(void)
 {
     if (!pg.held) {

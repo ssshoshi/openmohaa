@@ -147,12 +147,15 @@ typedef struct {
 // leaves no wake.
 #define PP_WATER_DRAG  2.5f
 #define PP_WAKE_SPEED  12.0f
-// And the drag that grows with the square of the speed, as water's does, for
-// how much face a prop turns to the water for its mass: half water's density
-// (kg/m3) by a blunt shape's drag coefficient (1) by a sixth of its box's
-// area. A helmet settles slowly, a sandbag drops: glass sinks at ~0.4 m/s,
-// metal ~0.7, stone ~1.7. No more a step than the speed it has.
-#define PP_WATER_FORM  (0.5f * 1000.0f * 1.0f / 6.0f)
+// And for what sinks, the drag that grows with the square of the speed, as
+// water's does, for how much face a prop turns to the water for its mass:
+// half water's density (kg/m3) by a drag coefficient (0.4) by a sixth of its
+// box's area. A helmet settles, a sandbag drops: glass sinks at ~0.7 m/s,
+// metal ~1, stone ~2.2. Never more than PP_WATER_FORM_MOST of its speed a
+// second, so it is slowed, not stopped; not on what floats, which plunges in
+// and bobs up; and not on what the grabber holds, which a hand moves freely.
+#define PP_WATER_FORM      (0.5f * 1000.0f * 0.4f / 6.0f)
+#define PP_WATER_FORM_MOST 15.0f
 // The points of its box the water holds it up and slows it at, this far out
 // from its middle to its corners
 #define PP_WATER_INSET 0.7f
@@ -555,9 +558,13 @@ void CG_PhysicsPropsWater(float dt)
 {
     JPH::BodyInterface &bodies = phys_system->GetBodyInterfaceNoLock();
     const float         g      = -phys_system->GetGravity().GetZ();
+    JPH::BodyID         held;
 
     if (!cg_water_float->integer) {
         return;
+    }
+    if (!CG_PhysicsGrabbedBody(&held)) {
+        held = JPH::BodyID();
     }
 
     for (size_t i = 0; i < pp_props.size(); i++) {
@@ -635,7 +642,8 @@ void CG_PhysicsPropsWater(float dt)
                 continue;
             }
             const JPH::Vec3 rel  = PhysToJolt(flow) - bodies.GetPointVelocity(pp->id, point);
-            const float     drag = PP_WATER_DRAG + Q_min(pp->form * rel.Length(), 0.9f / dt);
+            const float     drag = PP_WATER_DRAG
+                             + (pp->buoyancy < 1.0f && pp->id != held ? Q_min(pp->form * rel.Length(), PP_WATER_FORM_MOST) : 0.0f);
 
             force = rel * (mass * drag * tops[c] / 8.0f) + JPH::Vec3(0.0f, 0.0f, mass * g * pp->buoyancy * tops[c] / 8.0f);
             bodies.AddForce(pp->id, force, point);

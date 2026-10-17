@@ -138,6 +138,7 @@ void CG_PhysicsPlayerPushes(void);
 void CG_PhysicsPushBody(JPH::BodyID id, const vec3_t dir, float speed);
 void CG_PhysicsPushPropsInBox(const vec3_t mins, const vec3_t maxs, const vec3_t dir, float speed);
 void CG_PhysicsGrabStep(float dt);
+qboolean CG_PhysicsGrabbedBody(JPH::BodyID *id);
 
 void CG_JoltRagdollsStep(float dt);
 void CG_JoltRagdollCounts(int *used, int *floating, int *asleep);
