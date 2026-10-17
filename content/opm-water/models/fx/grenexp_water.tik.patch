@@ -1,16 +1,41 @@
 --- a/models/fx/grenexp_water.tik
 +++ b/models/fx/grenexp_water.tik
-@@ -32,6 +32,9 @@
+@@ -10,15 +10,15 @@
+ {
+ 		client
+ 		{
+-			cache waterplume.spr
+-			cache water_g.spr
++			cache opm_waterplume.spr
++			cache opm_water_g.spr
+ 			cache ripple.spr
+ 
+ 			sfx sound grenade_exp_water
+ 		
+ 		 sfx originspawn
+ 		(
+-			model oceanspray.spr
++			model opm_oceanspray.spr
+ 			count 5
+ 			color 1.00 1.00 1.00
+ 			spritegridlighting
+@@ -32,10 +32,14 @@
  			circle
  		)
  
 +		// OPM (content/opm-water): no collision, which also lit each drop by
-+		// the light grid where it was: a grenade goes off on the bottom, and
-+		// the plume came up black from there
++		// the light grid where it was; and the sprites are opm_ ones that
++		// keep their colour (scripts/opm_water.shader): a grenade goes off
++		// on the bottom, and the plume came up black
  		sfx originspawn
  			(
  				count 30
-@@ -47,7 +50,6 @@
+-				model waterplume.spr
++				model opm_waterplume.spr
+ 				spritegridlighting
+ 				offset crandom 60 crandom 60 0
+ 				angles 0 0 crandom 360
+@@ -47,7 +51,6 @@
  				life 2.5
  				scale 0.2
  				alpha .3
@@ -18,3 +43,12 @@
  				sphere
  				scalerate 3
  				fade
+@@ -55,7 +58,7 @@
+ 
+ 		sfx originspawn
+ 		(
+-			model water_g.spr
++			model opm_water_g.spr
+ 			count 5
+ 			alpha 0.51
+ 			color 1.00 1.00 1.00

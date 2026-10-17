@@ -13,14 +13,14 @@ init
 {
 	client
 	{
-		cache bh_ocean_plume.spr
+		cache opm_ocean_plume.spr
 		cache models/fx/water_splash_drop.tik
 
 		sfx sound snd_bh_puddle
 
 		sfx originspawn
 		(
-			model bh_ocean_plume.spr
+			model opm_ocean_plume.spr
 			alpha 0.8
 			angles 0 0 0
 			offset 0 0 4

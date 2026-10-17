@@ -14,8 +14,8 @@ init
 {
 	client
 	{
-		cache bh_ocean_plume.spr
-		cache oceanspray.spr
+		cache opm_ocean_plume.spr
+		cache opm_oceanspray.spr
 		cache models/fx/water_splash_drop.tik
 
 		sfx sound impact_watersplash
@@ -23,7 +23,7 @@ init
 		// the water heaving up where it went in
 		sfx originspawn
 		(
-			model bh_ocean_plume.spr
+			model opm_ocean_plume.spr
 			alpha 0.85
 			angles 0 0 0
 			offset 0 0 6
@@ -80,7 +80,7 @@ init
 		// spray over it
 		sfx originspawn
 		(
-			model oceanspray.spr
+			model opm_oceanspray.spr
 			alpha 0.5
 			offset crandom 12 crandom 12 8
 			count 3
@@ -96,7 +96,7 @@ init
 		// mist, hanging a moment
 		delayedsfx 0.08 originspawn
 		(
-			model bh_ocean_plume.spr
+			model opm_ocean_plume.spr
 			alpha 0.35
 			angles 0 0 0
 			offset 0 0 16

@@ -9,18 +9,21 @@
  setup
  {
  	scale 1.0
-@@ -15,113 +19,81 @@
+@@ -14,114 +18,82 @@
+ 	client
  	{
  		//cache some stuff used in this effect
- 		cache bh_ocean_plume.spr
+-		cache bh_ocean_plume.spr
 -		cache bh_water_ring.spr
++		cache opm_ocean_plume.spr
  		cache models/fx/water_splash_drop.tik
  
 -		// main plume
 +		// the water bulging up where it went in
  		sfx originspawn
  		(
- 			model bh_ocean_plume.spr
+-			model bh_ocean_plume.spr
++			model opm_ocean_plume.spr
  			spritegridlighting
 -			alpha 1.0
 +			alpha 0.8
@@ -87,7 +90,7 @@
  		delayedsfx 0.05 originspawn
  		(
 -			model models/fx/water_splash_drop.tik
-+			model bh_ocean_plume.spr
++			model opm_ocean_plume.spr
  			spritegridlighting
 -			spawnrange 512
 -			angles 270 0 0
