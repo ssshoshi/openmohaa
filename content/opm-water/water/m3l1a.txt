@@ -29,6 +29,9 @@ swash 170
 remapShader textures/mohtest/omaha_set4_shoreline textures/test/omaha_pjspick5
 beachSurface textures/test/omaha_pjspick5
 beachSurface textures/mohtest/omaha_set4_shoreline
+// and the sand above it, so the wet ends at the tide's ragged line, not
+// along the edges of the textures
+beachSurface textures/mohtest/omaha_set4_covered
 
 chop 1
 foam 1

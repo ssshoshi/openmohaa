@@ -76,6 +76,16 @@ float Clouds(vec2 x)
 	return Noise(x).x * 0.55 + Noise(Turn(x, 1.1) * 2.03 + 3.7).x * 0.3 + Noise(Turn(x, 2.3) * 4.1 + 9.2).x * 0.15;
 }
 
+// On the beach's own ground (R_WaterBuildBeach): its grid has it at this
+// height here. The terrain is drawn coarser further off than its heights.
+bool OnBeach(vec3 p, float lin)
+{
+	vec2 at = (p.xy - u_BeachGround.xy) * u_BeachGround.zw;
+	if (at.x < 0.0 || at.y < 0.0 || at.x > 1.0 || at.y > 1.0)
+		return false;
+	return abs(p.z - texture2D(u_SpecularMap, at).r) <= 6.0 + lin * 0.006;
+}
+
 void main()
 {
 	float d = texture2D(u_ScreenDepthMap, var_DepthTex).r;
@@ -87,38 +97,55 @@ void main()
 	gl_FragDepth = d;
 
 	float lin  = LinearDepth(d);
-	vec3  pos  = u_ViewOrigin + var_ViewDir * (lin / u_ViewInfo.y);
+	vec3  vd   = var_ViewDir / u_ViewInfo.y;
+	vec3  ddx  = dFdx(var_ViewDir) / u_ViewInfo.y;
+	vec3  ddy  = dFdy(var_ViewDir) / u_ViewInfo.y;
+	vec3  pos  = u_ViewOrigin + vd * lin;
+	vec2  texel = r_FBufScale;
 
-	// Only the beach's own ground: not the sand under the water (another
-	// shader, with the water's reflection over it already), nor what stands
-	// on the beach, a body or a boat, which the swash ran over
-	if (u_BeachGround.z > 0.0)
-	{
-		vec2 at = (pos.xy - u_BeachGround.xy) * u_BeachGround.zw;
-		if (at.x < 0.0 || at.y < 0.0 || at.x > 1.0 || at.y > 1.0)
-			discard;
-		float ground = texture2D(u_SpecularMap, at).r;
-		// the terrain is drawn coarser further off than its heights
-		if (abs(pos.z - ground) > 6.0 + lin * 0.006)
-			discard;
-	}
 	// Which way it faces, from the pixels beside it on its own side: at an
 	// edge (a model before the sand) the depth jumps, and across it the
 	// normal was anything, a bright line round everything on the beach.
 	// The side whose depth goes on most smoothly.
-	vec2  texel = r_FBufScale;
-	float lx0  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex - vec2(texel.x, 0.0)).r);
-	float lx1  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex + vec2(texel.x, 0.0)).r);
-	float ly0  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex - vec2(0.0, texel.y)).r);
-	float ly1  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex + vec2(0.0, texel.y)).r);
-	vec3  ddx  = dFdx(var_ViewDir) / u_ViewInfo.y;
-	vec3  ddy  = dFdy(var_ViewDir) / u_ViewInfo.y;
-	vec3  vd   = var_ViewDir / u_ViewInfo.y;
+	float dx0  = texture2D(u_ScreenDepthMap, var_DepthTex - vec2(texel.x, 0.0)).r;
+	float dx1  = texture2D(u_ScreenDepthMap, var_DepthTex + vec2(texel.x, 0.0)).r;
+	float dy0  = texture2D(u_ScreenDepthMap, var_DepthTex - vec2(0.0, texel.y)).r;
+	float dy1  = texture2D(u_ScreenDepthMap, var_DepthTex + vec2(0.0, texel.y)).r;
+	float lx0  = LinearDepth(dx0), lx1 = LinearDepth(dx1);
+	float ly0  = LinearDepth(dy0), ly1 = LinearDepth(dy1);
 	vec3  sx   = abs(lx1 - lin) < abs(lin - lx0) ? (vd + ddx) * lx1 - vd * lin : vd * lin - (vd - ddx) * lx0;
 	vec3  sy   = abs(ly1 - lin) < abs(lin - ly0) ? (vd + ddy) * ly1 - vd * lin : vd * lin - (vd - ddy) * ly0;
 	vec3  N    = normalize(cross(sx, sy));
 	if (N.z < 0.0)
 		N = -N;
+
+	// Only the beach's own ground: not the sand under the water (another
+	// shader, with the water's reflection over it already), nor what stands
+	// on the beach, a body or a boat, which the swash ran over. A pixel off
+	// it at a model's edge, which the prepass covered a pixel further than
+	// the view did, takes the ground beside it and its depth: where the view
+	// has the model there, it is in front and keeps the pixel, and where the
+	// view has the ground it is wet as the ground round it (left dry, it was
+	// a light line round everything on the wet sand)
+	if (u_BeachGround.z > 0.0 && !OnBeach(pos, lin))
+	{
+		vec3 p;
+
+		if (OnBeach(p = u_ViewOrigin + (vd - ddx) * lx0, lx0))
+			d = dx0;
+		else if (OnBeach(p = u_ViewOrigin + (vd + ddx) * lx1, lx1))
+			d = dx1;
+		else if (OnBeach(p = u_ViewOrigin + (vd - ddy) * ly0, ly0))
+			d = dy0;
+		else if (OnBeach(p = u_ViewOrigin + (vd + ddy) * ly1, ly1))
+			d = dy1;
+		else
+			discard;
+		pos = p;
+		lin = LinearDepth(d);
+		gl_FragDepth = d;
+		N = vec3(0.0, 0.0, 1.0);
+	}
 	float onGround = smoothstep(0.55, 0.8, N.z); // ground, not the sides of things
 
 	vec2  dir    = normalize(u_WaterWaves.xy);
