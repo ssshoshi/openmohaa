@@ -22,6 +22,9 @@ beach 1200 -440
 puddles 0.3 110
 // each wave runs on up the sand this far at most, and back
 swash 170
+// the beach is the sand above the water alone: the sand under it is another
+// shader, which the water's own reflection is over already
+beachSurface textures/test/omaha_pjspick5
 
 chop 1
 foam 1

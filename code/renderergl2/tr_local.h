@@ -1029,6 +1029,7 @@ typedef enum
 	UNIFORM_WORLDVIEWPROJECTION, // what the world is projected by, for a ray to be followed through the view
 	UNIFORM_WATERVIEW,           // the view's box on the screen: x, y, the far x, the far y
 	UNIFORM_BEACHSWASH,
+	UNIFORM_BEACHGROUND,   // where the beach's ground lies (tr_water.c, R_WaterBuildBeach): its corner, one over its size, whether
 	UNIFORM_RIPPLESIM,     // the water's ripples (tr_water.c, glsl/ripple_fp.glsl)
 	UNIFORM_RIPPLEDECAY,
 	UNIFORM_RIPPLESOURCES,
@@ -2511,6 +2512,7 @@ typedef struct {
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
 	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
+	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	

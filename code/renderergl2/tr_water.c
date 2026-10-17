@@ -54,6 +54,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //     beach 900 -440          // the sand is wet this far inland of the shore line, and up to this height
 //     puddles 0.3 90          // water stands in its hollows: how much of it, and how big they are
 //     swash 160               // how far up the sand a wave runs, at most, from the shore line
+//     beachSurface textures/sand  // the beach is the ground of this shader alone (up to 4 of these
+//                             // lines): not the sand under the water, nor what stands on it
 //
 // The beach is drawn over the opaque view from its depth (RB_BeachDraw,
 // glsl/beach_*.glsl): wet sand darker with the sky in it, the puddles, and the
@@ -92,6 +94,8 @@ typedef struct {
     float  beachReach, beachTop;
     float  puddles, puddleSize;
     float  swash;
+    char   beachSurfaces[4][MAX_QPATH];
+    int    numBeachSurfaces;
     char   file[MAX_QPATH];
     qboolean fromFile;
 } waterParams_t;
@@ -285,6 +289,11 @@ static void R_WaterReadFile(const char *mapName)
                 water.beachSet   = qtrue;
                 water.beachReach = Q_max(v[0], 1.0f);
                 water.beachTop   = v[1];
+            }
+        } else if (!Q_stricmp(key, "beachSurface")) {
+            token = COM_ParseExt(&text, qfalse);
+            if (token[0] && water.numBeachSurfaces < 4) {
+                Q_strncpyz(water.beachSurfaces[water.numBeachSurfaces++], token, MAX_QPATH);
             }
         } else if (!Q_stricmp(key, "swash")) {
             R_WaterNumbers(&text, &water.swash, 1);
@@ -520,10 +529,182 @@ static float RB_WaterBindSky(void)
     return Q_min(water.skyBox, 1.0f);
 }
 
+/*
+===============
+R_WaterBuildBeach
+
+The beach's ground (beachSurface in the water file): the surfaces of those
+shaders, the world's and the terrain's, drawn from above into a grid of their
+height, tr.beachGroundImage. The beach pass (beach_fp.glsl) is drawn only on
+that ground: not on the sand under the water, which is another shader and
+has the water's own reflection over it, nor on what stands on the beach.
+===============
+*/
+#define BEACH_GROUND_SIZE 1024
+#define BEACH_GROUND_NONE -1.0e9f
+
+static struct {
+    float *height;
+    int    width, rows;
+    float  x0, y0, texel;
+    vec2_t mins, maxs;
+    qboolean on;
+} beachGround;
+
+static qboolean R_WaterIsBeachShader(const shader_t *sh)
+{
+    int i;
+
+    for (i = 0; sh && i < water.numBeachSurfaces; i++) {
+        if (!Q_stricmp(sh->name, water.beachSurfaces[i])) {
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
+// A triangle of the ground: its bounds, or its height at each texel it covers
+static void R_WaterBeachTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean draw)
+{
+    float area, minx, maxx, miny, maxy;
+    int   x0, x1, y0, y1, x, y;
+
+    minx = Q_min(a[0], Q_min(b[0], c[0]));
+    maxx = Q_max(a[0], Q_max(b[0], c[0]));
+    miny = Q_min(a[1], Q_min(b[1], c[1]));
+    maxy = Q_max(a[1], Q_max(b[1], c[1]));
+    if (!draw) {
+        beachGround.mins[0] = Q_min(beachGround.mins[0], minx);
+        beachGround.mins[1] = Q_min(beachGround.mins[1], miny);
+        beachGround.maxs[0] = Q_max(beachGround.maxs[0], maxx);
+        beachGround.maxs[1] = Q_max(beachGround.maxs[1], maxy);
+        return;
+    }
+
+    area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (fabs(area) < 0.001f) {
+        return; // edge on from above
+    }
+    x0 = Q_max(0, (int)floor((minx - beachGround.x0) / beachGround.texel));
+    x1 = Q_min(beachGround.width - 1, (int)floor((maxx - beachGround.x0) / beachGround.texel));
+    y0 = Q_max(0, (int)floor((miny - beachGround.y0) / beachGround.texel));
+    y1 = Q_min(beachGround.rows - 1, (int)floor((maxy - beachGround.y0) / beachGround.texel));
+
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            const float px = beachGround.x0 + (x + 0.5f) * beachGround.texel;
+            const float py = beachGround.y0 + (y + 0.5f) * beachGround.texel;
+            const float wa = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) / area;
+            const float wb = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
+            const float wc = 1.0f - wa - wb;
+            float      *h  = &beachGround.height[y * beachGround.width + x];
+
+            if (wa < -0.001f || wb < -0.001f || wc < -0.001f) {
+                continue;
+            }
+            *h = Q_max(*h, wa * a[2] + wb * b[2] + wc * c[2]);
+        }
+    }
+}
+
+// Every triangle of the beach's ground, for its bounds and then its height
+static void R_WaterBeachSurfaces(qboolean draw)
+{
+    int i, k, x, y;
+
+    for (i = 0; i < tr.world->numsurfaces; i++) {
+        const msurface_t      *surf = &tr.world->surfaces[i];
+        const srfBspSurface_t *bsp;
+
+        if (!R_WaterIsBeachShader(surf->shader) || !surf->data) {
+            continue;
+        }
+        if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
+            continue;
+        }
+        bsp = (const srfBspSurface_t *)surf->data;
+        for (k = 0; k + 2 < bsp->numIndexes; k += 3) {
+            R_WaterBeachTri(bsp->verts[bsp->indexes[k]].xyz, bsp->verts[bsp->indexes[k + 1]].xyz,
+                bsp->verts[bsp->indexes[k + 2]].xyz, draw);
+        }
+    }
+
+    // the terrain: each patch 512 units square, its heights 9 by 9
+    for (i = 0; i < tr.world->numTerraPatches; i++) {
+        const cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
+
+        if (!R_WaterIsBeachShader(patch->shader)) {
+            continue;
+        }
+        for (y = 0; y < 8; y++) {
+            for (x = 0; x < 8; x++) {
+                vec3_t p[4];
+
+                for (k = 0; k < 4; k++) {
+                    const int xi = x + (k & 1), yi = y + (k >> 1);
+
+                    VectorSet(p[k], patch->x0 + xi * 64.0f, patch->y0 + yi * 64.0f,
+                        patch->heightmap[yi * 9 + xi] * 2.0f + patch->z0);
+                }
+                R_WaterBeachTri(p[0], p[1], p[3], draw);
+                R_WaterBeachTri(p[0], p[3], p[2], draw);
+            }
+        }
+    }
+}
+
+static void R_WaterBuildBeach(void)
+{
+    float extent;
+    int   i;
+
+    if (beachGround.height) {
+        ri.Free(beachGround.height);
+    }
+    memset(&beachGround, 0, sizeof(beachGround));
+    // the last map's grid is one of its images, which the next map frees
+    tr.beachGroundImage = NULL;
+
+    if (!tr.world || !water.beachSet || !water.numBeachSurfaces || !tr.beachShader[0].program) {
+        return;
+    }
+
+    VectorSet2(beachGround.mins, 1e9f, 1e9f);
+    VectorSet2(beachGround.maxs, -1e9f, -1e9f);
+    R_WaterBeachSurfaces(qfalse);
+    if (beachGround.maxs[0] <= beachGround.mins[0] || beachGround.maxs[1] <= beachGround.mins[1]) {
+        ri.Printf(PRINT_WARNING, "WARNING: %s: no surface of its beachSurface shaders, the beach is everywhere\n", water.file);
+        return;
+    }
+
+    extent            = Q_max(beachGround.maxs[0] - beachGround.mins[0], beachGround.maxs[1] - beachGround.mins[1]);
+    beachGround.texel = Q_max(extent / BEACH_GROUND_SIZE, 4.0f);
+    beachGround.x0    = beachGround.mins[0] - beachGround.texel;
+    beachGround.y0    = beachGround.mins[1] - beachGround.texel;
+    beachGround.width = Q_min(BEACH_GROUND_SIZE, (int)ceil((beachGround.maxs[0] - beachGround.mins[0]) / beachGround.texel) + 2);
+    beachGround.rows  = Q_min(BEACH_GROUND_SIZE, (int)ceil((beachGround.maxs[1] - beachGround.mins[1]) / beachGround.texel) + 2);
+
+    beachGround.height = ri.Malloc(beachGround.width * beachGround.rows * sizeof(float));
+    for (i = 0; i < beachGround.width * beachGround.rows; i++) {
+        beachGround.height[i] = BEACH_GROUND_NONE;
+    }
+    R_WaterBeachSurfaces(qtrue);
+
+    tr.beachGroundImage = R_CreateImage("*beachGround", NULL, beachGround.width, beachGround.rows, IMGTYPE_COLORALPHA,
+        IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+    qglTextureSubImage2DEXT(tr.beachGroundImage->texnum, GL_TEXTURE_2D, 0, 0, 0, beachGround.width, beachGround.rows,
+        GL_RED, GL_FLOAT, beachGround.height);
+    // a height or none: never one between them
+    qglTextureParameteriEXT(tr.beachGroundImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    qglTextureParameteriEXT(tr.beachGroundImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    beachGround.on = qtrue;
+}
+
 void R_WaterLoadWorld(const char *mapName)
 {
     R_WaterReadFile(mapName);
     R_WaterBuildSky();
+    R_WaterBuildBeach();
 }
 
 /*
@@ -1123,6 +1304,16 @@ void RB_BeachDraw(void)
         VectorSet4(v, water.swash, 0.0f, 0.0f, 0.0f);
         GLSL_SetUniformVec4(sp, UNIFORM_BEACHSWASH, v);
 
+        // the beach's ground alone (R_WaterBuildBeach)
+        if (beachGround.on && tr.beachGroundImage) {
+            VectorSet4(v, beachGround.x0, beachGround.y0, 1.0f / (beachGround.width * beachGround.texel),
+                1.0f / (beachGround.rows * beachGround.texel));
+            GL_BindToTMU(tr.beachGroundImage, TB_SPECULARMAP);
+        } else {
+            VectorClear4(v);
+        }
+        GLSL_SetUniformVec4(sp, UNIFORM_BEACHGROUND, v);
+
         {
             const int stains = r_waterBlood->value > 0.0f ? numSandStains : 0;
 
@@ -1188,6 +1379,11 @@ void R_WaterInfo_f(void)
         }
     } else {
         ri.Printf(PRINT_ALL, "  mirrors only what is on the screen (r_waterReflect %d)\n", r_waterReflect->integer);
+    }
+    if (water.numBeachSurfaces) {
+        ri.Printf(PRINT_ALL, "  beach on %s%s: %s\n", water.beachSurfaces[0], water.numBeachSurfaces > 1 ? " (and more)" : "",
+            beachGround.on ? va("%d x %d texels of %g units", beachGround.width, beachGround.rows, beachGround.texel)
+                           : "none of it found, the beach is everywhere");
     }
     ri.Printf(PRINT_ALL, "  skyBox %g  %s\n", water.skyBox,
         !waterSkyShader ? "(no sky box to mirror)" : waterSkySeen ? va("mirrors %s", waterSkyShader->name) : va("%s, not drawn yet", waterSkyShader->name));

@@ -229,6 +229,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_WorldViewProjection", GLSL_MAT16 },
 	{ "u_WaterView",       GLSL_VEC4 },
 	{ "u_BeachSwash",      GLSL_VEC4 },
+	{ "u_BeachGround",     GLSL_VEC4 },
 	{ "u_RippleSim",       GLSL_VEC4 },
 	{ "u_RippleDecay",     GLSL_VEC4 },
 	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
@@ -2526,6 +2527,7 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_CUBEMAP, TB_CUBEMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SPECULARMAP, TB_SPECULARMAP);
 			GLSL_FinishGPUShader(&tr.beachShader[i]);
 			numEtcShaders++;
 		}

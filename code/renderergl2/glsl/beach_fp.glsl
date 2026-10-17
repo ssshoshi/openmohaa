@@ -28,6 +28,8 @@ uniform vec4      u_CubeMapInfo; // how much of it is mirrored: 0 the flat u_Wat
 uniform vec4      u_WaterBlood;  // the colour of blood
 uniform vec4      u_BeachWet;    // how far inland the sand is wet, the highest it is, puddles (a share), their size
 uniform vec4      u_BeachSwash;  // how far up the sand a wave runs, at most
+uniform sampler2D u_SpecularMap; // the beach's ground: its height from above, where it is (R_WaterBuildBeach)
+uniform vec4      u_BeachGround; // where that grid starts, one over its size (0: the beach is everywhere)
 uniform vec4      u_WaterBloodZone; // w: how many u_SandStains
 uniform vec4      u_SandStains[WATER_MAX_SPOTS]; // x, y, the ground's height, how far the blood has soaked
 
@@ -86,6 +88,20 @@ void main()
 
 	float lin  = LinearDepth(d);
 	vec3  pos  = u_ViewOrigin + var_ViewDir * (lin / u_ViewInfo.y);
+
+	// Only the beach's own ground: not the sand under the water (another
+	// shader, with the water's reflection over it already), nor what stands
+	// on the beach, a body or a boat, which the swash ran over
+	if (u_BeachGround.z > 0.0)
+	{
+		vec2 at = (pos.xy - u_BeachGround.xy) * u_BeachGround.zw;
+		if (at.x < 0.0 || at.y < 0.0 || at.x > 1.0 || at.y > 1.0)
+			discard;
+		float ground = texture2D(u_SpecularMap, at).r;
+		// the terrain is drawn coarser further off than its heights
+		if (abs(pos.z - ground) > 6.0 + lin * 0.006)
+			discard;
+	}
 	// Which way it faces, from the pixels beside it on its own side: at an
 	// edge (a model before the sand) the depth jumps, and across it the
 	// normal was anything, a bright line round everything on the beach.
@@ -133,7 +149,11 @@ void main()
 	if (u_BeachSwash.x > 0.0 && inland > -60.0 && inland < u_BeachSwash.x * 1.4)
 	{
 		float across = dot(pos.xy, vec2(dir.y, -dir.x));
-		float cycle  = u_Time / max(u_WaterWaves.w, 0.5) + (Clouds(vec2(across / 900.0, 1.7)) - 0.5) * 1.4;
+		// The waves come in square to the shore, so a wave's swash runs up all
+		// along it at once, ragged: a big lag along the shore swept each wave
+		// in from both sides to the middle, its bright front with it
+		float cycle  = u_Time / max(u_WaterWaves.w, 0.5) + (Clouds(vec2(across / 2400.0, 1.7)) - 0.5) * 0.3
+		             + (Clouds(vec2(across / 260.0, 4.3)) - 0.5) * 0.12;
 		float wave   = floor(cycle);
 		float f      = fract(cycle);
 		float run    = u_BeachSwash.x * (0.3 + 0.85 * Clouds(vec2(across / 380.0 + wave * 3.7, wave * 1.3)));
