@@ -166,6 +166,9 @@ void main()
 		float hollow = Clouds(along / max(u_BeachWet.w, 1.0) + 3.1);
 		float level  = 0.74 - u_BeachWet.z * 0.3;
 		puddle = smoothstep(level, level + 0.025, hollow) * wet * smoothstep(0.92, 0.98, N.z);
+		// above the waterline alone: under the water they were a second
+		// reflection under the water's own
+		puddle *= smoothstep(0.0, 40.0, inland);
 	}
 
 	// The swash: each wave runs up the sand in a thin sheet, fast, and
@@ -228,15 +231,16 @@ void main()
 	vec3  blood     = mix(vec3(0.5, 0.14, 0.11), u_WaterBlood.rgb * 2.2, 0.35);
 
 #if defined(BEACH_ADD)
-	// the sky in it: a sheen on the wet sand, a mirror where water stands,
-	// stirred by the wind
+	// the sky in it: a mirror where water stands, stirred by the wind
 	vec2  ripple = Noise(pos.xy / 9.0 + vec2(u_Time * 0.7, u_Time * -0.4)).yz * 0.06
 	             + Noise(Turn(pos.xy, 1.7) / 4.0 + vec2(u_Time * -0.5, u_Time * 0.9)).yz * 0.03;
 	vec3  n      = normalize(N + vec3(-ripple * clamp(puddle + sheet, 0.0, 1.0), 0.0));
 	vec3  V      = normalize(u_ViewOrigin - pos);
 	float facing = clamp(dot(n, V), 0.0, 1.0);
 	float fresnel = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
-	float shine  = wet * fresnel * 0.45 + max(puddle, sheet) * mix(0.08, 0.7, fresnel);
+	// only the water standing in the hollows gives the sky back: the wet sand
+	// and the swash's thin sheet are dull
+	float shine  = puddle * mix(0.08, 0.7, fresnel);
 	shine *= 1.0 - swashFoam;
 
 	// What it mirrors: the ray off it, followed through the view's depth
