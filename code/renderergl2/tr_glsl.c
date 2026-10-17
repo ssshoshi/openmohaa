@@ -2445,6 +2445,7 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_CUBEMAP, TB_CUBEMAP);
 
 			GLSL_FinishGPUShader(&tr.waterShader);
 
@@ -2500,6 +2501,7 @@ void GLSL_InitGPUShaders(void)
 			GLSL_InitUniforms(&tr.beachShader[i]);
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_CUBEMAP, TB_CUBEMAP);
 			GLSL_FinishGPUShader(&tr.beachShader[i]);
 			numEtcShaders++;
 		}

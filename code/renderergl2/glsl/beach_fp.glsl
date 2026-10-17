@@ -23,6 +23,8 @@ uniform vec2      u_GlobalFogParams;
 uniform vec4      u_WaterWaves;  // the way the waves come in (xy)
 uniform vec4      u_WaterShore;  // z: whether there is a shore line, w: where
 uniform vec4      u_WaterSky;    // the sky
+uniform samplerCube u_CubeMap;   // the map's sky box (tr_water.c, R_WaterBuildSky)
+uniform vec4      u_CubeMapInfo; // how much of it is mirrored: 0 the flat u_WaterSky
 uniform vec4      u_WaterBlood;  // the colour of blood
 uniform vec4      u_BeachWet;    // how far inland the sand is wet, the highest it is, puddles (a share), their size
 uniform vec4      u_BeachSwash;  // how far up the sand a wave runs, at most
@@ -177,9 +179,12 @@ void main()
 
 	// What it mirrors: the ray off it, followed through the view's depth
 	// until it goes behind something, which is then what is seen in it;
-	// else the sky
+	// else the sky, the map's box where the view has drawn it
 	vec3 R      = reflect(-V, n);
-	vec3 mirror = u_WaterSky.rgb;
+	vec3 sky    = u_WaterSky.rgb;
+	if (u_CubeMapInfo.x > 0.0)
+		sky = mix(sky, textureCubeLod(u_CubeMap, R, 1.0).rgb, u_CubeMapInfo.x);
+	vec3 mirror = sky;
 	if (shine > 0.01)
 	{
 		float stepLen = 6.0;
@@ -202,7 +207,7 @@ void main()
 			{
 				// fading towards the edge of the view, where it would run out
 				vec2 edge = min(uv, u_ViewInfo.zw - uv) / u_ViewInfo.zw;
-				mirror = mix(u_WaterSky.rgb, texture2D(u_ScreenImageMap, uv).rgb, smoothstep(0.0, 0.08, min(edge.x, edge.y)));
+				mirror = mix(sky, texture2D(u_ScreenImageMap, uv).rgb, smoothstep(0.0, 0.08, min(edge.x, edge.y)));
 				break;
 			}
 		}

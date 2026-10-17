@@ -2491,6 +2491,7 @@ typedef struct {
 	image_t                 *screenSsaoImage;
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
+	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
@@ -3839,6 +3840,7 @@ void R_GroundCoverRegisterCvars(void);
 // tr_image.c: an image file's pixels, without making a texture of it
 void R_LoadImage(const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips);
 void R_LoadImageUncompressed(const char *name, byte **pic, int *width, int *height, GLenum *picFormat);
+void R_LightScaleTexture(byte *in, int inwidth, int inheight, qboolean only_gamma);
 void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header);
 void R_GroundCoverFree(void);
 void R_AddGroundCoverSurfaces(void);
@@ -3866,6 +3868,7 @@ void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int
 void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp);
 void R_WaterSetDry(shaderProgram_t *sp);
+void RB_WaterSawSky(const shader_t *sh);
 
 // Added in OPM: what is on the lens (tr_lens.c)
 extern cvar_t *r_lens;

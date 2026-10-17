@@ -17,6 +17,8 @@ uniform sampler2D u_DiffuseMap;      // the water's own texture: ripples, foam, 
 uniform sampler2D u_ScreenImageMap;  // the view before its water
 uniform sampler2D u_ScreenDepthMap;  // the view's depth after the prepass
 uniform sampler2D u_SpecularMap;     // its ripples round the view (glsl/ripple_fp.glsl): height, before, foam
+uniform samplerCube u_CubeMap;       // the map's sky box (tr_water.c, R_WaterBuildSky)
+uniform vec4      u_CubeMapInfo;     // how much of it is mirrored: 0 the flat u_WaterSky
 
 uniform vec3      u_ViewOrigin;
 uniform vec4      u_ViewInfo;        // zNear, zFar, whether there is the depth, and the view
@@ -238,10 +240,13 @@ void main()
 	// What it mirrors, more of it the flatter one looks across: the ray off
 	// the waves followed through the view's depth until it goes behind
 	// something, which is then what is seen in it (as on the wet sand,
-	// beach_fp.glsl); else the sky. The chop only breaks it up a little.
+	// beach_fp.glsl); else the sky, the map's box where the view has drawn
+	// it. The chop only breaks it up a little.
 	vec3  R      = reflect(-V, N);
 	float up     = clamp(R.z, 0.0, 1.0);
 	vec3  sky    = mix(u_WaterSky.rgb, u_WaterSky.rgb * vec3(0.78, 0.85, 0.94), sqrt(up));
+	if (u_CubeMapInfo.x > 0.0)
+		sky = mix(sky, textureCubeLod(u_CubeMap, R, 1.0).rgb, u_CubeMapInfo.x);
 	float cosV   = clamp(dot(N, V), 0.0, 1.0);
 	float fresnel = below ? 0.0 : 0.03 + 0.97 * pow(1.0 - cosV, 4.0);
 	fresnel = min(fresnel, 0.9);
