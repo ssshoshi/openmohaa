@@ -59,6 +59,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_local.h"
 #include "cg_water.h"
 #include "cg_lens.h"
+#include "cg_specialfx.h"
 #include "../qcommon/qfiles.h"
 
 cvar_t *cg_water_float;
@@ -182,6 +183,20 @@ typedef struct {
 
 static cgWaterRing_t cg_waterRings[WATER_RINGS];
 
+// The water thrown up where something went in, a moment ago: one splash for
+// what goes in together
+#define WATER_SPLASH_SLOW   110.0f // slower in than this, it only ripples
+#define WATER_SPLASH_LARGE  24.0f  // this big or more, the large splash
+#define WATER_SPLASH_NEAR   48.0f  // closer than this to the last ones,
+#define WATER_SPLASH_WITHIN 400    // within this (ms), it is the same splash
+#define WATER_SPLASHES      8
+
+static struct {
+    vec3_t at;
+    int    time;
+    float  size;
+} cg_waterSplashes[WATER_SPLASHES];
+
 // each entity as it was the frame before
 static struct {
     int      time;  // cg.time then, or 0
@@ -200,6 +215,7 @@ void CG_InitWater(void)
     cg_numWaterRipples = 0;
     cg_waterRippleTime = 0;
     memset(cg_waterRings, 0, sizeof(cg_waterRings));
+    memset(cg_waterSplashes, 0, sizeof(cg_waterSplashes));
     cg_water.map[0] = 0;
     memset(cg_waterBlood, 0, sizeof(cg_waterBlood));
     memset(cg_waterStains, 0, sizeof(cg_waterStains));
@@ -838,6 +854,35 @@ void CG_WaterSplash(const vec3_t at, float size, float speed)
     ring->start = cg.time ? cg.time : 1;
 }
 
+void CG_WaterSplashEffect(const vec3_t at, float size, float speed)
+{
+    int i, oldest = 0;
+
+    if (!cg_water_ripples || !cg_water_ripples->integer || speed < WATER_SPLASH_SLOW) {
+        return;
+    }
+
+    for (i = 0; i < WATER_SPLASHES; i++) {
+        if (cg_waterSplashes[i].time && cg.time >= cg_waterSplashes[i].time
+            && cg.time - cg_waterSplashes[i].time < WATER_SPLASH_WITHIN
+            && Square(cg_waterSplashes[i].at[0] - at[0]) + Square(cg_waterSplashes[i].at[1] - at[1])
+                   < Square(WATER_SPLASH_NEAR + Q_max(size, cg_waterSplashes[i].size) * 0.5f)
+            && (size < WATER_SPLASH_LARGE || cg_waterSplashes[i].size >= WATER_SPLASH_LARGE)) {
+            return;
+        }
+        if (cg_waterSplashes[i].time < cg_waterSplashes[oldest].time) {
+            oldest = i;
+        }
+    }
+
+    VectorCopy(at, cg_waterSplashes[oldest].at);
+    cg_waterSplashes[oldest].time = cg.time ? cg.time : 1;
+    cg_waterSplashes[oldest].size = size;
+
+    sfxManager.MakeEffect_Normal(size >= WATER_SPLASH_LARGE ? SFX_OPM_WATER_SPLASH_LARGE : SFX_OPM_WATER_SPLASH_SMALL,
+        Vector(at), Vector(0, 0, 1));
+}
+
 // The water where things went in, rocking
 static void CG_WaterRings(float dt)
 {
@@ -1062,6 +1107,7 @@ void CG_WaterRipplesFrame(void)
 
                         VectorSet(at, cent->lerpOrigin[0], cent->lerpOrigin[1], water.surface);
                         CG_WaterSplash(at, Com_Clamp(4.0f, 24.0f, size), -velocity[2]);
+                        CG_WaterSplashEffect(at, size, -velocity[2]);
                     }
                 }
                 cg_waterWas[num].wet = wet;

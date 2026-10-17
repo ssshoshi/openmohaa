@@ -631,6 +631,7 @@ void CG_PhysicsPropsWater(float dt)
 
             VectorSet(at, mid[0], mid[1], water.surface);
             CG_WaterSplash(at, Com_Clamp(4.0f, 30.0f, size * 0.6f), -v[2]);
+            CG_WaterSplashEffect(at, size, -v[2]);
         }
         pp->wet = share;
 

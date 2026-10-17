@@ -1129,6 +1129,8 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
                 PhysFromJolt(JPH::Vec3(t.GetTranslation()), q);
                 q[2] = water.surface;
                 CG_WaterSplash(q, Com_Clamp(5.0f, 22.0f, r * 2.2f), fall);
+                // the body's: one large splash however many parts go in
+                CG_WaterSplashEffect(q, 40.0f, fall);
             }
         }
         pr->wet[i] = under;
