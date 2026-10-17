@@ -24,9 +24,10 @@ puddles 0.3 110
 swash 170
 // the beach is the sand above the water alone: the sand under it is another
 // shader, which the water's own reflection is over already. The painted
-// shoreline strip along the waterline is drawn as the beach's sand too: its
-// straight bright edge stood out against the wet beach
-remapShader textures/mohtest/omaha_set4_shoreline textures/test/omaha_pjspick5
+// shoreline strip along the waterline is drawn as the sand above it
+// (set4_covered), which runs down to pjspick5: its straight bright edge, and
+// then pjspick5 in its place, stood out against the sand round it
+remapShader textures/mohtest/omaha_set4_shoreline textures/mohtest/omaha_set4_covered
 beachSurface textures/test/omaha_pjspick5
 beachSurface textures/mohtest/omaha_set4_shoreline
 // and the sand above it, so the wet ends at the tide's ragged line, not
