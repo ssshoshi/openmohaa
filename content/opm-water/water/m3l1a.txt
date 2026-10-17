@@ -28,6 +28,10 @@ swash 170
 // (set4_covered), which runs down to pjspick5: its straight bright edge, and
 // then pjspick5 in its place, stood out against the sand round it
 remapShader textures/mohtest/omaha_set4_shoreline textures/mohtest/omaha_set4_covered
+// and the beach's own sand as it too: pjspick5 is lit apart from its
+// lightmap, set4_covered with it, and the two met in a straight line of
+// light and dark
+remapShader textures/test/omaha_pjspick5 textures/mohtest/omaha_set4_covered
 beachSurface textures/test/omaha_pjspick5
 beachSurface textures/mohtest/omaha_set4_shoreline
 // and the sand above it, so the wet ends at the tide's ragged line, not
