@@ -137,6 +137,53 @@ static std::vector<JPH::BodyID> pp_static;
 // what each hanging lamp hangs from (CG_PropHangs)
 static std::vector<JPH::Ref<JPH::Constraint>> pp_hangs;
 static char                    pp_map[MAX_QPATH];
+
+// A lamp on a cord (cgProp_t.corded): the cord is a rope of a few points, its
+// ends held at the anchor and at the lamp, which falls and swings under them
+// and so sags when the lamp is knocked up into it, and lags as it swings.
+#define PP_CORD_POINTS 40
+#define PP_CORD_SMOOTH 4  // drawn pieces between two of its points, along a curve through them
+#define PP_CORD_WIDTH  0.35f // half its thickness
+#define PP_CORD_VIEW   3072.0f
+#define PP_CORD_SHADER "opm/lampcord"
+
+typedef struct {
+    int      prop;
+    vec3_t   p[PP_CORD_POINTS + 1];
+    vec3_t   old[PP_CORD_POINTS + 1];
+    int      lastTime;
+    qboolean live;
+} ppCord_t;
+
+static std::vector<ppCord_t> pp_cords;
+
+// Where the renderer is to draw a prop. A lamp on a cord drawn as its lamp
+// without a wire (CG_PhysicsDrawCords) has its own model, wire and all, shrunk
+// to a speck at the lamp's middle: it shows nothing, and the realtime light of
+// the fixture, which follows it, stays in the lamp, its spot light turned as
+// the lamp is (the axes keep their directions, scaled down).
+#define PP_CORD_HIDDEN_SCALE 0.0001f
+static void CG_PhysicsAxisFromQuat(JPH::QuatArg q, vec3_t axis[3]);
+
+static void CG_PhysicsSendPose(const cgProp_t *p, const vec3_t origin, const vec3_t axis[3])
+{
+    if (p->corded && p->cordModel) {
+        vec3_t light, none[3];
+        int    k;
+
+        VectorCopy(origin, light);
+        for (k = 0; k < 3; k++) {
+            VectorMA(light, p->cordLight[k], axis[k], light);
+        }
+        VectorScale(axis[0], PP_CORD_HIDDEN_SCALE, none[0]);
+        VectorScale(axis[1], PP_CORD_HIDDEN_SCALE, none[1]);
+        VectorScale(axis[2], PP_CORD_HIDDEN_SCALE, none[2]);
+        cgi.R_SetStaticModelTransform(p->staticIndex, light, none);
+        return;
+    }
+    cgi.R_SetStaticModelTransform(p->staticIndex, origin, axis);
+}
+
 static qboolean                pp_loaded;
 
 static JPH::Quat CG_PhysicsQuatFromAxis(const vec3_t axis[3])
@@ -192,6 +239,28 @@ static JPH::ShapeRefC CG_PhysicsHangingShape(const cgProp_t *p)
     // the inner settings are held by reference, and so must not be on the stack
     JPH::Ref<JPH::BoxShapeSettings>     box = new JPH::BoxShapeSettings(extent, Q_min(JPH::cDefaultConvexRadius, extent.ReduceMin() * 0.5f));
     JPH::RotatedTranslatedShapeSettings placed(PhysToJolt(centre), JPH::Quat::sIdentity(), box);
+    JPH::ShapeSettings::ShapeResult     result = placed.Create();
+
+    return result.HasError() ? JPH::ShapeRefC() : result.Get();
+}
+
+// Added in OPM
+//  A box from mins to maxs in a prop's own frame.
+static JPH::ShapeRefC CG_PhysicsBoxShape(const vec3_t mins, const vec3_t maxs)
+{
+    vec3_t    half, centre;
+    JPH::Vec3 extent;
+    int       k;
+
+    for (k = 0; k < 3; k++) {
+        half[k]   = Q_max(1.0f, (maxs[k] - mins[k]) * 0.5f);
+        centre[k] = (maxs[k] + mins[k]) * 0.5f;
+    }
+    extent = PhysToJolt(half);
+
+    // the inner settings are held by reference, and so must not be on the stack
+    JPH::Ref<JPH::BoxShapeSettings>     inner = new JPH::BoxShapeSettings(extent, Q_min(JPH::cDefaultConvexRadius, extent.ReduceMin() * 0.5f));
+    JPH::RotatedTranslatedShapeSettings placed(PhysToJolt(centre), JPH::Quat::sIdentity(), inner);
     JPH::ShapeSettings::ShapeResult     result = placed.Create();
 
     return result.HasError() ? JPH::ShapeRefC() : result.Get();
@@ -259,6 +328,7 @@ void CG_PhysicsUnloadProps(void)
     }
 
     pp_hangs.clear();
+    pp_cords.clear();
     pp_props.clear();
     pp_static.clear();
     pp_loaded = qfalse;
@@ -302,7 +372,8 @@ void CG_PhysicsLoadProps(void)
             continue;
         }
 
-        shape = moves && p->hangs ? CG_PhysicsHangingShape(p) : CG_PhysicsPropShape(p);
+        shape = moves && p->corded ? CG_PhysicsBoxShape(p->cordMins, p->cordMaxs)
+              : moves && p->hangs ? CG_PhysicsHangingShape(p) : CG_PhysicsPropShape(p);
         if (!shape) {
             failed++;
             continue;
@@ -352,8 +423,30 @@ void CG_PhysicsLoadProps(void)
             continue;
         }
 
+        // on its cord: never farther than its length from where it hangs, and
+        // free to come nearer, the cord going slack
+        if (moves && p->corded) {
+            JPH::DistanceConstraintSettings cord;
+            vec3_t                          top;
+
+            VectorCopy(p->origin, top);
+            for (k = 0; k < 3; k++) {
+                VectorMA(top, p->cordTop[k], p->axis[k], top);
+            }
+            cord.mSpace       = JPH::EConstraintSpace::WorldSpace;
+            cord.mPoint1      = JPH::RVec3(PhysToJolt(p->cordAnchor));
+            cord.mPoint2      = JPH::RVec3(PhysToJolt(top));
+            cord.mMinDistance = 0.0f;
+            cord.mMaxDistance = p->cordLength * PHYS_UNITS_TO_METRES;
+
+            JPH::Constraint *c = bodies.CreateConstraint(&cord, JPH::BodyID(), id);
+            if (c) {
+                phys_system->AddConstraint(c);
+                pp_hangs.push_back(c);
+            }
+        }
         // tied where it hangs
-        if (moves && p->hangs) {
+        else if (moves && p->hangs) {
             JPH::PointConstraintSettings tie;
             vec3_t                       point;
 
@@ -382,6 +475,15 @@ void CG_PhysicsLoadProps(void)
             pp.everMoved = qfalse;
             p->body    = (int)pp_props.size();
             pp_props.push_back(pp);
+
+            if (p->corded) {
+                ppCord_t cord;
+
+                memset(&cord, 0, sizeof(cord));
+                cord.prop = i;
+                pp_cords.push_back(cord);
+                CG_PhysicsSendPose(p, p->origin, p->axis);
+            }
             dynamic++;
         } else {
             pp_static.push_back(id);
@@ -516,13 +618,225 @@ void CG_PhysicsDrawProps(float frac)
             CG_PhysicsAxisFromQuat(rot, axis);
         }
 
-        cgi.R_SetStaticModelTransform(cg_props[pp->prop].staticIndex, origin, axis);
+        CG_PhysicsSendPose(&cg_props[pp->prop], origin, axis);
 
         // Settled: drawn where it came to rest, and left alone after.
         if (pp->prevPos == pp->curPos && pp->prevRot == pp->curRot
             && !phys_system->GetBodyInterfaceNoLock().IsActive(pp->id)) {
             pp->moving = qfalse;
         }
+    }
+}
+
+
+//=============================================================
+// Lamps on cords
+//=============================================================
+
+static void CG_PhysicsCordStep(ppCord_t *c, const cgProp_t *p, const vec3_t top)
+{
+    const float rest = p->cordLength / PP_CORD_POINTS;
+    float       dt, g;
+    int         i, n;
+
+    if (!c->live) {
+        for (i = 0; i <= PP_CORD_POINTS; i++) {
+            const float t = (float)i / PP_CORD_POINTS;
+
+            VectorScale(p->cordAnchor, 1.0f - t, c->p[i]);
+            VectorMA(c->p[i], t, top, c->p[i]);
+            VectorCopy(c->p[i], c->old[i]);
+        }
+        c->lastTime = cg.time;
+        c->live     = qtrue;
+    }
+
+    dt          = Q_clamp_float((cg.time - c->lastTime) * 0.001f, 0.0f, 0.05f);
+    c->lastTime = cg.time;
+    g           = cg.snap && cg.snap->ps.gravity ? (float)cg.snap->ps.gravity : 800.0f;
+
+    // falling, a little slowed by the air
+    for (i = 1; i < PP_CORD_POINTS; i++) {
+        vec3_t v;
+
+        VectorSubtract(c->p[i], c->old[i], v);
+        VectorCopy(c->p[i], c->old[i]);
+        VectorMA(c->p[i], 0.98f, v, c->p[i]);
+        c->p[i][2] -= g * dt * dt;
+    }
+
+    // held at both ends, each length as long as it is
+    VectorCopy(p->cordAnchor, c->p[0]);
+    VectorCopy(top, c->p[PP_CORD_POINTS]);
+    // both ways in turn, so that a pull at one end reaches the other
+    for (n = 0; n < 40; n++) {
+        for (int j = 0; j < PP_CORD_POINTS; j++) {
+            const int i = (n & 1) ? PP_CORD_POINTS - 1 - j : j;
+            vec3_t    d;
+            float     len, share;
+
+            VectorSubtract(c->p[i + 1], c->p[i], d);
+            len = VectorLength(d);
+            if (len < 0.0001f) {
+                continue;
+            }
+            // a cord pulls but does not push: shorter, it folds and droops
+            if (len <= rest) {
+                continue;
+            }
+            share = (len - rest) / len;
+            if (i == 0) {
+                VectorMA(c->p[i + 1], -share, d, c->p[i + 1]);
+            } else if (i + 1 == PP_CORD_POINTS) {
+                VectorMA(c->p[i], share, d, c->p[i]);
+            } else {
+                VectorMA(c->p[i], 0.5f * share, d, c->p[i]);
+                VectorMA(c->p[i + 1], -0.5f * share, d, c->p[i + 1]);
+            }
+        }
+        VectorCopy(p->cordAnchor, c->p[0]);
+        VectorCopy(top, c->p[PP_CORD_POINTS]);
+    }
+}
+
+// The point t of the way from c->p[i] to c->p[i + 1], on a curve through the
+// points around them (Catmull-Rom), so that the cord bends smoothly between
+// its points rather than in straight pieces.
+static void CG_PhysicsCordCurve(const ppCord_t *c, int i, float t, vec3_t out)
+{
+    const float *p0 = c->p[Q_max(i - 1, 0)];
+    const float *p1 = c->p[i];
+    const float *p2 = c->p[i + 1];
+    const float *p3 = c->p[Q_min(i + 2, PP_CORD_POINTS)];
+    const float  t2 = t * t, t3 = t2 * t;
+    int          k;
+
+    for (k = 0; k < 3; k++) {
+        out[k] = 0.5f * (2.0f * p1[k] + (p2[k] - p0[k]) * t + (2.0f * p0[k] - 5.0f * p1[k] + 4.0f * p2[k] - p3[k]) * t2
+                         + (3.0f * p1[k] - p0[k] - 3.0f * p2[k] + p3[k]) * t3);
+    }
+}
+
+// A strip along the cord, face on to the eye wherever it is, as the grabber's
+// beam is drawn (CG_RagdollDrawGrabBeam).
+static void CG_PhysicsCordDraw(const ppCord_t *c, qhandle_t shader)
+{
+    const int  n = PP_CORD_POINTS * PP_CORD_SMOOTH;
+    polyVert_t quad[4];
+    vec3_t     points[PP_CORD_POINTS * PP_CORD_SMOOTH + 1];
+    vec3_t     side, prevSide;
+    int        i, k;
+
+    for (i = 0; i < n; i++) {
+        CG_PhysicsCordCurve(c, i / PP_CORD_SMOOTH, (float)(i % PP_CORD_SMOOTH) / PP_CORD_SMOOTH, points[i]);
+    }
+    VectorCopy(c->p[PP_CORD_POINTS], points[n]);
+
+    for (i = 0; i <= n; i++) {
+        vec3_t tangent, toEye;
+
+        VectorSubtract(points[Q_min(i + 1, n)], points[Q_max(i - 1, 0)], tangent);
+        VectorSubtract(cg.refdef.vieworg, points[i], toEye);
+        CrossProduct(tangent, toEye, side);
+        if (VectorNormalize(side) < 0.0001f) {
+            VectorCopy(cg.refdef.viewaxis[1], side);
+        }
+        VectorScale(side, PP_CORD_WIDTH, side);
+
+        if (i) {
+            VectorAdd(points[i - 1], prevSide, quad[0].xyz);
+            VectorSubtract(points[i - 1], prevSide, quad[1].xyz);
+            VectorSubtract(points[i], side, quad[2].xyz);
+            VectorAdd(points[i], side, quad[3].xyz);
+            for (k = 0; k < 4; k++) {
+                quad[k].st[0]       = (k == 0 || k == 1) ? (float)(i - 1) / n : (float)i / n;
+                quad[k].st[1]       = (k == 1 || k == 2) ? 1.0f : 0.0f;
+                quad[k].modulate[0] = quad[k].modulate[1] = quad[k].modulate[2] = quad[k].modulate[3] = 255;
+            }
+            cgi.R_AddPolyToScene(shader, 4, quad, 0);
+        }
+        VectorCopy(side, prevSide);
+    }
+}
+
+// Every frame: the lamps on cords near the view, their lamps (when drawn
+// without their wire) and their cords.
+void CG_PhysicsDrawCords(float frac)
+{
+    static qhandle_t shader;
+
+    if (pp_cords.empty()) {
+        return;
+    }
+    if (!shader) {
+        shader = cgi.R_RegisterShader(PP_CORD_SHADER);
+    }
+
+    for (size_t i = 0; i < pp_cords.size(); i++) {
+        ppCord_t         *c  = &pp_cords[i];
+        const cgProp_t   *p  = &cg_props[c->prop];
+        const physProp_t *pp = &pp_props[p->body];
+        vec3_t            origin, axis[3], top;
+        int               k;
+
+        {
+            const JPH::Vec3 pos = JPH::Vec3(pp->prevPos) + (JPH::Vec3(pp->curPos) - JPH::Vec3(pp->prevPos)) * frac;
+            const JPH::Quat rot = pp->prevRot.SLERP(pp->curRot, frac).Normalized();
+
+            PhysFromJolt(pos, origin);
+            CG_PhysicsAxisFromQuat(rot, axis);
+        }
+
+        // after a vid_restart the renderer has the model where the map put it
+        CG_PhysicsSendPose(p, origin, axis);
+
+        // the glows at its bulb go with it
+        for (int n = 0; n < p->numCordCoronas; n++) {
+            const cgCorona_t *corona = &cg_coronas[p->cordCoronas[n]];
+            vec3_t            at;
+
+            VectorCopy(origin, at);
+            for (k = 0; k < 3; k++) {
+                VectorMA(at, p->cordCoronaLocal[n][k], axis[k], at);
+            }
+            cgi.R_SetStaticModelTransform(corona->staticIndex, at, corona->axis);
+        }
+
+        if (DistanceSquared(cg.refdef.vieworg, p->cordAnchor) > Square(PP_CORD_VIEW)) {
+            c->live = qfalse;
+            continue;
+        }
+
+        if (p->cordModel) {
+            refEntity_t ent;
+
+            memset(&ent, 0, sizeof(ent));
+            ent.reType              = RT_MODEL;
+            ent.hModel              = p->cordModel;
+            ent.tiki                = cgi.R_Model_GetHandle(p->cordModel);
+            ent.scale               = p->cordScale;
+            ent.entityNumber        = ENTITYNUM_NONE;
+            ent.frameInfo[0].weight = 1.0f;
+            ent.actionWeight        = 1.0f;
+            // its own light is inside it
+            ent.renderfx            = RF_NOSHADOW;
+            VectorCopy(origin, ent.origin);
+            VectorCopy(origin, ent.lightingOrigin);
+            for (k = 0; k < 3; k++) {
+                VectorMA(ent.origin, p->cordOffset[k], axis[k], ent.origin);
+                VectorMA(ent.lightingOrigin, p->cordLight[k], axis[k], ent.lightingOrigin);
+            }
+            VectorCopy(ent.origin, ent.oldorigin);
+            AxisCopy(axis, ent.axis);
+            cgi.R_AddRefEntityToScene(&ent, ENTITYNUM_NONE);
+        }
+
+        VectorCopy(origin, top);
+        for (k = 0; k < 3; k++) {
+            VectorMA(top, p->cordTop[k], axis[k], top);
+        }
+        CG_PhysicsCordStep(c, p, top);
+        CG_PhysicsCordDraw(c, shader);
     }
 }
 
