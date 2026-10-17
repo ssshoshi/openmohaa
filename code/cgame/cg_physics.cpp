@@ -198,6 +198,7 @@ void CG_PhysicsFrame(void)
             CG_PhysicsMoveMovers((float)(steps + 1) / total, dt);
             CG_PhysicsGrabStep(dt);
             CG_JoltRagdollsStep(dt);
+            CG_PhysicsPropsWater(dt);
             phys_system->Update(dt, 1, phys_temp, phys_jobs);
             CG_PhysicsPropsStepped();
             CG_PhysicsFurnitureStepped();

@@ -57,6 +57,7 @@ void CG_PhysicsDrawWorld(void);
 void CG_PhysicsLoadProps(void);
 void CG_PhysicsUnloadProps(void);
 void CG_PhysicsPropsStepped(void);
+void CG_PhysicsPropsWater(float dt);
 void CG_PhysicsDrawProps(float frac);
 void CG_PhysicsDrawCords(float frac); // Added in OPM: lamps on cords (cg_physics_props.cpp)
 void CG_PhysicsImpulse(JPH::BodyID id, const vec3_t point, const vec3_t impulse);
