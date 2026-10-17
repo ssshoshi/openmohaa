@@ -1553,6 +1553,12 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 		return;
 	}
 
+	// Added in OPM
+	//  The view water mirrors has none in it (tr_water.c).
+	if ((tr.viewParms.flags & VPF_WATERREFLECT) && shader->waterImage) {
+		return;
+	}
+
 	// instead of checking for overflow, we just mask the index
 	// so it wraps around
 	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
@@ -1635,6 +1641,10 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs,
 		return;
 	}
 
+	// Added in OPM
+	//  What the view's water mirrors, drawn before it (tr_water.c).
+	R_WaterReflectView( drawSurfs, numDrawSurfs );
+
 	// check for any pass through drawing, which
 	// may cause another view to be rendered first
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
@@ -1707,7 +1717,8 @@ static void R_AddEntitySurface (int entityNum)
 		return;
 	}
 
-	if (tr.viewParms.isPortal) {
+	// (the view water mirrors is a portal that sees what the main view does)
+	if (tr.viewParms.isPortal && !(tr.viewParms.flags & VPF_WATERREFLECT)) {
 		if (!(ent->e.renderfx & (RF_WRAP_FRAMES | RF_SHADOW_PLANE))) {
 			return;
 		}
@@ -3314,7 +3325,7 @@ void R_AddSpriteSurfaces()
 			}
 		}
         
-		if (tr.viewParms.isPortal) {
+		if (tr.viewParms.isPortal && !(tr.viewParms.flags & VPF_WATERREFLECT)) {
 			if (!(sprite->renderfx & (RF_SHADOW_PLANE | RF_WRAP_FRAMES))) {
 				continue;
 			}

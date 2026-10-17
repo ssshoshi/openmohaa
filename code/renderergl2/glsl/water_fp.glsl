@@ -18,6 +18,9 @@ uniform sampler2D u_ScreenImageMap;  // the view before its water
 uniform sampler2D u_ScreenDepthMap;  // the view's depth after the prepass
 uniform sampler2D u_SpecularMap;     // its ripples round the view (glsl/ripple_fp.glsl): height, before, foam
 uniform samplerCube u_CubeMap;       // the map's sky box (tr_water.c, R_WaterBuildSky)
+uniform sampler2D u_WaterReflectMap; // the world from under the surface (tr_water.c, R_WaterReflectView)
+uniform vec4      u_WaterReflect;    // whether there is it, the height it was seen from, its share of the image across and up
+uniform mat4      u_WaterReflectMvp; // how it was seen
 uniform vec4      u_CubeMapInfo;     // how much of it is mirrored: 0 the flat u_WaterSky
 
 uniform vec3      u_ViewOrigin;
@@ -252,7 +255,15 @@ void main()
 	fresnel = min(fresnel, 0.9);
 
 	vec3 mirror = sky;
-	if (hasDepth && hasView && fresnel > 0.05)
+	if (u_WaterReflect.x > 0.5 && !below && abs(var_Position.z - u_WaterReflect.y) < 4.0)
+	{
+		// the view from under the surface: the spot of it over this one,
+		// moved as the waves turn the surface
+		vec4 clip = u_WaterReflectMvp * vec4(var_Position + vec3(-slope * 80.0, 0.0), 1.0);
+		vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
+		mirror    = texture2D(u_WaterReflectMap, at * u_WaterReflect.zw).rgb;
+	}
+	else if (hasDepth && hasView && fresnel > 0.05)
 	{
 		vec3  Rm      = reflect(-V, normalize(var_Normal + vec3(-slope * 0.6, 0.0)));
 		float stepLen = 8.0;

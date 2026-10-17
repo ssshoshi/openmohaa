@@ -70,6 +70,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 cvar_t        *r_water;
 cvar_t        *r_waterRipples;
 cvar_t        *r_waterWet;
+cvar_t        *r_waterReflect;
 static cvar_t *r_waterBlood;
 
 typedef struct {
@@ -132,6 +133,8 @@ void R_WaterRegisterCvars(void)
     r_waterBlood = ri.Cvar_Get("r_waterBlood", "1", CVAR_ARCHIVE);
     r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterWet = ri.Cvar_Get("r_waterWet", "1", CVAR_ARCHIVE);
+    r_waterReflect = ri.Cvar_Get("r_waterReflect", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_waterReflect, "Water mirrors the world from under its surface, a second view drawn first: 0 only what is on the screen, 1 at half the screen's size, 2 at all of it (the size needs vid_restart), 3 as 1 and shows it in a corner");
     ri.Cvar_SetDescription(r_waterWet, "What stands in the water or on a beach below the tide's mark looks wet: darker, glossy, with the sky in it");
     ri.Cvar_SetDescription(r_waterRipples, "Ripples and wakes on water from men wading, boats, bullets and things falling in (needs vid_restart)");
     ri.Cvar_SetDescription(r_water, "Draws water with the water program: waves, reflection, depth, surf (needs vid_restart)");
@@ -853,6 +856,17 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     }
     GLSL_SetUniformVec4(sp, UNIFORM_WATERRIPPLES, v);
 
+    // the view under its surface, if it was drawn (R_WaterReflectView)
+    if (backEnd.viewParms.waterReflect && tr.waterReflectImage) {
+        VectorSet4(v, 1.0f, backEnd.viewParms.waterReflectHeight, backEnd.viewParms.waterReflectShare[0],
+            backEnd.viewParms.waterReflectShare[1]);
+        GLSL_SetUniformMat4(sp, UNIFORM_WATERREFLECTMVP, backEnd.viewParms.waterReflectMvp);
+        GL_BindToTMU(tr.waterReflectImage, TB_SHADOWMAP);
+    } else {
+        VectorClear4(v);
+    }
+    GLSL_SetUniformVec4(sp, UNIFORM_WATERREFLECT, v);
+
     GL_BindToTMU(input->shader->waterImage, TB_DIFFUSEMAP);
     GL_BindToTMU(hasView ? tr.waterSceneImage : tr.whiteImage, TB_LIGHTMAP);
     GL_BindToTMU(hasDepth ? tr.hdrDepthImage : tr.whiteImage, TMU_SOFTDEPTH);
@@ -861,7 +875,129 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
 
     R_DrawElements(input->numIndexes, input->firstIndex);
 
+    // r_waterReflect 3: the view under the water as it was drawn, in a corner
+    if (r_waterReflect->integer == 3 && backEnd.viewParms.waterReflect && glState.currentFBO) {
+        ivec4_t box;
+
+        box[0] = 0;
+        box[1] = 0;
+        box[2] = glState.currentFBO->width / 3;
+        box[3] = glState.currentFBO->height / 3;
+        FBO_FastBlit(tr.waterReflectFbo, NULL, glState.currentFBO, box, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    }
+
     return qtrue;
+}
+
+/*
+===============
+R_WaterReflectView
+
+What the view's water mirrors, of the world above it: the view drawn again
+first, from under the surface, into tr.waterReflectImage, which the water
+looks itself up in (water_fp.glsl) where it lies at that height. On the
+screen alone (RB_WaterDraw's ray through the view's depth) it can only show
+what the view also sees, so looking down at it a tree went from it.
+
+It is a mirror portal (oblique near plane at the surface, the faces turned)
+that draws what the main view does: entities and sprites as it has them
+(R_AddEntitySurfaces), no water, no viewmodel; no depth prepass, so no sun
+shadow mask either. One height a view: the water nearest under the eye.
+===============
+*/
+// what the last view under the water was, for waterinfo
+static struct {
+    float height;
+    int   surfs;
+    int   frame;
+} waterReflectInfo;
+
+void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
+{
+    viewParms_t parms, oldParms;
+    float       height = 0.0f, above = 0.0f;
+    qboolean    found = qfalse;
+    mat4_t      mvp;
+    int         i;
+
+    tr.viewParms.waterReflect = qfalse;
+
+    if (!r_waterReflect->integer || !tr.waterReflectFbo || !tr.waterShader.program || !tr.world
+        || tr.viewParms.isPortal || tr.viewParms.isPortalSky || tr.viewParms.targetFbo
+        || (tr.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC | VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY))
+        || (tr.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_HUD)) || r_noportals->integer) {
+        return;
+    }
+
+    for (i = 0; i < numDrawSurfs; i++) {
+        shader_t *shader;
+        int       entityNum, fogNum, dlighted, pshadowed;
+        qboolean  bStaticModel;
+        cplane_t  plane;
+        float     h;
+
+        R_DecomposeSort(drawSurfs[i].sort, &entityNum, &shader, &fogNum, &dlighted, &pshadowed, &bStaticModel);
+        if (!shader->waterImage || entityNum != REFENTITYNUM_WORLD) {
+            continue;
+        }
+        R_PlaneForSurface(drawSurfs[i].surface, &plane);
+        if (plane.normal[2] < 0.99f) {
+            continue;
+        }
+        h = plane.dist / plane.normal[2];
+        if (tr.viewParms.ori.origin[2] - h <= 0.0f) {
+            continue; // under it
+        }
+        if (!found || tr.viewParms.ori.origin[2] - h < above) {
+            found  = qtrue;
+            height = h;
+            above  = tr.viewParms.ori.origin[2] - h;
+        }
+    }
+    if (!found) {
+        return;
+    }
+
+    oldParms = tr.viewParms;
+    parms    = tr.viewParms;
+
+    // the eye and its axes turned over in the surface; it sees what the eye
+    // does above it, so the eye's PVS
+    parms.ori.origin[2] = 2.0f * height - parms.ori.origin[2];
+    for (i = 0; i < 3; i++) {
+        parms.ori.axis[i][2] = -parms.ori.axis[i][2];
+    }
+    parms.isPortal = qtrue;
+    parms.isMirror = qtrue;
+    VectorSet(parms.portalPlane.normal, 0.0f, 0.0f, 1.0f);
+    parms.portalPlane.dist = height - 1.0f;
+    parms.zFar             = 0.0f;
+    parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
+
+    // the same share of the image as the view has of the screen
+    parms.targetFbo      = tr.waterReflectFbo;
+    parms.viewportX      = 0;
+    parms.viewportY      = 0;
+    parms.viewportWidth  = Q_max(1, oldParms.viewportWidth * tr.waterReflectFbo->width / glConfig.vidWidth);
+    parms.viewportHeight = Q_max(1, oldParms.viewportHeight * tr.waterReflectFbo->height / glConfig.vidHeight);
+
+    {
+        const int before = tr.refdef.numDrawSurfs;
+
+        R_RenderView(&parms);
+        waterReflectInfo.surfs = tr.refdef.numDrawSurfs - before;
+    }
+    waterReflectInfo.height = height;
+    waterReflectInfo.frame  = tr.frameCount;
+
+    Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
+
+    tr.viewParms                    = oldParms;
+    tr.viewParms.waterReflect       = qtrue;
+    tr.viewParms.waterReflectHeight = height;
+    tr.viewParms.waterReflectShare[0] = parms.viewportWidth / (float)tr.waterReflectFbo->width;
+    tr.viewParms.waterReflectShare[1] = parms.viewportHeight / (float)tr.waterReflectFbo->height;
+    Mat4Copy(mvp, tr.viewParms.waterReflectMvp);
 }
 
 // Reads the map's water file again: for working on one
@@ -1014,6 +1150,12 @@ void R_WaterInfo_f(void)
     }
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
         water.chop, water.foam, water.refraction, water.glints);
+    if (waterReflectInfo.frame && tr.frameCount - waterReflectInfo.frame < 10) {
+        ri.Printf(PRINT_ALL, "  mirrors the world from under the water at %g: %d surfaces (all views this frame %d)\n",
+            waterReflectInfo.height, waterReflectInfo.surfs, tr.refdef.numDrawSurfs);
+    } else {
+        ri.Printf(PRINT_ALL, "  mirrors only what is on the screen (r_waterReflect %d)\n", r_waterReflect->integer);
+    }
     ri.Printf(PRINT_ALL, "  skyBox %g  %s\n", water.skyBox,
         !waterSkyShader ? "(no sky box to mirror)" : waterSkySeen ? va("mirrors %s", waterSkyShader->name) : va("%s, not drawn yet", waterSkyShader->name));
 }

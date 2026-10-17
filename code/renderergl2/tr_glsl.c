@@ -232,6 +232,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
 	{ "u_RippleFoam",      GLSL_VEC4_WATERSPOTS },
 	{ "u_WaterRipples",    GLSL_VEC4 },
+	{ "u_WaterReflect",    GLSL_VEC4 },
+	{ "u_WaterReflectMvp", GLSL_MAT16 },
+	{ "u_WaterReflectMap", GLSL_INT },
 	{ "u_LensInfo",        GLSL_VEC4 },
 	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
 	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
@@ -2446,6 +2449,7 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_CUBEMAP, TB_CUBEMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_WATERREFLECTMAP, TB_SHADOWMAP);
 
 			GLSL_FinishGPUShader(&tr.waterShader);
 
