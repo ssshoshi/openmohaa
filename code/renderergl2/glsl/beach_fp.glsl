@@ -223,6 +223,15 @@ void main()
 	}
 	stain *= onGround;
 
+	// Under the water all of it fades out, before the swash's reach and the
+	// beach's ground end: the water is over it there, and where either ended
+	// it did so in a straight line along the shore
+	float sea = smoothstep(-60.0, -10.0, inland);
+	wet       *= sea;
+	sheet     *= sea;
+	swashFoam *= sea;
+	stain     *= sea;
+
 	if (wet + stain + sheet <= 0.002)
 		discard;
 
