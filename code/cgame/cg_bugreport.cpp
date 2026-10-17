@@ -540,6 +540,10 @@ void CG_BugReportInit(void)
     if (!cgi.Cvar_Get("cvb_bound", "0", CVAR_ARCHIVE)->integer) {
         cgi.Cmd_Execute(EXEC_APPEND, "bind F7 cvarbrowser\nseta cvb_bound 1\n");
     }
+    // And HOME for the model browser (client/cl_uimodelbrowser.cpp): every F key is taken.
+    if (!cgi.Cvar_Get("mdb_bound", "0", CVAR_ARCHIVE)->integer) {
+        cgi.Cmd_Execute(EXEC_APPEND, "bind HOME modelbrowser\nseta mdb_bound 1\n");
+    }
 
     memset(&br, 0, sizeof(br));
 }

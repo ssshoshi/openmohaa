@@ -91,6 +91,8 @@ consolecmd_t G_ConsoleCmds[] = {
     {"scriptinfo",      G_OrchScriptInfoCmd,  qfalse},
     {"orch_runscript",  G_OrchRunScriptCmd,   qfalse},
     {"orch_scripts",    G_OrchScriptsCmd,     qfalse},
+    {"spawnmodel",      G_OrchSpawnModelCmd,  qfalse},
+    {"spawnactor",      G_OrchSpawnActorCmd,  qfalse},
 #ifdef _DEBUG
     {"bot",             G_BotCommand,         qfalse},
 #endif

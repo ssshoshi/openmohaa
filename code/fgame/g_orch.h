@@ -70,3 +70,12 @@ qboolean G_OrchRunScriptCmd(struct gentity_s *ent);
 // answers "orch_scripts <lines>" with the script threads near the player and
 // the map script's, where each is and what it waits for.
 qboolean G_OrchScriptsCmd(struct gentity_s *ent);
+// spawnmodel [-compare] [-at x y z] [-face yaw] [-gap units] <model.tik>... | -clear:
+// models where the player looks, in a row facing them (the model browser,
+// orch.py spawn). Single player.
+qboolean G_OrchSpawnModelCmd(struct gentity_s *ent);
+// spawnactor [-noai] [-noattack] [-health n] [-weapon name] [-at x y z] <model.tik>: a soldier
+// where the player looks, facing them. Single player.
+qboolean G_OrchSpawnActorCmd(struct gentity_s *ent);
+// Whether spawnmodel or spawnactor made it.
+bool G_OrchSpawned(class Entity *ent);
