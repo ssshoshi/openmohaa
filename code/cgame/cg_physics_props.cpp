@@ -520,18 +520,22 @@ void CG_PhysicsLoadProps(void)
     }
 }
 
-// How fast a prop comes to go with the water round it, and stops turning in
-// it: a share of the difference a second, all under. Slower through it than
-// PP_WAKE_SPEED, it leaves no wake.
-#define PP_WATER_DRAG      2.5f
-#define PP_WATER_SPIN_DRAG 2.0f
-#define PP_WAKE_SPEED      12.0f
+// How fast a prop comes to go with the water round it: a share of the
+// difference a second, all under. Slower through it than PP_WAKE_SPEED, it
+// leaves no wake.
+#define PP_WATER_DRAG  2.5f
+#define PP_WAKE_SPEED  12.0f
+// The points of its box the water holds it up and slows it at, this far out
+// from its middle to its corners
+#define PP_WATER_INSET 0.7f
 
-// Before each step: the props in water (cg_water.cpp). What is under of each
-// (its box, turned, against the surface and the swell over it) is held up by
-// its material (a crate floats, a helmet sinks), slowed and carried along by
-// the water; and going through it, leaves a wake; falling in, splashes. Only
-// props awake: one asleep where it came to rest stays so until something
+// Before each step: the props in water (cg_water.cpp). The water holds each
+// up at eight points through its box, by its material (a crate floats, a
+// helmet sinks), each by how far under it is, eased in over half the box's
+// height so that one going under is no sudden push; and slows each point as
+// it goes through the water, which also stops it spinning and rocking, and
+// carries it along. Going through it, it leaves a wake; falling in, splashes.
+// Only props awake: one asleep where it came to rest stays so until something
 // wakes it.
 void CG_PhysicsPropsWater(float dt)
 {
@@ -546,9 +550,9 @@ void CG_PhysicsPropsWater(float dt)
         physProp_t     *pp = &pp_props[i];
         const cgProp_t *p  = &cg_props[pp->prop];
         cgWaterSample_t water;
-        vec3_t          centre, axis[3], corner, low, flow, v, under;
-        float           zmin, zmax, top, share, mass, size;
-        int             k, c, numUnder;
+        vec3_t          centre, axis[3], mid, corner, points[8], flow, v;
+        float           zmin, zmax, band, share, mass, size, tops[8];
+        int             k, c;
 
         if (!bodies.IsActive(pp->id) || p->hangs || p->corded) {
             continue;
@@ -557,43 +561,46 @@ void CG_PhysicsPropsWater(float dt)
         PhysFromJolt(JPH::Vec3(bodies.GetPosition(pp->id)), centre);
         CG_PhysicsAxisFromQuat(bodies.GetRotation(pp->id), axis);
 
-        // its box's corners: how low and high it reaches, and the middle of
-        // those under the water, where it is held up
+        // the middle of its box, and how low and high the box reaches
+        VectorCopy(centre, mid);
+        for (k = 0; k < 3; k++) {
+            VectorMA(mid, 0.5f * (p->mins[k] + p->maxs[k]), axis[k], mid);
+        }
         zmin = 1e9f;
         zmax = -1e9f;
-        VectorClear(under);
-        numUnder = 0;
-        VectorCopy(centre, low);
-        if (!CG_WaterSample(centre, &water)) {
-            // the middle out of it: under it, perhaps, going in
-            VectorSet(low, centre[0], centre[1], centre[2] + Q_min(p->mins[2], 0.0f));
-            if (!CG_WaterSample(low, &water)) {
-                pp->wet = 0.0f;
-                continue;
-            }
-        }
-        top = water.surface + CG_WaterSwell(centre);
         for (c = 0; c < 8; c++) {
-            VectorCopy(centre, corner);
+            VectorCopy(mid, corner);
+            VectorCopy(mid, points[c]);
             for (k = 0; k < 3; k++) {
-                VectorMA(corner, (c & (1 << k)) ? p->maxs[k] : p->mins[k], axis[k], corner);
+                const float half = 0.5f * (p->maxs[k] - p->mins[k]) * ((c & (1 << k)) ? 1.0f : -1.0f);
+
+                VectorMA(corner, half, axis[k], corner);
+                VectorMA(points[c], half * PP_WATER_INSET, axis[k], points[c]);
             }
             zmin = Q_min(zmin, corner[2]);
             zmax = Q_max(zmax, corner[2]);
-            if (corner[2] < top) {
-                VectorAdd(under, corner, under);
-                numUnder++;
-            }
         }
-        share = Com_Clamp(0.0f, 1.0f, (top - zmin) / Q_max(zmax - zmin, 1.0f));
-        if (share <= 0.0f || !numUnder) {
+
+        VectorSet(corner, mid[0], mid[1], zmin + 1.0f);
+        if (!CG_WaterSample(corner, &water)) {
             pp->wet = 0.0f;
             continue;
         }
-        VectorScale(under, 1.0f / numUnder, under);
+
+        // how far under each point is, eased over half the box's height
+        band  = Q_max((zmax - zmin) * 0.5f, 2.0f);
+        share = 0.0f;
+        for (c = 0; c < 8; c++) {
+            tops[c] = Com_Clamp(0.0f, 1.0f, 0.5f + (water.surface + CG_WaterSwell(points[c]) - points[c][2]) / band);
+            share += tops[c] / 8.0f;
+        }
+        if (share <= 0.0f) {
+            pp->wet = 0.0f;
+            continue;
+        }
 
         mass = CG_PhysicsBodyMass(pp->id);
-        CG_WaterFlow(centre, water.depth, flow);
+        CG_WaterFlow(mid, water.depth, flow);
         PhysFromJolt(bodies.GetLinearVelocity(pp->id), v);
 
         // a prop that goes in falling splashes, by how big and how fast
@@ -601,32 +608,33 @@ void CG_PhysicsPropsWater(float dt)
         if (pp->wet <= 0.0f && v[2] < -60.0f) {
             vec3_t at;
 
-            VectorSet(at, centre[0], centre[1], water.surface);
+            VectorSet(at, mid[0], mid[1], water.surface);
             CG_WaterSplash(at, Com_Clamp(4.0f, 30.0f, size * 0.6f), -v[2]);
         }
         pp->wet = share;
 
-        {
-            vec3_t     rel;
-            JPH::Vec3  force;
-            const float lift = mass * g * pp->buoyancy * share;
+        for (c = 0; c < 8; c++) {
+            const JPH::RVec3 point(PhysToJolt(points[c]));
+            JPH::Vec3        force;
 
-            VectorSubtract(flow, v, rel);
-            force = PhysToJolt(rel) * (mass * PP_WATER_DRAG * share) + JPH::Vec3(0.0f, 0.0f, lift);
-            bodies.AddForce(pp->id, force, JPH::RVec3(PhysToJolt(under)));
-            bodies.SetAngularVelocity(pp->id, bodies.GetAngularVelocity(pp->id) * Q_max(0.0f, 1.0f - PP_WATER_SPIN_DRAG * share * dt));
+            if (tops[c] <= 0.0f) {
+                continue;
+            }
+            force = (PhysToJolt(flow) - bodies.GetPointVelocity(pp->id, point)) * (mass * PP_WATER_DRAG * tops[c] / 8.0f)
+                  + JPH::Vec3(0.0f, 0.0f, mass * g * pp->buoyancy * tops[c] / 8.0f);
+            bodies.AddForce(pp->id, force, point);
         }
 
         // going through it: a wake from where it meets the water
         {
             const float speed = sqrt(Square(v[0] - flow[0]) + Square(v[1] - flow[1]));
 
-            if (speed > PP_WAKE_SPEED && zmax > top) {
+            if (speed > PP_WAKE_SPEED && zmax > water.surface) {
                 const float push = Q_min(share * 2.0f, 1.0f);
                 vec3_t      at;
 
-                VectorSet(at, centre[0] + (v[0] - flow[0]) / speed * size * 0.4f,
-                    centre[1] + (v[1] - flow[1]) / speed * size * 0.4f, water.surface);
+                VectorSet(at, mid[0] + (v[0] - flow[0]) / speed * size * 0.4f,
+                    mid[1] + (v[1] - flow[1]) / speed * size * 0.4f, water.surface);
                 CG_WaterRipple(at, Com_Clamp(6.0f, 40.0f, size * 0.8f), Q_min(speed, 300.0f) * 0.035f * push * dt,
                     Q_min(speed, 300.0f) / 150.0f * 0.6f * push * dt);
             }
