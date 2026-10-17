@@ -729,7 +729,7 @@ void main()
 		rt_specView  = E;
 		rt_specRough = roughness;
   #else
-		vec3 rtNormal = normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
   #endif
   #if defined(USE_LIGHTMAP)
 		rt_skyLM = var_TexCoords.zw;
