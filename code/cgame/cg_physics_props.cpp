@@ -53,31 +53,32 @@ typedef struct {
     float       restitution;
     physSoundMat_t sound; // what it sounds like striking things (phys_impact.cpp)
     // In water (CG_PhysicsPropsWater): what it is held up by all under, over
-    // its weight. Over 1 it floats, riding with 1/buoyancy of it under; 0
-    // sinks (slowed by the water all the same).
+    // its weight. Over 1 it floats, riding with 1/buoyancy of it under; under
+    // 1 it sinks, what it displaces still holding some of it up, and the water
+    // slowing it to a sink (PP_WATER_FORM).
     float       buoyancy;
 } physMaterial_t;
 
 static const physMaterial_t phys_materials[] = {
     {"glass",
      {"bottle", "jug", "pitcher", "glass", "jar", "vase", NULL},
-     1.5f, 0.4f, 0.3f, PHYS_SND_GLASS, 0.0f},
+     1.5f, 0.4f, 0.3f, PHYS_SND_GLASS, 0.4f},
     {"metal",
      {"helmet", NULL},
-     3.0f, 0.5f, 0.2f, PHYS_SND_HELMET, 0.0f},
+     3.0f, 0.5f, 0.2f, PHYS_SND_HELMET, 0.3f},
     {"metal",
      {"mg42", "rifle", "kar98", "pistol", "gun", NULL},
-     3.0f, 0.5f, 0.2f, PHYS_SND_WEAPON, 0.0f},
+     3.0f, 0.5f, 0.2f, PHYS_SND_WEAPON, 0.15f},
     {"metal",
      {"bucket", "can", "shell", "pot", "stove", "radio", "ammo", "valve", "switch", "microphone", "filter",
       "canteen", "radar", "lantern", NULL},
-     3.0f, 0.5f, 0.2f, PHYS_SND_METAL, 0.0f},
+     3.0f, 0.5f, 0.2f, PHYS_SND_METAL, 0.3f},
     {"paper",
      {"paper", "card", "book", "map", "sack", "bag", "cloth", "blanket", "pillow", NULL},
      0.8f, 0.8f, 0.05f, PHYS_SND_PAPER, 1.15f}, // soaked, it floats low
     {"stone",
      {"sandbag", "brick", "stone", "rock", "concrete", NULL},
-     25.0f, 0.8f, 0.05f, PHYS_SND_STONE, 0.0f},
+     25.0f, 0.8f, 0.05f, PHYS_SND_STONE, 0.45f},
     {"wood",
      {"chair", "stool", "crate", "table", "trunk", "box", "bench", "lid", "cot", "basket", "desk", "shelf", "barrel",
       NULL},
@@ -85,7 +86,7 @@ static const physMaterial_t phys_materials[] = {
 };
 
 // not known by its name: it sinks
-static const physMaterial_t phys_defaultMaterial = {"default", {NULL}, 3.0f, 0.5f, 0.15f, PHYS_SND_DEFAULT, 0.0f};
+static const physMaterial_t phys_defaultMaterial = {"default", {NULL}, 3.0f, 0.5f, 0.15f, PHYS_SND_DEFAULT, 0.35f};
 
 static const physMaterial_t *CG_PhysicsMaterial(const char *name)
 {
@@ -137,8 +138,24 @@ typedef struct {
     JPH::Quat   prevRot, curRot;
     qboolean    moving; // moved since it was last drawn where it was placed
     float       buoyancy; // its material's (CG_PhysicsPropsWater)
+    float       form;     // the water's drag on it going through, over speed squared (PP_WATER_FORM)
     float       wet;      // how much of it was under in the step before
 } physProp_t;
+
+// How fast a prop comes to go with the water round it: a share of the
+// difference a second, all under. Slower through it than PP_WAKE_SPEED, it
+// leaves no wake.
+#define PP_WATER_DRAG  2.5f
+#define PP_WAKE_SPEED  12.0f
+// And the drag that grows with the square of the speed, as water's does, for
+// how much face a prop turns to the water for its mass: half water's density
+// (kg/m3) by a blunt shape's drag coefficient (1) by a sixth of its box's
+// area. A helmet settles slowly, a sandbag drops: glass sinks at ~0.4 m/s,
+// metal ~0.7, stone ~1.7. No more a step than the speed it has.
+#define PP_WATER_FORM  (0.5f * 1000.0f * 1.0f / 6.0f)
+// The points of its box the water holds it up and slows it at, this far out
+// from its middle to its corners
+#define PP_WATER_INSET 0.7f
 
 static std::vector<physProp_t> pp_props;
 static std::vector<JPH::BodyID> pp_static;
@@ -482,6 +499,12 @@ void CG_PhysicsLoadProps(void)
             pp.moving  = qfalse;
             pp.everMoved = qfalse;
             pp.buoyancy  = material->buoyancy;
+            {
+                const JPH::Vec3 box  = PhysToJolt(p->maxs) - PhysToJolt(p->mins);
+                const float     area = 2.0f * (box.GetX() * box.GetY() + box.GetY() * box.GetZ() + box.GetZ() * box.GetX());
+
+                pp.form = PP_WATER_FORM * area / Q_max(settings.mMassPropertiesOverride.mMass, 0.1f);
+            }
             pp.wet       = 0.0f;
             p->body    = (int)pp_props.size();
             pp_props.push_back(pp);
@@ -519,15 +542,6 @@ void CG_PhysicsLoadProps(void)
         );
     }
 }
-
-// How fast a prop comes to go with the water round it: a share of the
-// difference a second, all under. Slower through it than PP_WAKE_SPEED, it
-// leaves no wake.
-#define PP_WATER_DRAG  2.5f
-#define PP_WAKE_SPEED  12.0f
-// The points of its box the water holds it up and slows it at, this far out
-// from its middle to its corners
-#define PP_WATER_INSET 0.7f
 
 // Before each step: the props in water (cg_water.cpp). The water holds each
 // up at eight points through its box, by its material (a crate floats, a
@@ -620,8 +634,10 @@ void CG_PhysicsPropsWater(float dt)
             if (tops[c] <= 0.0f) {
                 continue;
             }
-            force = (PhysToJolt(flow) - bodies.GetPointVelocity(pp->id, point)) * (mass * PP_WATER_DRAG * tops[c] / 8.0f)
-                  + JPH::Vec3(0.0f, 0.0f, mass * g * pp->buoyancy * tops[c] / 8.0f);
+            const JPH::Vec3 rel  = PhysToJolt(flow) - bodies.GetPointVelocity(pp->id, point);
+            const float     drag = PP_WATER_DRAG + Q_min(pp->form * rel.Length(), 0.9f / dt);
+
+            force = rel * (mass * drag * tops[c] / 8.0f) + JPH::Vec3(0.0f, 0.0f, mass * g * pp->buoyancy * tops[c] / 8.0f);
             bodies.AddForce(pp->id, force, point);
         }
 
