@@ -215,13 +215,37 @@ void CG_PhysicsFrame(void)
 
         if (cg_physics_log->integer && cg.time - phys_reportTime >= 5000) {
             if (phys_steps) {
+                // what is awake, by whose it is: kinematic (moved each step)
+                // and free
+                JPH::BodyIDVector         awake;
+                const JPH::BodyInterface &bi = phys_system->GetBodyInterfaceNoLock();
+                int                       kin[5] = {0}, dyn[5] = {0};
+
+                phys_system->GetActiveBodies(JPH::EBodyType::RigidBody, awake);
+                for (const JPH::BodyID &id : awake) {
+                    const JPH::uint64 u    = bi.GetUserData(id);
+                    const int         kind = u >= PHYS_USERDATA_RAGDOLL_BASE     ? 4
+                                           : u >= PHYS_USERDATA_FURNITURE_BASE ? 3
+                                           : u >= PHYS_USERDATA_ENTITY_BASE    ? 2
+                                           : u >= PHYS_USERDATA_PROP_BASE      ? 1
+                                                                               : 0;
+                    (bi.GetMotionType(id) == JPH::EMotionType::Dynamic ? dyn : kin)[kind]++;
+                }
+
+                int used, floating, asleep;
+
+                CG_JoltRagdollCounts(&used, &floating, &asleep);
                 cgi.Printf(
-                    "physics: %d steps in the last %.1f s, %.0f us each, worst %.0f us; %d bodies awake\n",
+                    "physics: %d steps in the last %.1f s, %.0f us each, worst %.0f us; %d bodies awake"
+                    " (free/kinematic: world %d/%d props %d/%d entities %d/%d furniture %d/%d ragdolls %d/%d);"
+                    " %d ragdolls, %d afloat, %d of them asleep far off\n",
                     phys_steps,
                     (cg.time - phys_reportTime) * 0.001f,
                     phys_stepUs / phys_steps,
                     phys_worstStepUs,
-                    (int)phys_system->GetNumActiveBodies(JPH::EBodyType::RigidBody)
+                    (int)awake.size(),
+                    dyn[0], kin[0], dyn[1], kin[1], dyn[2], kin[2], dyn[3], kin[3], dyn[4], kin[4],
+                    used, floating, asleep
                 );
             }
             phys_reportTime   = cg.time;

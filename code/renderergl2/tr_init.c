@@ -169,6 +169,7 @@ cvar_t  *r_sunEntityShadowCascades;
 cvar_t  *r_sunCascade2CacheDist;
 cvar_t  *r_sunCascade2CacheAngle;
 cvar_t  *r_skelCull;
+cvar_t  *r_prepassFarModels;
 cvar_t  *r_skinCache;
 cvar_t  *r_softParticles;
 cvar_t  *r_ignoreDstAlpha;
@@ -1682,6 +1683,9 @@ void R_Register( void )
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.
 	r_skelCull = ri.Cvar_Get( "r_skelCull", "1", 0 );
+	// Added in OPM: a beach of the dead each drawn twice, once for depth
+	r_prepassFarModels = ri.Cvar_Get( "r_prepassFarModels", "0.04", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_prepassFarModels, "Leaves out of the depth prepass any animated model smaller in the view than this (its radius over its distance): it is drawn by the main pass alone. 0 puts every model in the prepass." );
 	ri.Cvar_SetDescription( r_skelCull, "Skeletal models wholly outside a view (their animation's sphere and their bones both) are not drawn in it" );
 	// Pose each skeletal model once per scene and skin each of its surfaces
 	// once per pose, rather than again in every view that draws it (prepass,
@@ -1816,6 +1820,8 @@ void R_Register( void )
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
+	R_WaterRegisterCvars();
+	R_LensRegisterCvars();
 	R_SkelGpuRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is
@@ -1887,6 +1893,8 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
 	// Added in OPM
 	ri.Cmd_AddCommand( "groundcoverinfo", R_GroundCoverInfo_f );
+	ri.Cmd_AddCommand( "waterinfo", R_WaterInfo_f );
+	ri.Cmd_AddCommand( "waterreload", R_WaterReload_f );
 	ri.Cmd_AddCommand( "skelgpuinfo", R_SkelGpuInfo_f );
 	R_RtTestCommands( qtrue );
 
@@ -2163,6 +2171,8 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
 	// Added in OPM
 	ri.Cmd_RemoveCommand( "groundcoverinfo" );
+	ri.Cmd_RemoveCommand( "waterinfo" );
+	ri.Cmd_RemoveCommand( "waterreload" );
 	ri.Cmd_RemoveCommand( "skelgpuinfo" );
 	R_RtTestCommands( qfalse );
 
@@ -2442,6 +2452,9 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.SetStaticModelTransform = RE_SetStaticModelTransform;
 	re.DetachWorldSurfaces = RE_DetachWorldSurfaces;
 	re.RegisterShaderVertexLit = RE_RegisterShaderVertexLit;
+	re.SetWaterBlood = RE_SetWaterBlood;
+	re.AddWaterRipples = RE_AddWaterRipples;
+	re.SetLensSpots = RE_SetLensSpots;
 	re.TIKI_Orientation = RE_TIKI_Orientation;
 	re.TIKI_IsOnGround = RE_TIKI_IsOnGround;
 	re.SetFrameNumber = RE_SetFrameNumber;

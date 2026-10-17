@@ -2565,6 +2565,7 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	int picNumMips;
 	long	hash;
 	imgFlags_t checkFlagsTrue, checkFlagsFalse;
+	int		imgStartedAt, imgLoadedAt; // Added in OPM: tiki_loadlog 2
 
 	if (!name) {
 		return NULL;
@@ -2594,8 +2595,13 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	//
 	// load the pic from disk
 	//
+	imgStartedAt = ri.Milliseconds();
 	R_LoadImage( name, &pic, &width, &height, &picFormat, &picNumMips );
+	imgLoadedAt = ri.Milliseconds();
 	if ( pic == NULL ) {
+		if ( imgLoadedAt - imgStartedAt >= 3 && ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 ) {
+			ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms looking for image %s, not found\n", imgLoadedAt - imgStartedAt, name );
+		}
 		return NULL;
 	}
 
@@ -2725,6 +2731,10 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 
 	image = R_CreateImage2( ( char * ) name, pic, width, height, picFormat, picNumMips, type, flags, 0 );
 	ri.Free( pic );
+	if ( ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 && ri.Milliseconds() - imgStartedAt >= 3 ) {
+		ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms image %s (%dx%d, %d mips, format 0x%x): %d reading, %d the rest\n", ri.Milliseconds() - imgStartedAt, name,
+			width, height, picNumMips, picFormat, imgLoadedAt - imgStartedAt, ri.Milliseconds() - imgLoadedAt );
+	}
 	return image;
 }
 
@@ -2961,8 +2971,20 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenScratchImage = R_CreateImage("screenScratch", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
 
 		// Added in OPM: soft particles read the view's depth from it too
-		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0)
+		// and water, to see how deep it is (tr_water.c)
+		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer)
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+
+		// Added in OPM: the view before its water, which the water shows through (tr_water.c)
+		if (r_water->integer)
+			tr.waterSceneImage = R_CreateImage("*waterScene", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+
+		// Added in OPM: the water's ripples (tr_water.c)
+		if (r_water->integer && r_waterRipples->integer)
+		{
+			tr.waterRippleImage[0] = R_CreateImage("*waterRipple0", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.waterRippleImage[1] = R_CreateImage("*waterRipple1", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
 
 		if (r_drawSunRays->integer)
 			tr.sunRaysImage = R_CreateImage("*sunRays", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);

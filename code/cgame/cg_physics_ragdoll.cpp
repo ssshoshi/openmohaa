@@ -47,6 +47,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_physics_local.h"
 #include "cg_physics_ragdoll.h"
+#include "cg_water.h"
 
 #include <vector>
 
@@ -200,6 +201,16 @@ typedef struct {
     qboolean contact[RD_NUM_JOINTS];
     vec3_t   contactNormal[RD_NUM_JOINTS];
     int      onBodyMask;
+
+    // In water (CG_JoltRagdollFloat): how thick each part is, metres, and
+    // whether the water held any of it up in the latest step.
+    float    radius[PR_NUM_PARTS];
+    float    wet[PR_NUM_PARTS]; // how much of each was under in the step before
+    qboolean floating;
+    // How long it has lain quietly afloat, seconds, and whether it has been
+    // let sleep for being far from the view (CG_JoltRagdollFloat)
+    float    floatCalm;
+    qboolean floatAsleep;
 } prRagdoll_t;
 
 static prRagdoll_t pr_ragdolls[PR_MAX_RAGDOLLS];
@@ -528,6 +539,7 @@ int CG_JoltRagdollCreate(
         const float ra = Q_max(radius[def->a], 1.0f) * PHYS_UNITS_TO_METRES;
         const float rb = Q_max(radius[def->b], 1.0f) * PHYS_UNITS_TO_METRES;
         r              = Q_max(ra, rb);
+        pr->radius[i]  = (ra + rb) * 0.5f;
 
         // The pelvis also spans the hips and the chest the shoulders, which is
         // where the legs and arms hang from.
@@ -693,6 +705,10 @@ int CG_JoltRagdollCreate(
     }
 
     pr->used        = qtrue;
+    pr->floating    = qfalse;
+    pr->floatCalm   = 0.0f;
+    pr->floatAsleep = qfalse;
+    memset(pr->wet, 0, sizeof(pr->wet));
     pr->holdJoint   = -1;
     pr->anchor      = JPH::BodyID();
     pr->hold        = NULL;
@@ -979,8 +995,172 @@ void CG_JoltRagdollWake(int handle)
     }
 }
 
-// Each step of the world: the hold on the death pose easing off, and the
-// anchor of a body held by the grabber carried towards the end of the beam.
+//=============================================================
+// In water
+//=============================================================
+
+// How much of a part's weight the water holds up when it is all under. A dead
+// man's chest and belly float best (the air in him, and his kit), and his head
+// and limbs only a little less: he lies along the top of the water, low in it,
+// rather than folded at the waist with them hanging.
+static const float pr_partFloat[PR_NUM_PARTS] = {
+    1.3f, 1.3f, 1.3f, 1.3f, 1.12f, 1.12f,     // pelvis, spine, spine1, chest, neck, head
+    1.12f, 1.12f, 1.12f, 1.12f, 1.12f, 1.12f, // the arms
+    1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f,       // the legs
+};
+
+// How fast a part comes to go with the water around it, and stops turning in
+// it: a share of the difference a second, for a part all under.
+#define PR_WATER_DRAG      3.0f
+#define PR_WATER_SPIN_DRAG 2.5f
+
+// A body in water is held up and carried along by it (cg_water.cpp). Each part
+// is pushed at both its ends, by as much as is under the water there, so the
+// parts that float turn the body over onto them and the swell rolls it.
+static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, float dt)
+{
+    cgWaterSample_t water;
+    vec3_t          at;
+    const float     g = -phys_system->GetGravity().GetZ();
+
+    const qboolean wasFloating = pr->floating;
+
+    pr->floating = qfalse;
+    if (!cg_water_float->integer) {
+        return;
+    }
+
+    PhysFromJolt(JPH::Vec3(bodies.GetCenterOfMassPosition(pr->ragdoll->GetBodyID(PR_PELVIS))), at);
+    if (!CG_WaterSample(at, &water)) {
+        memset(pr->wet, 0, sizeof(pr->wet));
+        pr->floatCalm   = 0.0f;
+        pr->floatAsleep = qfalse;
+        return;
+    }
+
+    // Far from the view, a body that has lain afloat quietly for a while is
+    // let sleep where it is: the water's push would wake every part of it
+    // every step, so a sea of the dead would never rest and their simulation
+    // is most of a frame. It wakes when the view comes near again, or when
+    // something (a blast, a round) wakes it.
+    {
+        const float range = Q_max(cg_water_floatrange->value, 0.0f);
+        const float dist  = Distance(at, cg.refdef.vieworg);
+        qboolean    awake = qfalse;
+
+        for (int i = 0; i < PR_NUM_PARTS && !awake; i++) {
+            awake = bodies.IsActive(pr->ragdoll->GetBodyID(i));
+        }
+
+        if (pr->floatAsleep) {
+            if (range <= 0.0f || dist < range * 0.85f) {
+                // the view has come back: on with the water
+                for (int i = 0; i < PR_NUM_PARTS; i++) {
+                    bodies.ActivateBody(pr->ragdoll->GetBodyID(i));
+                }
+                pr->floatAsleep = qfalse;
+                pr->floatCalm   = 0.0f;
+            } else if (!awake) {
+                pr->floating = qtrue;
+                return;
+            } else {
+                // woken by something else: let it settle again first
+                pr->floatAsleep = qfalse;
+                pr->floatCalm   = 0.0f;
+            }
+        }
+
+        // and anywhere, a body lying still in the shallows, on the bottom
+        // with the water hardly moving it, is let sleep too
+        if (wasFloating && range > 0.0f) {
+            const float speed = bodies.GetLinearVelocity(pr->ragdoll->GetBodyID(PR_PELVIS)).Length() * PHYS_METRES_TO_UNITS;
+            const float calm  = dist > range ? 40.0f : water.depth < 40.0f ? 6.0f : 0.0f;
+
+            pr->floatCalm = speed < calm ? pr->floatCalm + dt : 0.0f;
+            if (pr->floatCalm > (dist > range ? 2.0f : 4.0f)) {
+                for (int i = 0; i < PR_NUM_PARTS; i++) {
+                    bodies.DeactivateBody(pr->ragdoll->GetBodyID(i));
+                }
+                pr->floatAsleep = qtrue;
+                pr->floating    = qtrue;
+                return;
+            }
+        } else {
+            pr->floatCalm = 0.0f;
+        }
+    }
+
+    for (int i = 0; i < PR_NUM_PARTS; i++) {
+        const JPH::BodyID id    = pr->ragdoll->GetBodyID(i);
+        const JPH::RMat44 t     = bodies.GetWorldTransform(id);
+        const float       r     = Q_max(pr->radius[i] * PHYS_METRES_TO_UNITS, 1.0f);
+        const float       mass  = pr_parts[i].mass * 0.5f;
+        float             under = 0.0f;
+
+        for (int end = 0; end < 2; end++) {
+            const JPH::RVec3 point = t * (end ? pr->localB[i] : pr->localA[i]);
+            vec3_t           q, flow;
+            float            share;
+
+            PhysFromJolt(JPH::Vec3(point), q);
+            share = Com_Clamp(0.0f, 1.0f, (water.surface + CG_WaterSwell(q) - (q[2] - r)) / (2.0f * r));
+            if (share <= 0.0f) {
+                continue;
+            }
+
+            CG_WaterFlow(q, water.depth, flow);
+
+            const JPH::Vec3 along = PhysToJolt(flow) - bodies.GetPointVelocity(id, point);
+            const JPH::Vec3 force = JPH::Vec3(0.0f, 0.0f, mass * g * pr_partFloat[i] * share) + along * (mass * PR_WATER_DRAG * share);
+
+            bodies.AddForce(id, force, point);
+            under += share * 0.5f;
+        }
+
+        // a part that goes in falling splashes, by how big and how fast
+        if (under > 0.0f && pr->wet[i] <= 0.0f) {
+            const float fall = -bodies.GetLinearVelocity(id).GetZ() * PHYS_METRES_TO_UNITS;
+
+            if (fall > 60.0f) {
+                vec3_t q;
+
+                PhysFromJolt(JPH::Vec3(t.GetTranslation()), q);
+                q[2] = water.surface;
+                CG_WaterSplash(q, Com_Clamp(5.0f, 22.0f, r * 2.2f), fall);
+            }
+        }
+        pr->wet[i] = under;
+
+        if (under > 0.0f) {
+            bodies.SetAngularVelocity(id, bodies.GetAngularVelocity(id) * Q_max(0.0f, 1.0f - PR_WATER_SPIN_DRAG * under * dt));
+            pr->floating = qtrue;
+        }
+    }
+}
+
+// For the physics log: bodies in use, afloat, and let sleep afloat far off
+void CG_JoltRagdollCounts(int *used, int *floating, int *asleep)
+{
+    *used = *floating = *asleep = 0;
+    for (int n = 0; n < PR_MAX_RAGDOLLS; n++) {
+        if (pr_ragdolls[n].used) {
+            (*used)++;
+            *floating += pr_ragdolls[n].floating ? 1 : 0;
+            *asleep += pr_ragdolls[n].floatAsleep ? 1 : 0;
+        }
+    }
+}
+
+qboolean CG_JoltRagdollFloating(int handle)
+{
+    prRagdoll_t *pr = CG_JoltRagdollGet(handle);
+
+    return pr && pr->floating;
+}
+
+// Each step of the world: the hold on the death pose easing off, the anchor
+// of a body held by the grabber carried towards the end of the beam, and the
+// water holding up and carrying the bodies in it.
 void CG_JoltRagdollsStep(float dt)
 {
     if (!phys_system) {
@@ -1017,6 +1197,8 @@ void CG_JoltRagdollsStep(float dt)
             memset(pr->contact, 0, sizeof(pr->contact));
             pr->onBodyMask = 0;
         }
+
+        CG_JoltRagdollFloat(pr, bodies, dt);
 
         if (pr->holdJoint < 0 || pr->anchor.IsInvalid()) {
             continue;

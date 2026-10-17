@@ -4282,6 +4282,9 @@ static shader_t *FinishShader( void ) {
 	// determine which vertex attributes this shader needs
 	ComputeVertexAttribs();
 
+	// Added in OPM: water, drawn by the water program (tr_water.c)
+	R_WaterFinishShader(&shader, &stages[0]);
+
 	return GeneratePermanentShader();
 }
 

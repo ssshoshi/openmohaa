@@ -52,6 +52,14 @@ extern const char *fallbackShader_texturecolor_vp;
 extern const char *fallbackShader_texturecolor_fp;
 extern const char *fallbackShader_tonemap_vp;
 extern const char *fallbackShader_tonemap_fp;
+extern const char *fallbackShader_water_vp;
+extern const char *fallbackShader_beach_vp;
+extern const char *fallbackShader_ripple_vp;
+extern const char *fallbackShader_lens_vp;
+extern const char *fallbackShader_lens_fp;
+extern const char *fallbackShader_ripple_fp;
+extern const char *fallbackShader_beach_fp;
+extern const char *fallbackShader_water_fp;
 extern const char* fallbackShader_greyscale_vp;
 extern const char* fallbackShader_greyscale_fp;
 
@@ -201,7 +209,35 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SkelAmbient",     GLSL_VEC4 },
 	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS },
 	{ "u_SkelNumDents",    GLSL_INT },
-	{ "u_SkelDents",       GLSL_VEC4_SKELDENTS }
+	{ "u_SkelDents",       GLSL_VEC4_SKELDENTS },
+	{ "u_SkelMorphMap",    GLSL_INT },
+	{ "u_SkelNumMorphs",   GLSL_INT },
+	{ "u_SkelMorphs",      GLSL_VEC4_SKELMORPHS },
+	// Added in OPM: the water program (tr_water.c)
+	{ "u_WaterColor",      GLSL_VEC4 },
+	{ "u_WaterBlood",      GLSL_VEC4 },
+	{ "u_WaterWaves",      GLSL_VEC4 },
+	{ "u_WaterShore",      GLSL_VEC4 },
+	{ "u_WaterSky",        GLSL_VEC4 },
+	{ "u_WaterLook",       GLSL_VEC4 },
+	{ "u_WaterBloodZone",  GLSL_VEC4 },
+	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS },
+	{ "u_BeachWet",        GLSL_VEC4 },
+	{ "u_SandStains",      GLSL_VEC4_WATERSPOTS },
+	{ "u_WorldViewProjection", GLSL_MAT16 },
+	{ "u_WaterView",       GLSL_VEC4 },
+	{ "u_BeachSwash",      GLSL_VEC4 },
+	{ "u_RippleSim",       GLSL_VEC4 },
+	{ "u_RippleDecay",     GLSL_VEC4 },
+	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
+	{ "u_RippleFoam",      GLSL_VEC4_WATERSPOTS },
+	{ "u_WaterRipples",    GLSL_VEC4 },
+	{ "u_LensInfo",        GLSL_VEC4 },
+	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
+	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_Wet",             GLSL_VEC4 },
+	{ "u_WetSky",          GLSL_VEC4 },
+	{ "u_WetSun",          GLSL_VEC4 }
 };
 
 typedef enum
@@ -954,6 +990,8 @@ static int GLSL_LoadGPUShaderText(const char *name, const char *fallback,
 
 	if (size > destSize)
 	{
+		// Added in OPM: say so, rather than the shader just failing to load
+		ri.Printf(PRINT_WARNING, "GLSL: '%s' is %d bytes, %d more than there is room for after its header\n", filename, size, size - destSize);
 		result = 0;
 	}
 	else
@@ -1087,8 +1125,11 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	int attribs, qboolean fragmentShader, const GLchar *extra, qboolean addHeader,
 	const char *fallback_vp, const char *fallback_fp)
 {
-	char vpCode[32000];
-	char fpCode[32000];
+	// Added in OPM: room for lightall, which with its header outgrew 32000
+	// (it failed to load, saying only that it could not); static, as two
+	// such buffers are a lot of stack and the shaders are built one at a time
+	static char vpCode[65536];
+	static char fpCode[65536];
 	char *postHeader;
 	int size;
 	int result;
@@ -1191,6 +1232,12 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 				break;
 			case GLSL_VEC4_SKELDENTS:
 				size += sizeof(vec4_t) * SKEL_GPU_MAX_DENTS * 2;
+				break;
+			case GLSL_VEC4_SKELMORPHS:
+				size += sizeof(vec4_t) * (SKEL_GPU_MAX_MORPHS / 4);
+				break;
+			case GLSL_VEC4_WATERSPOTS:
+				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
 				break;
 			default:
 				break;
@@ -1498,6 +1545,66 @@ void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const ve
 
 /*
 Added in OPM
+A posed model's morph targets' weights, four a vec4. Only the vec4s that hold
+them are sent, and only when they are not what the program has.
+*/
+void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELMORPHS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelMorphs: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_MORPHS / 4) {
+		vec4s = SKEL_GPU_MAX_MORPHS / 4;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+The clouds of blood round bodies in water (tr_water.c), vec4s of them; sent
+when they are not what the program has.
+*/
+void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_WATERSPOTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformWaterSpots: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > WATER_MAX_SPOTS) {
+		vec4s = WATER_MAX_SPOTS;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
 The realtime lights a draw may take (R_RtSetUniforms), count indexes, four a
 vec4. Only the vec4s that hold them are sent.
 */
@@ -1778,7 +1885,7 @@ static qboolean GLSL_InitLightallShader(int i)
 
 	if (i & LIGHTDEF_SKEL_GPU)
 	{
-		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n#define SKEL_MAX_DENTS %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW, SKEL_GPU_MAX_DENTS));
+		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n#define SKEL_MAX_DENTS %d\n#define SKEL_MAX_MORPHS %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW, SKEL_GPU_MAX_DENTS, SKEL_GPU_MAX_MORPHS));
 		attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES
 			| ATTR_TANGENT | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR | ATTR_BONE_WEIGHTS | ATTR_LIGHTDIRECTION;
 	}
@@ -1827,6 +1934,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 
@@ -2320,6 +2428,83 @@ void GLSL_InitGPUShaders(void)
 		}
 	}
 
+	// Added in OPM: water (tr_water.c). Without it water keeps its own stages.
+	if (r_water->integer && glRefConfig.framebufferObject)
+	{
+		attribs = ATTR_POSITION | ATTR_NORMAL;
+		extradefines[0] = '\0';
+
+		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+		Q_strcat(extradefines, 1024, va("#define WATER_RIPPLE_SIZE %d\n", WATER_RIPPLE_SIZE));
+
+		if (GLSL_InitGPUShader(&tr.waterShader, "water", attribs, qtrue, extradefines, qtrue, fallbackShader_water_vp, fallbackShader_water_fp))
+		{
+			GLSL_InitUniforms(&tr.waterShader);
+
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
+
+			GLSL_FinishGPUShader(&tr.waterShader);
+
+			numEtcShaders++;
+		}
+		else
+		{
+			ri.Printf(PRINT_WARNING, "WARNING: the water program did not compile, water keeps its stages\n");
+		}
+
+		// what lands on the lens: drawn over the frame, through its copy
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		extradefines[0] = '\0';
+		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+		if (GLSL_InitGPUShader(&tr.lensShader, "lens", attribs, qtrue, extradefines, qtrue, fallbackShader_lens_vp, fallbackShader_lens_fp))
+		{
+			GLSL_InitUniforms(&tr.lensShader);
+			GLSL_SetUniformInt(&tr.lensShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			GLSL_FinishGPUShader(&tr.lensShader);
+			numEtcShaders++;
+		}
+
+		// its ripples, a step of them
+		if (r_waterRipples->integer)
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+
+			if (GLSL_InitGPUShader(&tr.rippleShader, "ripple", attribs, qtrue, extradefines, qtrue, fallbackShader_ripple_vp, fallbackShader_ripple_fp))
+			{
+				GLSL_InitUniforms(&tr.rippleShader);
+				GLSL_SetUniformInt(&tr.rippleShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+				GLSL_FinishGPUShader(&tr.rippleShader);
+				numEtcShaders++;
+			}
+		}
+
+		// the wet beach the tide leaves: darkened, then the sky in it
+		for (i = 0; i < 2; i++)
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			if (qglesMajorVersion < 3 && glRefConfig.standardDerivatives)
+				Q_strcat(extradefines, 1024, "#extension GL_OES_standard_derivatives : enable\n");
+			Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+			if (i)
+				Q_strcat(extradefines, 1024, "#define BEACH_ADD\n");
+
+			if (!GLSL_InitGPUShader(&tr.beachShader[i], "beach", attribs, qtrue, extradefines, qtrue, fallbackShader_beach_vp, fallbackShader_beach_fp))
+				break;
+
+			GLSL_InitUniforms(&tr.beachShader[i]);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_FinishGPUShader(&tr.beachShader[i]);
+			numEtcShaders++;
+		}
+	}
+
 #if 0
 	attribs = ATTR_POSITION | ATTR_TEXCOORD;
 	extradefines[0] = '\0';
@@ -2385,6 +2570,11 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
+	GLSL_DeleteGPUShader(&tr.waterShader);
+	GLSL_DeleteGPUShader(&tr.rippleShader);
+	GLSL_DeleteGPUShader(&tr.lensShader);
+	GLSL_DeleteGPUShader(&tr.beachShader[0]);
+	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 
 	for ( i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.depthBlurShader[i]);

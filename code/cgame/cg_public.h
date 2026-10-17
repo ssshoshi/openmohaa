@@ -90,7 +90,9 @@ functions imported from the main executable
 //  5: R_SetStaticModelTransform, CM_DisableBrush, R_DetachWorldSurfaces and
 //  R_RegisterShaderVertexLit are present.
 //  6: CM_EnableBrush is present.
-#define CGAME_IMPORT_API_VERSION 6
+//  7: R_SetWaterBlood, R_AddWaterRipples and R_SetLensSpots are present (and
+//  NULL when the renderer has no use for them).
+#define CGAME_IMPORT_API_VERSION 7
 
     /*
 ==================================================================
@@ -472,6 +474,15 @@ functions exported to the main executable
         // Added in OPM, API version 6
         //  Puts back a brush CM_DisableBrush took out.
         void (*CM_EnableBrush)(int brushNum);
+
+        // Added in OPM, API version 7
+        //  Bodies' blood in water, and on the sand. See refexport_t. NULL with
+        //  a renderer that draws none.
+        void (*R_SetWaterBlood)(const float *spots, int numSpots, const float *stains, int numStains);
+        //  What disturbs the water this frame: x, y, width, dip, foam.
+        void (*R_AddWaterRipples)(const float *ripples, int numRipples);
+        //  What is on the camera's lens: see refexport_t.
+        void (*R_SetLensSpots)(const float *spots, int numSpots);
 
     } clientGameImport_t;
 
