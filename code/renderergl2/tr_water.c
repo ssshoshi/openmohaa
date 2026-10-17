@@ -54,6 +54,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //     beach 900 -440          // the sand is wet this far inland of the shore line, and up to this height
 //     puddles 0.3 90          // water stands in its hollows: how much of it, and how big they are
 //     swash 160               // how far up the sand a wave runs, at most, from the shore line
+//     remapShader textures/a textures/b // draw the first as the second on this map (up to 4)
 //     beachSurface textures/sand  // the beach is the ground of this shader alone (up to 4 of these
 //                             // lines): not the sand under the water, nor what stands on it
 //
@@ -96,6 +97,8 @@ typedef struct {
     float  swash;
     char   beachSurfaces[4][MAX_QPATH];
     int    numBeachSurfaces;
+    char   remaps[4][2][MAX_QPATH]; // shaders drawn as others on this map
+    int    numRemaps;
     char   file[MAX_QPATH];
     qboolean fromFile;
 } waterParams_t;
@@ -289,6 +292,17 @@ static void R_WaterReadFile(const char *mapName)
                 water.beachSet   = qtrue;
                 water.beachReach = Q_max(v[0], 1.0f);
                 water.beachTop   = v[1];
+            }
+        } else if (!Q_stricmp(key, "remapShader")) {
+            char from[MAX_QPATH];
+
+            token = COM_ParseExt(&text, qfalse);
+            Q_strncpyz(from, token, sizeof(from));
+            token = COM_ParseExt(&text, qfalse);
+            if (from[0] && token[0] && water.numRemaps < 4) {
+                Q_strncpyz(water.remaps[water.numRemaps][0], from, MAX_QPATH);
+                Q_strncpyz(water.remaps[water.numRemaps][1], token, MAX_QPATH);
+                water.numRemaps++;
             }
         } else if (!Q_stricmp(key, "beachSurface")) {
             token = COM_ParseExt(&text, qfalse);
@@ -702,7 +716,14 @@ static void R_WaterBuildBeach(void)
 
 void R_WaterLoadWorld(const char *mapName)
 {
+    int i;
+
     R_WaterReadFile(mapName);
+    // a shore's own texture swapped for the beach's (m3l1a's painted
+    // shoreline strip, a straight bright line once the beach was wet)
+    for (i = 0; i < water.numRemaps; i++) {
+        R_RemapShader(water.remaps[i][0], water.remaps[i][1], "0");
+    }
     R_WaterBuildSky();
     R_WaterBuildBeach();
 }

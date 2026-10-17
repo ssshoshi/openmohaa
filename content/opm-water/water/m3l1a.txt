@@ -23,8 +23,12 @@ puddles 0.3 110
 // each wave runs on up the sand this far at most, and back
 swash 170
 // the beach is the sand above the water alone: the sand under it is another
-// shader, which the water's own reflection is over already
+// shader, which the water's own reflection is over already. The painted
+// shoreline strip along the waterline is drawn as the beach's sand too: its
+// straight bright edge stood out against the wet beach
+remapShader textures/mohtest/omaha_set4_shoreline textures/test/omaha_pjspick5
 beachSurface textures/test/omaha_pjspick5
+beachSurface textures/mohtest/omaha_set4_shoreline
 
 chop 1
 foam 1
