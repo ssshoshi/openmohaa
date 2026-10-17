@@ -858,8 +858,8 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
 
     // the view under its surface, if it was drawn (R_WaterReflectView)
     if (backEnd.viewParms.waterReflect && tr.waterReflectImage) {
-        VectorSet4(v, 1.0f, backEnd.viewParms.waterReflectHeight, backEnd.viewParms.waterReflectShare[0],
-            backEnd.viewParms.waterReflectShare[1]);
+        VectorSet4(v, 1.0f, 0.0f, backEnd.viewParms.waterReflectShare[0], backEnd.viewParms.waterReflectShare[1]);
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERREFLECTPLANE, backEnd.viewParms.waterReflectPlane);
         GLSL_SetUniformMat4(sp, UNIFORM_WATERREFLECTMVP, backEnd.viewParms.waterReflectMvp);
         GL_BindToTMU(tr.waterReflectImage, TB_SHADOWMAP);
     } else {
@@ -910,12 +910,15 @@ static struct {
     float height;
     int   surfs;
     int   frame;
+    int   numPlanes;          // the water planes in view, for waterinfo
+    vec4_t planes[8];         // normal z, height, surfaces, under the eye
 } waterReflectInfo;
 
 void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
 {
     viewParms_t parms, oldParms;
-    float       height = 0.0f, above = 0.0f;
+    cplane_t    mirror;
+    float       above = 0.0f, d;
     qboolean    found = qfalse;
     mat4_t      mvp;
     int         i;
@@ -929,6 +932,7 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
         return;
     }
 
+    waterReflectInfo.numPlanes = 0;
     for (i = 0; i < numDrawSurfs; i++) {
         shader_t *shader;
         int       entityNum, fogNum, dlighted, pshadowed;
@@ -944,14 +948,33 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
         if (plane.normal[2] < 0.99f) {
             continue;
         }
-        h = plane.dist / plane.normal[2];
-        if (tr.viewParms.ori.origin[2] - h <= 0.0f) {
+        // its height under the eye, for waterinfo
+        h = (plane.dist - plane.normal[0] * tr.viewParms.ori.origin[0] - plane.normal[1] * tr.viewParms.ori.origin[1])
+          / plane.normal[2];
+        {
+            int k;
+
+            for (k = 0; k < waterReflectInfo.numPlanes; k++) {
+                if (fabs(waterReflectInfo.planes[k][1] - h) < 0.5f && fabs(waterReflectInfo.planes[k][0] - plane.normal[2]) < 0.0005f) {
+                    waterReflectInfo.planes[k][2] += 1.0f;
+                    break;
+                }
+            }
+            if (k == waterReflectInfo.numPlanes && k < 8) {
+                VectorSet4(waterReflectInfo.planes[k], plane.normal[2], h, 1.0f, tr.viewParms.ori.origin[2] > h);
+                waterReflectInfo.numPlanes++;
+            }
+        }
+        // how far over it the eye is: a map's water need not lie level
+        // (m3l1a's sea leans by two degrees, thirty units in a thousand)
+        d = DotProduct(tr.viewParms.ori.origin, plane.normal) - plane.dist;
+        if (d <= 0.0f) {
             continue; // under it
         }
-        if (!found || tr.viewParms.ori.origin[2] - h < above) {
+        if (!found || d < above) {
             found  = qtrue;
-            height = h;
-            above  = tr.viewParms.ori.origin[2] - h;
+            mirror = plane;
+            above  = d;
         }
     }
     if (!found) {
@@ -961,16 +984,17 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     oldParms = tr.viewParms;
     parms    = tr.viewParms;
 
-    // the eye and its axes turned over in the surface; it sees what the eye
-    // does above it, so the eye's PVS
-    parms.ori.origin[2] = 2.0f * height - parms.ori.origin[2];
+    // the eye and its axes turned over in the surface's plane; it sees what
+    // the eye does above it, so the eye's PVS
+    VectorMA(oldParms.ori.origin, -2.0f * above, mirror.normal, parms.ori.origin);
     for (i = 0; i < 3; i++) {
-        parms.ori.axis[i][2] = -parms.ori.axis[i][2];
+        VectorMA(oldParms.ori.axis[i], -2.0f * DotProduct(oldParms.ori.axis[i], mirror.normal), mirror.normal,
+            parms.ori.axis[i]);
     }
     parms.isPortal = qtrue;
     parms.isMirror = qtrue;
-    VectorSet(parms.portalPlane.normal, 0.0f, 0.0f, 1.0f);
-    parms.portalPlane.dist = height - 1.0f;
+    VectorCopy(mirror.normal, parms.portalPlane.normal);
+    parms.portalPlane.dist = mirror.dist - 1.0f;
     parms.zFar             = 0.0f;
     parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
 
@@ -987,14 +1011,16 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
         R_RenderView(&parms);
         waterReflectInfo.surfs = tr.refdef.numDrawSurfs - before;
     }
-    waterReflectInfo.height = height;
+    // the water's height under the eye, for waterinfo
+    waterReflectInfo.height = oldParms.ori.origin[2] - above / mirror.normal[2];
     waterReflectInfo.frame  = tr.frameCount;
 
     Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
 
     tr.viewParms                    = oldParms;
     tr.viewParms.waterReflect       = qtrue;
-    tr.viewParms.waterReflectHeight = height;
+    VectorCopy(mirror.normal, tr.viewParms.waterReflectPlane);
+    tr.viewParms.waterReflectPlane[3] = mirror.dist;
     tr.viewParms.waterReflectShare[0] = parms.viewportWidth / (float)tr.waterReflectFbo->width;
     tr.viewParms.waterReflectShare[1] = parms.viewportHeight / (float)tr.waterReflectFbo->height;
     Mat4Copy(mvp, tr.viewParms.waterReflectMvp);
@@ -1151,8 +1177,15 @@ void R_WaterInfo_f(void)
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
         water.chop, water.foam, water.refraction, water.glints);
     if (waterReflectInfo.frame && tr.frameCount - waterReflectInfo.frame < 10) {
-        ri.Printf(PRINT_ALL, "  mirrors the world from under the water at %g: %d surfaces (all views this frame %d)\n",
-            waterReflectInfo.height, waterReflectInfo.surfs, tr.refdef.numDrawSurfs);
+        int k;
+
+        ri.Printf(PRINT_ALL, "  mirrors the world from under the water at %g: %d surfaces\n", waterReflectInfo.height,
+            waterReflectInfo.surfs);
+        for (k = 0; k < waterReflectInfo.numPlanes; k++) {
+            ri.Printf(PRINT_ALL, "    water in view at %g (normal z %.5f): %d surfaces%s\n", waterReflectInfo.planes[k][1],
+                waterReflectInfo.planes[k][0], (int)waterReflectInfo.planes[k][2],
+                waterReflectInfo.planes[k][3] > 0.5f ? "" : ", over the eye");
+        }
     } else {
         ri.Printf(PRINT_ALL, "  mirrors only what is on the screen (r_waterReflect %d)\n", r_waterReflect->integer);
     }

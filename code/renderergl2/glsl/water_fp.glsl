@@ -19,7 +19,8 @@ uniform sampler2D u_ScreenDepthMap;  // the view's depth after the prepass
 uniform sampler2D u_SpecularMap;     // its ripples round the view (glsl/ripple_fp.glsl): height, before, foam
 uniform samplerCube u_CubeMap;       // the map's sky box (tr_water.c, R_WaterBuildSky)
 uniform sampler2D u_WaterReflectMap; // the world from under the surface (tr_water.c, R_WaterReflectView)
-uniform vec4      u_WaterReflect;    // whether there is it, the height it was seen from, its share of the image across and up
+uniform vec4      u_WaterReflect;    // whether there is it, -, its share of the image across and up
+uniform vec4      u_WaterReflectPlane; // the plane of the water it was seen from: normal, distance
 uniform mat4      u_WaterReflectMvp; // how it was seen
 uniform vec4      u_CubeMapInfo;     // how much of it is mirrored: 0 the flat u_WaterSky
 
@@ -171,6 +172,19 @@ void main()
 	// What lies under it: how deep, and how much water the eye looks through
 	float fragLin   = LinearDepth(gl_FragCoord.z);
 	float behindLin = hasDepth ? LinearDepth(texture2D(u_ScreenDepthMap, screen).r) : fragLin + 4096.0;
+	// In front of the water, which it cannot be where the water is drawn: a
+	// model's edge, which the prepass covered a pixel further than the view
+	// did. Read as no water at all, it was surf, a bright dotted line round
+	// everything standing in front of water. The farthest beside it instead.
+	if (hasDepth && behindLin < fragLin)
+	{
+		behindLin = max(max(LinearDepth(texture2D(u_ScreenDepthMap, screen + vec2(r_FBufScale.x, 0.0)).r),
+		                    LinearDepth(texture2D(u_ScreenDepthMap, screen - vec2(r_FBufScale.x, 0.0)).r)),
+		                max(LinearDepth(texture2D(u_ScreenDepthMap, screen + vec2(0.0, r_FBufScale.y)).r),
+		                    LinearDepth(texture2D(u_ScreenDepthMap, screen - vec2(0.0, r_FBufScale.y)).r)));
+		if (behindLin < fragLin)
+			behindLin = fragLin + 64.0;
+	}
 	vec3  bottom    = u_ViewOrigin + toFrag * (behindLin / fragLin);
 	float depth     = below ? 4096.0 : max(var_Position.z - bottom.z, 0.0);
 
@@ -255,7 +269,7 @@ void main()
 	fresnel = min(fresnel, 0.9);
 
 	vec3 mirror = sky;
-	if (u_WaterReflect.x > 0.5 && !below && abs(var_Position.z - u_WaterReflect.y) < 4.0)
+	if (u_WaterReflect.x > 0.5 && !below && abs(dot(var_Position, u_WaterReflectPlane.xyz) - u_WaterReflectPlane.w) < 4.0)
 	{
 		// the view from under the surface: the spot of it over this one,
 		// moved as the waves turn the surface
