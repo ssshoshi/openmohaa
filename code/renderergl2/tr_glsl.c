@@ -222,6 +222,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_WaterShore",      GLSL_VEC4 },
 	{ "u_WaterSky",        GLSL_VEC4 },
 	{ "u_WaterLook",       GLSL_VEC4 },
+	{ "u_WaterOcean",      GLSL_VEC4 },
 	{ "u_WaterBloodZone",  GLSL_VEC4 },
 	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS },
 	{ "u_BeachWet",        GLSL_VEC4 },

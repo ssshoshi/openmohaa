@@ -48,6 +48,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //     sky 0.5 0.55 0.6        // the sky it mirrors where there is no sky box (else the fog's colour)
 //     skyBox 1                // how much of the map's sky box it mirrors, once the view has drawn it: 0 none
 //     chop 1  foam 1  refraction 0.03  glints 1
+//     ocean 190 12 0.38 32    // the open sea's waves in place of the chop: their scale (units; the
+//                             // longest is 6.3 of it), height, drag (how they gather into crests), octaves
 //
 // And where the map has a beach the tide is going out from (it needs `shore`):
 //
@@ -91,6 +93,7 @@ typedef struct {
     qboolean skySet;
     float  skyBox;
     float  chop, foam, refraction, glints;
+    vec4_t ocean; // the open sea's waves: their scale (units), height, drag, octaves; 0: the chop
     qboolean beachSet;
     float  beachReach, beachTop;
     float  puddles, puddleSize;
@@ -279,6 +282,10 @@ static void R_WaterReadFile(const char *mapName)
             water.skySet = R_WaterNumbers(&text, water.sky, 3) == 3;
         } else if (!Q_stricmp(key, "skyBox")) {
             R_WaterNumbers(&text, &water.skyBox, 1);
+        } else if (!Q_stricmp(key, "ocean")) {
+            if (R_WaterNumbers(&text, v, 4) == 4) {
+                VectorSet4(water.ocean, Q_max(v[0], 1.0f), v[1], v[2], Com_Clamp(4.0f, 40.0f, v[3]));
+            }
         } else if (!Q_stricmp(key, "chop")) {
             R_WaterNumbers(&text, &water.chop, 1);
         } else if (!Q_stricmp(key, "foam")) {
@@ -1045,6 +1052,13 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     VectorSet4(v, water.foam, water.refraction, water.glints, water.bloodClouds);
     GLSL_SetUniformVec4(sp, UNIFORM_WATERLOOK, v);
 
+    if (water.ocean[0] > 0.0f) {
+        VectorSet4(v, 1.0f / water.ocean[0], water.ocean[1], water.ocean[2], water.ocean[3]);
+    } else {
+        VectorClear4(v);
+    }
+    GLSL_SetUniformVec4(sp, UNIFORM_WATEROCEAN, v);
+
     // where the ripples' grid lies
     if (tr.rippleShader.program && tr.waterRippleImage[0] && ripples.time >= 0.0f) {
         const float texel = WATER_RIPPLE_SPAN / WATER_RIPPLE_SIZE;
@@ -1388,6 +1402,9 @@ void R_WaterInfo_f(void)
     }
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
         water.chop, water.foam, water.refraction, water.glints);
+    if (water.ocean[0] > 0.0f) {
+        ri.Printf(PRINT_ALL, "  ocean %g %g %g %g\n", water.ocean[0], water.ocean[1], water.ocean[2], water.ocean[3]);
+    }
     if (waterReflectInfo.frame && tr.frameCount - waterReflectInfo.frame < 10) {
         int k;
 

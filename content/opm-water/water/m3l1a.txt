@@ -37,6 +37,9 @@ beachSurface textures/mohtest/omaha_set4_shoreline
 beachSurface textures/mohtest/omaha_set4_covered
 
 chop 1
+// the open Channel: waves of the open sea over the swell, gathering into
+// ragged crests and running in to the shore (the longest about 19 m)
+ocean 120 50 0.38 24
 foam 1
 refraction 0.03
 glints 0.15

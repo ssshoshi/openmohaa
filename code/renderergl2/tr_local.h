@@ -1022,6 +1022,7 @@ typedef enum
 	UNIFORM_WATERSHORE,
 	UNIFORM_WATERSKY,
 	UNIFORM_WATERLOOK,
+	UNIFORM_WATEROCEAN,    // the open sea's waves (tr_water.c, ocean): one over their scale, height, drag, octaves
 	UNIFORM_WATERBLOODZONE,
 	UNIFORM_WATERSPOTS,
 	UNIFORM_BEACHWET,
