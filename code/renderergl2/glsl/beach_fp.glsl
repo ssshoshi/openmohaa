@@ -84,8 +84,23 @@ void main()
 	// r_prepassFarModels) keeps its own pixels
 	gl_FragDepth = d;
 
-	vec3  pos  = u_ViewOrigin + var_ViewDir * (LinearDepth(d) / u_ViewInfo.y);
-	vec3  N    = normalize(cross(dFdx(pos), dFdy(pos)));
+	float lin  = LinearDepth(d);
+	vec3  pos  = u_ViewOrigin + var_ViewDir * (lin / u_ViewInfo.y);
+	// Which way it faces, from the pixels beside it on its own side: at an
+	// edge (a model before the sand) the depth jumps, and across it the
+	// normal was anything, a bright line round everything on the beach.
+	// The side whose depth goes on most smoothly.
+	vec2  texel = r_FBufScale;
+	float lx0  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex - vec2(texel.x, 0.0)).r);
+	float lx1  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex + vec2(texel.x, 0.0)).r);
+	float ly0  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex - vec2(0.0, texel.y)).r);
+	float ly1  = LinearDepth(texture2D(u_ScreenDepthMap, var_DepthTex + vec2(0.0, texel.y)).r);
+	vec3  ddx  = dFdx(var_ViewDir) / u_ViewInfo.y;
+	vec3  ddy  = dFdy(var_ViewDir) / u_ViewInfo.y;
+	vec3  vd   = var_ViewDir / u_ViewInfo.y;
+	vec3  sx   = abs(lx1 - lin) < abs(lin - lx0) ? (vd + ddx) * lx1 - vd * lin : vd * lin - (vd - ddx) * lx0;
+	vec3  sy   = abs(ly1 - lin) < abs(lin - ly0) ? (vd + ddy) * ly1 - vd * lin : vd * lin - (vd - ddy) * ly0;
+	vec3  N    = normalize(cross(sx, sy));
 	if (N.z < 0.0)
 		N = -N;
 	float onGround = smoothstep(0.55, 0.8, N.z); // ground, not the sides of things

@@ -329,8 +329,10 @@ void main()
 #if defined(USE_RTLIGHT_PARTICLES)
 	var_RtParticleLight = vec3(0.0);
 	if (u_RtStage == RT_STAGE_PARTICLE || u_RtStage == RT_STAGE_PARTICLE_LIT)
+		// what the live lights add to its own colour, with all of them live
+		// too (see generic_fp.glsl)
 		var_RtParticleLight = RtLightParticle(var_RtPos, gl_Position.xy / max(gl_Position.w, 0.0001) * 0.5 + 0.5,
-			u_RtStage == RT_STAGE_PARTICLE && u_RtParams.y < 1.5);
+			u_RtStage == RT_STAGE_PARTICLE);
 #endif
 
 	// MOH:AA global fog. u_LocalViewOrigin is in the same space as position.
