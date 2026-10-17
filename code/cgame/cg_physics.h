@@ -95,6 +95,7 @@ extern "C" {
     extern cvar_t *cg_physics_log;
     extern cvar_t *cg_physics_debug;
     extern cvar_t *cg_physics_props;
+    extern cvar_t *cg_physics_hanging; // lamps hanging from the ceiling swing (cg_props.cpp)
     extern cvar_t *cg_physics_clipped;
     extern cvar_t *cg_physics_edit;
     extern cvar_t *cg_physics_sounds;

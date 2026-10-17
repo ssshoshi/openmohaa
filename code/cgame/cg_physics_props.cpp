@@ -134,6 +134,8 @@ typedef struct {
 
 static std::vector<physProp_t> pp_props;
 static std::vector<JPH::BodyID> pp_static;
+// what each hanging lamp hangs from (CG_PropHangs)
+static std::vector<JPH::Ref<JPH::Constraint>> pp_hangs;
 static char                    pp_map[MAX_QPATH];
 static qboolean                pp_loaded;
 
@@ -162,6 +164,37 @@ static void CG_PhysicsAxisFromQuat(JPH::QuatArg q, vec3_t axis[3])
         axis[k][1] = c.GetY();
         axis[k][2] = c.GetZ();
     }
+}
+
+// A hanging lamp's mass in kilograms, and how fast the air slows its swing.
+#define PP_HANGING_MASS    4.0f
+#define PP_HANGING_DAMPING 0.25f
+
+// Added in OPM
+//  A hanging lamp: a box round its lower end only, the lamp and not the wire or
+//  chain above it, which would grind against the ceiling it hangs from.
+static JPH::ShapeRefC CG_PhysicsHangingShape(const cgProp_t *p)
+{
+    vec3_t    half, centre;
+    JPH::Vec3 extent;
+    float     height = p->maxs[2] - p->mins[2];
+    float     lamp   = Q_min(height, Q_max(8.0f, Q_min(height * 0.4f, 24.0f)));
+    int       k;
+
+    for (k = 0; k < 2; k++) {
+        half[k]   = Q_max(1.0f, (p->maxs[k] - p->mins[k]) * 0.5f);
+        centre[k] = (p->maxs[k] + p->mins[k]) * 0.5f;
+    }
+    half[2]   = lamp * 0.5f;
+    centre[2] = p->mins[2] + lamp * 0.5f;
+    extent    = PhysToJolt(half);
+
+    // the inner settings are held by reference, and so must not be on the stack
+    JPH::Ref<JPH::BoxShapeSettings>     box = new JPH::BoxShapeSettings(extent, Q_min(JPH::cDefaultConvexRadius, extent.ReduceMin() * 0.5f));
+    JPH::RotatedTranslatedShapeSettings placed(PhysToJolt(centre), JPH::Quat::sIdentity(), box);
+    JPH::ShapeSettings::ShapeResult     result = placed.Create();
+
+    return result.HasError() ? JPH::ShapeRefC() : result.Get();
 }
 
 static JPH::ShapeRefC CG_PhysicsPropShape(const cgProp_t *p)
@@ -208,6 +241,9 @@ void CG_PhysicsUnloadProps(void)
     if (phys_system) {
         JPH::BodyInterface &bodies = phys_system->GetBodyInterface();
 
+        for (size_t i = 0; i < pp_hangs.size(); i++) {
+            phys_system->RemoveConstraint(pp_hangs[i]);
+        }
         for (size_t i = 0; i < pp_props.size(); i++) {
             bodies.RemoveBody(pp_props[i].id);
             bodies.DestroyBody(pp_props[i].id);
@@ -222,6 +258,7 @@ void CG_PhysicsUnloadProps(void)
         cg_props[i].body = -1;
     }
 
+    pp_hangs.clear();
     pp_props.clear();
     pp_static.clear();
     pp_loaded = qfalse;
@@ -265,7 +302,7 @@ void CG_PhysicsLoadProps(void)
             continue;
         }
 
-        shape = CG_PhysicsPropShape(p);
+        shape = moves && p->hangs ? CG_PhysicsHangingShape(p) : CG_PhysicsPropShape(p);
         if (!shape) {
             failed++;
             continue;
@@ -300,12 +337,38 @@ void CG_PhysicsLoadProps(void)
             settings.mLinearDamping  = 0.05f;
             settings.mAngularDamping = 0.1f;
             settings.mMotionQuality  = JPH::EMotionQuality::LinearCast;
+            if (p->hangs) {
+                // light, and the air slows its swing to rest in a few seconds
+                settings.mMassPropertiesOverride.mMass = p->mass > 0.0f ? p->mass : PP_HANGING_MASS;
+                settings.mLinearDamping                = PP_HANGING_DAMPING;
+                settings.mAngularDamping               = PP_HANGING_DAMPING;
+                settings.mMotionQuality                = JPH::EMotionQuality::Discrete;
+            }
         }
 
         const JPH::BodyID id = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
         if (id.IsInvalid()) {
             failed++;
             continue;
+        }
+
+        // tied where it hangs
+        if (moves && p->hangs) {
+            JPH::PointConstraintSettings tie;
+            vec3_t                       point;
+
+            VectorCopy(p->origin, point);
+            for (k = 0; k < 3; k++) {
+                VectorMA(point, p->hangPoint[k], p->axis[k], point);
+            }
+            tie.mSpace  = JPH::EConstraintSpace::WorldSpace;
+            tie.mPoint1 = tie.mPoint2 = JPH::RVec3(PhysToJolt(point));
+
+            JPH::Constraint *c = bodies.CreateConstraint(&tie, JPH::BodyID(), id);
+            if (c) {
+                phys_system->AddConstraint(c);
+                pp_hangs.push_back(c);
+            }
         }
 
         if (moves) {

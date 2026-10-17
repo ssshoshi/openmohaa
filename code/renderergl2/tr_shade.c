@@ -1137,7 +1137,14 @@ static void ForwardDlight( void ) {
 			index &= ~LIGHTDEF_LIGHTTYPE_MASK;
 			index |= LIGHTDEF_USE_LIGHT_VECTOR;
 
-			sp = &tr.lightallShader[index];
+			// Added in OPM: permutations with material maps are built when
+			// first asked for, so this one may not exist yet
+			sp = GLSL_GetLightallShader(index);
+		}
+
+		if (!sp->program)
+		{
+			continue;
 		}
 
 		backEnd.pc.c_lightallDraws++;
@@ -1645,18 +1652,29 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 
 		GLSL_BindProgram(sp);
 
-		// Added in OPM: the realtime lights, in views of the world
+		// Added in OPM: the realtime lights, in views of the world, and not
+		// in the depth prepass: it writes no colour, and every pixel of it
+		// went through all of the lights for nothing
 		if (R_RtActive())
 		{
-			if (!backEnd.projection2D && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+			if (!backEnd.projection2D && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
 				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
 			{
-				R_RtSetUniforms(sp, R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader));
+				const int kind = R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader);
+
+				const qboolean lightallLightmap = pStage->glslShaderGroup == tr.lightallShader
+					&& (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP;
+				// the lightmap the stage reads, for the sky's page of it
+				image_t *lightmap = lightallLightmap ? pStage->bundle[TB_LIGHTMAP].image[0]
+					: kind == RT_STAGE_LIGHTING ? pStage->bundle[0].image[0]
+					: kind == RT_STAGE_LIGHTING2 ? pStage->bundle[1].image[0] : NULL;
+
+				R_RtSetUniforms(sp, kind, lightmap, lightallLightmap || kind == RT_STAGE_LIGHTING || kind == RT_STAGE_LIGHTING2);
 				R_RtBindTextures();
 			}
 			else
 			{
-				R_RtSetUniforms(sp, -1);
+				R_RtSetUniforms(sp, -1, NULL, qfalse);
 			}
 		}
 

@@ -56,8 +56,12 @@ void main()
 		rtLight = var_RtParticleLight;
 	else
   #endif
-	if (u_RtStage != RT_STAGE_NONE)
-		rtLight = RtLight(var_RtPos, normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal),
+	// a lightmap stage's sky is read at its lightmap texel (the second
+	// texture's below); the second's lighting is worked out there alone.
+	// The side that faces the normal is GL's back face: Q3 culls GL_FRONT.
+	rt_skyLM = var_DiffuseTex;
+	if (u_RtStage != RT_STAGE_NONE && u_RtStage != RT_STAGE_LIGHTING2)
+		rtLight = RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal),
 			u_RtStage != RT_STAGE_LIT && u_RtParams.y < 1.5);
 
 	if (u_RtStage == RT_STAGE_LIGHTING)
@@ -94,7 +98,8 @@ void main()
 		{
 			if (u_RtParams.y > 1.5)
 				color2.rgb = u_RtAmbient.rgb;
-			color2.rgb = RtDelta(color2.rgb, RtLight(var_RtPos, normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal), u_RtParams.y < 1.5));
+			rt_skyLM   = var_Tex2;
+			color2.rgb = RtDelta(color2.rgb, RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal), u_RtParams.y < 1.5));
 		}
   #endif
 

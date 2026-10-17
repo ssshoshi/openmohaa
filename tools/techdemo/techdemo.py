@@ -220,6 +220,9 @@ def build_plaza(m):
 
 
 HALL = (-3072, 512, -1024, 2560, 384)
+# how far static/lightbulb_on_wire.tik reaches up from its bulb, less a little
+# so that the wire goes into the ceiling it hangs from
+HALL_WIRE = 195
 
 
 def build_hall(m):
@@ -231,14 +234,16 @@ def build_hall(m):
     for px in (-2560, -2048, -1536):
         for py in (1024, 1536, 2048):
             m.add(box((px - 40, py - 40, z0), (px + 40, py + 40, z0 + h), wall))
-    # coloured lamps between the pillars, each a bulb on a wire with its light
+    # coloured lamps between the pillars, each a bulb on a long wire with its
+    # light at the bulb: they hang from the ceiling and swing when hit
     colors = [(1, 0.55, 0.25), (0.35, 0.55, 1), (1, 0.9, 0.7), (0.4, 1, 0.45), (1, 0.3, 0.3), (0.8, 0.5, 1)]
     n = 0
+    bulb = z0 + h - HALL_WIRE
     for lx in (-2816, -2304, -1792, -1280):
         for ly in (768, 1280, 1792, 2304):
             c = colors[n % len(colors)]
-            light(m, (lx, ly, z0 + 220), 24, c)
-            static(m, "static/lightbulb_on_wire_short.tik", (lx, ly, z0 + h - 2))
+            light(m, (lx, ly, bulb + 6), 24, c)
+            static(m, "static/lightbulb_on_wire.tik", (lx, ly, bulb))
             n += 1
     # spots down onto the floor near the door, where people will walk
     for sy in (1152, 1920):
@@ -249,6 +254,9 @@ def build_hall(m):
 
 
 PHYS = (-512, 2048, 1536, 3328, 320)
+
+# how high static/square_table.tik's top is
+TABLE_TOP = 48
 
 
 def build_physics(m):
@@ -278,11 +286,16 @@ def build_physics(m):
     for tx, ty in ((256, 2432), (768, 2560), (128, 2752)):
         static(m, "static/square_table.tik", (tx, ty, z0))
         for k, model in enumerate(("static/bottle_large.tik", "static/bottle_small.tik", "static/jug.tik", "static/bucket.tik")):
-            static(m, model, (tx - 18 + (k % 2) * 36, ty - 12 + (k // 2) * 24, z0 + 30), yaw=k * 40)
+            static(m, model, (tx - 18 + (k % 2) * 36, ty - 12 + (k // 2) * 24, z0 + TABLE_TOP), yaw=k * 40)
         for k, (ox, oy, yaw) in enumerate(((0, -48, 90), (0, 48, 270), (-48, 0, 0), (48, 0, 180))):
             static(m, "furniture/woodchair.tik" if k % 2 else "furniture/simplechair.tik", (tx + ox, ty + oy, z0), yaw=yaw)
     for k in range(6):
         static(m, "static/bucket.tik", (1300 + (k % 3) * 40, 2700 + (k // 3) * 40, z0 + 160))
+    # a lantern on a table of its own, alight: a prop that carries its light
+    # (knock it over and the light, and its shadows, go with it)
+    static(m, "static/square_table.tik", (900, 2850, z0))
+    static(m, "static/german_lantern.tik", (900, 2850, z0 + TABLE_TOP))
+    light(m, (900, 2850, z0 + TABLE_TOP + 12), 10, (1, 0.7, 0.4))
 
 
 GALLERY_BOX = (1792, 512, 3328, 1024, 256)

@@ -969,8 +969,9 @@ void R_AddWorldSurfaces (void) {
 		R_AddTerrainSurfaces();
 		tr.pc.t_terrainSurfaces += R_MicroSeconds() - tStart;
 	}
-	// the compiler never had the static models in the way of its lights
-	if (r_drawstaticmodels->integer && !(tr.viewParms.flags & VPF_RTBAKED)) {
+	// the compiler never had the static models in the way of its lights, nor
+	// of its sky
+	if (r_drawstaticmodels->integer && !(tr.viewParms.flags & (VPF_RTBAKED | VPF_RTSKY))) {
 		double tStart = R_MicroSeconds();
 		tr.pc.c_staticModelWalks++;
 		R_AddStaticModelSurfaces();

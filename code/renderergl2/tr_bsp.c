@@ -559,6 +559,9 @@ static void R_FreeWorldImages( void )
 
 	R_IssuePendingRenderCommands();
 
+	// Added in OPM: the sky each of their texels sees
+	R_RtFreeSkyLightmaps();
+
 	if ( tr.lightmaps ) {
 		for ( i = 0; i < tr.numLightmaps; i++ ) {
 			R_FreeImage( tr.lightmaps[i] );

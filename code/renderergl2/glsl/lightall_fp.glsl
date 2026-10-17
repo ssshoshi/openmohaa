@@ -723,8 +723,16 @@ void main()
 	{
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 		vec3 rtNormal = N;
+
+		// the lights' and the sun's shine, with all of the light live
+		rt_specOn    = u_RtParams.y > 1.5 && u_RtSurface.z > 0.0;
+		rt_specView  = E;
+		rt_specRough = roughness;
   #else
-		vec3 rtNormal = normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+  #endif
+  #if defined(USE_LIGHTMAP)
+		rt_skyLM = var_TexCoords.zw;
   #endif
   #if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
 		// the map's own lighting: with the direct light live alone
@@ -734,6 +742,9 @@ void main()
 		// lit at run time: the lights, when all of it is live
 		if (u_RtParams.y > 1.5)
 			gl_FragColor.rgb += diffuse.rgb * RtLight(var_RtPos, rtNormal, false);
+  #endif
+  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+		gl_FragColor.rgb += rt_spec * specular.rgb;
   #endif
 	}
 #endif
