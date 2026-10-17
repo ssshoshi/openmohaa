@@ -484,6 +484,9 @@ static void R_WaterBuildSky(void)
     if (!tr.waterSkyImage) {
         tr.waterSkyImage = R_CreateImage("*waterSky", NULL, WATER_SKY_SIZE, WATER_SKY_SIZE, IMGTYPE_COLORALPHA,
             IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_MIPMAP | IMGFLAG_CUBEMAP, GL_RGBA8);
+        // made once and filled again for each map: not one of this map's
+        // images, which the next map frees (R_FreeUnusedImages)
+        tr.waterSkyImage->r_sequence = -1;
     }
     for (face = 0; face < 6; face++) {
         qglTextureSubImage2DEXT(tr.waterSkyImage->texnum, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, 0, 0,
