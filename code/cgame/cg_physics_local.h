@@ -139,6 +139,7 @@ void CG_PhysicsPushPropsInBox(const vec3_t mins, const vec3_t maxs, const vec3_t
 void CG_PhysicsGrabStep(float dt);
 
 void CG_JoltRagdollsStep(float dt);
+void CG_JoltRagdollCounts(int *used, int *floating, int *asleep);
 void CG_JoltRagdollsUnload(void);
 void CG_JoltRagdollContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold);
 

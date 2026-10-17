@@ -446,6 +446,7 @@ RB_RenderDrawSurfList
 ==================
 */
 void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
+	qboolean		prepassSkip = qfalse; // Added in OPM: r_prepassFarModels
 	shader_t		*shader = NULL, *oldShader;
 	int				fogNum, oldFogNum;
 	int				entityNum, oldEntityNum;
@@ -456,6 +457,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				i;
 	drawSurf_t		*drawSurf;
 	int				oldSort;
+	qboolean		beachDrawn = qfalse;
 	double			originalTime;
 	FBO_t*			fbo = NULL;
 	qboolean		bStaticModel, oldbStaticModel;
@@ -507,6 +509,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		if ( drawSurf->sort == (unsigned)oldSort && drawSurf->cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
 				continue;
+			// Added in OPM: a model too small for the prepass (r_prepassFarModels)
+			if (prepassSkip)
+				continue;
 
 			// fast path, same as previous sort
 			tess.rtMask |= drawSurf->rtMask;
@@ -532,6 +537,17 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
         //=========================
 		cubemapIndex = drawSurf->cubemapIndex;
 
+		// Added in OPM: the wet beach, over the opaque world and under
+		// anything blended (tr_water.c)
+		if (!beachDrawn && !backEnd.depthFill && shader && shader->sort > SS_OPAQUE) {
+			if (oldShader != NULL) {
+				RB_EndSurface();
+				oldShader = NULL;
+			}
+			RB_BeachDraw();
+			beachDrawn = qtrue;
+		}
+
 		//
 		// change the tess parameters if needed
 		// a "entityMergable" shader is a shader that can have surfaces from separate
@@ -555,6 +571,14 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		}
 
 		if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
+			continue;
+
+		// Added in OPM: a model too small in the view for the depth prepass
+		// (r_prepassFarModels, R_AddSkelSurfaces) is drawn by the main pass alone
+		prepassSkip = backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !bStaticModel
+			&& entityNum != REFENTITYNUM_WORLD && entityNum < backEnd.refdef.num_entities
+			&& backEnd.refdef.entities[entityNum].prepassSkip;
+		if (prepassSkip)
 			continue;
 
 		// OPENMOHAA-specific stuff
@@ -757,6 +781,10 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// draw the contents of the last shader batch
 	if (oldShader != NULL) {
 		RB_EndSurface();
+	}
+	// Added in OPM: the beach, when nothing blended came after the world
+	if (!beachDrawn && !backEnd.depthFill) {
+		RB_BeachDraw();
 	}
 	RB_SurfProfEnd();
 
@@ -1407,6 +1435,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	backEnd.waterScene = qfalse;
 	backEnd.depthPrepassed = qfalse;
 
 	// clear the z buffer, set the modelview, etc
@@ -2203,6 +2232,10 @@ const void *RB_PostProcess(const void *data)
 		RB_BokehBlur(srcFbo, srcBox, srcFbo, srcBox, backEnd.refdef.blurFactor);
 	else
 		RB_GaussianBlur(srcFbo, srcFbo, backEnd.refdef.blurFactor);
+
+	// Added in OPM: what has landed on the lens
+	if (srcFbo)
+		RB_LensDraw(srcFbo, srcBox);
 
 	if (srcFbo != dstFbo)
 		FBO_FastBlit(srcFbo, srcBox, dstFbo, dstBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);

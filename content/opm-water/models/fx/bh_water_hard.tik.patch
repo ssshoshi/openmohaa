@@ -1,0 +1,169 @@
+--- a/models/fx/bh_water_hard.tik
++++ b/models/fx/bh_water_hard.tik
+@@ -1,4 +1,8 @@
+ TIKI
++// OPM (content/opm-water): a round into water. A thin column of water thrown
++// up out of the hole it makes and falling back, a crown of drops round it, a
++// little mist. The rings it sends out are the water's own now (cgame), so it
++// has none of its own.
+ setup
+ {
+ 	scale 1.0
+@@ -15,113 +19,81 @@
+ 	{
+ 		//cache some stuff used in this effect
+ 		cache bh_ocean_plume.spr
+-		cache bh_water_ring.spr
+ 		cache models/fx/water_splash_drop.tik
+ 
+-		// main plume
++		// the water bulging up where it went in
+ 		sfx originspawn
+ 		(
+ 			model bh_ocean_plume.spr
+ 			spritegridlighting
+-			alpha 1.0
++			alpha 0.8
+ 			angles 0 0 0
+-			offsetalongaxis 0 0 0
+-			offset 0 0 32
++			offset 0 0 4
+ 			count 1
+-			life 0.5
+-			scale 0.5
++			life 0.25
++			scale 0.3
++			scalerate 1.5
+ 			fade
+-			fadedelay 0.2
+ 		)
+ 
+-		// spray
+-		delayedsfx 0.05 originspawn
++		// the column, thrown up and falling back
++		sfx originspawn
+ 		(
+ 			model models/fx/water_splash_drop.tik
+ 			spritegridlighting
+ 			spawnrange 512
+ 			angles 270 0 0
+-			alpha 0.5
+-			offsetalongaxis random 16 crandom 1 crandom 1
+-			offset 0 0 8
+-			count 12
+-			alignstretch 0.5
+-			velocity 165
+-			randvelaxis random 165 crandom 20 crandom 20
+-			accel 0 0 -1200
+-			life 1 0.25
+-			scalemin 1.2
+-			scalemax 2.0
+-			scalerate -1.0
+-			fadein 0.2
++			alpha 0.75
++			offsetalongaxis random 4 crandom 1 crandom 1
++			offset 0 0 2
++			count 16
++			alignstretch 0.9
++			velocity 230
++			randvelaxis random 200 crandom 8 crandom 8
++			accel 0 0 -900
++			life 0.7 0.2
++			scalemin 1.0
++			scalemax 1.6
++			scalerate -0.6
+ 			fade
+-			fadedelay 0.6
++			fadedelay 0.35
+ 		)
+ 
+-		// spray
+-		delayedsfx 0.1 originspawn
++		// the crown, low and outward
++		sfx originspawn
+ 		(
+ 			model models/fx/water_splash_drop.tik
+ 			spritegridlighting
+ 			spawnrange 512
+ 			angles 270 0 0
+-			alpha 0.5
+-			offsetalongaxis random 6 crandom 1 crandom 1
+-			offset 0 0 32
+-			count 6
+-			alignstretch 0.5
+-			velocity 50
+-			randvelaxis random 50 crandom 60 crandom 60
+-			accel 0 0 -800
+-			life 0.6 0.2
+-			scalemin 1.5
+-			scalemax 2.5
++			alpha 0.55
++			offset 0 0 2
++			count 18
++			alignstretch 0.6
++			velocity 75
++			randvelaxis random 75 crandom 95 crandom 95
++			accel 0 0 -850
++			life 0.35 0.15
++			scalemin 0.8
++			scalemax 1.3
+ 			scalerate -1.0
+-			fadein 0.2
+ 			fade
+-			fadedelay 0.5
++			fadedelay 0.2
+ 		)
+ 
+-		// add water ripple
+-		sfx originspawn
++		// mist, hanging a moment over it
++		delayedsfx 0.05 originspawn
+ 		(
+-			model bh_water_ring.spr
++			model bh_ocean_plume.spr
+ 			spritegridlighting
+-			angles 90 0 0
+-			alpha 1.0
++			alpha 0.35
++			angles 0 0 0
++			offset 0 0 10
+ 			count 1
+-			life 0.8 0.1
+-			scale 0.3
+-			scalerate 2.0
+-			fadedelay 0.1
+-		)
+-
+-		// add water ripple
+-		delayedsfx 0.15 originspawn
+-		(
+-			model bh_water_ring.spr
+-			spritegridlighting
+-			angles 90 0 0
+-			alpha 0.9
+-			count 1
+-			life 0.85 0.1
+-			scale 0.27
+-			scalerate 1.8
+-			fadedelay 0.1
+-		)
+-
+-		// add water ripple
+-		delayedsfx 0.3 originspawn
+-		(
+-			model bh_water_ring.spr
+-			spritegridlighting
+-			angles 90 0 0
+-			alpha 0.8
+-			count 1
+-			life 0.9 0.1
+-			scale 0.24
+-			scalerate 1.6
+-			fadedelay 0.1
++			life 0.6
++			scale 0.2
++			scalerate 0.8
++			fade
+ 		)
+ 	}
+ }

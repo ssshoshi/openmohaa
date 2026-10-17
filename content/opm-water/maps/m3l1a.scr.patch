@@ -1,0 +1,23 @@
+--- a/maps/m3l1a.scr
++++ b/maps/m3l1a.scr
+@@ -8888,9 +8888,17 @@
+ 	self.script_damage = 1
+ 
+ 	//*** damage the target
+-	self exec global/bullethit.scr local.direction local.damage local.force local.location
+-
+-	self playsound snd_bh_flesh
++	// OPM (content/opm-water): with a real round, so it is seen and bled; the
++	// player as before
++	if (self != $player)
++	{
++		self waitthread global/opm_realhit.scr::hit local.direction local.damage local.force local.location
++	}
++	else
++	{
++		self exec global/bullethit.scr local.direction local.damage local.force local.location
++		self playsound snd_bh_flesh
++	}
+ 
+ 	self.script_damage = 0
+ 

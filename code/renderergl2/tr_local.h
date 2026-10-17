@@ -167,6 +167,11 @@ typedef struct {
     int			poseId;
     vec3_t		boneCentre; // the bounds of its bones, in its own space
     float		boneRadius;
+
+    // Added in OPM
+    //  Too small in the main view to be worth the depth prepass
+    //  (r_prepassFarModels): drawn by the main pass alone.
+    qboolean	prepassSkip;
 } trRefEntity_t;
 
 #define RT_CASTS_MOVING   1 // with what moves, every frame
@@ -516,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    16
+#define NUM_TEXTURE_UNITS    17
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -533,9 +538,12 @@ enum
 #define RT_SKY_DIRS     16 // Added in OPM: the directions the sky lights from, RT_SKY_TILES squared
 #define RT_SKY_TILES    4
 #define TMU_RTSKYLM     15 // Added in OPM: the sky each lightmap texel sees (tr_rtlight.c)
+#define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
+#define SKEL_GPU_MAX_MORPHS 64 // Added in OPM: the morph targets (a face) a posed model takes in the vertex program
+#define SKEL_GPU_MORPH_ROWS 512 // Added in OPM: rows of tr.skelMorphImage, SKEL_GPU_BONE_ROW texels each
 
 typedef enum
 {
@@ -711,6 +719,10 @@ typedef struct shader_s {
     // on a sprite starts when the sprite was spawned, not at an arbitrary
     // point in the level's clock.
     qboolean animMapFromSpawn;
+    // Added in OPM: water drawn by the water program (tr_water.c), and the
+    // texture of its first stage, which the program takes its ripples from
+    qboolean isWater;
+    image_t *waterImage;
 } shader_t;
 
 enum
@@ -846,8 +858,13 @@ enum
 	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
 	GLSL_VEC4_RTSKY,    // Added in OPM: the sky's directions, RT_SKY_DIRS * 4 vec4s (tr.rtSkyRows)
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
-	GLSL_VEC4_SKELDENTS   // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
+	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
+	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
+	GLSL_VEC4_WATERSPOTS  // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
 };
+
+#define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
+#define WATER_RIPPLE_SIZE 1024 // Added in OPM: the water's ripples, a grid this many texels across (tr_water.c)
 
 typedef enum
 {
@@ -993,6 +1010,33 @@ typedef enum
 	UNIFORM_SKELLIGHTS,
 	UNIFORM_SKELNUMDENTS,
 	UNIFORM_SKELDENTS,
+	UNIFORM_SKELMORPHMAP,  // Added in OPM: the morphs of the models the vertex program poses
+	UNIFORM_SKELNUMMORPHS,
+	UNIFORM_SKELMORPHS,
+	UNIFORM_WATERCOLOR,   // Added in OPM: the water program (tr_water.c)
+	UNIFORM_WATERBLOOD,
+	UNIFORM_WATERWAVES,
+	UNIFORM_WATERSHORE,
+	UNIFORM_WATERSKY,
+	UNIFORM_WATERLOOK,
+	UNIFORM_WATERBLOODZONE,
+	UNIFORM_WATERSPOTS,
+	UNIFORM_BEACHWET,
+	UNIFORM_SANDSTAINS,
+	UNIFORM_WORLDVIEWPROJECTION, // what the world is projected by, for a ray to be followed through the view
+	UNIFORM_WATERVIEW,           // the view's box on the screen: x, y, the far x, the far y
+	UNIFORM_BEACHSWASH,
+	UNIFORM_RIPPLESIM,     // the water's ripples (tr_water.c, glsl/ripple_fp.glsl)
+	UNIFORM_RIPPLEDECAY,
+	UNIFORM_RIPPLESOURCES,
+	UNIFORM_RIPPLEFOAM,
+	UNIFORM_WATERRIPPLES,  // where the ripples' grid lies, for the water
+	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
+	UNIFORM_LENSSPOTS,
+	UNIFORM_LENSLOOK,
+	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
+	UNIFORM_WETSKY,
+	UNIFORM_WETSUN,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2359,6 +2403,7 @@ typedef struct {
 	qboolean    depthFill;
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
+	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
 	float       greyscale;
 
 	//
@@ -2445,6 +2490,8 @@ typedef struct {
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
 	image_t					*hdrDepthImage;
+	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
+	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
 	image_t					*textureDepthImage;
@@ -2463,6 +2510,8 @@ typedef struct {
 	FBO_t					*screenShadowFbo;
 	FBO_t					*screenSsaoFbo;
 	FBO_t					*hdrDepthFbo;
+	FBO_t					*waterSceneFbo;
+	FBO_t					*waterRippleFbo[2]; // Added in OPM: the ripples' grid, this step and the last
 	FBO_t                   *renderCubeFbo;
 
 	shader_t				*defaultShader;
@@ -2510,6 +2559,10 @@ typedef struct {
 	shaderProgram_t depthBlurShader[4];
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
+	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
+	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
+	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
+	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
 
 	// -----------------------------------------
@@ -2627,6 +2680,7 @@ typedef struct {
     vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
     int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
+    image_t *skelMorphImage;   // Added in OPM: each posed surface's vertexes' morphs: offset, which target (tr_skelgpu.c)
     int rendererhandle;
     qboolean shadersParsed;
     int frame_skel_index;
@@ -2809,6 +2863,7 @@ extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
 extern  cvar_t  *r_skelCull;
+extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
 extern  cvar_t  *r_softParticles;
 extern  cvar_t  *r_ignoreDstAlpha;
@@ -3309,6 +3364,8 @@ typedef struct shaderCommands_s
 		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
 		int      numDents;     // R_GoreDentsGpu
 		vec4_t   dents[SKEL_GPU_MAX_DENTS * 2];
+		int      numMorphs;    // the face's morph targets' weights, 0 for none
+		vec4_t   morphs[SKEL_GPU_MAX_MORPHS / 4];
 		int      numBones;     // the model's, from params[0]
 	} skelGpu;
 
@@ -3531,6 +3588,8 @@ void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_
 void GLSL_SetUniformRtSky(shaderProgram_t *program, int uniformNum, const vec4_t *v, int generation);
 void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
 
@@ -3788,6 +3847,31 @@ void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
 void RB_GroundCoverBindVao(void);
 void RB_GroundCoverDrawElements(void);
+
+/*
+=============================================================
+WATER (tr_water.c)
+=============================================================
+*/
+extern cvar_t *r_water;
+extern cvar_t *r_waterRipples;
+void R_WaterRegisterCvars(void);
+void R_WaterLoadWorld(const char *mapName);
+void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
+qboolean RB_WaterDraw(shaderCommands_t *input);
+void RB_BeachDraw(void);
+void R_WaterInfo_f(void);
+void R_WaterReload_f(void);
+void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
+void RE_AddWaterRipples(const float *ripples, int numRipples);
+void R_WaterSetWet(shaderProgram_t *sp);
+void R_WaterSetDry(shaderProgram_t *sp);
+
+// Added in OPM: what is on the lens (tr_lens.c)
+extern cvar_t *r_lens;
+void R_LensRegisterCvars(void);
+void RE_SetLensSpots(const float *spots, int num);
+void RB_LensDraw(FBO_t *fbo, ivec4_t box);
 
 // tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
 struct skelSurfaceGame_s;

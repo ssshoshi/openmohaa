@@ -156,8 +156,15 @@ void R_RegisterShaders(model_t *mod)
         assert(psurface->numskins <= MAX_TIKI_SHADER);
         for (j = 0; j < psurface->numskins; j++) {
             if (psurface->shader[j][0]) {
+                const int startedAt = ri.Milliseconds();
+
                 sh                   = R_FindShader(psurface->shader[j], LIGHTMAP_NONE, qtrue);
                 psurface->hShader[j] = sh->index;
+
+                // Added in OPM: which of a model's shaders cost it its time (tiki_loadlog 2)
+                if (ri.Milliseconds() - startedAt >= 5 && ri.Cvar_Get("tiki_loadlog", "0", 0)->integer > 1) {
+                    ri.Printf(PRINT_ALL, "tiki_loadlog:   %d ms for shader %s\n", ri.Milliseconds() - startedAt, psurface->shader[j]);
+                }
             } else {
                 psurface->hShader[j] = 0;
             }
@@ -243,12 +250,20 @@ static qhandle_t R_RegisterModelInternal(const char *name, qboolean bBeginTiki, 
                 return mod->index;
             }
         } else if (!stricmp(ptr, "tik")) {
+            // Added in OPM: how long a model new to the renderer takes, its
+            // textures with it (tiki_loadlog)
+            const int startedAt = ri.Milliseconds();
+
             mod->d.tiki = ri.TIKI_RegisterTikiFlags(name, use);
             Q_strncpyz(mod->name, name, sizeof(mod->name));
 
             if (mod->d.tiki) {
                 mod->type = MOD_TIKI;
                 R_RegisterShaders(mod);
+
+                if (ri.Cvar_Get("tiki_loadlog", "0", 0)->integer) {
+                    ri.Printf(PRINT_ALL, "tiki_loadlog: %d ms registering %s with its shaders\n", ri.Milliseconds() - startedAt, name);
+                }
 
                 if (bBeginTiki) {
                     ri.CG_ProcessInitCommands(mod->d.tiki, NULL);
@@ -871,6 +886,22 @@ void R_AddSkelSurfaces(trRefEntity_t *ent)
     }
 
     // Added in OPM
+    //  The main view: a model this small on the screen saves the main pass
+    //  next to nothing by being in the depth prepass first, and costs a whole
+    //  second draw of it. A beach of the dead far off is left out of it
+    //  (RB_RenderDrawSurfList); by the bones, which a ragdoll takes away from
+    //  the entity.
+    if (!(tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !tr.viewParms.isPortal) {
+        vec3_t centre;
+
+        R_LocalPointToWorld(ent->boneCentre, centre);
+        // as big as the larger of its animation's sphere and its bones': a
+        // boat's one bone has no size
+        ent->prepassSkip = r_prepassFarModels->value > 0.0f && !(ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK))
+                        && Q_max(Q_max(ent->boneRadius, radius), 1.0f) < r_prepassFarModels->value * Distance(centre, tr.viewParms.ori.origin);
+    }
+
+    // Added in OPM
     //  In a sun cascade, a model whose shadow cannot fall where the view
     //  sees through it (R_SunCasterCulled): the animation's sphere and its
     //  bones' both.
@@ -1113,6 +1144,22 @@ static void R_PoseSkelModel(trRefEntity_t *ent, dtiki_t *tiki, int num_tags, flo
         // found morphs
         skeletorMorphCacheIndex += added;
         ent->e.hasMorph = qtrue;
+
+        // Added in OPM
+        //  A model with a face has morph targets whether or not this frame
+        //  moves it: a weight of nothing moves no vertex, so a face at rest
+        //  (most of the living, all of the dead) is skinned as one without,
+        //  which the vertex program can pose (tr_skelgpu.cpp).
+        {
+            const int *w = &skeletorMorphCache[ent->e.morphstart];
+            int        k;
+
+            for (k = 0; k < added && !w[k]; k++) {
+            }
+            if (k == added) {
+                ent->e.hasMorph = qfalse;
+            }
+        }
     }
 
     ent->posedScene = tr.sceneCount;

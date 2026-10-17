@@ -337,6 +337,8 @@ cvar_t *g_door_reopen_blocked;
 
 // Whether to run a map's add-on script (maps/<map>_opm.scr) next to its own
 cvar_t *g_mapaddons;
+cvar_t *g_placeddead;
+cvar_t *g_precacheScriptModels;
 
 // How hard an explosion pushes the player (RadiusDamage); 0 for not at all
 cvar_t *g_blastpush;
@@ -831,6 +833,8 @@ void CVAR_Init(void)
     g_door_reopen_blocked = gi.Cvar_Get("g_door_reopen_blocked", "1", 0);
 
     g_mapaddons = gi.Cvar_Get("g_mapaddons", "1", CVAR_ARCHIVE);
+    g_placeddead = gi.Cvar_Get("g_placeddead", "1", CVAR_ARCHIVE);
+    g_precacheScriptModels = gi.Cvar_Get("g_precacheScriptModels", "1", CVAR_ARCHIVE);
 
     g_blastpush = gi.Cvar_Get("g_blastpush", "1", CVAR_ARCHIVE);
 

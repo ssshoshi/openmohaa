@@ -1,0 +1,80 @@
+// OPM (content/opm-water): a scripted hit made a real one.
+//
+// A map's script that has a man "hit" by gunfire (m3l1a's bhit: the MG42s
+// cutting down the men on the beach and in the boats) only damages him, and
+// plays a flesh hit sound: no round is seen to go in, he does not bleed, and
+// nothing of the gore happens. Here the round's hit is shown first, at the
+// part of him the script names, the way the script has it come ("bloodsplat":
+// the flesh hit message a real round sends, so his wound, the blood out of
+// it and its push on him are a real round's), and then he takes the damage as
+// he did. A real round is not fired: in a crowded boat it would as often get
+// the man in front of him.
+//
+//	self waitthread global/opm_realhit.scr::hit <direction> <damage> <force> <location>
+//
+// As global/bullethit.scr takes them: the way the round travels, its damage,
+// its push, and where on him (bullethit.scr's numbers, -1 anywhere).
+
+hit local.direction local.damage local.force local.location:
+	local.bone = waitthread bone local.location
+	local.at = self gettagposition local.bone
+	if (local.at == NIL)
+	{
+		local.at = self.origin + ( 0 0 40 )
+	}
+
+	local.dir = local.direction
+	if (local.dir == NIL || (vector_length local.dir) < 0.01)
+	{
+		local.dir = ( 0 -1 0 )
+	}
+	local.dir = vector_normalize local.dir
+
+	// a rifle round or an MG's; older games have no "bloodsplat" and go on
+	// without it
+	self bloodsplat local.at local.dir 1
+	self exec global/bullethit.scr local.direction local.damage local.force local.location
+end
+
+// The bone of bullethit.scr's location number
+bone local.location:
+	switch (local.location)
+	{
+	case 0:
+		end "Bip01 Pelvis"
+	case 1:
+		end "Bip01 Spine"
+	case 2:
+		end "Bip01 Spine1"
+	case 3:
+		end "Bip01 Spine2"
+	case 4:
+		end "Bip01 Neck"
+	case 5:
+		end "Bip01 Head"
+	case 6:
+		end "Bip01 R UpperArm"
+	case 7:
+		end "Bip01 R Forearm"
+	case 8:
+		end "Bip01 R Hand"
+	case 9:
+		end "Bip01 L UpperArm"
+	case 10:
+		end "Bip01 L Forearm"
+	case 11:
+		end "Bip01 L Hand"
+	case 12:
+		end "Bip01 R Thigh"
+	case 13:
+		end "Bip01 R Calf"
+	case 14:
+		end "Bip01 R Foot"
+	case 15:
+		end "Bip01 L Thigh"
+	case 16:
+		end "Bip01 L Calf"
+	case 17:
+		end "Bip01 L Foot"
+	}
+end "Bip01 Spine1"

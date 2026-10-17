@@ -491,6 +491,10 @@ static void DrawSkySide( struct image_s *image, const int mins[2], const int max
 			GLSL_SetUniformVec2(sp, UNIFORM_GLOBALFOGPARAMS, noFogParams);
 		}
 
+		// Added in OPM: nor is the sky wet (tr_water.c), whatever the last
+		// draw was
+		R_WaterSetDry(sp);
+
 		// Added in OPM: nor do the realtime lights reach the sky. With all of
 		// the light live (r_realtimeLighting 2) lightall adds them to whatever
 		// has no lightmap, and the box, drawn without normals, took them with
