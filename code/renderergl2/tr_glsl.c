@@ -204,6 +204,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyMap",        GLSL_INT },
 	{ "u_RtSurface",       GLSL_VEC4 },
 	{ "u_RtSkyLightmap",   GLSL_INT },
+	{ "u_RtBounce",        GLSL_VEC4 },
+	{ "u_RtBounceMap",     GLSL_INT },
 	{ "u_SoftParticle",    GLSL_VEC4 },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
@@ -380,6 +382,9 @@ static const char *rt_glsl =
 	"uniform vec4 u_RtSurface;\n"
 	// u_RtSurface.y 2: the sky each texel of the draw's lightmap sees, at rt_skyLM
 	"uniform sampler2D u_RtSkyLightmap;\n"
+	// the light bounced onto each texel of the lightmap (R_RtBounce), at rt_skyLM; its scale, w 1 on
+	"uniform vec4 u_RtBounce;\n"
+	"uniform sampler2D u_RtBounceMap;\n"
 	"vec2 rt_skyLM = vec2(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
@@ -654,6 +659,9 @@ static const char *rt_glsl =
 	"#endif\n"
 	"		sum += RtSky(P, N);\n"
 	"	}\n"
+	// what the sun, the sky and the lamps light round it gives back
+	"	if (u_RtBounce.w > 0.5 && u_RtSurface.y > 1.5 && !delta)\n"
+	"		sum += u_RtBounce.rgb * texture2D(u_RtBounceMap, rt_skyLM).rgb;\n"
 	"	return sum;\n"
 	"}\n"
 	"#else\n"
@@ -1971,6 +1979,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2100,6 +2109,7 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);
