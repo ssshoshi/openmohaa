@@ -21,6 +21,7 @@
 //                            // islands with their middle near a bulb:
 //         glassreach 10      // that near, in units
 //         glow 0.12 0.1 0.07 // the glow over its glass (a fabric shade glows less than glass)
+//         glassbright 0.5    // its glass drawn this bright, not whole (a fabric shade)
 //         shade 0 0 1 0.8    // the way its shade closes it off, in its frame, and
 //                            // how much of its light it stops that way (a bell
 //                            // shade: the ceiling over it takes a fifth); with
@@ -67,6 +68,7 @@ models/lights/fattablelamp.tik
 	glass 1 0.86 0.62
 	glow 0.12 0.1 0.07
 	glassreach 17
+	glassbright 0.5
 	bulb 0 0 36
 }
 
@@ -124,6 +126,7 @@ models/lights/tablelamp.tik
 	glass 1 0.86 0.62
 	glow 0.12 0.1 0.07
 	glassreach 20
+	glassbright 0.5
 	bulb 0.4 0.2 30
 }
 

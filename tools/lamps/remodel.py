@@ -94,13 +94,16 @@ def glass_shader(model, entry):
             c = [float(x) for x in color]
             glow = tuple(g * x / max(c) for g, x in zip(glow, c))
         extra = tuple(float(x) for x in entry["glow"]) if "glow" in entry else GLASS_EXTRA
+        # drawn whole the glass is as bright as the screen shows: a fabric shade less
+        bright = float(entry["glassbright"][0]) if "glassbright" in entry else None
+        base = "\t\trgbGen const %.2f %.2f %.2f" % ((bright,) * 3) if bright is not None else "\t\trgbGen identity"
         if "glass" in entry:
             # its own glass, lit from inside alike whichever way a face of it
             # turns: the texture whole (its shading is in it), and more over it.
             # Lit by the lights as a wall is, the side of a shade turned from
             # its bulb went dull, with a hard line where the faces turn.
             return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap",
-                              "\t{", "\t\tmap %s" % image, "\t\tdepthWrite", "\t\trgbGen identity", "\t}",
+                              "\t{", "\t\tmap %s" % image, "\t\tdepthWrite", base, "\t}",
                               "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE",
                               "\t\trgbGen const %.2f %.2f %.2f" % extra, "\t}", "}", ""])
         test = ["\t\talphaFunc GE128"]

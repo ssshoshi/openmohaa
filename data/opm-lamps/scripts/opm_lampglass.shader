@@ -41,7 +41,7 @@ opm_fattablelamp_glass
 	{
 		map textures/opm/lamps/fattablelamp_glass.tga
 		depthWrite
-		rgbGen identity
+		rgbGen const 0.50 0.50 0.50
 	}
 	{
 		map textures/opm/lamps/fattablelamp_glass.tga
@@ -121,7 +121,7 @@ opm_tablelamp_glass
 	{
 		map textures/opm/lamps/tablelamp_glass.tga
 		depthWrite
-		rgbGen identity
+		rgbGen const 0.50 0.50 0.50
 	}
 	{
 		map textures/opm/lamps/tablelamp_glass.tga
