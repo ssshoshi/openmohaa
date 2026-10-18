@@ -15,7 +15,9 @@
 //                            // (its TIKI scale, not the map's)
 //         shade 0 0 1 0.8    // the way its shade closes it off, in its frame, and
 //                            // how much of its light it stops that way (a bell
-//                            // shade: the ceiling over it takes a fifth)
+//                            // shade: the ceiling over it takes a fifth); with
+//                            // ring after it, a lampshade open at both ends round
+//                            // that axis, which stops what leaves by its sides
 //         spot x y z 60      // a lamp that shines one way: that way in its
 //                            // frame, and the cone's whole angle
 //     }
@@ -50,7 +52,7 @@ models/lights/fattablelamp.tik
 {
 	kind shaded
 	intensity 100
-	shade 0 0 1 0.5
+	shade 0 0 1 0.6 ring
 	bulb 0 0 36
 }
 
@@ -58,7 +60,7 @@ models/lights/glasslamp.tik
 {
 	kind shaded
 	intensity 90
-	shade 0 0 1 0.7
+	shade 0 0 1 0.4 ring
 	bulb 0 0 29.7
 }
 
@@ -96,7 +98,7 @@ models/lights/tablelamp.tik
 {
 	kind shaded
 	intensity 100
-	shade 0 0 1 0.5
+	shade 0 0 1 0.6 ring
 	bulb 0.4 0.2 30
 }
 

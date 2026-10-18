@@ -588,8 +588,11 @@ static const char *rt_glsl =
 	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"		float near = l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0;\n"
 	"		float att  = ndl * fade * fade / max(d2, near);\n"
+	// longer than a whole, the shade is a ring round the lamp (a lampshade open
+	// at both ends): what leaves near square to its axis is held back
 	"		float shut = length(l2.xyz);\n"
-	"		if (l0.w < 0.5 && shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
+	"		if (l0.w < 0.5 && shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) / (d * shut));\n"
+	"		else if (l0.w < 0.5 && shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
 	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
 	// flash, a blast): never shadowed, and on top of the map's lighting always
 	"		bool added = l0.w > 1.5;\n"
@@ -677,7 +680,8 @@ static const char *rt_glsl =
 	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"		float att  = fade * fade / max(d2, l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0);\n"
 	"		float shut = length(l2.xyz);\n"
-	"		if (l0.w < 0.5 && shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);\n"
+	"		if (l0.w < 0.5 && shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);\n"
+	"		else if (l0.w < 0.5 && shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);\n"
 	"		bool added = l0.w > 1.5;\n"
 	"		if (l0.w > 0.5 && !added)\n"
 	"		{\n"
