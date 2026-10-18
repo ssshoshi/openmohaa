@@ -1008,6 +1008,9 @@ typedef enum
 	UNIFORM_RTSKYLIGHTMAP,
 	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
 	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
+	UNIFORM_RTPROBEG,
+	UNIFORM_RTPROBEB,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)

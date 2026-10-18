@@ -206,6 +206,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyLightmap",   GLSL_INT },
 	{ "u_RtBounce",        GLSL_VEC4 },
 	{ "u_RtBounceMap",     GLSL_INT },
+	{ "u_RtProbeR",        GLSL_VEC4 },
+	{ "u_RtProbeG",        GLSL_VEC4 },
+	{ "u_RtProbeB",        GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
@@ -385,6 +388,10 @@ static const char *rt_glsl =
 	// the light bounced onto each texel of the lightmap (R_RtBounce), at rt_skyLM; its scale, w 1 on
 	"uniform vec4 u_RtBounce;\n"
 	"uniform sampler2D u_RtBounceMap;\n"
+	// on what has no lightmap, from the probes round it: for each colour m + v . N (xyz v, w m)
+	"uniform vec4 u_RtProbeR;\n"
+	"uniform vec4 u_RtProbeG;\n"
+	"uniform vec4 u_RtProbeB;\n"
 	"vec2 rt_skyLM = vec2(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
@@ -662,6 +669,8 @@ static const char *rt_glsl =
 	// what the sun, the sky and the lamps light round it gives back
 	"	if (u_RtBounce.w > 0.5 && u_RtSurface.y > 1.5 && !delta)\n"
 	"		sum += u_RtBounce.rgb * texture2D(u_RtBounceMap, rt_skyLM).rgb;\n"
+	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
+	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
 	"	return sum;\n"
 	"}\n"
 	"#else\n"
