@@ -579,15 +579,18 @@ static const char *rt_glsl =
 	"		if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
 	"		if (ndl <= 0.0) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
-	// the compiler's point light: intensity * 7500 / distance squared, never nearer than 16
-	"		float att  = ndl * fade * fade / max(d2, 256.0);\n"
+	// the compiler's point light: intensity * 7500 / distance squared, never
+	// nearer than 16; a lamp's, never nearer than the glow of its shade
+	// (l2.w, which a spot light's cone has)
+	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"		float near = l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0;\n"
+	"		float att  = ndl * fade * fade / max(d2, near);\n"
 	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
 	// flash, a blast): never shadowed, and on top of the map's lighting always
 	"		bool added = l0.w > 1.5;\n"
 	"		if (l0.w > 0.5 && !added)\n"
 	"		{\n"
 	// the compiler's spot light: a cone, with a 32 unit soft edge
-	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
 	"			float along = -dot(toLight, l2.xyz);\n"
 	"			if (along <= 0.001) continue;\n"
 	"			float radiusAtDist = l2.w * along;\n"
@@ -666,11 +669,11 @@ static const char *rt_glsl =
 	"		float r2 = l1.w * l1.w;\n"
 	"		if (d2 >= r2) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
-	"		float att  = fade * fade / max(d2, 256.0);\n"
+	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"		float att  = fade * fade / max(d2, l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0);\n"
 	"		bool added = l0.w > 1.5;\n"
 	"		if (l0.w > 0.5 && !added)\n"
 	"		{\n"
-	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
 	"			float along = -dot(toLight, l2.xyz);\n"
 	"			if (along <= 0.001) continue;\n"
 	"			float radiusAtDist = l2.w * along;\n"

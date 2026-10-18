@@ -73,6 +73,7 @@ cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
 cvar_t *r_rtMovingLights;
+cvar_t *r_rtLamps;
 
 // the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
 // sent four indexes a vec4 (u_RtList)
@@ -126,6 +127,11 @@ typedef struct {
 	vec3_t   fixtureLocal; // where it is in that model's frame
 	vec3_t   spotDirLocal; // a spot light's direction in that model's frame
 	int      movedFrame;   // the frame it last moved with its fixture
+	qboolean lamp;         // at a lamp's bulbs (R_RtLightsAtLamps): seen by its cluster, not the map's light lists
+	qboolean noShadow;     // the map's fill light no lamp could take: soft, and casting no shadow
+	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
+	float    flicker;      // a flame's: how much it dips
+	float    seed;
 } rtLight_t;
 
 static struct {
@@ -250,6 +256,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
 	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
 	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
+	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtLamps, "With r_realtimeLighting 2, the light comes from the lamps' bulbs (lights/lamps.txt): the map's lights in a room go to a lamp there, a lamp with none gets its own, and those no lamp sees cast no shadow. Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_rtSkyTile, 256, 2048, qtrue);
 	ri.Cvar_SetDescription(r_rtSkyTile, "The size of the sky's depth from each of its directions, which says what sees the sky: the whole map in it");
@@ -323,9 +331,383 @@ shadow of it.
 #define RT_FIXTURE_TALL  80.0f  // a fixture longer than this keeps its light where the lights are
 #define RT_MERGE_REACH   48.0f // point lights this close are one lamp
 
+/*
+=============================================================================
+
+THE LAMPS
+
+A lamp model is one surface with one texture, and the map's lights are seldom
+at it: the level designer lit each room with a few point lights where they
+lit it best, up near the ceiling, a hand or two from the lamps, and put lamps
+on the walls the compiler gave no light at all. Lit live, the light came from
+the air beside the lamps.
+
+lights/lamps.txt (data/opm-lamps, tools/lamps) says where each lamp model's
+bulbs are. With r_realtimeLighting 2 the light comes from them: each of the
+map's point lights goes to the nearest lamp it can see, all of their light
+together in one light at its bulbs; a lamp no light went to gets one of its
+own, as the table gives it; and a light that sees no lamp stays where it is,
+a fill the room was lit with, casting no shadow (there is nothing for it to
+cast one from). The map's spot lights stay as they are.
+
+r_realtimeLighting 1 keeps the map's lighting and takes only the change each
+light makes to it: there the lights stay where the map compiled them.
+=============================================================================
+*/
+
+#define RT_LAMP_DEFS   128
+#define RT_LAMP_BULBS  12
+#define RT_LAMP_REACH  512.0f // a light further than this from every lamp is a fill
+#define RT_LAMP_SEEN   16.0f  // a trace that stops this near a lamp got to it
+#define RT_LAMP_MOST   2.0f   // a lamp takes up to this much of what its kind gives
+#define RT_LAMP_NEAR   32.0f  // a lamp's light stops growing this near it: its shade glows, it is no point
+
+enum {
+	RT_LAMP_BULB,
+	RT_LAMP_SHADED,
+	RT_LAMP_CANDLE,
+	RT_LAMP_LANTERN,
+	RT_LAMP_OFF
+};
+
+typedef struct {
+	char     model[MAX_QPATH]; // without "models/", lowercase
+	int      kind;
+	vec3_t   color;
+	float    intensity;
+	vec3_t   bulbs[RT_LAMP_BULBS];
+	int      numBulbs;
+	qboolean spot;
+	vec3_t   spotDir;
+	float    spotAngle;
+} rtLampDef_t;
+
+static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
+static int         rt_numLampDefs;
+
+// a model's name as the table keys it: lowercase, no "models/", no doubled slashes
+static void R_RtLampKey(const char *model, char *out, int size)
+{
+	int o = 0;
+
+	if (!Q_stricmpn(model, "models/", 7)) {
+		model += 7;
+	}
+	for (; *model && o < size - 1; model++) {
+		const char c = *model == '\\' ? '/' : tolower((unsigned char)*model);
+
+		if (c == '/' && o > 0 && out[o - 1] == '/') {
+			continue;
+		}
+		out[o++] = c;
+	}
+	out[o] = 0;
+}
+
+static void R_RtLoadLampDefs(void)
+{
+	union {
+		char *c;
+		void *v;
+	} buffer;
+	char        *text;
+	rtLampDef_t *def = NULL;
+
+	rt_numLampDefs = 0;
+	if (ri.FS_ReadFile("lights/lamps.txt", &buffer.v) <= 0) {
+		return;
+	}
+
+	text = buffer.c;
+	while (1) {
+		const char *token = COM_ParseExt(&text, qtrue);
+
+		if (!token[0]) {
+			break;
+		}
+		if (!strcmp(token, "{")) {
+			continue;
+		}
+		if (!strcmp(token, "}")) {
+			def = NULL;
+			continue;
+		}
+		if (!def) {
+			if (rt_numLampDefs >= RT_LAMP_DEFS) {
+				ri.Printf(PRINT_WARNING, "lights/lamps.txt: more than %d lamps\n", RT_LAMP_DEFS);
+				break;
+			}
+			def = &rt_lampDefs[rt_numLampDefs++];
+			Com_Memset(def, 0, sizeof(*def));
+			R_RtLampKey(token, def->model, sizeof(def->model));
+			def->kind = RT_LAMP_SHADED;
+			VectorSet(def->color, 1.0f, 0.86f, 0.68f);
+			def->intensity = 100;
+			continue;
+		}
+		if (!Q_stricmp(token, "kind")) {
+			token = COM_ParseExt(&text, qfalse);
+			def->kind = !Q_stricmp(token, "bulb")      ? RT_LAMP_BULB
+					  : !Q_stricmp(token, "candle")  ? RT_LAMP_CANDLE
+					  : !Q_stricmp(token, "lantern") ? RT_LAMP_LANTERN
+					  : !Q_stricmp(token, "off")     ? RT_LAMP_OFF
+													 : RT_LAMP_SHADED;
+			if (def->kind == RT_LAMP_CANDLE || def->kind == RT_LAMP_LANTERN) {
+				VectorSet(def->color, 1.0f, 0.68f, 0.38f);
+			}
+		} else if (!Q_stricmp(token, "color")) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				def->color[k] = atof(COM_ParseExt(&text, qfalse));
+			}
+		} else if (!Q_stricmp(token, "intensity")) {
+			def->intensity = atof(COM_ParseExt(&text, qfalse));
+		} else if (!Q_stricmp(token, "bulb")) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				const float v = atof(COM_ParseExt(&text, qfalse));
+
+				if (def->numBulbs < RT_LAMP_BULBS) {
+					def->bulbs[def->numBulbs][k] = v;
+				}
+			}
+			def->numBulbs = Q_min(def->numBulbs + 1, RT_LAMP_BULBS);
+		} else if (!Q_stricmp(token, "spot")) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				def->spotDir[k] = atof(COM_ParseExt(&text, qfalse));
+			}
+			def->spotAngle = atof(COM_ParseExt(&text, qfalse));
+			def->spot      = VectorNormalize(def->spotDir) > 0 && def->spotAngle > 0;
+		}
+		SkipRestOfLine(&text);
+	}
+	ri.FS_FreeFile(buffer.v);
+}
+
+static const rtLampDef_t *R_RtLampDef(const char *model)
+{
+	char key[MAX_QPATH];
+	int  i;
+
+	R_RtLampKey(model, key, sizeof(key));
+	for (i = 0; i < rt_numLampDefs; i++) {
+		if (!strcmp(rt_lampDefs[i].model, key)) {
+			return &rt_lampDefs[i];
+		}
+	}
+	return NULL;
+}
+
+static int R_RtClusterAt(const vec3_t p)
+{
+	const mnode_t *leaf = R_PointInLeaf(p);
+
+	return leaf && leaf->cluster >= 0 && leaf->cluster < tr.world->numClusters ? leaf->cluster : -1;
+}
+
+static float R_RtRangeOf(const vec3_t color)
+{
+	const float brightest = Q_max(color[0], Q_max(color[1], color[2]));
+
+	return Q_min(4096.0f, sqrt(brightest / RT_CUTOFF));
+}
+
+// Whether a light at from sees a lamp's bulbs at to: no wall between them.
+// Traced from the lamp, which hangs in the room, out to the light, which the
+// designer put anywhere, often a hand from a ceiling or a wall: what stops
+// the trace that near the light is beside it. Bulbs a ceiling or a wall cuts
+// through (a lamp's middle can be in one) see from as far as they reach.
+static qboolean R_RtSeesLamp(const vec3_t from, const vec3_t to, float size)
+{
+	trace_t trace;
+	vec3_t  zero = {0, 0, 0};
+
+	ri.CM_BoxTrace(&trace, to, from, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	if (trace.startsolid) {
+		ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		return (trace.fraction >= 0.999f || Distance(trace.endpos, to) < Q_max(RT_LAMP_SEEN, size)) ? qtrue : qfalse;
+	}
+	return (trace.fraction >= 0.999f || Distance(trace.endpos, from) < RT_LAMP_SEEN) ? qtrue : qfalse;
+}
+
+/*
+Each of the map's point lights to the lamp nearest it that it sees, the lamps
+lit, and the lamps the table has marked in isLamp, for R_RtLightsAtFixtures
+to leave alone. rt.lights has room for a light at every static model.
+*/
+static void R_RtLightsAtLamps(byte *isLamp)
+{
+	typedef struct {
+		int    model;
+		vec3_t centre;
+		int    light; // its light in rt.lights
+		int    given; // the map's lights that went to it
+		const rtLampDef_t *def;
+	} lamp_t;
+	lamp_t *lamps;
+	int     numLamps = 0, taken = 0, fills = 0, added = 0;
+	int     numMapLights = rt.numLights;
+	int     i, j, k;
+
+	R_RtLoadLampDefs();
+	if (!rt_numLampDefs) {
+		ri.Printf(PRINT_DEVELOPER, "realtime lighting: no lights/lamps.txt\n");
+		return;
+	}
+
+	lamps = ri.Hunk_AllocateTempMemory(sizeof(lamp_t) * Q_max(1, tr.world->numStaticModels));
+
+	for (i = 0; i < tr.world->numStaticModels; i++) {
+		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
+		const rtLampDef_t      *def;
+		lamp_t                 *lamp;
+
+		if (!sm->tiki || !(def = R_RtLampDef(sm->model)) || !def->numBulbs) {
+			continue;
+		}
+		isLamp[i]       = 1;
+		sm->rtFixture   = qtrue;
+		if (def->kind == RT_LAMP_OFF) {
+			continue;
+		}
+
+		lamp        = &lamps[numLamps++];
+		lamp->model = i;
+		lamp->given = 0;
+		lamp->def   = def;
+		// the middle of its bulbs, in the world
+		VectorCopy(sm->origin, lamp->centre);
+		for (j = 0; j < def->numBulbs; j++) {
+			for (k = 0; k < 3; k++) {
+				VectorMA(lamp->centre, def->bulbs[j][k] * sm->scale / def->numBulbs, sm->axis[k], lamp->centre);
+			}
+		}
+	}
+
+	// a light at each lamp, as the table has it, until the map's lights come to it
+	for (i = 0; i < numLamps; i++) {
+		lamp_t                       *lamp = &lamps[i];
+		const cStaticModelUnpacked_t *sm   = &tr.world->staticModels[lamp->model];
+		rtLight_t                    *l    = &rt.lights[rt.numLights];
+
+		lamp->light = rt.numLights++;
+		Com_Memset(l, 0, sizeof(*l));
+		l->source     = -1;
+		l->mergedInto = -1;
+		l->staticSlot = -1;
+		l->fixture    = lamp->model;
+		l->lamp       = qtrue;
+		l->cluster    = R_RtClusterAt(lamp->centre);
+		l->seed       = (float)(lamp->model % 97) * 0.37f;
+		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.14f : lamp->def->kind == RT_LAMP_LANTERN ? 0.08f : 0.0f;
+		VectorCopy(lamp->centre, l->origin);
+		if (lamp->def->spot) {
+			l->spot = qtrue;
+			for (k = 0; k < 3; k++) {
+				VectorMA(l->spotDir, lamp->def->spotDir[k], sm->axis[k], l->spotDir);
+			}
+			VectorNormalize(l->spotDir);
+			l->radiusByDist = tan(DEG2RAD(lamp->def->spotAngle * 0.5f));
+		}
+	}
+
+	// The map's point lights, each to the nearest lamp it sees. A lamp takes
+	// no more than RT_LAMP_MOST of what its kind gives: a light the designer
+	// lit a whole room with, put five units from a wall in a sconce, burnt a
+	// white hole in the wall. What it does not take stays where it was, a
+	// fill with no shadow.
+	for (j = 0; j < numMapLights; j++) {
+		rtLight_t *l    = &rt.lights[j];
+		float      best = RT_LAMP_REACH;
+		int        to   = -1;
+
+		if (l->range <= 0 || l->spot) {
+			continue;
+		}
+		for (i = 0; i < numLamps; i++) {
+			const float d = Distance(l->origin, lamps[i].centre);
+
+			if (d < best && R_RtSeesLamp(l->origin, lamps[i].centre, tr.world->staticModels[lamps[i].model].cull_radius)) {
+				best = d;
+				to   = i;
+			}
+		}
+		if (r_rtDebug->integer) {
+			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f) intensity %.0f: %s\n", l->source, l->origin[0], l->origin[1], l->origin[2],
+				Q_max(l->color[0], Q_max(l->color[1], l->color[2])) / 7500.0f,
+				to < 0 ? "a fill" : va("to %s at (%.0f %.0f %.0f), %.0f away", tr.world->staticModels[lamps[to].model].model, lamps[to].centre[0], lamps[to].centre[1], lamps[to].centre[2], best));
+		}
+		if (to < 0) {
+			l->noShadow = qtrue;
+			fills++;
+			continue;
+		}
+		{
+			rtLight_t  *into = &rt.lights[lamps[to].light];
+			const float most = lamps[to].def->intensity * 7500.0f * RT_LAMP_MOST;
+			const float has  = Q_max(into->color[0], Q_max(into->color[1], into->color[2]));
+			const float its  = Q_max(l->color[0], Q_max(l->color[1], l->color[2]));
+			const float give = its > 0 ? Q_min(1.0f, Q_max(0.0f, most - has) / its) : 0;
+
+			VectorMA(into->color, give, l->color, into->color);
+			if (give >= 0.999f) {
+				l->range      = 0;
+				l->mergedInto = lamps[to].light;
+			} else {
+				VectorScale(l->color, 1.0f - give, l->color);
+				l->range    = R_RtRangeOf(l->color);
+				l->noShadow = qtrue;
+				fills++;
+			}
+			lamps[to].given++;
+		}
+		taken++;
+	}
+
+	// the lamps none came to light as the table has them
+	for (i = 0; i < numLamps; i++) {
+		rtLight_t *l = &rt.lights[lamps[i].light];
+
+		if (!lamps[i].given) {
+			VectorScale(lamps[i].def->color, lamps[i].def->intensity * 7500.0f, l->color);
+			added++;
+		}
+		l->range = R_RtRangeOf(l->color);
+	}
+
+	// a spot light at a lamp (a shade's cone) goes and turns with it
+	for (j = 0; j < rt.numLights; j++) {
+		rtLight_t *l = &rt.lights[j];
+
+		if (!l->spot || l->range <= 0 || l->fixture >= 0) {
+			continue;
+		}
+		for (i = 0; i < numLamps; i++) {
+			if (Distance(l->origin, lamps[i].centre) < RT_FIXTURE_REACH) {
+				l->fixture = lamps[i].model;
+				break;
+			}
+		}
+	}
+
+	ri.Hunk_FreeTempMemory(lamps);
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps, %d of the map's lights went to them, %d lit their own, %d fills\n",
+		numLamps, taken, added, fills);
+}
+
 static void R_RtLightsAtFixtures(void)
 {
-	int i, j, merged = 0, fixtures = 0;
+	int   i, j, merged = 0, fixtures = 0;
+	byte *isLamp = ri.Hunk_AllocateTempMemory(Q_max(1, tr.world->numStaticModels));
+
+	Com_Memset(isLamp, 0, Q_max(1, tr.world->numStaticModels));
+	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
+		R_RtLightsAtLamps(isLamp);
+	}
 
 	for (i = 0; i < tr.world->numStaticModels; i++) {
 		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
@@ -334,6 +716,9 @@ static void R_RtLightsAtFixtures(void)
 		float                   weight = 0;
 		int                     count  = 0, keep = -1;
 
+		if (isLamp[i]) {
+			continue;
+		}
 		sm->rtFixture = qfalse;
 		if (!sm->tiki || !R_RtIsFixture(sm)) {
 			continue;
@@ -371,7 +756,7 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *l = &rt.lights[j];
 			float      w;
 
-			if (l->range <= 0) {
+			if (l->range <= 0 || l->lamp) {
 				continue;
 			}
 			if (tall) {
@@ -444,7 +829,7 @@ static void R_RtLightsAtFixtures(void)
 		float      weight;
 		int        count = 0;
 
-		if (l->spot || l->range <= 0) {
+		if (l->spot || l->range <= 0 || l->lamp) {
 			continue;
 		}
 		weight = l->color[0] + l->color[1] + l->color[2];
@@ -454,7 +839,7 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *o = &rt.lights[j];
 			float      w;
 
-			if (o->spot || o->range <= 0 || Distance(o->origin, l->origin) > RT_MERGE_REACH) {
+			if (o->spot || o->range <= 0 || o->lamp || Distance(o->origin, l->origin) > RT_MERGE_REACH) {
 				continue;
 			}
 			w = o->color[0] + o->color[1] + o->color[2];
@@ -509,7 +894,9 @@ static void R_RtLightsAtFixtures(void)
 			const rtLight_t *l = &rt.lights[i];
 			int              to = newIndex[i] >= 0 ? newIndex[i] : (l->mergedInto >= 0 ? newIndex[l->mergedInto] : -1);
 
-			rt.fromSphere[l->source] = to;
+			if (l->source >= 0) {
+				rt.fromSphere[l->source] = to;
+			}
 		}
 		for (i = 0, j = 0; i < rt.numLights; i++) {
 			if (rt.lights[i].range > 0) {
@@ -520,6 +907,7 @@ static void R_RtLightsAtFixtures(void)
 		ri.Hunk_FreeTempMemory(newIndex);
 	}
 
+	ri.Hunk_FreeTempMemory(isLamp);
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d fixtures, %d lights taken into them or their neighbours\n", fixtures, merged);
 }
 
@@ -960,7 +1348,8 @@ void R_RtLoadWorld(void)
 		return;
 	}
 
-	rt.lights     = ri.Malloc(sizeof(rtLight_t) * Q_max(1, tr.numSLights));
+	// and a light for each static model, which may be a lamp (R_RtLightsAtLamps)
+	rt.lights     = ri.Malloc(sizeof(rtLight_t) * Q_max(1, tr.numSLights + tr.world->numStaticModels));
 	rt.fromSphere = ri.Malloc(sizeof(int) * Q_max(1, tr.numSLights));
 	rt.numLights  = 0;
 	for (i = 0; i < tr.numSLights; i++) {
@@ -1694,6 +2083,14 @@ static void R_RtFollowFixtures(void)
 		VectorCopy(origin, l->origin);
 		l->movedFrame  = rt.frame;
 		l->staticFaces = 0;
+		if (l->lamp) {
+			const int cluster = R_RtClusterAt(origin);
+
+			if (cluster != l->cluster) {
+				l->cluster     = cluster;
+				rt.seenCluster = -1; // the view's list is made again
+			}
+		}
 	}
 }
 
@@ -1820,7 +2217,32 @@ static qboolean R_RtMarkSeenLights(const vec3_t vieworg)
 			}
 		}
 	}
+	// a lamp's light is not where the map's lists put the lights it took
+	// (nor in them, if it is its own): it is seen where its cluster is
+	for (i = 0; i < rt.numLights; i++) {
+		rtLight_t *l = &rt.lights[i];
+
+		if (l->lamp && l->visFrame != rt.frame
+			&& (l->cluster < 0 || (vis[l->cluster >> 3] & (1 << (l->cluster & 7))))) {
+			l->visFrame                 = rt.frame;
+			rt.seenLights[rt.numSeen++] = i;
+		}
+	}
 	return qtrue;
+}
+
+// A flame's light: a few waves out of step, mostly slow, with a quick one
+// over them, never brighter than the lamp, and down by flicker at the most
+static float R_RtFlicker(const rtLight_t *l, int time)
+{
+	float t, w;
+
+	if (l->flicker <= 0) {
+		return 1.0f;
+	}
+	t = time * 0.001f + l->seed;
+	w = 0.45f * sin(t * 2.3f) + 0.3f * sin(t * 5.9f + 1.3f) + 0.25f * sin(t * 13.7f + 0.4f);
+	return 1.0f - l->flicker * (0.5f + 0.5f * w);
 }
 
 void R_RtRenderShadows(const refdef_t *fd)
@@ -1946,16 +2368,26 @@ void R_RtRenderShadows(const refdef_t *fd)
 	for (i = 0; i < numCandidates; i++) {
 		rt.candidateOf[candidates[i]] = i;
 	}
+	{
+		uint64_t lamps = 0;
+
+		// lamps are not in the map's lists: every mover may shadow them
+		for (i = 0; i < numCandidates; i++) {
+			if (rt.lights[candidates[i]].lamp) {
+				lamps |= (uint64_t)1 << i;
+			}
+		}
 	for (i = 0; i < numMovers; i++) {
 		if (rt.leafLights && r_rtShadowCull->integer) {
 			vec3_t mins, maxs;
 
 			VectorSet(mins, movers[i].centre[0] - movers[i].radius, movers[i].centre[1] - movers[i].radius, movers[i].centre[2] - movers[i].radius);
 			VectorSet(maxs, movers[i].centre[0] + movers[i].radius, movers[i].centre[1] + movers[i].radius, movers[i].centre[2] + movers[i].radius);
-			movers[i].lights = R_RtLeafLights(tr.world->nodes, mins, maxs, rt.candidateOf);
+			movers[i].lights = R_RtLeafLights(tr.world->nodes, mins, maxs, rt.candidateOf) | lamps;
 		} else {
 			movers[i].lights = ~(uint64_t)0;
 		}
+	}
 	}
 	for (i = 0; i < numCandidates; i++) {
 		rt.candidateOf[candidates[i]] = -1;
@@ -1973,7 +2405,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 		l->lastUsed = rt.frame;
 
-		if (r_rtShadows->integer) {
+		if (r_rtShadows->integer && !l->noShadow) {
 			int f;
 
 			// what stands still: drawn once, a few faces a frame
@@ -2099,12 +2531,13 @@ void R_RtRenderShadows(const refdef_t *fd)
 		data = &tr.rtLightData[tr.rtNumActive * RT_LIGHT_VEC4S];
 		VectorCopy(l->origin, data[0]);
 		data[0][3] = l->spot ? 1.0f : 0.0f;
-		// eased as it is lit: smoothstep
-		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight), data[1]);
+		// eased as it is lit: smoothstep; a flame dips and comes back
+		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight) * R_RtFlicker(l, fd->time), data[1]);
 		data[1][3] = l->range;
 		VectorCopy(l->spotDir, data[2]);
-		data[2][3] = l->radiusByDist;
-		data[3][0] = r_rtShadows->integer ? (float)(l->staticSlot * 6) : -1.0f;
+		// a point light's: how near it its light stops growing (RtLight)
+		data[2][3] = l->spot ? l->radiusByDist : l->lamp ? RT_LAMP_NEAR : 0.0f;
+		data[3][0] = r_rtShadows->integer && !l->noShadow ? (float)(l->staticSlot * 6) : -1.0f;
 		data[3][1] = dynamicTile;
 		// the people are in its shadow faces as they are, or else capsules
 		data[3][2] = r_rtShadowCharacters->integer && dynamicTile >= 0 ? -1.0f : R_RtLightCapsules(l, bodies, numBodies);
