@@ -7,16 +7,14 @@ opm_ceilinglamp1_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/ceilinglamp1.tga
-		alphaFunc GE128
+		map textures/opm/lamps/ceilinglamp1_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/ceilinglamp1.tga
+		map textures/opm/lamps/ceilinglamp1_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -25,16 +23,14 @@ opm_chandalier_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/chandalier.tga
-		alphaFunc GE128
+		map textures/opm/lamps/chandalier_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/chandalier.tga
+		map textures/opm/lamps/chandalier_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -43,16 +39,14 @@ opm_fattablelamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/fattablelamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/fattablelamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/fattablelamp.tga
+		map textures/opm/lamps/fattablelamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -61,16 +55,14 @@ opm_glasslamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/glasslamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/glasslamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/glasslamp.tga
+		map textures/opm/lamps/glasslamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -79,16 +71,14 @@ opm_hang3lamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/hang3lamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/hang3lamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/hang3lamp.tga
+		map textures/opm/lamps/hang3lamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -97,16 +87,14 @@ opm_hang5lamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/hang5lamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/hang5lamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/hang5lamp.tga
+		map textures/opm/lamps/hang5lamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -115,16 +103,14 @@ opm_hanglamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/hanglamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/hanglamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/hanglamp.tga
+		map textures/opm/lamps/hanglamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -133,16 +119,14 @@ opm_tablelamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/tablelamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/tablelamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/tablelamp.tga
+		map textures/opm/lamps/tablelamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -151,16 +135,14 @@ opm_tiffanylamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/tiffanyshade.tga
-		alphaFunc GE128
+		map textures/opm/lamps/tiffanylamp_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/tiffanyshade.tga
+		map textures/opm/lamps/tiffanylamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.61 0.28
+		rgbGen const 0.95 0.70 0.41
 	}
 }
 
@@ -169,16 +151,14 @@ opm_wallsconce_cutglass_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/wallsconce-cutglass.tga
-		alphaFunc GE128
+		map textures/opm/lamps/wallsconce_cutglass_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/wallsconce-cutglass.tga
+		map textures/opm/lamps/wallsconce_cutglass_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -187,16 +167,14 @@ opm_wallsconce_frosted_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/wallsconce-frosted.tga
-		alphaFunc GE128
+		map textures/opm/lamps/wallsconce_frosted_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/wallsconce-frosted.tga
+		map textures/opm/lamps/wallsconce_frosted_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -205,16 +183,14 @@ opm_wallsconce_single_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/wallsconce-single.tga
-		alphaFunc GE128
+		map textures/opm/lamps/wallsconce_single_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/wallsconce-single.tga
+		map textures/opm/lamps/wallsconce_single_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -223,16 +199,14 @@ opm_lightbulb_covered_nowire_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/bulbcover_one.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightbulb_covered_nowire_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/bulbcover_one.tga
+		map textures/opm/lamps/lightbulb_covered_nowire_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -241,16 +215,14 @@ opm_lightbulb_covered_on_wire_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/bulbcover.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightbulb_covered_on_wire_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/bulbcover.tga
+		map textures/opm/lamps/lightbulb_covered_on_wire_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -259,16 +231,14 @@ opm_lightbulb_covered_on_wire_short_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/bulbcover.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightbulb_covered_on_wire_short_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/bulbcover.tga
+		map textures/opm/lamps/lightbulb_covered_on_wire_short_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -277,16 +247,14 @@ opm_lightpost_globe_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/globe.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightpost_globe_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/globe.tga
+		map textures/opm/lamps/lightpost_globe_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -295,16 +263,14 @@ opm_lightpost_globe_winter_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/globe_winter.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightpost_globe_winter_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/globe_winter.tga
+		map textures/opm/lamps/lightpost_globe_winter_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -313,16 +279,14 @@ opm_lightpost_sidemounted_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/hanger.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightpost_sidemounted_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/hanger.tga
+		map textures/opm/lamps/lightpost_sidemounted_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -331,16 +295,14 @@ opm_lightpost_sidemounted_winter_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/hanger_snow.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightpost_sidemounted_winter_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/hanger_snow.tga
+		map textures/opm/lamps/lightpost_sidemounted_winter_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -349,16 +311,14 @@ opm_lightpost_triple_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/support.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightpost_triple_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/support.tga
+		map textures/opm/lamps/lightpost_triple_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -367,16 +327,14 @@ opm_lightpost_tripler_winter_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/support_snow.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightpost_tripler_winter_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/support_snow.tga
+		map textures/opm/lamps/lightpost_tripler_winter_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -385,16 +343,14 @@ opm_static_domelight_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/bunker/lightbulb.tga
-		alphaFunc GE128
+		map textures/opm/lamps/static_domelight_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/bunker/lightbulb.tga
+		map textures/opm/lamps/static_domelight_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -403,16 +359,14 @@ opm_lightbulb_desertcage_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/desertlamp.tga
-		alphaFunc GE128
+		map textures/opm/lamps/lightbulb_desertcage_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/desertlamp.tga
+		map textures/opm/lamps/lightbulb_desertcage_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.78 0.55
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -571,16 +525,14 @@ opm_swinging_lantern_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/glantern.tga
-		alphaFunc GE128
+		map textures/opm/lamps/swinging_lantern_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/glantern.tga
+		map textures/opm/lamps/swinging_lantern_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.68 0.36
+		rgbGen const 0.95 0.90 0.82
 	}
 }
 
@@ -589,15 +541,13 @@ opm_german_lantern_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/models/lights/glantern.tga
-		alphaFunc GE128
+		map textures/opm/lamps/german_lantern_glass.tga
 		depthWrite
 		rgbGen static
 	}
 	{
-		map textures/models/lights/glantern.tga
+		map textures/opm/lamps/german_lantern_glass.tga
 		blendFunc GL_ONE GL_ONE
-		alphaFunc GE128
-		rgbGen const 0.95 0.68 0.36
+		rgbGen const 0.95 0.90 0.82
 	}
 }

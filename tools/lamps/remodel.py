@@ -33,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "blender"))
 sys.path.insert(0, HERE)
 
+import glass  # noqa: E402
 import lamps  # noqa: E402
 import mohaa_blender as mb  # noqa: E402
 
@@ -66,17 +67,25 @@ def glass_shader(model, entry):
     kind = (entry.get("kind") or ["shaded"])[0]
     name = "opm_%s_glass" % lamp_name(model)
     color = entry.get("color")
+    if "glass" in entry and kind != "bulb":
+        # its own glass, wrapped round each shade (glass.py)
+        glass.write(lamp_name(model), [float(x) for x in entry["glass"]])
+        image = "textures/opm/lamps/%s_glass.tga" % lamp_name(model)
     if kind == "bulb":
         c = [float(x) for x in color] if color else [1.0, 0.92, 0.75]
         body = ["\t{", "\t\tmap %s" % image, "\t\talphaFunc GE128", "\t\tdepthWrite",
                 "\t\trgbGen const %.2f %.2f %.2f" % tuple(c), "\t}"]
     else:
         glow = GLOW.get(kind, GLOW["shaded"])
+        if "glass" in entry:
+            # its texture has its colour: the light through it a little warm
+            glow = (0.95, 0.9, 0.82)
         if color:
             c = [float(x) for x in color]
             glow = tuple(g * x / max(c) for g, x in zip(glow, c))
-        body = ["\t{", "\t\tmap %s" % image, "\t\talphaFunc GE128", "\t\tdepthWrite", "\t\trgbGen static", "\t}",
-                "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE", "\t\talphaFunc GE128",
+        test = [] if "glass" in entry else ["\t\talphaFunc GE128"]
+        body = ["\t{", "\t\tmap %s" % image] + test + ["\t\tdepthWrite", "\t\trgbGen static", "\t}",
+                "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE"] + test + [
                 "\t\trgbGen const %.2f %.2f %.2f" % glow, "\t}"]
     return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap"] + body + ["}", ""])
 
@@ -108,6 +117,7 @@ def remodel(model, entry, work, args):
         spec["bulbSize"] = float(entry["bulbSize"][0])
     if "glassThreshold" in entry:
         spec["glassThreshold"] = float(entry["glassThreshold"][0])
+    spec["rewrap"] = "glass" in entry and spec["kind"] != "bulb"
     if "round" in entry:
         spec["round"] = entry["round"][0] != "0"
     spec_path = os.path.join(out, "spec.json")

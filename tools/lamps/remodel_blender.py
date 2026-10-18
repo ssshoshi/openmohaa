@@ -72,45 +72,36 @@ def face_luma(me, image):
     return luma
 
 
-def glass_faces(me, luma, threshold=None):
-    """The faces of the glass: the pieces of the mesh (faces that share a corner,
-    where it is, whatever its texture seams) mostly of the bright part of the
-    texture. A shade is a piece of its own, its rim darker than its middle; the
-    frame's pieces are dark, a bright highlight here and there."""
+def glass_faces(me, luma, threshold=None, bulbs=()):
+    """The faces of the glass: the pieces of the mesh (its texture's islands)
+    mostly of the bright part of the texture. A shade is a piece of its own, its rim darker than its middle; the
+    frame's pieces are dark, a bright highlight here and there. A piece round a
+    bulb (its box holds one) is a shade too, however its texture is smeared,
+    unless it is the dark metal of a socket."""
     area = np.array([p.area for p in me.polygons])
     if not (area > 0).any():
         return set()
     if threshold is None:
         threshold = max(0.5, 0.8 * float(np.percentile(luma[area > 0], 95)))
 
-    # pieces: faces joined where a corner is at the same place
-    parent = list(range(len(me.polygons)))
-
-    def root(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    at = {}
-    for poly in me.polygons:
-        for vi in poly.vertices:
-            key = tuple(round(c, 4) for c in me.vertices[vi].co)
-            if key in at:
-                a, b = root(poly.index), root(at[key])
-                if a != b:
-                    parent[a] = b
-            else:
-                at[key] = poly.index
-    pieces = {}
-    for poly in me.polygons:
-        pieces.setdefault(root(poly.index), []).append(poly.index)
+    # pieces: the texture's islands (faces joined where their texture runs
+    # on across the edge). Joined by where their corners are, the shades on
+    # a chandelier's arms were one piece with the arms they touch.
+    from bpy_extras import mesh_utils
+    pieces = {i: faces for i, faces in enumerate(mesh_utils.mesh_linked_uv_islands(me))}
 
     glass = set()
     for faces in pieces.values():
         total = sum(area[i] for i in faces)
+        if total <= 0:
+            continue
         bright = sum(area[i] for i in faces if luma[i] >= threshold)
-        if total > 0 and bright / total > 0.5:
+        mean = sum(area[i] * luma[i] for i in faces) / total
+        co = np.array([me.vertices[vi].co[:] for i in faces for vi in me.polygons[i].vertices])
+        lo, hi = co.min(0), co.max(0)
+        pad = 0.02 * float(np.linalg.norm(hi - lo))
+        round_bulb = any(np.all(b >= lo - pad) and np.all(b <= hi + pad) for b in bulbs)
+        if bright / total > 0.5 or (round_bulb and mean > 0.3):
             glass.update(faces)
     return glass
 
@@ -206,6 +197,57 @@ def add_bulb(arm, frame_obj, at_world, radius, shape, shader):
     return obj
 
 
+def rewrap(obj):
+    """The glass's UVs wrapped round each of its shades: u round it, v from its
+    neck (0) to its rim (1), for its own texture (tools/lamps/glass.py). A
+    shade is a piece of the mesh, its axis up through the middle of its box
+    and its neck at the top."""
+    me = obj.data
+    uv = me.uv_layers.active.data
+    co = np.array([obj.matrix_world @ v.co for v in me.vertices])
+    parent = list(range(len(me.vertices)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    at = {}
+    for i, c in enumerate(co):
+        key = tuple(np.round(c, 5))
+        if key in at:
+            parent[root(i)] = root(at[key])
+        else:
+            at[key] = i
+    for e in me.edges:
+        a, b = root(e.vertices[0]), root(e.vertices[1])
+        if a != b:
+            parent[a] = b
+    pieces = {}
+    for i in range(len(co)):
+        pieces.setdefault(root(i), []).append(i)
+    u_of, v_of = {}, {}
+    for members in pieces.values():
+        p = co[members]
+        lo, hi = p.min(0), p.max(0)
+        mid = (lo + hi) / 2
+        for i in members:
+            d = co[i] - mid
+            u_of[i] = (math.atan2(d[1], d[0]) / (2 * math.pi)) % 1.0
+            v_of[i] = (hi[2] - co[i][2]) / max(hi[2] - lo[2], 1e-6)
+    for poly in me.polygons:
+        us = [u_of[me.loops[li].vertex_index] for li in poly.loop_indices]
+        # a face across the seam takes its u from one side of it
+        wrap = max(us) - min(us) > 0.5
+        for li in poly.loop_indices:
+            vi = me.loops[li].vertex_index
+            u = u_of[vi]
+            if wrap and u < 0.5:
+                u += 1.0
+            uv[li].uv = (u, 1.0 - v_of[vi])
+
+
 def lamp_name(tik_path):
     return os.path.splitext(os.path.basename(tik_path))[0].lower().replace("-", "_")
 
@@ -232,7 +274,11 @@ def main():
         image = image_array(mat)
         if image is None or spec.get("kind") == "off":
             continue
-        faces = glass_faces(obj.data, face_luma(obj.data, image), spec.get("glassThreshold"))
+        # the bulbs where the mesh is, in its object's own space
+        to_local = obj.matrix_world.inverted()
+        unit = arm.get("mohaa_unit", UNIT_METERS)
+        bulbs = [np.array((to_local @ (Vector(b) * unit))[:]) for b in spec.get("bulb", [])]
+        faces = glass_faces(obj.data, face_luma(obj.data, image), spec.get("glassThreshold"), bulbs)
         report.setdefault("surfaces", {})[obj.get("mohaa_surface", obj.name)] = {
             "faces": len(obj.data.polygons), "glass": len(faces)}
         if not faces:
@@ -261,6 +307,11 @@ def main():
                 new.name = glass_shader
                 rounded.append(new.name)
     report["rounded"] = rounded
+
+    if spec.get("rewrap"):
+        for o in bpy.data.objects:
+            if o.type == "MESH" and o.get("mohaa_surface") == glass_shader:
+                rewrap(o)
 
     # a bulb at each of its bulbs: lamps.txt gives them in the model's frame,
     # its TIKI scale in them; Blender's world is that times its unit
