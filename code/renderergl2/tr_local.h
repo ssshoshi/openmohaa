@@ -3316,6 +3316,8 @@ IMPLEMENTATION SPECIFIC FUNCTIONS
 */
 
 void		GLimp_InitExtraExtensions( void );
+// Added in OPM: whether the shaders are built with the bounce of the realtime lights (r_rtBounce at their build)
+qboolean R_RtBounceCompiled(void);
 // Added in OPM: glGetTexImage, to read a texture back (the realtime lights' colours of what they bounce off)
 extern void (APIENTRY *qglGetTexImageOPM)(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
 
