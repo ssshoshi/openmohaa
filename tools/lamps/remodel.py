@@ -39,6 +39,9 @@ import mohaa_blender as mb  # noqa: E402
 
 SHADERS = os.path.join(HERE, "..", "..", "data", "opm-lamps", "scripts", "opm_lampglass.shader")
 
+# the glow over the glass of its own texture (glass.py), which is drawn whole
+GLASS_EXTRA = (0.35, 0.33, 0.30)
+
 # how each kind's glass glows, lit from inside: added over the lit glass
 GLOW = {
     "shaded": (0.95, 0.78, 0.55),
@@ -83,7 +86,16 @@ def glass_shader(model, entry):
         if color:
             c = [float(x) for x in color]
             glow = tuple(g * x / max(c) for g, x in zip(glow, c))
-        test = [] if "glass" in entry else ["\t\talphaFunc GE128"]
+        if "glass" in entry:
+            # its own glass, lit from inside alike whichever way a face of it
+            # turns: the texture whole (its shading is in it), and more over it.
+            # Lit by the lights as a wall is, the side of a shade turned from
+            # its bulb went dull, with a hard line where the faces turn.
+            return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap",
+                              "\t{", "\t\tmap %s" % image, "\t\tdepthWrite", "\t\trgbGen identity", "\t}",
+                              "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE",
+                              "\t\trgbGen const %.2f %.2f %.2f" % GLASS_EXTRA, "\t}", "}", ""])
+        test = ["\t\talphaFunc GE128"]
         body = ["\t{", "\t\tmap %s" % image] + test + ["\t\tdepthWrite", "\t\trgbGen static", "\t}",
                 "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE"] + test + [
                 "\t\trgbGen const %.2f %.2f %.2f" % glow, "\t}"]

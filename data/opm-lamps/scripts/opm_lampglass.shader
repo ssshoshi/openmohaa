@@ -9,12 +9,12 @@ opm_ceilinglamp1_glass
 	{
 		map textures/opm/lamps/ceilinglamp1_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/ceilinglamp1_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -25,12 +25,12 @@ opm_chandalier_glass
 	{
 		map textures/opm/lamps/chandalier_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/chandalier_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -41,12 +41,12 @@ opm_fattablelamp_glass
 	{
 		map textures/opm/lamps/fattablelamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/fattablelamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -57,12 +57,12 @@ opm_glasslamp_glass
 	{
 		map textures/opm/lamps/glasslamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/glasslamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -73,12 +73,12 @@ opm_hang3lamp_glass
 	{
 		map textures/opm/lamps/hang3lamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/hang3lamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -89,12 +89,12 @@ opm_hang5lamp_glass
 	{
 		map textures/opm/lamps/hang5lamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/hang5lamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -105,12 +105,12 @@ opm_hanglamp_glass
 	{
 		map textures/opm/lamps/hanglamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/hanglamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -121,12 +121,12 @@ opm_tablelamp_glass
 	{
 		map textures/opm/lamps/tablelamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/tablelamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -137,12 +137,12 @@ opm_tiffanylamp_glass
 	{
 		map textures/opm/lamps/tiffanylamp_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/tiffanylamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.70 0.41
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -153,12 +153,12 @@ opm_wallsconce_cutglass_glass
 	{
 		map textures/opm/lamps/wallsconce_cutglass_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/wallsconce_cutglass_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -169,12 +169,12 @@ opm_wallsconce_frosted_glass
 	{
 		map textures/opm/lamps/wallsconce_frosted_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/wallsconce_frosted_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -185,12 +185,12 @@ opm_wallsconce_single_glass
 	{
 		map textures/opm/lamps/wallsconce_single_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/wallsconce_single_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -201,12 +201,12 @@ opm_lightbulb_covered_nowire_glass
 	{
 		map textures/opm/lamps/lightbulb_covered_nowire_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightbulb_covered_nowire_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -217,12 +217,12 @@ opm_lightbulb_covered_on_wire_glass
 	{
 		map textures/opm/lamps/lightbulb_covered_on_wire_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightbulb_covered_on_wire_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -233,12 +233,12 @@ opm_lightbulb_covered_on_wire_short_glass
 	{
 		map textures/opm/lamps/lightbulb_covered_on_wire_short_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightbulb_covered_on_wire_short_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -249,12 +249,12 @@ opm_lightpost_globe_glass
 	{
 		map textures/opm/lamps/lightpost_globe_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightpost_globe_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -265,12 +265,12 @@ opm_lightpost_globe_winter_glass
 	{
 		map textures/opm/lamps/lightpost_globe_winter_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightpost_globe_winter_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -281,12 +281,12 @@ opm_lightpost_sidemounted_glass
 	{
 		map textures/opm/lamps/lightpost_sidemounted_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightpost_sidemounted_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -297,12 +297,12 @@ opm_lightpost_sidemounted_winter_glass
 	{
 		map textures/opm/lamps/lightpost_sidemounted_winter_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightpost_sidemounted_winter_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -313,12 +313,12 @@ opm_lightpost_triple_glass
 	{
 		map textures/opm/lamps/lightpost_triple_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightpost_triple_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -329,12 +329,12 @@ opm_lightpost_tripler_winter_glass
 	{
 		map textures/opm/lamps/lightpost_tripler_winter_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightpost_tripler_winter_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -345,12 +345,12 @@ opm_static_domelight_glass
 	{
 		map textures/opm/lamps/static_domelight_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/static_domelight_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -361,12 +361,12 @@ opm_lightbulb_desertcage_glass
 	{
 		map textures/opm/lamps/lightbulb_desertcage_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/lightbulb_desertcage_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -527,12 +527,12 @@ opm_swinging_lantern_glass
 	{
 		map textures/opm/lamps/swinging_lantern_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/swinging_lantern_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
 
@@ -543,11 +543,11 @@ opm_german_lantern_glass
 	{
 		map textures/opm/lamps/german_lantern_glass.tga
 		depthWrite
-		rgbGen static
+		rgbGen identity
 	}
 	{
 		map textures/opm/lamps/german_lantern_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.95 0.90 0.82
+		rgbGen const 0.35 0.33 0.30
 	}
 }
