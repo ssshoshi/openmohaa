@@ -73,6 +73,11 @@ extern "C" {
     // Something about so big goes into the water at a point, this fast.
     void CG_WaterSplash(const vec3_t at, float size, float speed);
 
+    // And the water it throws up, seen and heard (a round's has its own impact
+    // effect): small or large by its size, none for something slipping in
+    // slowly, and one where several go in together (a body's parts).
+    void CG_WaterSplashEffect(const vec3_t at, float size, float speed);
+
     // Once a frame: what is wading and sailing through the water disturbs it,
     // and what disturbed it this frame goes to the renderer.
     void CG_WaterRipplesFrame(void);

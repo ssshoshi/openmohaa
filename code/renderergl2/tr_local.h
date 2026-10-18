@@ -521,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    17
+#define NUM_TEXTURE_UNITS    18
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -539,6 +539,7 @@ enum
 #define RT_SKY_TILES    4
 #define TMU_RTSKYLM     15 // Added in OPM: the sky each lightmap texel sees (tr_rtlight.c)
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
+#define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -994,6 +995,8 @@ typedef enum
 	UNIFORM_RTSHADOWSTATIC,
 	UNIFORM_RTSHADOWDYNAMIC,
 	UNIFORM_RTSUNSHADOW,
+	UNIFORM_RTSUNCASCADE,
+	UNIFORM_RTSUNCASCADEMVP,
 	UNIFORM_RTSHADOWBAKED,
 	UNIFORM_RTCAPSULES,
 	UNIFORM_RTLIST,
@@ -1019,6 +1022,7 @@ typedef enum
 	UNIFORM_WATERSHORE,
 	UNIFORM_WATERSKY,
 	UNIFORM_WATERLOOK,
+	UNIFORM_WATEROCEAN,    // the open sea's waves (tr_water.c, ocean): one over their scale, height, drag, octaves
 	UNIFORM_WATERBLOODZONE,
 	UNIFORM_WATERSPOTS,
 	UNIFORM_BEACHWET,
@@ -1026,11 +1030,16 @@ typedef enum
 	UNIFORM_WORLDVIEWPROJECTION, // what the world is projected by, for a ray to be followed through the view
 	UNIFORM_WATERVIEW,           // the view's box on the screen: x, y, the far x, the far y
 	UNIFORM_BEACHSWASH,
+	UNIFORM_BEACHGROUND,   // where the beach's ground lies (tr_water.c, R_WaterBuildBeach): its corner, one over its size, whether
 	UNIFORM_RIPPLESIM,     // the water's ripples (tr_water.c, glsl/ripple_fp.glsl)
 	UNIFORM_RIPPLEDECAY,
 	UNIFORM_RIPPLESOURCES,
 	UNIFORM_RIPPLEFOAM,
 	UNIFORM_WATERRIPPLES,  // where the ripples' grid lies, for the water
+	UNIFORM_WATERREFLECT,  // the view the water mirrors: whether, -, its share of the image
+	UNIFORM_WATERREFLECTPLANE, // the plane of the water it was seen from
+	UNIFORM_WATERREFLECTMVP,
+	UNIFORM_WATERREFLECTMAP,
 	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
 	UNIFORM_LENSSPOTS,
 	UNIFORM_LENSLOOK,
@@ -1213,7 +1222,11 @@ typedef enum {
 	VPF_RTBAKED         = 0x400,
 	// Added in OPM
 	//  The sky's depth from one of its directions, once a map (tr_rtlight.c).
-	VPF_RTSKY           = 0x800
+	VPF_RTSKY           = 0x800,
+	// Added in OPM
+	//  The view water mirrors, under its surface (tr_water.c): a portal
+	//  view that draws the entities and sprites the main view does.
+	VPF_WATERREFLECT    = 0x1000
 } viewParmFlags_t;
 
 typedef struct {
@@ -1253,6 +1266,13 @@ typedef struct {
 	// Which sun shadow cascade this view is rendering, 0-3, or -1 when it is
 	// not one. Only used to attribute GPU time per cascade (r_gpuTimers).
 	int			sunCascade;
+
+	// Added in OPM: the view its water mirrors was drawn first, into
+	// tr.waterReflectImage (R_WaterReflectView): at this height, seen so
+	int			waterReflect;
+	vec4_t		waterReflectPlane; // normal, distance
+	vec2_t		waterReflectShare; // of the image across and up
+	mat4_t		waterReflectMvp;
 } viewParms_t;
 
 
@@ -2491,6 +2511,9 @@ typedef struct {
 	image_t                 *screenSsaoImage;
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
+	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
+	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
+	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
@@ -2511,6 +2534,7 @@ typedef struct {
 	FBO_t					*screenSsaoFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
+	FBO_t					*waterReflectFbo;
 	FBO_t					*waterRippleFbo[2]; // Added in OPM: the ripples' grid, this step and the last
 	FBO_t                   *renderCubeFbo;
 
@@ -3839,6 +3863,7 @@ void R_GroundCoverRegisterCvars(void);
 // tr_image.c: an image file's pixels, without making a texture of it
 void R_LoadImage(const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips);
 void R_LoadImageUncompressed(const char *name, byte **pic, int *width, int *height, GLenum *picFormat);
+void R_LightScaleTexture(byte *in, int inwidth, int inheight, qboolean only_gamma);
 void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header);
 void R_GroundCoverFree(void);
 void R_AddGroundCoverSurfaces(void);
@@ -3854,8 +3879,11 @@ WATER (tr_water.c)
 =============================================================
 */
 extern cvar_t *r_water;
+extern cvar_t *r_waterReflect;
 extern cvar_t *r_waterRipples;
 void R_WaterRegisterCvars(void);
+void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs);
+void R_PlaneForSurface(surfaceType_t *surfType, cplane_t *plane);
 void R_WaterLoadWorld(const char *mapName);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
@@ -3866,6 +3894,7 @@ void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int
 void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp);
 void R_WaterSetDry(shaderProgram_t *sp);
+void RB_WaterSawSky(const shader_t *sh);
 
 // Added in OPM: what is on the lens (tr_lens.c)
 extern cvar_t *r_lens;

@@ -9,18 +9,21 @@
  setup
  {
  	scale 1.0
-@@ -15,113 +19,81 @@
+@@ -14,114 +18,82 @@
+ 	client
  	{
  		//cache some stuff used in this effect
- 		cache bh_ocean_plume.spr
+-		cache bh_ocean_plume.spr
 -		cache bh_water_ring.spr
++		cache opm_ocean_plume.spr
  		cache models/fx/water_splash_drop.tik
  
 -		// main plume
 +		// the water bulging up where it went in
  		sfx originspawn
  		(
- 			model bh_ocean_plume.spr
+-			model bh_ocean_plume.spr
++			model opm_ocean_plume.spr
  			spritegridlighting
 -			alpha 1.0
 +			alpha 0.8
@@ -34,19 +37,63 @@
 +			life 0.25
 +			scale 0.3
 +			scalerate 1.5
++			fade
++		)
++
++		// the column, thrown up and falling back
++		sfx originspawn
++		(
++			model models/fx/water_splash_drop.tik
++			spritegridlighting
++			spawnrange 4096
++			angles 270 0 0
++			alpha 0.75
++			offsetalongaxis random 4 crandom 1 crandom 1
++			offset 0 0 2
++			count 16
++			alignstretch 0.9
++			velocity 230
++			randvelaxis random 200 crandom 8 crandom 8
++			accel 0 0 -900
++			life 0.7 0.2
++			scalemin 1.0
++			scalemax 1.6
++			scalerate -0.6
++			fade
++			fadedelay 0.35
++		)
++
++		// the crown, low and outward
++		sfx originspawn
++		(
++			model models/fx/water_splash_drop.tik
++			spritegridlighting
++			spawnrange 4096
++			angles 270 0 0
++			alpha 0.55
++			offset 0 0 2
++			count 18
++			alignstretch 0.6
++			velocity 75
++			randvelaxis random 75 crandom 95 crandom 95
++			accel 0 0 -850
++			life 0.35 0.15
++			scalemin 0.8
++			scalemax 1.3
++			scalerate -1.0
  			fade
--			fadedelay 0.2
+ 			fadedelay 0.2
  		)
  
 -		// spray
--		delayedsfx 0.05 originspawn
-+		// the column, thrown up and falling back
-+		sfx originspawn
++		// mist, hanging a moment over it
+ 		delayedsfx 0.05 originspawn
  		(
- 			model models/fx/water_splash_drop.tik
+-			model models/fx/water_splash_drop.tik
++			model opm_ocean_plume.spr
  			spritegridlighting
- 			spawnrange 512
- 			angles 270 0 0
+-			spawnrange 512
+-			angles 270 0 0
 -			alpha 0.5
 -			offsetalongaxis random 16 crandom 1 crandom 1
 -			offset 0 0 8
@@ -60,32 +107,24 @@
 -			scalemax 2.0
 -			scalerate -1.0
 -			fadein 0.2
-+			alpha 0.75
-+			offsetalongaxis random 4 crandom 1 crandom 1
-+			offset 0 0 2
-+			count 16
-+			alignstretch 0.9
-+			velocity 230
-+			randvelaxis random 200 crandom 8 crandom 8
-+			accel 0 0 -900
-+			life 0.7 0.2
-+			scalemin 1.0
-+			scalemax 1.6
-+			scalerate -0.6
++			alpha 0.35
++			angles 0 0 0
++			offset 0 0 10
++			count 1
++			life 0.6
++			scale 0.2
++			scalerate 0.8
  			fade
 -			fadedelay 0.6
-+			fadedelay 0.35
- 		)
- 
+-		)
+-
 -		// spray
 -		delayedsfx 0.1 originspawn
-+		// the crown, low and outward
-+		sfx originspawn
- 		(
- 			model models/fx/water_splash_drop.tik
- 			spritegridlighting
- 			spawnrange 512
- 			angles 270 0 0
+-		(
+-			model models/fx/water_splash_drop.tik
+-			spritegridlighting
+-			spawnrange 512
+-			angles 270 0 0
 -			alpha 0.5
 -			offsetalongaxis random 6 crandom 1 crandom 1
 -			offset 0 0 32
@@ -97,37 +136,20 @@
 -			life 0.6 0.2
 -			scalemin 1.5
 -			scalemax 2.5
-+			alpha 0.55
-+			offset 0 0 2
-+			count 18
-+			alignstretch 0.6
-+			velocity 75
-+			randvelaxis random 75 crandom 95 crandom 95
-+			accel 0 0 -850
-+			life 0.35 0.15
-+			scalemin 0.8
-+			scalemax 1.3
- 			scalerate -1.0
+-			scalerate -1.0
 -			fadein 0.2
- 			fade
+-			fade
 -			fadedelay 0.5
-+			fadedelay 0.2
- 		)
- 
+-		)
+-
 -		// add water ripple
 -		sfx originspawn
-+		// mist, hanging a moment over it
-+		delayedsfx 0.05 originspawn
- 		(
+-		(
 -			model bh_water_ring.spr
-+			model bh_ocean_plume.spr
- 			spritegridlighting
+-			spritegridlighting
 -			angles 90 0 0
 -			alpha 1.0
-+			alpha 0.35
-+			angles 0 0 0
-+			offset 0 0 10
- 			count 1
+-			count 1
 -			life 0.8 0.1
 -			scale 0.3
 -			scalerate 2.0
@@ -160,10 +182,6 @@
 -			scale 0.24
 -			scalerate 1.6
 -			fadedelay 0.1
-+			life 0.6
-+			scale 0.2
-+			scalerate 0.8
-+			fade
  		)
  	}
  }

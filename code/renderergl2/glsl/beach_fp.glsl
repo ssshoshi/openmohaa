@@ -23,9 +23,13 @@ uniform vec2      u_GlobalFogParams;
 uniform vec4      u_WaterWaves;  // the way the waves come in (xy)
 uniform vec4      u_WaterShore;  // z: whether there is a shore line, w: where
 uniform vec4      u_WaterSky;    // the sky
+uniform samplerCube u_CubeMap;   // the map's sky box (tr_water.c, R_WaterBuildSky)
+uniform vec4      u_CubeMapInfo; // how much of it is mirrored: 0 the flat u_WaterSky
 uniform vec4      u_WaterBlood;  // the colour of blood
 uniform vec4      u_BeachWet;    // how far inland the sand is wet, the highest it is, puddles (a share), their size
 uniform vec4      u_BeachSwash;  // how far up the sand a wave runs, at most
+uniform sampler2D u_SpecularMap; // the beach's ground: its height from above, where it is (R_WaterBuildBeach)
+uniform vec4      u_BeachGround; // where that grid starts, one over its size (0: the beach is everywhere)
 uniform vec4      u_WaterBloodZone; // w: how many u_SandStains
 uniform vec4      u_SandStains[WATER_MAX_SPOTS]; // x, y, the ground's height, how far the blood has soaked
 
@@ -72,6 +76,16 @@ float Clouds(vec2 x)
 	return Noise(x).x * 0.55 + Noise(Turn(x, 1.1) * 2.03 + 3.7).x * 0.3 + Noise(Turn(x, 2.3) * 4.1 + 9.2).x * 0.15;
 }
 
+// On the beach's own ground (R_WaterBuildBeach): its grid has it at this
+// height here. The terrain is drawn coarser further off than its heights.
+bool OnBeach(vec3 p, float lin)
+{
+	vec2 at = (p.xy - u_BeachGround.xy) * u_BeachGround.zw;
+	if (at.x < 0.0 || at.y < 0.0 || at.x > 1.0 || at.y > 1.0)
+		return false;
+	return abs(p.z - texture2D(u_SpecularMap, at).r) <= 6.0 + lin * 0.006;
+}
+
 void main()
 {
 	float d = texture2D(u_ScreenDepthMap, var_DepthTex).r;
@@ -82,10 +96,56 @@ void main()
 	// r_prepassFarModels) keeps its own pixels
 	gl_FragDepth = d;
 
-	vec3  pos  = u_ViewOrigin + var_ViewDir * (LinearDepth(d) / u_ViewInfo.y);
-	vec3  N    = normalize(cross(dFdx(pos), dFdy(pos)));
+	float lin  = LinearDepth(d);
+	vec3  vd   = var_ViewDir / u_ViewInfo.y;
+	vec3  ddx  = dFdx(var_ViewDir) / u_ViewInfo.y;
+	vec3  ddy  = dFdy(var_ViewDir) / u_ViewInfo.y;
+	vec3  pos  = u_ViewOrigin + vd * lin;
+	vec2  texel = r_FBufScale;
+
+	// Which way it faces, from the pixels beside it on its own side: at an
+	// edge (a model before the sand) the depth jumps, and across it the
+	// normal was anything, a bright line round everything on the beach.
+	// The side whose depth goes on most smoothly.
+	float dx0  = texture2D(u_ScreenDepthMap, var_DepthTex - vec2(texel.x, 0.0)).r;
+	float dx1  = texture2D(u_ScreenDepthMap, var_DepthTex + vec2(texel.x, 0.0)).r;
+	float dy0  = texture2D(u_ScreenDepthMap, var_DepthTex - vec2(0.0, texel.y)).r;
+	float dy1  = texture2D(u_ScreenDepthMap, var_DepthTex + vec2(0.0, texel.y)).r;
+	float lx0  = LinearDepth(dx0), lx1 = LinearDepth(dx1);
+	float ly0  = LinearDepth(dy0), ly1 = LinearDepth(dy1);
+	vec3  sx   = abs(lx1 - lin) < abs(lin - lx0) ? (vd + ddx) * lx1 - vd * lin : vd * lin - (vd - ddx) * lx0;
+	vec3  sy   = abs(ly1 - lin) < abs(lin - ly0) ? (vd + ddy) * ly1 - vd * lin : vd * lin - (vd - ddy) * ly0;
+	vec3  N    = normalize(cross(sx, sy));
 	if (N.z < 0.0)
 		N = -N;
+
+	// Only the beach's own ground: not the sand under the water (another
+	// shader, with the water's reflection over it already), nor what stands
+	// on the beach, a body or a boat, which the swash ran over. A pixel off
+	// it at a model's edge, which the prepass covered a pixel further than
+	// the view did, takes the ground beside it and its depth: where the view
+	// has the model there, it is in front and keeps the pixel, and where the
+	// view has the ground it is wet as the ground round it (left dry, it was
+	// a light line round everything on the wet sand)
+	if (u_BeachGround.z > 0.0 && !OnBeach(pos, lin))
+	{
+		vec3 p;
+
+		if (OnBeach(p = u_ViewOrigin + (vd - ddx) * lx0, lx0))
+			d = dx0;
+		else if (OnBeach(p = u_ViewOrigin + (vd + ddx) * lx1, lx1))
+			d = dx1;
+		else if (OnBeach(p = u_ViewOrigin + (vd - ddy) * ly0, ly0))
+			d = dy0;
+		else if (OnBeach(p = u_ViewOrigin + (vd + ddy) * ly1, ly1))
+			d = dy1;
+		else
+			discard;
+		pos = p;
+		lin = LinearDepth(d);
+		gl_FragDepth = d;
+		N = vec3(0.0, 0.0, 1.0);
+	}
 	float onGround = smoothstep(0.55, 0.8, N.z); // ground, not the sides of things
 
 	vec2  dir    = normalize(u_WaterWaves.xy);
@@ -106,6 +166,9 @@ void main()
 		float hollow = Clouds(along / max(u_BeachWet.w, 1.0) + 3.1);
 		float level  = 0.74 - u_BeachWet.z * 0.3;
 		puddle = smoothstep(level, level + 0.025, hollow) * wet * smoothstep(0.92, 0.98, N.z);
+		// above the waterline alone: under the water they were a second
+		// reflection under the water's own
+		puddle *= smoothstep(0.0, 40.0, inland);
 	}
 
 	// The swash: each wave runs up the sand in a thin sheet, fast, and
@@ -116,7 +179,11 @@ void main()
 	if (u_BeachSwash.x > 0.0 && inland > -60.0 && inland < u_BeachSwash.x * 1.4)
 	{
 		float across = dot(pos.xy, vec2(dir.y, -dir.x));
-		float cycle  = u_Time / max(u_WaterWaves.w, 0.5) + (Clouds(vec2(across / 900.0, 1.7)) - 0.5) * 1.4;
+		// The waves come in square to the shore, so a wave's swash runs up all
+		// along it at once, ragged: a big lag along the shore swept each wave
+		// in from both sides to the middle, its bright front with it
+		float cycle  = u_Time / max(u_WaterWaves.w, 0.5) + (Clouds(vec2(across / 2400.0, 1.7)) - 0.5) * 0.3
+		             + (Clouds(vec2(across / 260.0, 4.3)) - 0.5) * 0.12;
 		float wave   = floor(cycle);
 		float f      = fract(cycle);
 		float run    = u_BeachSwash.x * (0.3 + 0.85 * Clouds(vec2(across / 380.0 + wave * 3.7, wave * 1.3)));
@@ -156,6 +223,15 @@ void main()
 	}
 	stain *= onGround;
 
+	// Under the water all of it fades out, before the swash's reach and the
+	// beach's ground end: the water is over it there, and where either ended
+	// it did so in a straight line along the shore
+	float sea = smoothstep(-60.0, -10.0, inland);
+	wet       *= sea;
+	sheet     *= sea;
+	swashFoam *= sea;
+	stain     *= sea;
+
 	if (wet + stain + sheet <= 0.002)
 		discard;
 
@@ -164,22 +240,26 @@ void main()
 	vec3  blood     = mix(vec3(0.5, 0.14, 0.11), u_WaterBlood.rgb * 2.2, 0.35);
 
 #if defined(BEACH_ADD)
-	// the sky in it: a sheen on the wet sand, a mirror where water stands,
-	// stirred by the wind
+	// the sky in it: a mirror where water stands, stirred by the wind
 	vec2  ripple = Noise(pos.xy / 9.0 + vec2(u_Time * 0.7, u_Time * -0.4)).yz * 0.06
 	             + Noise(Turn(pos.xy, 1.7) / 4.0 + vec2(u_Time * -0.5, u_Time * 0.9)).yz * 0.03;
 	vec3  n      = normalize(N + vec3(-ripple * clamp(puddle + sheet, 0.0, 1.0), 0.0));
 	vec3  V      = normalize(u_ViewOrigin - pos);
 	float facing = clamp(dot(n, V), 0.0, 1.0);
 	float fresnel = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
-	float shine  = wet * fresnel * 0.45 + max(puddle, sheet) * mix(0.08, 0.7, fresnel);
+	// only the water standing in the hollows gives the sky back: the wet sand
+	// and the swash's thin sheet are dull
+	float shine  = puddle * mix(0.08, 0.7, fresnel);
 	shine *= 1.0 - swashFoam;
 
 	// What it mirrors: the ray off it, followed through the view's depth
 	// until it goes behind something, which is then what is seen in it;
-	// else the sky
+	// else the sky, the map's box where the view has drawn it
 	vec3 R      = reflect(-V, n);
-	vec3 mirror = u_WaterSky.rgb;
+	vec3 sky    = u_WaterSky.rgb;
+	if (u_CubeMapInfo.x > 0.0)
+		sky = mix(sky, textureCubeLod(u_CubeMap, R, 1.0).rgb, u_CubeMapInfo.x);
+	vec3 mirror = sky;
 	if (shine > 0.01)
 	{
 		float stepLen = 6.0;
@@ -202,7 +282,7 @@ void main()
 			{
 				// fading towards the edge of the view, where it would run out
 				vec2 edge = min(uv, u_ViewInfo.zw - uv) / u_ViewInfo.zw;
-				mirror = mix(u_WaterSky.rgb, texture2D(u_ScreenImageMap, uv).rgb, smoothstep(0.0, 0.08, min(edge.x, edge.y)));
+				mirror = mix(sky, texture2D(u_ScreenImageMap, uv).rgb, smoothstep(0.0, 0.08, min(edge.x, edge.y)));
 				break;
 			}
 		}

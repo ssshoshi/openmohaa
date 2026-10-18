@@ -2979,6 +2979,15 @@ void R_CreateBuiltinImages( void ) {
 		if (r_water->integer)
 			tr.waterSceneImage = R_CreateImage("*waterScene", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
 
+		// Added in OPM: the view water mirrors (tr_water.c), at half the
+		// screen's size, or all of it at r_waterReflect 2
+		if (r_water->integer)
+		{
+			const int shift = r_waterReflect->integer == 2 ? 0 : 1;
+
+			tr.waterReflectImage = R_CreateImage("*waterReflect", NULL, width >> shift, height >> shift, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+		}
+
 		// Added in OPM: the water's ripples (tr_water.c)
 		if (r_water->integer && r_waterRipples->integer)
 		{

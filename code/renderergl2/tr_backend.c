@@ -401,6 +401,17 @@ void RB_BeginDrawingView (void) {
 		clearBits |= GL_COLOR_BUFFER_BIT;
 	}
 
+	// Added in OPM: the view water mirrors starts from the fog, else black,
+	// not from the last frame's (tr_water.c)
+	if ((backEnd.viewParms.flags & VPF_WATERREFLECT) && !(clearBits & GL_COLOR_BUFFER_BIT))
+	{
+		clearBits |= GL_COLOR_BUFFER_BIT;
+		if (backEnd.globalFogEnabled)
+			qglClearColor( backEnd.globalFogColor[0], backEnd.globalFogColor[1], backEnd.globalFogColor[2], 1.0f );
+		else
+			qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+	}
+
 	qglClear( clearBits );
 
 	if ( ( backEnd.refdef.rdflags & RDF_HYPERSPACE ) )
@@ -1446,7 +1457,10 @@ const void	*RB_DrawSurfs( const void *data ) {
 		qglEnable(GL_DEPTH_CLAMP);
 	}
 
-	if (glRefConfig.framebufferObject && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && (r_depthPrepass->integer || isShadowView))
+	// (Added in OPM: not for the view water mirrors, drawn small and once
+	// over, which nothing reads the depth or the sun's shadow mask of)
+	if (glRefConfig.framebufferObject && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && (r_depthPrepass->integer || isShadowView)
+		&& !(backEnd.viewParms.flags & VPF_WATERREFLECT))
 	{
 		FBO_t *oldFbo = glState.currentFBO;
 		vec4_t viewInfo;

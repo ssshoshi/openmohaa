@@ -1182,7 +1182,18 @@ static void ForwardDlight( void ) {
 
 			ComputeShaderColors(pStage, baseColor, vertColor, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
 
+			// Changed in OPM: the light is added on top, so it fades into black
+			// fog, adding nothing out in it. With the surface's own fog colour
+			// it added that colour, at full strength out where the fog is
+			// thick: a light near far terrain (m3l1a's bunker MG42s' muzzle
+			// flashes on the bluff behind) blinked it white.
 			RB_SetGlobalFogUniforms(sp, pStage);
+			if (backEnd.globalFogEnabled && !tess.no_global_fog && (pStage->stateBits & GLS_FOG_ENABLED))
+			{
+				const vec4_t black = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+				GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, black);
+			}
 
 			GLSL_SetUniformVec4(sp, UNIFORM_BASECOLOR, baseColor);
 			GLSL_SetUniformVec4(sp, UNIFORM_VERTCOLOR, vertColor);

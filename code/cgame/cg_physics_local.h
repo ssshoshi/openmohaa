@@ -57,6 +57,7 @@ void CG_PhysicsDrawWorld(void);
 void CG_PhysicsLoadProps(void);
 void CG_PhysicsUnloadProps(void);
 void CG_PhysicsPropsStepped(void);
+void CG_PhysicsPropsWater(float dt);
 void CG_PhysicsDrawProps(float frac);
 void CG_PhysicsDrawCords(float frac); // Added in OPM: lamps on cords (cg_physics_props.cpp)
 void CG_PhysicsImpulse(JPH::BodyID id, const vec3_t point, const vec3_t impulse);
@@ -137,6 +138,7 @@ void CG_PhysicsPlayerPushes(void);
 void CG_PhysicsPushBody(JPH::BodyID id, const vec3_t dir, float speed);
 void CG_PhysicsPushPropsInBox(const vec3_t mins, const vec3_t maxs, const vec3_t dir, float speed);
 void CG_PhysicsGrabStep(float dt);
+qboolean CG_PhysicsGrabbedBody(JPH::BodyID *id);
 
 void CG_JoltRagdollsStep(float dt);
 void CG_JoltRagdollCounts(int *used, int *floating, int *asleep);

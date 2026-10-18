@@ -1013,6 +1013,8 @@ static const float pr_partFloat[PR_NUM_PARTS] = {
 // it: a share of the difference a second, for a part all under.
 #define PR_WATER_DRAG      3.0f
 #define PR_WATER_SPIN_DRAG 2.5f
+// Slower than this through the water (units a second), a part leaves no wake.
+#define PR_WAKE_SPEED      12.0f
 
 // A body in water is held up and carried along by it (cg_water.cpp). Each part
 // is pushed at both its ends, by as much as is under the water there, so the
@@ -1127,9 +1129,33 @@ static void CG_JoltRagdollFloat(prRagdoll_t *pr, JPH::BodyInterface& bodies, flo
                 PhysFromJolt(JPH::Vec3(t.GetTranslation()), q);
                 q[2] = water.surface;
                 CG_WaterSplash(q, Com_Clamp(5.0f, 22.0f, r * 2.2f), fall);
+                // the body's: one large splash however many parts go in
+                CG_WaterSplashEffect(q, 40.0f, fall);
             }
         }
         pr->wet[i] = under;
+
+        // and one going through the water pushes it aside: a wake behind it
+        // (a body dragged, swept along, or kicking as it goes over)
+        if (under > 0.0f) {
+            vec3_t q, flow, v;
+            float  speed;
+
+            PhysFromJolt(JPH::Vec3(t.GetTranslation()), q);
+            CG_WaterFlow(q, water.depth, flow);
+            PhysFromJolt(bodies.GetLinearVelocity(id), v);
+            speed = sqrt(Square(v[0] - flow[0]) + Square(v[1] - flow[1]));
+            if (speed > PR_WAKE_SPEED) {
+                const float push = Q_min(under * 2.0f, 1.0f);
+
+                // a little ahead of it, where it meets the water
+                q[0] += (v[0] - flow[0]) / speed * r;
+                q[1] += (v[1] - flow[1]) / speed * r;
+                q[2] = water.surface;
+                CG_WaterRipple(q, Com_Clamp(6.0f, 20.0f, r * 2.5f), Q_min(speed, 300.0f) * 0.035f * push * dt,
+                    Q_min(speed, 300.0f) / 150.0f * 0.6f * push * dt);
+            }
+        }
 
         if (under > 0.0f) {
             bodies.SetAngularVelocity(id, bodies.GetAngularVelocity(id) * Q_max(0.0f, 1.0f - PR_WATER_SPIN_DRAG * under * dt));

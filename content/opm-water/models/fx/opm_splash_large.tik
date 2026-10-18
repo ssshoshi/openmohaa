@@ -1,0 +1,115 @@
+TIKI
+// OPM (content/opm-water): something big going into water, a body, a crate
+// (CG_WaterSplashEffect): a heavy column thrown up and falling back, a wide
+// crown of drops thrown out round it, spray and mist hanging over it. The
+// rings are the water's own.
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy2.skd
+}
+
+init
+{
+	client
+	{
+		cache opm_ocean_plume.spr
+		cache opm_oceanspray.spr
+		cache models/fx/water_splash_drop.tik
+
+		sfx sound impact_watersplash
+
+		// the water heaving up where it went in
+		sfx originspawn
+		(
+			model opm_ocean_plume.spr
+			alpha 0.85
+			angles 0 0 0
+			offset 0 0 6
+			count 2
+			life 0.45
+			scale 0.45
+			scalerate 1.8
+			fade
+		)
+
+		// the column, thrown up and falling back
+		sfx originspawn
+		(
+			model models/fx/water_splash_drop.tik
+			spawnrange 4096
+			angles 270 0 0
+			alpha 0.8
+			offsetalongaxis random 6 crandom 10 crandom 10
+			offset 0 0 2
+			count 30
+			alignstretch 0.9
+			velocity 260
+			randvelaxis random 220 crandom 30 crandom 30
+			accel 0 0 -900
+			life 0.9 0.3
+			scalemin 1.6
+			scalemax 2.8
+			scalerate -0.5
+			fade
+			fadedelay 0.5
+		)
+
+		// the crown, wide and outward
+		sfx originspawn
+		(
+			model models/fx/water_splash_drop.tik
+			spawnrange 4096
+			angles 270 0 0
+			alpha 0.6
+			offset 0 0 2
+			count 34
+			alignstretch 0.6
+			velocity 90
+			randvelaxis random 90 crandom 150 crandom 150
+			accel 0 0 -850
+			life 0.55 0.2
+			scalemin 1.2
+			scalemax 2.2
+			scalerate -0.8
+			fade
+			fadedelay 0.3
+		)
+
+		// spray over it
+		sfx originspawn
+		(
+			model opm_oceanspray.spr
+			alpha 0.5
+			offset crandom 12 crandom 12 8
+			count 3
+			life 0.9
+			scale 0.25
+			scalerate 2.5
+			velocity 30
+			randvel crandom 20 crandom 20 random 40
+			accel 0 0 -20
+			fade
+		)
+
+		// mist, hanging a moment
+		delayedsfx 0.08 originspawn
+		(
+			model opm_ocean_plume.spr
+			alpha 0.35
+			angles 0 0 0
+			offset 0 0 16
+			count 1
+			life 0.9
+			scale 0.3
+			scalerate 0.9
+			fade
+		)
+	}
+}
+
+animations
+{
+	idle dummy2.skc
+}

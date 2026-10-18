@@ -1220,8 +1220,18 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
     }
 
     if ((CG_PointContents(vPos, 0)) & MASK_WATER) {
+        cgWaterSample_t water;
+        vec3_t          at;
+
+        // Changed in OPM: up at the surface over it. A grenade sinks and goes
+        // off on the bottom, and its plume came up from there, half of it
+        // under the water.
+        VectorCopy(vPos, at);
+        if (CG_WaterSample(vPos, &water) && water.surface > at[2]) {
+            at[2] = water.surface;
+        }
         iBaseEffect = SFX_EXP_GREN_PUDDLE;
-        sfxManager.MakeEffect_Normal(iBaseEffect, vPos, Vector(0, 0, 1));
+        sfxManager.MakeEffect_Normal(iBaseEffect, at, Vector(0, 0, 1));
         return;
     }
 

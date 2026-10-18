@@ -924,6 +924,9 @@ void RB_StageIteratorSky( void ) {
 
 		DrawSkyBox( tess.shader );
 
+		// Added in OPM: the water may mirror it now (tr_water.c)
+		RB_WaterSawSky( tess.shader );
+
 		GL_SetModelviewMatrix( oldmodelview );
 	}
 

@@ -17,6 +17,12 @@ uniform sampler2D u_DiffuseMap;      // the water's own texture: ripples, foam, 
 uniform sampler2D u_ScreenImageMap;  // the view before its water
 uniform sampler2D u_ScreenDepthMap;  // the view's depth after the prepass
 uniform sampler2D u_SpecularMap;     // its ripples round the view (glsl/ripple_fp.glsl): height, before, foam
+uniform samplerCube u_CubeMap;       // the map's sky box (tr_water.c, R_WaterBuildSky)
+uniform sampler2D u_WaterReflectMap; // the world from under the surface (tr_water.c, R_WaterReflectView)
+uniform vec4      u_WaterReflect;    // whether there is it, -, its share of the image across and up
+uniform vec4      u_WaterReflectPlane; // the plane of the water it was seen from: normal, distance
+uniform mat4      u_WaterReflectMvp; // how it was seen
+uniform vec4      u_CubeMapInfo;     // how much of it is mirrored: 0 the flat u_WaterSky
 
 uniform vec3      u_ViewOrigin;
 uniform vec4      u_ViewInfo;        // zNear, zFar, whether there is the depth, and the view
@@ -34,6 +40,7 @@ uniform vec4      u_WaterWaves; // the way the waves come in (xy), their length 
 uniform vec4      u_WaterShore; // wave height, the depth the surf starts at, whether there is a shore line, where
 uniform vec4      u_WaterSky;   // the sky it mirrors, and how choppy it is
 uniform vec4      u_WaterLook;  // foam, refraction, sun glints, how much the blood lies in clouds
+uniform vec4      u_WaterOcean; // the open sea's waves (OceanWaves): one over their scale, height, drag, octaves (0: the chop)
 uniform vec4      u_WaterBloodZone; // all the blood to, and none past: out from the shore line, else in depth; how many u_WaterSpots
 uniform vec4      u_WaterSpots[WATER_MAX_SPOTS]; // blood round bodies in the water: x, y, how far it has spread, how thick
 uniform mat4      u_WorldViewProjection; // the world's, to follow what it mirrors through the view
@@ -94,6 +101,42 @@ float Clouds(vec2 x)
 	return Noise(x).x * 0.55 + Noise(Turn(x, 1.1) * 2.03 + 3.7).x * 0.3 + Noise(Turn(x, 2.3) * 4.1 + 9.2).x * 0.15;
 }
 
+// The open sea (after afl_ext's "Very fast procedural ocean", MIT): waves of
+// exp(sin) shape, peaked crests and long flat troughs, each octave higher,
+// faster and weaker than the last and pushed along by the slope of those
+// before it (the drag), so they gather into ragged crests rather than lines.
+// Their ways spread round the way the waves come in, and they go that way, to
+// the shore. p is in the sea's scale (u_WaterOcean.x); back the height, 0
+// to 1, and its slope, each wave's own (the drag's bend left out).
+vec3 OceanWaves(vec2 p, vec2 dir, float t, int octaves)
+{
+	vec2  grad   = vec2(0.0);
+	float shift  = length(p) * 0.1; // no two octaves in phase everywhere
+	float iter   = 0.0;
+	float freq   = 1.0;
+	float speed  = 2.0;
+	float weight = 1.0;
+	float sum = 0.0, weights = 0.0;
+	for (int i = 0; i < 40; i++)
+	{
+		if (i >= octaves)
+			break;
+		vec2  d    = Turn(dir, (fract(sin(iter) * 43758.5453) * 2.0 - 1.0) * 0.9);
+		float x    = dot(d, p) * freq - t * speed + shift;
+		float wave = exp(sin(x) - 1.0);
+		float dx   = wave * cos(x);
+		p       += d * (-dx) * weight * u_WaterOcean.z;
+		grad    += d * (dx * freq * weight);
+		sum     += wave * weight;
+		weights += weight;
+		weight   = mix(weight, 0.0, 0.2);
+		freq    *= 1.18;
+		speed   *= 1.07;
+		iter    += 1232.399963;
+	}
+	return vec3(sum, grad) / weights;
+}
+
 // The chop on the swell: noise as a height, in units, and its slope. Two
 // layers drift across each other, which reads as small waves running.
 vec2 Chop(vec2 p, vec2 dir, float t)
@@ -137,6 +180,22 @@ void main()
 	// The chop on them, fading with distance where it would only sparkle
 	float near  = 1.0 / (1.0 + dist / 1400.0);
 	vec2  slope = swell / (1.0 + dist / 6000.0) + Chop(p, dir, t) * (u_WaterSky.a * 2.5) * near;
+	// or the open sea's waves over the swell, in place of the chop: fewer of
+	// them further off, and flatter, where they would only sparkle
+	float crest = 0.5;
+	if (u_WaterOcean.x > 0.0)
+	{
+		float scale  = u_WaterOcean.x;
+		vec2  q      = p * scale;
+		float far    = dist * scale;
+		int   octs   = int(mix(u_WaterOcean.w, 6.0, clamp(far / 60.0, 0.0, 1.0)));
+		vec3  wave   = OceanWaves(q, dir, t, octs);
+		float h      = wave.x;
+		vec2  grad   = wave.yz * u_WaterOcean.y * scale;
+		grad *= 1.0 - 0.8 * min(1.0, sqrt(far * 0.01) * 1.1);
+		slope = swell / (1.0 + dist / 6000.0) + grad;
+		crest = h;
+	}
 
 	// and the ripples and wakes of what goes through it, and their foam
 	float rippleFoam = 0.0;
@@ -166,6 +225,19 @@ void main()
 	// What lies under it: how deep, and how much water the eye looks through
 	float fragLin   = LinearDepth(gl_FragCoord.z);
 	float behindLin = hasDepth ? LinearDepth(texture2D(u_ScreenDepthMap, screen).r) : fragLin + 4096.0;
+	// In front of the water, which it cannot be where the water is drawn: a
+	// model's edge, which the prepass covered a pixel further than the view
+	// did. Read as no water at all, it was surf, a bright dotted line round
+	// everything standing in front of water. The farthest beside it instead.
+	if (hasDepth && behindLin < fragLin)
+	{
+		behindLin = max(max(LinearDepth(texture2D(u_ScreenDepthMap, screen + vec2(r_FBufScale.x, 0.0)).r),
+		                    LinearDepth(texture2D(u_ScreenDepthMap, screen - vec2(r_FBufScale.x, 0.0)).r)),
+		                max(LinearDepth(texture2D(u_ScreenDepthMap, screen + vec2(0.0, r_FBufScale.y)).r),
+		                    LinearDepth(texture2D(u_ScreenDepthMap, screen - vec2(0.0, r_FBufScale.y)).r)));
+		if (behindLin < fragLin)
+			behindLin = fragLin + 64.0;
+	}
 	vec3  bottom    = u_ViewOrigin + toFrag * (behindLin / fragLin);
 	float depth     = below ? 4096.0 : max(var_Position.z - bottom.z, 0.0);
 
@@ -222,6 +294,10 @@ void main()
 	vec3  absorb  = vec3(1.0, 0.55, 0.45) * (2.3 / clarity) + blood * vec3(0.3, 1.6, 1.8) / clarity;
 	vec3  T       = exp(-absorb * through);
 	vec3  own     = mix(u_WaterColor.rgb, u_WaterBlood.rgb, clamp(blood * 0.9, 0.0, 1.0));
+	// the light the sea scatters back from inside it: more through the thin
+	// water of a crest than in a trough
+	if (u_WaterOcean.x > 0.0)
+		own *= 0.55 + 1.3 * crest;
 
 	vec3 under;
 	float alpha = 1.0;
@@ -238,16 +314,27 @@ void main()
 	// What it mirrors, more of it the flatter one looks across: the ray off
 	// the waves followed through the view's depth until it goes behind
 	// something, which is then what is seen in it (as on the wet sand,
-	// beach_fp.glsl); else the sky. The chop only breaks it up a little.
+	// beach_fp.glsl); else the sky, the map's box where the view has drawn
+	// it. The chop only breaks it up a little.
 	vec3  R      = reflect(-V, N);
 	float up     = clamp(R.z, 0.0, 1.0);
 	vec3  sky    = mix(u_WaterSky.rgb, u_WaterSky.rgb * vec3(0.78, 0.85, 0.94), sqrt(up));
+	if (u_CubeMapInfo.x > 0.0)
+		sky = mix(sky, textureCubeLod(u_CubeMap, R, 1.0).rgb, u_CubeMapInfo.x);
 	float cosV   = clamp(dot(N, V), 0.0, 1.0);
 	float fresnel = below ? 0.0 : 0.03 + 0.97 * pow(1.0 - cosV, 4.0);
 	fresnel = min(fresnel, 0.9);
 
 	vec3 mirror = sky;
-	if (hasDepth && hasView && fresnel > 0.05)
+	if (u_WaterReflect.x > 0.5 && !below && abs(dot(var_Position, u_WaterReflectPlane.xyz) - u_WaterReflectPlane.w) < 4.0)
+	{
+		// the view from under the surface: the spot of it over this one,
+		// moved as the waves turn the surface
+		vec4 clip = u_WaterReflectMvp * vec4(var_Position + vec3(-slope * 80.0, 0.0), 1.0);
+		vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
+		mirror    = texture2D(u_WaterReflectMap, at * u_WaterReflect.zw).rgb;
+	}
+	else if (hasDepth && hasView && fresnel > 0.05)
 	{
 		vec3  Rm      = reflect(-V, normalize(var_Normal + vec3(-slope * 0.6, 0.0)));
 		float stepLen = 8.0;

@@ -194,6 +194,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtShadowStatic",  GLSL_INT },
 	{ "u_RtShadowDynamic", GLSL_INT },
 	{ "u_RtSunShadow",     GLSL_INT },
+	{ "u_RtSunCascade",    GLSL_INT },
+	{ "u_RtSunCascadeMvp", GLSL_MAT16 },
 	{ "u_RtShadowBaked",   GLSL_INT },
 	{ "u_RtCapsules",      GLSL_INT },
 	{ "u_RtList",          GLSL_VEC4_RTLIST },
@@ -220,6 +222,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_WaterShore",      GLSL_VEC4 },
 	{ "u_WaterSky",        GLSL_VEC4 },
 	{ "u_WaterLook",       GLSL_VEC4 },
+	{ "u_WaterOcean",      GLSL_VEC4 },
 	{ "u_WaterBloodZone",  GLSL_VEC4 },
 	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS },
 	{ "u_BeachWet",        GLSL_VEC4 },
@@ -227,11 +230,16 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_WorldViewProjection", GLSL_MAT16 },
 	{ "u_WaterView",       GLSL_VEC4 },
 	{ "u_BeachSwash",      GLSL_VEC4 },
+	{ "u_BeachGround",     GLSL_VEC4 },
 	{ "u_RippleSim",       GLSL_VEC4 },
 	{ "u_RippleDecay",     GLSL_VEC4 },
 	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
 	{ "u_RippleFoam",      GLSL_VEC4_WATERSPOTS },
 	{ "u_WaterRipples",    GLSL_VEC4 },
+	{ "u_WaterReflect",    GLSL_VEC4 },
+	{ "u_WaterReflectPlane", GLSL_VEC4 },
+	{ "u_WaterReflectMvp", GLSL_MAT16 },
+	{ "u_WaterReflectMap", GLSL_INT },
 	{ "u_LensInfo",        GLSL_VEC4 },
 	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
 	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
@@ -356,6 +364,10 @@ static const char *rt_glsl =
 	"uniform sampler2DShadow u_RtShadowStatic;\n"
 	"uniform sampler2DShadow u_RtShadowDynamic;\n"
 	"uniform sampler2D u_RtSunShadow;\n"
+	// the sun's widest cascade, for particles: where they are, not behind
+	// them on the screen (a w of 0: none)
+	"uniform sampler2DShadow u_RtSunCascade;\n"
+	"uniform mat4 u_RtSunCascadeMvp;\n"
 	"uniform sampler2DShadow u_RtShadowBaked;\n"
 	// the sky (R_RtUpdateSky): each direction's projection, three rows, then
 	// the direction; its light, w the most world a texel covers (0: none)
@@ -635,8 +647,10 @@ static const char *rt_glsl =
 	"}\n"
 	"#else\n"
 	// dust or smoke at P, lit from every side as it hangs in the light, which
-	// it is not in the shadow maps of; sunUV is where it is on the screen, whose
-	// sun shadow (that of what is behind it) it takes
+	// it is not in the shadow maps of. Its sun shadow is the sun's widest
+	// cascade's at P; without one, the screen's at sunUV, where it is on the
+	// screen (that of what is behind it, which over water is the bottom, and
+	// changes as things pass behind: smoke flickered dark)
 	"vec3 RtLightParticle(vec3 P, vec2 sunUV, bool delta)\n"
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
@@ -679,7 +693,16 @@ static const char *rt_glsl =
 	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
 	"	{\n"
 	"		float vis = 1.0;\n"
-	"		if (u_RtSunColor.w > 0.5)\n"
+	"		vec4 sp = u_RtSunCascadeMvp * vec4(P, 1.0);\n"
+	"		if (u_RtSunColor.w > 0.5 && abs(sp.w) > 0.0)\n"
+	"		{\n"
+	"			if (all(lessThan(abs(sp.xyz), vec3(abs(sp.w)))))\n"
+	"			{\n"
+	"				sp.xyz = sp.xyz * (0.5 / sp.w) + vec3(0.5);\n"
+	"				vis = shadow2D(u_RtSunCascade, vec3(sp.xy, sp.z - 0.0005));\n"
+	"			}\n"
+	"		}\n"
+	"		else if (u_RtSunColor.w > 0.5)\n"
 	"			vis = texture2D(u_RtSunShadow, sunUV).r;\n"
 	"		sum += u_RtSunColor.rgb * vis;\n"
 	"	}\n"
@@ -1929,6 +1952,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
@@ -2057,6 +2081,7 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
@@ -2445,6 +2470,8 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_CUBEMAP, TB_CUBEMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_WATERREFLECTMAP, TB_SHADOWMAP);
 
 			GLSL_FinishGPUShader(&tr.waterShader);
 
@@ -2500,6 +2527,8 @@ void GLSL_InitGPUShaders(void)
 			GLSL_InitUniforms(&tr.beachShader[i]);
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
 			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_CUBEMAP, TB_CUBEMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SPECULARMAP, TB_SPECULARMAP);
 			GLSL_FinishGPUShader(&tr.beachShader[i]);
 			numEtcShaders++;
 		}
