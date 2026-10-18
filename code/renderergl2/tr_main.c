@@ -3295,7 +3295,14 @@ void R_AddSpriteSurf(surfaceType_t* surface, shader_t* shader, float zDistance)
 		zDistance = MAX_SPRITE_DIST_SQUARED;
 	}
 
-	index = tr.refdef.numSpriteSurfs % MAX_SPRITES;
+	// every view of the frame (the water reflection among them) adds its sprites after
+	// the last view's, so the list can outgrow MAX_SPRITES; wrapping the index left the
+	// view's range pointing at unwritten entries with no surface
+	if (tr.refdef.numSpriteSurfs >= MAX_SPRITESURFS) {
+		return;
+	}
+
+	index = tr.refdef.numSpriteSurfs;
     tr.refdef.spriteSurfs[index].sort = (int)(MAX_SPRITE_DIST_SQUARED - zDistance) | (shader->sortedIndex << QSORT_SHADERNUM_SHIFT);
     tr.refdef.spriteSurfs[index].surface = surface;
     tr.refdef.spriteSurfs[index].rtMask = RT_MASK_ALL;
