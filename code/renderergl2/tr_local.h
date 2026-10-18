@@ -1705,6 +1705,12 @@ typedef struct cStaticModelUnpacked_s {
     int rtCaster; // once moved, RT_CASTS_*
     uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
+
+    // Added in OPM
+    //  The map's light for it, a colour a vertex, is for another model than the
+    //  one loaded under its name (a remodelled prop, or a mod's): it is lit by
+    //  the light grid instead (RB_SurfaceStaticModel).
+    qboolean noVertexData;
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
