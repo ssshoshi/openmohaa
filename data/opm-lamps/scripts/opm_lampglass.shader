@@ -16,7 +16,7 @@ opm_ceilinglamp1_glass
 		map textures/models/lights/ceilinglamp1.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -34,7 +34,7 @@ opm_chandalier_glass
 		map textures/models/lights/chandalier.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -52,7 +52,7 @@ opm_fattablelamp_glass
 		map textures/models/lights/fattablelamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -70,7 +70,7 @@ opm_glasslamp_glass
 		map textures/models/lights/glasslamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -88,7 +88,7 @@ opm_hang3lamp_glass
 		map textures/models/lights/hang3lamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -106,7 +106,7 @@ opm_hang5lamp_glass
 		map textures/models/lights/hang5lamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -124,7 +124,7 @@ opm_hanglamp_glass
 		map textures/models/lights/hanglamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -142,7 +142,7 @@ opm_tablelamp_glass
 		map textures/models/lights/tablelamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -160,7 +160,7 @@ opm_tiffanylamp_glass
 		map textures/models/lights/tiffanyshade.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.34 0.15
+		rgbGen const 0.95 0.61 0.28
 	}
 }
 
@@ -178,7 +178,7 @@ opm_wallsconce_cutglass_glass
 		map textures/models/lights/wallsconce-cutglass.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -196,7 +196,7 @@ opm_wallsconce_frosted_glass
 		map textures/models/lights/wallsconce-frosted.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -214,7 +214,7 @@ opm_wallsconce_single_glass
 		map textures/models/lights/wallsconce-single.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -232,7 +232,7 @@ opm_lightbulb_covered_nowire_glass
 		map textures/models/lights/bulbcover_one.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -250,7 +250,7 @@ opm_lightbulb_covered_on_wire_glass
 		map textures/models/lights/bulbcover.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -268,7 +268,7 @@ opm_lightbulb_covered_on_wire_short_glass
 		map textures/models/lights/bulbcover.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -286,7 +286,7 @@ opm_lightpost_globe_glass
 		map textures/models/lights/globe.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -304,7 +304,7 @@ opm_lightpost_globe_winter_glass
 		map textures/models/lights/globe_winter.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -322,7 +322,7 @@ opm_lightpost_sidemounted_glass
 		map textures/models/lights/hanger.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -340,7 +340,7 @@ opm_lightpost_sidemounted_winter_glass
 		map textures/models/lights/hanger_snow.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -358,7 +358,7 @@ opm_lightpost_triple_glass
 		map textures/models/lights/support.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -376,7 +376,7 @@ opm_lightpost_tripler_winter_glass
 		map textures/models/lights/support_snow.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -394,7 +394,7 @@ opm_static_domelight_glass
 		map textures/models/bunker/lightbulb.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -412,7 +412,7 @@ opm_lightbulb_desertcage_glass
 		map textures/models/lights/desertlamp.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.55 0.44 0.30
+		rgbGen const 0.95 0.78 0.55
 	}
 }
 
@@ -562,7 +562,7 @@ opm_wallsconce_candle_glass
 		map textures/models/lights/wallsconce-candle.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.60 0.42 0.22
+		rgbGen const 0.95 0.68 0.36
 	}
 }
 
@@ -580,7 +580,7 @@ opm_swinging_lantern_glass
 		map textures/models/lights/glantern.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.60 0.42 0.22
+		rgbGen const 0.95 0.68 0.36
 	}
 }
 
@@ -598,6 +598,6 @@ opm_german_lantern_glass
 		map textures/models/lights/glantern.tga
 		blendFunc GL_ONE GL_ONE
 		alphaFunc GE128
-		rgbGen const 0.60 0.42 0.22
+		rgbGen const 0.95 0.68 0.36
 	}
 }

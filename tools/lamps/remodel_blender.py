@@ -133,6 +133,10 @@ def split_object(obj, faces, name):
         bmesh.ops.delete(bm, geom=drop, context="FACES")
         bm.to_mesh(o.data)
         bm.free()
+        # its LOD data names the vertexes of the whole surface: cut in two, it
+        # would pull these to others' places as the view moves away
+        for a in [a.name for a in o.data.attributes if a.name.startswith("mohaa_collapse")]:
+            o.data.attributes.remove(o.data.attributes[a])
     return new
 
 

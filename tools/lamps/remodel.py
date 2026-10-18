@@ -40,9 +40,9 @@ SHADERS = os.path.join(HERE, "..", "..", "data", "opm-lamps", "scripts", "opm_la
 
 # how each kind's glass glows, lit from inside: added over the lit glass
 GLOW = {
-    "shaded": (0.55, 0.44, 0.30),
-    "candle": (0.60, 0.42, 0.22),
-    "lantern": (0.60, 0.42, 0.22),
+    "shaded": (0.95, 0.78, 0.55),
+    "candle": (0.95, 0.68, 0.36),
+    "lantern": (0.95, 0.68, 0.36),
 }
 
 

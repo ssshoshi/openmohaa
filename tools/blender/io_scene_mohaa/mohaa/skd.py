@@ -280,7 +280,10 @@ def _surface_record(s):
         for bi, bw, off in v.weights:
             w.pack("if3f", bi, bw, *off)
     collapse = s.collapse if s.collapse and len(s.collapse) == nv else list(range(nv))
-    collapse_index = s.collapse_index if s.collapse_index and len(s.collapse_index) == nv else [0] * nv
+    # without LOD data of its own a surface is never reduced: the renderer drops
+    # the vertexes (and with its third, the whole surface) whose index is under
+    # the model's cutoff, which 0 always is past the nearest LOD
+    collapse_index = s.collapse_index if s.collapse_index and len(s.collapse_index) == nv else [32767] * nv
     ofs_collapse = w.tell()
     w.pack("%di" % nv, *collapse)
     ofs_collapse_index = w.tell()
