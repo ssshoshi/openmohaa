@@ -774,7 +774,18 @@ static qboolean R_RtIsWindowLight(const rtLight_t *l)
 		return qfalse;
 	}
 	if (R_RtSkyOverhead(l->origin)) {
-		// outdoors itself: a lamp post's, a searchlight's
+		// outdoors itself: a lamp post's, a searchlight's; unless it is in a
+		// window's outer face, shining in, a few steps from a roof
+		for (back = 16.0f; back <= 128.0f; back += 16.0f) {
+			VectorMA(l->origin, back, l->spotDir, p);
+			ri.CM_BoxTrace(&trace, l->origin, p, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			if (!trace.startsolid && trace.fraction < 1.0f) {
+				return qfalse;
+			}
+			if (!R_RtSkyOverhead(p)) {
+				return qtrue;
+			}
+		}
 		return qfalse;
 	}
 	// straight back, and a little to each side and up and down of it: a
