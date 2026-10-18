@@ -671,10 +671,12 @@ static const char *rt_glsl =
 	"		sum += RtSky(P, N);\n"
 	"	}\n"
 	// what the sun, the sky and the lamps light round it gives back
+	"#if defined(RT_BOUNCE)\n"
 	"	if (u_RtBounce.w > 0.5 && u_RtSurface.y > 1.5 && !delta)\n"
 	"		sum += u_RtBounce.rgb * texture2D(u_RtBounceMap, rt_skyLM).rgb;\n"
 	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
 	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
+	"#endif\n"
 	"	return sum;\n"
 	"}\n"
 	"#else\n"
@@ -945,6 +947,9 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
 		if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
 			Q_strcat(dest, size, va("#define RT_CAPSULES\n#define RT_MAX_RUN %d\n", RT_MAX_RUN));
+		// the bounce (R_RtBounce), only where it is on: its reads cost every lit pixel even off
+		if (R_RtBounceCompiled())
+			Q_strcat(dest, size, "#define RT_BOUNCE\n");
 		Q_strcat(dest, size, rt_glsl);
 	}
 

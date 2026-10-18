@@ -76,6 +76,12 @@ cvar_t *r_rtMovingLights;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 static cvar_t *r_rtBounce;
+static qboolean rt_bounceCompiled; // r_rtBounce was on when the shaders were built
+
+qboolean R_RtBounceCompiled(void)
+{
+	return rt_bounceCompiled;
+}
 static cvar_t *r_rtBounceRays;
 static cvar_t *r_rtBounceMsec;
 
@@ -263,7 +269,8 @@ void R_RtRegister(void)
 	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtLamps, "With r_realtimeLighting 2, the light comes from the lamps' bulbs (lights/lamps.txt): the map's lights in a room go to a lamp there, a lamp with none gets its own, and those no lamp sees cast no shadow. Applies when a map is loaded");
 	r_rtBounce = ri.Cvar_Get("r_rtBounce", "3", CVAR_ARCHIVE);
-	ri.Cvar_SetDescription(r_rtBounce, "With r_realtimeLighting 2, how strong the light the sun, the sky and the lamps put on what they reach is where it bounces onto the rest, worked out once a map (rtbounce/<map>.bnc): 1 as it would be, more for the eye that grows used to a room (0: none)");
+	rt_bounceCompiled = r_rtBounce->value > 0;
+	ri.Cvar_SetDescription(r_rtBounce, "With r_realtimeLighting 2, how strong the light the sun, the sky and the lamps put on what they reach is where it bounces onto the rest, worked out once a map (rtbounce/<map>.bnc): 1 as it would be, more for the eye that grows used to a room (0: none, and from 0 or to it needs vid_restart: the shaders are built with it or without)");
 	r_rtBounceRays = ri.Cvar_Get("r_rtBounceRays", "32", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtBounceRays, 4, 128, qtrue);
 	ri.Cvar_SetDescription(r_rtBounceRays, "The rays each texel of the bounce gathers its light by: more is smoother and slower to work out. Applies when a map is loaded");
@@ -2308,7 +2315,7 @@ static void R_RtBounceStep(float bake, float ease)
 	int start;
 
 	VectorClear4(tr.rtBounce);
-	if (!R_RtLitLive() || !r_rtBounce || r_rtBounce->value <= 0 || !tr.lightmaps || tr.numLightmaps <= 0 || !tr.lightmaps[0]) {
+	if (!R_RtLitLive() || !r_rtBounce || r_rtBounce->value <= 0 || !rt_bounceCompiled || !tr.lightmaps || tr.numLightmaps <= 0 || !tr.lightmaps[0]) {
 		return;
 	}
 	// the sky's lightmaps first, which say how much of the sky each sample sees
