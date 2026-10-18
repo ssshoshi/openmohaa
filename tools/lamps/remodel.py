@@ -4,6 +4,7 @@
     tools/lamps/remodel.py models/lights/hang5lamp.tik --work ~/lamps
     tools/lamps/remodel.py --all --work ~/lamps --pk3 ~/lamps/zzzzzzzzz-opm-lampmodels.pk3
     tools/lamps/remodel.py shaders          # data/opm-lamps/scripts/opm_lampglass.shader from lamps.txt
+    tools/lamps/remodel.py sheet --work ~/lamps out.png   # each one made, its frame red, glass green, bulbs yellow
 
 Each lamp in data/opm-lamps/lights/lamps.txt is taken from the player's
 paks, made again by remodel_blender.py (its glass a surface of its own,
@@ -70,6 +71,12 @@ def glass_shader(model, entry):
     kind = (entry.get("kind") or ["shaded"])[0]
     name = "opm_%s_glass" % lamp_name(model)
     color = entry.get("color")
+    if (entry.get("glassmode") or [""])[0] == "keep":
+        # its own painted glass (a Tiffany shade), drawn whole as lit from inside
+        return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap",
+                          "\t{", "\t\tmap %s" % image, "\t\talphaFunc GE128", "\t\tdepthWrite", "\t\trgbGen identity", "\t}",
+                          "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE", "\t\talphaFunc GE128",
+                          "\t\trgbGen const %.2f %.2f %.2f" % GLASS_EXTRA, "\t}", "}", ""])
     if "glass" in entry and kind != "bulb":
         # its own glass, wrapped round each shade (glass.py)
         glass.write(lamp_name(model), [float(x) for x in entry["glass"]])
@@ -86,6 +93,7 @@ def glass_shader(model, entry):
         if color:
             c = [float(x) for x in color]
             glow = tuple(g * x / max(c) for g, x in zip(glow, c))
+        extra = tuple(float(x) for x in entry["glow"]) if "glow" in entry else GLASS_EXTRA
         if "glass" in entry:
             # its own glass, lit from inside alike whichever way a face of it
             # turns: the texture whole (its shading is in it), and more over it.
@@ -94,7 +102,7 @@ def glass_shader(model, entry):
             return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap",
                               "\t{", "\t\tmap %s" % image, "\t\tdepthWrite", "\t\trgbGen identity", "\t}",
                               "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE",
-                              "\t\trgbGen const %.2f %.2f %.2f" % GLASS_EXTRA, "\t}", "}", ""])
+                              "\t\trgbGen const %.2f %.2f %.2f" % extra, "\t}", "}", ""])
         test = ["\t\talphaFunc GE128"]
         body = ["\t{", "\t\tmap %s" % image] + test + ["\t\tdepthWrite", "\t\trgbGen static", "\t}",
                 "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE"] + test + [
@@ -129,7 +137,11 @@ def remodel(model, entry, work, args):
         spec["bulbSize"] = float(entry["bulbSize"][0])
     if "glassThreshold" in entry:
         spec["glassThreshold"] = float(entry["glassThreshold"][0])
-    spec["rewrap"] = "glass" in entry and spec["kind"] != "bulb"
+    mode = (entry.get("glassmode") or ["none" if spec["kind"] == "candle" else "auto"])[0]
+    spec["glassMode"] = mode
+    if "glassreach" in entry:
+        spec["glassReach"] = float(entry["glassreach"][0])
+    spec["rewrap"] = "glass" in entry and spec["kind"] != "bulb" and mode != "keep"
     if "round" in entry:
         spec["round"] = entry["round"][0] != "0"
     spec_path = os.path.join(out, "spec.json")
@@ -155,7 +167,13 @@ def remodel(model, entry, work, args):
     for w in result["warnings"]:
         print("  warning:", w)
 
-    # the .skd, at the path the game loads it from
+    # the .skd, at the path the game loads it from; one the remodel did not
+    # change stays out (written again, its vertexes in another order, the
+    # map's colour for each would go to another)
+    counts = result["report"].get("counts", {})
+    if not any(name.startswith("opm_") for name in counts):
+        print("%s: unchanged, left out" % model)
+        return None
     skd = skd_path(model)
     made = os.path.join(out, "export", name, os.path.basename(skd))
     if not os.path.exists(made):
@@ -189,9 +207,59 @@ def cmd_build(args):
         print("wrote", args.pk3)
 
 
+def cmd_sheet(work, out):
+    """Each remodelled lamp in three views, its surfaces in flat colours: the
+    split to check by eye (a shade left in the frame shows red)."""
+    import numpy as np
+    from PIL import Image
+
+    def flat(rgb):
+        a = np.zeros((2, 2, 4))
+        a[...] = rgb + (1.0,)
+        return a
+
+    tiles = []
+    for model, entry in lamps.read_table().items():
+        skd = skd_path(model)
+        path = os.path.join(work, "out", *re.sub("/+", "/", skd).split("/")) if skd else ""
+        if not os.path.exists(path):
+            continue
+        t = lamps.parse_tiki(model)
+        channels = lamps.read_skc_frame0(lamps.read(t["anim"])) if t["anim"] and lamps.read(t["anim"]) else {}
+        bones, surfaces = lamps.read_skd(open(path, "rb").read())
+        posed = lamps.pose(bones, channels)
+        tris = []
+        for name, verts, faces in surfaces:
+            colour = flat((0.2, 0.8, 0.2)) if name.endswith("_glass") else \
+                flat((1.0, 0.9, 0.2)) if name in ("opm_bulb", "opm_flame") else flat((0.75, 0.15, 0.12))
+            pts = []
+            for weights, _uv in verts:
+                p = np.zeros(3)
+                for b, w, off in weights:
+                    rows, origin = posed[bones[b][0].lower()]
+                    p += w * (np.array(off) @ rows + origin)
+                pts.append(p * t["scale"])
+            for a, b, c in faces:
+                tris.append((pts[a], pts[b], pts[c], (0, 0), (0, 0), (0, 0), colour))
+        tiles.append(lamps.draw(model, tris, [], size=220))
+    w, h = tiles[0].size
+    sheet = Image.new("RGB", (w * 2, (len(tiles) + 1) // 2 * h))
+    for i, tile in enumerate(tiles):
+        sheet.paste(tile, ((i % 2) * w, (i // 2) * h))
+    sheet.save(out)
+    print("%d lamps -> %s" % (len(tiles), out))
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "shaders":
         return cmd_shaders(None)
+    if len(sys.argv) > 1 and sys.argv[1] == "sheet":
+        ap = argparse.ArgumentParser()
+        ap.add_argument("cmd")
+        ap.add_argument("out")
+        ap.add_argument("--work", required=True)
+        a = ap.parse_args()
+        return cmd_sheet(a.work, a.out)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("models", nargs="*")
     ap.add_argument("--all", action="store_true")

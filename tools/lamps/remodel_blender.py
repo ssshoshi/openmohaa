@@ -37,6 +37,15 @@ from io_scene_mohaa.importer import UNIT_METERS  # noqa: E402
 MAX_VERTS = 1000  # TIKI_MAX_VERTEXES, a surface
 
 
+def posed_game(arm, obj):
+    """Each vertex of obj where the game draws it, in the model's frame and
+    units, as lamps.txt gives its bulbs: posed by its bones (a lamp's first
+    frame moves and turns its one bone) and scaled by its TIKI. The armature's
+    space is the model's frame; Blender's world is turned from it."""
+    co, _t, _l = remaster.posed_geometry(arm, obj)
+    return co * float(arm.get("mohaa_scale", 1.0))
+
+
 def clear_scene():
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -72,38 +81,47 @@ def face_luma(me, image):
     return luma
 
 
-def glass_faces(me, luma, threshold=None, bulbs=()):
-    """The faces of the glass: the pieces of the mesh (its texture's islands)
-    mostly of the bright part of the texture. A shade is a piece of its own, its rim darker than its middle; the
-    frame's pieces are dark, a bright highlight here and there. A piece round a
-    bulb (its box holds one) is a shade too, however its texture is smeared,
-    unless it is the dark metal of a socket."""
-    area = np.array([p.area for p in me.polygons])
-    if not (area > 0).any():
-        return set()
-    if threshold is None:
-        threshold = max(0.5, 0.8 * float(np.percentile(luma[area > 0], 95)))
-
-    # pieces: the texture's islands (faces joined where their texture runs
-    # on across the edge). Joined by where their corners are, the shades on
-    # a chandelier's arms were one piece with the arms they touch.
+def glass_faces(obj, luma, bulbs, reach):
+    """The faces of the glass: the texture's islands (faces joined where their
+    texture runs on across the edge) at a bulb, unless they are dark metal
+    (a socket at the bulb). A shade, a globe, a lantern's panes
+    have their middle at their bulb; a lamp's base, its post, its arms do not,
+    however bright their texture (a cream vase, snow on a post). An island
+    mostly at the bulbs is glass whole (a lamp's shades share their texture,
+    one island, its middle between them); one partly there (a sconce's glass
+    and its wall plate in one) is taken face by face."""
     from bpy_extras import mesh_utils
-    pieces = {i: faces for i, faces in enumerate(mesh_utils.mesh_linked_uv_islands(me))}
+    me = obj.data
+    area = np.array([p.area for p in me.polygons])
+    posed = posed_game(arm_of(obj), obj)
+    centre = {p.index: posed[list(p.vertices)].mean(0) for p in me.polygons}
+    bulbs = [np.array(b) for b in bulbs]
+
+    def nearest(p):
+        return min((float(np.linalg.norm(p - b)) for b in bulbs), default=1e9)
 
     glass = set()
-    for faces in pieces.values():
+    for faces in mesh_utils.mesh_linked_uv_islands(me):
         total = sum(area[i] for i in faces)
         if total <= 0:
             continue
-        bright = sum(area[i] for i in faces if luma[i] >= threshold)
+        near = [i for i in faces if nearest(centre[i]) <= reach]
+        share = sum(area[i] for i in near) / total
         mean = sum(area[i] * luma[i] for i in faces) / total
-        co = np.array([me.vertices[vi].co[:] for i in faces for vi in me.polygons[i].vertices])
-        lo, hi = co.min(0), co.max(0)
-        pad = 0.02 * float(np.linalg.norm(hi - lo))
-        round_bulb = any(np.all(b >= lo - pad) and np.all(b <= hi + pad) for b in bulbs)
-        if bright / total > 0.5 or (round_bulb and mean > 0.3):
-            glass.update(faces)
+        if share >= 0.8:
+            # all of it at the bulbs (the shades of one lamp, sharing their texture)
+            if mean > 0.25:
+                glass.update(near)
+        elif share >= 0.3:
+            # glass and metal in one island: each face by itself, clearly bright.
+            # An island mostly away from the bulbs (an arm, its wire passing a
+            # shade) has none.
+            glass.update(i for i in near if luma[i] > 0.5)
     return glass
+
+
+def arm_of(obj):
+    return obj.parent if obj.parent is not None and obj.parent.type == "ARMATURE" else obj.find_armature()
 
 
 def split_object(obj, faces, name):
@@ -142,58 +160,76 @@ def named_material(base, shader):
     return mat
 
 
-def add_bulb(arm, frame_obj, at_world, radius, shape, shader):
-    """A bulb (an egg, its narrow end up) or a flame (a teardrop) at at_world, skinned like the frame."""
+def bulb_points(shape, radius):
+    """A bulb (an egg, its narrow end up) or a flame (a teardrop), in units round
+    its middle: its vertexes and faces."""
     bm = bmesh.new()
     if shape == "flame":
         bmesh.ops.create_uvsphere(bm, u_segments=8, v_segments=6, radius=1.0)
-        for v in bm.verts:
-            z = v.co.z
-            # a teardrop: narrow and drawn up above, round below
-            k = 1.0 - 0.75 * max(0.0, z)
-            v.co.x *= radius * k
-            v.co.y *= radius * k
-            v.co.z = z * radius * (2.6 if z > 0 else 1.2)
     else:
         bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=7, radius=1.0)
-        for v in bm.verts:
-            z = v.co.z
+    verts = []
+    for v in bm.verts:
+        x, y, z = v.co
+        if shape == "flame":
+            # narrow and drawn up above, round below
+            k = 1.0 - 0.75 * max(0.0, z)
+            verts.append((x * radius * k, y * radius * k, z * radius * (2.6 if z > 0 else 1.2)))
+        else:
             k = 1.0 - 0.3 * max(0.0, z)
-            v.co.x *= radius * k
-            v.co.y *= radius * k
-            v.co.z = z * radius * 1.3
-    me = bpy.data.meshes.new(shader)
-    bm.to_mesh(me)
+            verts.append((x * radius * k, y * radius * k, z * radius * 1.3))
+    faces = [[v.index for v in f.verts] for f in bm.faces]
     bm.free()
-    uv = me.uv_layers.new(name="UVMap")
-    for loop in uv.data:
-        loop.uv = (0.5, 0.5)
-    for p in me.polygons:
-        p.use_smooth = True
-    obj = bpy.data.objects.new(shader, me)
-    for coll in frame_obj.users_collection:
-        coll.objects.link(obj)
-    obj.parent = arm
-    obj.matrix_world = Matrix.Translation(at_world)
-    # the frame's bone, all of it
-    for g in frame_obj.vertex_groups:
-        obj.vertex_groups.new(name=g.name)
+    return np.array(verts), faces
+
+
+def add_bulbs(arm, frame_obj, bulbs, radius, shape, shader):
+    """A bulb or a flame at each of bulbs (lamps.txt: the model's frame, as the
+    game draws it), a surface of their own cut out of the frame, so that they
+    are skinned as the frame is. Where they go in the frame's own space is
+    fitted from the frame's vertexes, posed (the game's) and not (Blender's):
+    an object of their own, placed through the bone, came out at the
+    armature's scale on lamps whose bone rests turned."""
+    me = frame_obj.data
+    rest = np.array([v.co[:] for v in me.vertices])
+    posed = posed_game(arm, frame_obj)
+    # rest = [posed 1] @ M
+    a = np.concatenate([posed, np.ones((len(posed), 1))], 1)
+    m, *_ = np.linalg.lstsq(a, rest, rcond=None)
+
     weights = {}
-    for v in frame_obj.data.vertices:
+    for v in me.vertices:
         for ge in v.groups:
             weights[ge.group] = weights.get(ge.group, 0.0) + ge.weight
-    if weights:
-        main = max(weights, key=weights.get)
-        obj.vertex_groups[frame_obj.vertex_groups[main].name].add(list(range(len(me.vertices))), 1.0, "REPLACE")
-    mod = obj.modifiers.new("Armature", "ARMATURE")
-    mod.object = arm
-    for key in ("mohaa_skd", "mohaa_flags"):
-        if key in frame_obj:
-            obj[key] = frame_obj[key]
+    group = max(weights, key=weights.get) if weights else None
+
+    pts, faces = bulb_points(shape, radius)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    deform = bm.verts.layers.deform.verify()
+    uv = bm.loops.layers.uv.active or bm.loops.layers.uv.new()
+    first_face = len(bm.faces)
+    for b in bulbs:
+        game = pts + np.array(b)
+        local = np.concatenate([game, np.ones((len(game), 1))], 1) @ m
+        new = [bm.verts.new(tuple(c)) for c in local]
+        for v in new:
+            if group is not None:
+                v[deform][group] = 1.0
+        for f in faces:
+            face = bm.faces.new([new[i] for i in f])
+            face.smooth = True
+            for loop in face.loops:
+                loop[uv].uv = (0.5, 0.5)
+    bm.faces.ensure_lookup_table()
+    added = set(range(first_face, len(bm.faces)))
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+    obj = split_object(frame_obj, added, shader)
     obj["mohaa_surface"] = shader
-    # one material for all of them, so that joined they are one surface
-    mat = bpy.data.materials.get(shader) or named_material(None, shader)
-    me.materials.append(mat)
+    obj.data.materials.clear()
+    obj.data.materials.append(bpy.data.materials.get(shader) or named_material(None, shader))
     return obj
 
 
@@ -204,7 +240,7 @@ def rewrap(obj):
     and its neck at the top."""
     me = obj.data
     uv = me.uv_layers.active.data
-    co = np.array([obj.matrix_world @ v.co for v in me.vertices])
+    co = posed_game(arm_of(obj), obj)
     parent = list(range(len(me.vertices)))
 
     def root(i):
@@ -267,24 +303,38 @@ def main():
     name = lamp_name(spec["model"])
     glass_shader = "opm_%s_glass" % name
 
-    # the glass, out of whichever surface has it
+    # the glass, out of whichever surface has it: a surface named for it
+    # whole, else the islands at the bulbs
+    unit = arm.get("mohaa_unit", UNIT_METERS)
+    bulbs = spec.get("bulb", [])
+    reach = float(spec.get("glassReach", 10.0))
+    mode = spec.get("glassMode", "auto")
     glass_objs = []
+
+    def named(o):
+        n = o.get("mohaa_surface", o.name).lower()
+        # named for its glass (glass, glanternglass); not a model named for it (glasslamp, wallsconce-cutglass)
+        return (n.endswith("glass") and n != arm.name.lower().replace("_", "-")
+                and not spec["model"].lower().endswith(n + ".tik")) or n == "lightbulb"
+    by_name = any(named(o) for o in meshes)
     for obj in meshes:
         mat = obj.data.materials[0] if obj.data.materials else None
         image = image_array(mat)
-        if image is None or spec.get("kind") == "off":
+        if mode == "none" or spec.get("kind") == "off":
             continue
-        # the bulbs where the mesh is, in its object's own space
-        to_local = obj.matrix_world.inverted()
-        unit = arm.get("mohaa_unit", UNIT_METERS)
-        bulbs = [np.array((to_local @ (Vector(b) * unit))[:]) for b in spec.get("bulb", [])]
-        faces = glass_faces(obj.data, face_luma(obj.data, image), spec.get("glassThreshold"), bulbs)
-        report.setdefault("surfaces", {})[obj.get("mohaa_surface", obj.name)] = {
-            "faces": len(obj.data.polygons), "glass": len(faces)}
+        surface = obj.get("mohaa_surface", obj.name).lower()
+        if named(obj):
+            faces = set(range(len(obj.data.polygons)))
+        elif by_name or image is None:
+            # the model names its glass: the rest is not
+            continue
+            continue
+        else:
+            faces = glass_faces(obj, face_luma(obj.data, image), bulbs, reach)
+        report.setdefault("surfaces", {})[surface] = {"faces": len(obj.data.polygons), "glass": len(faces)}
         if not faces:
             continue
         if len(faces) == len(obj.data.polygons):
-            # all of it is glass (a bare bulb): the surface itself becomes the glass
             glass = obj
         else:
             glass = split_object(obj, faces, glass_shader)
@@ -292,6 +342,15 @@ def main():
         glass.data.materials.clear()
         glass.data.materials.append(named_material(mat, glass_shader))
         glass_objs.append(glass)
+    # the glass of a lamp's several surfaces is one surface
+    if len(glass_objs) > 1:
+        bpy.ops.object.select_all(action="DESELECT")
+        for o in glass_objs:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = glass_objs[0]
+        bpy.ops.object.join()
+        glass_objs = [glass_objs[0]]
+    report["glass"] = sum(len(o.data.polygons) for o in glass_objs)
 
     # rounded, where there is room for it
     rounded = []
@@ -315,20 +374,12 @@ def main():
 
     # a bulb at each of its bulbs: lamps.txt gives them in the model's frame,
     # its TIKI scale in them; Blender's world is that times its unit
-    frame = next((o for o in bpy.data.objects if o.type == "MESH" and not o.get("mohaa_surface", "").startswith("opm_")), None)
+    frame = next((o for o in bpy.data.objects if o.type == "MESH" and not o.get("mohaa_surface", "").startswith("opm_")), None) \
+        or next((o for o in bpy.data.objects if o.type == "MESH"), None)
     shape = "flame" if spec.get("kind") in ("candle", "lantern") else "bulb"
     if spec.get("kind") not in ("bulb", "off") and frame is not None:
-        unit = arm.get("mohaa_unit", UNIT_METERS)
-        radius = float(spec.get("bulbSize", 0.45 if shape == "flame" else 1.4)) * unit
-        objs = [add_bulb(arm, frame, Vector(b) * unit, radius, shape, "opm_flame" if shape == "flame" else "opm_bulb")
-                for b in spec.get("bulb", [])]
-        if len(objs) > 1:
-            # one surface for them all
-            bpy.ops.object.select_all(action="DESELECT")
-            for o in objs:
-                o.select_set(True)
-            bpy.context.view_layer.objects.active = objs[0]
-            bpy.ops.object.join()
+        radius = float(spec.get("bulbSize", 0.9 if shape == "flame" else 1.4))
+        add_bulbs(arm, frame, spec.get("bulb", []), radius, shape, "opm_flame" if shape == "flame" else "opm_bulb")
         report["bulbs"] = len(spec.get("bulb", []))
 
     # the .skd alone: the game's .tik names the frame's shader, the new

@@ -46,7 +46,7 @@ opm_fattablelamp_glass
 	{
 		map textures/opm/lamps/fattablelamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.35 0.33 0.30
+		rgbGen const 0.12 0.10 0.07
 	}
 }
 
@@ -62,7 +62,7 @@ opm_glasslamp_glass
 	{
 		map textures/opm/lamps/glasslamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.35 0.33 0.30
+		rgbGen const 0.20 0.18 0.15
 	}
 }
 
@@ -126,7 +126,7 @@ opm_tablelamp_glass
 	{
 		map textures/opm/lamps/tablelamp_glass.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.35 0.33 0.30
+		rgbGen const 0.12 0.10 0.07
 	}
 }
 
@@ -135,13 +135,15 @@ opm_tiffanylamp_glass
 	cull none
 	surfaceparm nolightmap
 	{
-		map textures/opm/lamps/tiffanylamp_glass.tga
+		map textures/models/lights/tiffanyshade.tga
+		alphaFunc GE128
 		depthWrite
 		rgbGen identity
 	}
 	{
-		map textures/opm/lamps/tiffanylamp_glass.tga
+		map textures/models/lights/tiffanyshade.tga
 		blendFunc GL_ONE GL_ONE
+		alphaFunc GE128
 		rgbGen const 0.35 0.33 0.30
 	}
 }
