@@ -1320,7 +1320,8 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_REACH   2048.0f
 #define RT_BOUNCE_HASH    32.0f  // the size of the hash's cells
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 1
+#define RT_BOUNCE_VERSION 2
+#define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
 
 enum {
 	RT_BOUNCE_IDLE,
@@ -1637,27 +1638,28 @@ static void R_RtBounceSamples(void)
 	}
 }
 
-// What the lights, the sun and the sky put on a sample straight, raw
-static void R_RtBounceDirect(rtBounceSample_t *s)
+// What the lights, the sun and the sky put straight on a point facing
+// normal, which sees sky of the sky, raw
+static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out)
 {
 	trace_t trace;
 	vec3_t  zero = {0, 0, 0}, from, to;
 	int     i;
 
-	VectorMA(s->xyz, 2.0f, s->normal, from);
-	VectorClear(s->direct);
+	VectorMA(xyz, 2.0f, normal, from);
+	VectorClear(out);
 	if (rt.sun) {
-		const float ndl = DotProduct(s->normal, rt.sunDir);
+		const float ndl = DotProduct(normal, rt.sunDir);
 
 		if (ndl > 0) {
 			VectorMA(from, 16384.0f, rt.sunDir, to);
 			ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
 			if (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) {
-				VectorMA(s->direct, ndl, rt.sunColor, s->direct);
+				VectorMA(out, ndl, rt.sunColor, out);
 			}
 		}
 	}
-	VectorMA(s->direct, s->sky * Q_max(0.0f, r_rtSky->value), rt.skyColor, s->direct);
+	VectorMA(out, sky * Q_max(0.0f, r_rtSky->value), rt.skyColor, out);
 
 	for (i = 0; i < rt.numLights; i++) {
 		const rtLight_t *l = &rt.lights[i];
@@ -1667,13 +1669,13 @@ static void R_RtBounceDirect(rtBounceSample_t *s)
 		if (l->range <= 0) {
 			continue;
 		}
-		VectorSubtract(l->origin, s->xyz, toLight);
+		VectorSubtract(l->origin, xyz, toLight);
 		d2 = DotProduct(toLight, toLight);
 		if (d2 >= Square(l->range)) {
 			continue;
 		}
 		d   = sqrt(d2);
-		ndl = DotProduct(s->normal, toLight) / Q_max(d, 1e-3f);
+		ndl = DotProduct(normal, toLight) / Q_max(d, 1e-3f);
 		if (ndl <= 0) {
 			continue;
 		}
@@ -1700,8 +1702,30 @@ static void R_RtBounceDirect(rtBounceSample_t *s)
 				continue;
 			}
 		}
-		VectorMA(s->direct, att * r_rtScale->value, l->color, s->direct);
+		VectorMA(out, att * r_rtScale->value, l->color, out);
 	}
+}
+
+static void R_RtBounceDirect(rtBounceSample_t *s)
+{
+	R_RtBounceDirectAt(s->xyz, s->normal, s->sky, s->direct);
+}
+
+// A point no sample is near (a model, a door): how much of the sky is over
+// it, by a ray up the way it faces
+static float R_RtBounceSkyAt(const vec3_t xyz, const vec3_t normal)
+{
+	trace_t trace;
+	vec3_t  zero = {0, 0, 0}, from, dir, to;
+
+	VectorSet(dir, normal[0], normal[1], normal[2] + 1.0f);
+	if (VectorNormalize(dir) <= 0) {
+		return 0;
+	}
+	VectorMA(xyz, 2.0f, normal, from);
+	VectorMA(from, 16384.0f, dir, to);
+	ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	return (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) ? 0.5f * dir[2] : 0.0f;
 }
 
 // What bounces onto a sample once: rays over the half of the world it faces
@@ -1744,6 +1768,12 @@ static void R_RtBounceGather(int index)
 		}
 		hit = R_RtBounceNearest(trace.endpos, trace.plane.normal);
 		if (hit < 0) {
+			// no sample there (what is not lightmapped): its light where it
+			// was hit, a middling colour; once, not again for the second bounce
+			vec3_t given;
+
+			R_RtBounceDirectAt(trace.endpos, trace.plane.normal, R_RtBounceSkyAt(trace.endpos, trace.plane.normal), given);
+			VectorMA(s->first, RT_BOUNCE_ALBEDO / rt_bounce.rays, given, s->first);
 			rt_bounce.misses++;
 			continue;
 		}
