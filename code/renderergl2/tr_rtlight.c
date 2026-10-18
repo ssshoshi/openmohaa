@@ -3759,7 +3759,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 		data = &tr.rtLightData[tr.rtNumActive * RT_LIGHT_VEC4S];
 		VectorCopy(l->origin, data[0]);
-		data[0][3] = l->spot ? 1.0f : 0.0f;
+		// its kind: 0 a point light, 1 a spot light, 3 a lamp's (its shade and glow in data[2])
+		data[0][3] = l->spot ? 1.0f : l->lamp ? 3.0f : 0.0f;
 		// eased as it is lit: smoothstep; a flame dips and comes back
 		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight) * R_RtFlicker(l, fd->time), data[1]);
 		data[1][3] = l->range;
