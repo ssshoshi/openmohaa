@@ -582,11 +582,14 @@ static const char *rt_glsl =
 	// the compiler's point light: intensity * 7500 / distance squared, never
 	// nearer than 16; a lamp's, never nearer than the glow of its shade
 	// (l2.w, which a spot light's cone has), and less the way its shade
-	// closes it off (l2.xyz, as long as the part it stops there)
+	// closes it off (l2.xyz, as long as the part it stops there): a shade
+	// stops what leaves past its rim, so a little over square to it all of it
+	// is stopped (a bell shade's ceiling, near and far)
 	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"		float near = l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0;\n"
 	"		float att  = ndl * fade * fade / max(d2, near);\n"
-	"		if (l0.w < 0.5) att *= 1.0 - clamp(dot(toLight, -l2.xyz) / d, 0.0, 1.0);\n"
+	"		float shut = length(l2.xyz);\n"
+	"		if (l0.w < 0.5 && shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
 	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
 	// flash, a blast): never shadowed, and on top of the map's lighting always
 	"		bool added = l0.w > 1.5;\n"
@@ -673,7 +676,8 @@ static const char *rt_glsl =
 	"		float fade = 1.0 - d2 / r2;\n"
 	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"		float att  = fade * fade / max(d2, l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0);\n"
-	"		if (l0.w < 0.5) att *= 1.0 - clamp(dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)), 0.0, 1.0);\n"
+	"		float shut = length(l2.xyz);\n"
+	"		if (l0.w < 0.5 && shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);\n"
 	"		bool added = l0.w > 1.5;\n"
 	"		if (l0.w > 0.5 && !added)\n"
 	"		{\n"
