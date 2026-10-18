@@ -137,8 +137,12 @@ vec3 WetSky(vec3 N, vec3 E, float roughness, vec3 specular, vec3 light)
 	vec3  sky = u_WetSky.rgb * mix(0.12, 1.0, smoothstep(-0.15, 0.35, R.z));
 	vec3  F   = specular + (max(vec3(1.0 - roughness), specular) - specular) * pow(1.0 - NE, 5.0);
 	float sees = clamp(dot(light, vec3(0.2125, 0.7154, 0.0721)) * 1.6, 0.25, 1.0);
+	// seen edge on, the film's own ripples hide what it gives back: at a
+	// model's outline, where its normal turns from the eye, the most of it
+	// was a bright line a pixel wide (a Higgins boat's side)
+	float edge = smoothstep(0.0, 0.25, dot(N, E));
 
-	return sky * F * sees * (1.0 - roughness);
+	return sky * F * sees * (1.0 - roughness) * edge;
 }
 
 #if defined(USE_RTLIGHT)

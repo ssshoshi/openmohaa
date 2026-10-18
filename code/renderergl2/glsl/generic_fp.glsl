@@ -76,7 +76,17 @@ void main()
 		// lit by its colour, worked out at run time without the lights
 		rgb = color.rgb * (var_Color.rgb + rtLight);
 	}
-	else if (u_RtStage == RT_STAGE_LIT_BAKED || u_RtStage == RT_STAGE_PARTICLE)
+	else if (u_RtStage == RT_STAGE_PARTICLE)
+	{
+		// Dust, smoke and spray keep their own colour (their effect's, or the
+		// grid's light where they are), and the live lights add to it, a
+		// blast's flash brightening them by no more than so much of it. With
+		// all of the light live they were the ambient and the sun at them
+		// instead, dark under an overcast (m3l1a), and a blast's light near
+		// them whited them out a moment.
+		rgb = color.rgb * RtDelta(var_Color.rgb, min(rtLight, var_Color.rgb * 0.75));
+	}
+	else if (u_RtStage == RT_STAGE_LIT_BAKED)
 	{
 		// lit by a colour the map baked: all of it live, the ambient stands in
 		vec3 base = u_RtParams.y > 1.5 ? u_RtAmbient.rgb : var_Color.rgb;

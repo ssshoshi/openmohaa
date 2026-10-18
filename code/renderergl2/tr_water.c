@@ -45,14 +45,20 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //     bloodReach 200 600      // all of it out to the first distance from the shore, none past the second
 //     bloodDepth 30 120       // or with no shore line: all of it down to the first depth, none past the second
 //     bloodClouds 0.6         // 0 spread evenly, 1 all in clouds
-//     sky 0.5 0.55 0.6        // the sky it mirrors (else the fog's colour)
+//     sky 0.5 0.55 0.6        // the sky it mirrors where there is no sky box (else the fog's colour)
+//     skyBox 1                // how much of the map's sky box it mirrors, once the view has drawn it: 0 none
 //     chop 1  foam 1  refraction 0.03  glints 1
+//     ocean 190 12 0.38 32    // the open sea's waves in place of the chop: their scale (units; the
+//                             // longest is 6.3 of it), height, drag (how they gather into crests), octaves
 //
 // And where the map has a beach the tide is going out from (it needs `shore`):
 //
 //     beach 900 -440          // the sand is wet this far inland of the shore line, and up to this height
 //     puddles 0.3 90          // water stands in its hollows: how much of it, and how big they are
 //     swash 160               // how far up the sand a wave runs, at most, from the shore line
+//     remapShader textures/a textures/b // draw the first as the second on this map (up to 4)
+//     beachSurface textures/sand  // the beach is the ground of this shader alone (up to 4 of these
+//                             // lines): not the sand under the water, nor what stands on it
 //
 // The beach is drawn over the opaque view from its depth (RB_BeachDraw,
 // glsl/beach_*.glsl): wet sand darker with the sky in it, the puddles, and the
@@ -69,6 +75,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 cvar_t        *r_water;
 cvar_t        *r_waterRipples;
 cvar_t        *r_waterWet;
+cvar_t        *r_waterReflect;
 static cvar_t *r_waterBlood;
 
 typedef struct {
@@ -84,11 +91,17 @@ typedef struct {
     float  bloodClouds;
     vec3_t sky;
     qboolean skySet;
+    float  skyBox;
     float  chop, foam, refraction, glints;
+    vec4_t ocean; // the open sea's waves: their scale (units), height, drag, octaves; 0: the chop
     qboolean beachSet;
     float  beachReach, beachTop;
     float  puddles, puddleSize;
     float  swash;
+    char   beachSurfaces[4][MAX_QPATH];
+    int    numBeachSurfaces;
+    char   remaps[4][2][MAX_QPATH]; // shaders drawn as others on this map
+    int    numRemaps;
     char   file[MAX_QPATH];
     qboolean fromFile;
 } waterParams_t;
@@ -130,6 +143,8 @@ void R_WaterRegisterCvars(void)
     r_waterBlood = ri.Cvar_Get("r_waterBlood", "1", CVAR_ARCHIVE);
     r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterWet = ri.Cvar_Get("r_waterWet", "1", CVAR_ARCHIVE);
+    r_waterReflect = ri.Cvar_Get("r_waterReflect", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_waterReflect, "Water mirrors the world from under its surface, a second view drawn first: 0 only what is on the screen, 1 at half the screen's size, 2 at all of it (the size needs vid_restart), 3 as 1 and shows it in a corner");
     ri.Cvar_SetDescription(r_waterWet, "What stands in the water or on a beach below the tide's mark looks wet: darker, glossy, with the sky in it");
     ri.Cvar_SetDescription(r_waterRipples, "Ripples and wakes on water from men wading, boats, bullets and things falling in (needs vid_restart)");
     ri.Cvar_SetDescription(r_water, "Draws water with the water program: waves, reflection, depth, surf (needs vid_restart)");
@@ -151,6 +166,7 @@ static void R_WaterDefaults(void)
     water.reachFar    = 600.0f;
     water.bloodClouds = 0.6f;
     VectorSet(water.sky, 0.5f, 0.55f, 0.6f);
+    water.skyBox     = 1.0f;
     water.chop       = 1.0f;
     water.foam       = 1.0f;
     water.refraction = 0.03f;
@@ -203,7 +219,7 @@ void RE_AddWaterRipples(const float *in, int num)
     }
 }
 
-void R_WaterLoadWorld(const char *mapName)
+static void R_WaterReadFile(const char *mapName)
 {
     union {
         char *c;
@@ -264,6 +280,12 @@ void R_WaterLoadWorld(const char *mapName)
             R_WaterNumbers(&text, &water.bloodClouds, 1);
         } else if (!Q_stricmp(key, "sky")) {
             water.skySet = R_WaterNumbers(&text, water.sky, 3) == 3;
+        } else if (!Q_stricmp(key, "skyBox")) {
+            R_WaterNumbers(&text, &water.skyBox, 1);
+        } else if (!Q_stricmp(key, "ocean")) {
+            if (R_WaterNumbers(&text, v, 4) == 4) {
+                VectorSet4(water.ocean, Q_max(v[0], 1.0f), v[1], v[2], Com_Clamp(4.0f, 40.0f, v[3]));
+            }
         } else if (!Q_stricmp(key, "chop")) {
             R_WaterNumbers(&text, &water.chop, 1);
         } else if (!Q_stricmp(key, "foam")) {
@@ -278,6 +300,22 @@ void R_WaterLoadWorld(const char *mapName)
                 water.beachReach = Q_max(v[0], 1.0f);
                 water.beachTop   = v[1];
             }
+        } else if (!Q_stricmp(key, "remapShader")) {
+            char from[MAX_QPATH];
+
+            token = COM_ParseExt(&text, qfalse);
+            Q_strncpyz(from, token, sizeof(from));
+            token = COM_ParseExt(&text, qfalse);
+            if (from[0] && token[0] && water.numRemaps < 4) {
+                Q_strncpyz(water.remaps[water.numRemaps][0], from, MAX_QPATH);
+                Q_strncpyz(water.remaps[water.numRemaps][1], token, MAX_QPATH);
+                water.numRemaps++;
+            }
+        } else if (!Q_stricmp(key, "beachSurface")) {
+            token = COM_ParseExt(&text, qfalse);
+            if (token[0] && water.numBeachSurfaces < 4) {
+                Q_strncpyz(water.beachSurfaces[water.numBeachSurfaces++], token, MAX_QPATH);
+            }
         } else if (!Q_stricmp(key, "swash")) {
             R_WaterNumbers(&text, &water.swash, 1);
         } else if (!Q_stricmp(key, "puddles")) {
@@ -291,6 +329,410 @@ void R_WaterLoadWorld(const char *mapName)
     }
 
     ri.FS_FreeFile(buffer.v);
+}
+
+/*
+===============
+R_WaterBuildSky
+
+The sky box water mirrors: the six sides of the world's sky shader resampled
+into one cubemap (tr.waterSkyImage) that a direction in the world looks up
+as it is, each texel taken from the side and the spot of it that the box
+(tr_sky.c, MakeSkyVec) draws in that direction. Built when the map loads, if
+the map has water or a beach to mirror it, and used once a view has drawn
+the box (RB_WaterSawSky): a map whose far plane hides its sky mirrors the
+fog's colour as it shows it.
+===============
+*/
+#define WATER_SKY_SIZE 256
+
+static const shader_t *waterSkyShader; // the sky the cubemap holds
+static qboolean        waterSkySeen;   // and a view of this map drew it
+
+// The same as tr_sky.c's: for each of the box's sides, which of the world's
+// axes its s, t and out are (1 x, 2 y, 3 z, negative the other way), and
+// which image of the shader that side shows
+static const int waterSkyStToVec[6][3] = {
+    {3, -1, 2}, {-3, 1, 2}, {1, 3, 2}, {-1, -3, 2}, {-2, -1, 3}, {2, -1, -3}
+};
+static const int waterSkyTexOrder[6] = {0, 2, 1, 3, 4, 5};
+
+// One side of the box: an image's pixels, bilinearly
+static void R_WaterSkySample(const byte *pic, int width, int height, float u, float v, byte *out)
+{
+    float x = u * width - 0.5f, y = v * height - 0.5f;
+    int   x0, y0, x1, y1, c;
+    float fx, fy;
+
+    x  = Com_Clamp(0.0f, width - 1.0f, x);
+    y  = Com_Clamp(0.0f, height - 1.0f, y);
+    x0 = (int)x;
+    y0 = (int)y;
+    x1 = Q_min(x0 + 1, width - 1);
+    y1 = Q_min(y0 + 1, height - 1);
+    fx = x - x0;
+    fy = y - y0;
+
+    for (c = 0; c < 3; c++) {
+        const float top    = pic[(y0 * width + x0) * 4 + c] * (1.0f - fx) + pic[(y0 * width + x1) * 4 + c] * fx;
+        const float bottom = pic[(y1 * width + x0) * 4 + c] * (1.0f - fx) + pic[(y1 * width + x1) * 4 + c] * fx;
+
+        out[c] = (byte)(top * (1.0f - fy) + bottom * fy + 0.5f);
+    }
+    out[3] = 255;
+}
+
+static const shader_t *R_WaterWorldSky(qboolean *hasWater)
+{
+    const shader_t *sky = NULL;
+    int             i;
+
+    *hasWater = qfalse;
+    for (i = 0; i < tr.world->numsurfaces; i++) {
+        const shader_t *sh = tr.world->surfaces[i].shader;
+
+        if (!sh) {
+            continue;
+        }
+        if (sh->waterImage) {
+            *hasWater = qtrue;
+        }
+        if (!sky && sh->isSky && sh->sky.outerbox[0] && sh->sky.outerbox[0] != tr.defaultImage) {
+            sky = sh;
+        }
+    }
+    return sky;
+}
+
+static void R_WaterBuildSky(void)
+{
+    const shader_t *sh;
+    qboolean        hasWater;
+    byte           *pics[6];
+    int             widths[6], heights[6];
+    byte           *faces;
+    int             average[3] = {0, 0, 0}, loaded = 0;
+    int             face, side, i;
+
+    waterSkyShader = NULL;
+    waterSkySeen   = qfalse;
+
+    if (!tr.world || !glRefConfig.framebufferObject || !tr.waterShader.program) {
+        return;
+    }
+    sh = R_WaterWorldSky(&hasWater);
+    if (!sh || (!hasWater && !water.beachSet)) {
+        return;
+    }
+
+    for (side = 0; side < 6; side++) {
+        GLenum format;
+
+        pics[side] = NULL;
+        if (sh->sky.outerbox[side] && sh->sky.outerbox[side] != tr.defaultImage) {
+            R_LoadImageUncompressed(sh->sky.outerbox[side]->imgName, &pics[side], &widths[side], &heights[side], &format);
+            if (pics[side] && (format != GL_RGBA8 || widths[side] <= 0 || heights[side] <= 0)) {
+                ri.Free(pics[side]);
+                pics[side] = NULL;
+            }
+        }
+        if (!pics[side]) {
+            continue;
+        }
+
+        // as the sky's own images are uploaded (Upload32)
+        R_LightScaleTexture(pics[side], widths[side], heights[side], qfalse);
+        for (i = 0; i < widths[side] * heights[side]; i += 61) {
+            average[0] += pics[side][i * 4 + 0];
+            average[1] += pics[side][i * 4 + 1];
+            average[2] += pics[side][i * 4 + 2];
+            loaded++;
+        }
+    }
+    if (!loaded) {
+        return;
+    }
+
+    faces = ri.Hunk_AllocateTempMemory(WATER_SKY_SIZE * WATER_SKY_SIZE * 4 * 6);
+
+    // GL's cube sides, in its order (+x -x +y -y +z -z), each texel the
+    // direction GL looks it up in
+    for (face = 0; face < 6; face++) {
+        byte *out = faces + face * WATER_SKY_SIZE * WATER_SKY_SIZE * 4;
+        int   x, y;
+
+        for (y = 0; y < WATER_SKY_SIZE; y++) {
+            for (x = 0; x < WATER_SKY_SIZE; x++, out += 4) {
+                const float sc = 2.0f * (x + 0.5f) / WATER_SKY_SIZE - 1.0f;
+                const float tc = 2.0f * (y + 0.5f) / WATER_SKY_SIZE - 1.0f;
+                vec3_t      dir, b;
+                int         axis, image, j;
+
+                switch (face) {
+                case 0: VectorSet(dir, 1.0f, -tc, -sc); break;
+                case 1: VectorSet(dir, -1.0f, -tc, sc); break;
+                case 2: VectorSet(dir, sc, 1.0f, tc); break;
+                case 3: VectorSet(dir, sc, -1.0f, -tc); break;
+                case 4: VectorSet(dir, sc, -tc, 1.0f); break;
+                default: VectorSet(dir, -sc, -tc, -1.0f); break;
+                }
+
+                // the box's side that way (AddSkyPolygon), and where on it
+                if (fabs(dir[0]) > fabs(dir[1]) && fabs(dir[0]) > fabs(dir[2])) {
+                    axis = dir[0] < 0 ? 1 : 0;
+                } else if (fabs(dir[1]) > fabs(dir[2]) && fabs(dir[1]) > fabs(dir[0])) {
+                    axis = dir[1] < 0 ? 3 : 2;
+                } else {
+                    axis = dir[2] < 0 ? 5 : 4;
+                }
+                for (j = 0; j < 3; j++) {
+                    const int k = waterSkyStToVec[axis][j];
+
+                    b[abs(k) - 1] = k < 0 ? -dir[j] : dir[j];
+                }
+
+                image = waterSkyTexOrder[axis];
+                if (pics[image] && b[2] > 0.0f) {
+                    const float s = b[0] / b[2], t = b[1] / b[2];
+
+                    R_WaterSkySample(pics[image], widths[image], heights[image], (s + 1.0f) * 0.5f,
+                        1.0f - (t + 1.0f) * 0.5f, out);
+                } else {
+                    // a side the sky has no image for: the rest of it, evened out
+                    out[0] = average[0] / loaded;
+                    out[1] = average[1] / loaded;
+                    out[2] = average[2] / loaded;
+                    out[3] = 255;
+                }
+            }
+        }
+    }
+
+    for (side = 0; side < 6; side++) {
+        if (pics[side]) {
+            ri.Free(pics[side]);
+        }
+    }
+
+    if (!tr.waterSkyImage) {
+        tr.waterSkyImage = R_CreateImage("*waterSky", NULL, WATER_SKY_SIZE, WATER_SKY_SIZE, IMGTYPE_COLORALPHA,
+            IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_MIPMAP | IMGFLAG_CUBEMAP, GL_RGBA8);
+        // made once and filled again for each map: not one of this map's
+        // images, which the next map frees (R_FreeUnusedImages)
+        tr.waterSkyImage->r_sequence = -1;
+    }
+    for (face = 0; face < 6; face++) {
+        qglTextureSubImage2DEXT(tr.waterSkyImage->texnum, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, 0, 0,
+            WATER_SKY_SIZE, WATER_SKY_SIZE, GL_RGBA, GL_UNSIGNED_BYTE, faces + face * WATER_SKY_SIZE * WATER_SKY_SIZE * 4);
+    }
+    qglGenerateTextureMipmapEXT(tr.waterSkyImage->texnum, GL_TEXTURE_CUBE_MAP);
+
+    ri.Hunk_FreeTempMemory(faces);
+
+    waterSkyShader = sh;
+}
+
+// The view drew this sky's box (RB_StageIteratorSky): water may mirror it
+void RB_WaterSawSky(const shader_t *sh)
+{
+    if (sh && sh == waterSkyShader) {
+        waterSkySeen = qtrue;
+    }
+}
+
+// How much of the sky box to mirror, and the cubemap bound for it
+static float RB_WaterBindSky(void)
+{
+    if (!waterSkySeen || !tr.waterSkyImage || water.skyBox <= 0.0f || r_fastsky->integer) {
+        return 0.0f;
+    }
+    GL_BindToTMU(tr.waterSkyImage, TB_CUBEMAP);
+    return Q_min(water.skyBox, 1.0f);
+}
+
+/*
+===============
+R_WaterBuildBeach
+
+The beach's ground (beachSurface in the water file): the surfaces of those
+shaders, the world's and the terrain's, drawn from above into a grid of their
+height, tr.beachGroundImage. The beach pass (beach_fp.glsl) is drawn only on
+that ground: not on the sand under the water, which is another shader and
+has the water's own reflection over it, nor on what stands on the beach.
+===============
+*/
+#define BEACH_GROUND_SIZE 1024
+#define BEACH_GROUND_NONE -1.0e9f
+
+static struct {
+    float *height;
+    int    width, rows;
+    float  x0, y0, texel;
+    vec2_t mins, maxs;
+    qboolean on;
+} beachGround;
+
+static qboolean R_WaterIsBeachShader(const shader_t *sh)
+{
+    int i;
+
+    for (i = 0; sh && i < water.numBeachSurfaces; i++) {
+        if (!Q_stricmp(sh->name, water.beachSurfaces[i])) {
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
+// A triangle of the ground: its bounds, or its height at each texel it covers
+static void R_WaterBeachTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean draw)
+{
+    float area, minx, maxx, miny, maxy;
+    int   x0, x1, y0, y1, x, y;
+
+    minx = Q_min(a[0], Q_min(b[0], c[0]));
+    maxx = Q_max(a[0], Q_max(b[0], c[0]));
+    miny = Q_min(a[1], Q_min(b[1], c[1]));
+    maxy = Q_max(a[1], Q_max(b[1], c[1]));
+    if (!draw) {
+        beachGround.mins[0] = Q_min(beachGround.mins[0], minx);
+        beachGround.mins[1] = Q_min(beachGround.mins[1], miny);
+        beachGround.maxs[0] = Q_max(beachGround.maxs[0], maxx);
+        beachGround.maxs[1] = Q_max(beachGround.maxs[1], maxy);
+        return;
+    }
+
+    area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (fabs(area) < 0.001f) {
+        return; // edge on from above
+    }
+    x0 = Q_max(0, (int)floor((minx - beachGround.x0) / beachGround.texel));
+    x1 = Q_min(beachGround.width - 1, (int)floor((maxx - beachGround.x0) / beachGround.texel));
+    y0 = Q_max(0, (int)floor((miny - beachGround.y0) / beachGround.texel));
+    y1 = Q_min(beachGround.rows - 1, (int)floor((maxy - beachGround.y0) / beachGround.texel));
+
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            const float px = beachGround.x0 + (x + 0.5f) * beachGround.texel;
+            const float py = beachGround.y0 + (y + 0.5f) * beachGround.texel;
+            const float wa = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) / area;
+            const float wb = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
+            const float wc = 1.0f - wa - wb;
+            float      *h  = &beachGround.height[y * beachGround.width + x];
+
+            if (wa < -0.001f || wb < -0.001f || wc < -0.001f) {
+                continue;
+            }
+            *h = Q_max(*h, wa * a[2] + wb * b[2] + wc * c[2]);
+        }
+    }
+}
+
+// Every triangle of the beach's ground, for its bounds and then its height
+static void R_WaterBeachSurfaces(qboolean draw)
+{
+    int i, k, x, y;
+
+    for (i = 0; i < tr.world->numsurfaces; i++) {
+        const msurface_t      *surf = &tr.world->surfaces[i];
+        const srfBspSurface_t *bsp;
+
+        if (!R_WaterIsBeachShader(surf->shader) || !surf->data) {
+            continue;
+        }
+        if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
+            continue;
+        }
+        bsp = (const srfBspSurface_t *)surf->data;
+        for (k = 0; k + 2 < bsp->numIndexes; k += 3) {
+            R_WaterBeachTri(bsp->verts[bsp->indexes[k]].xyz, bsp->verts[bsp->indexes[k + 1]].xyz,
+                bsp->verts[bsp->indexes[k + 2]].xyz, draw);
+        }
+    }
+
+    // the terrain: each patch 512 units square, its heights 9 by 9
+    for (i = 0; i < tr.world->numTerraPatches; i++) {
+        const cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
+
+        if (!R_WaterIsBeachShader(patch->shader)) {
+            continue;
+        }
+        for (y = 0; y < 8; y++) {
+            for (x = 0; x < 8; x++) {
+                vec3_t p[4];
+
+                for (k = 0; k < 4; k++) {
+                    const int xi = x + (k & 1), yi = y + (k >> 1);
+
+                    VectorSet(p[k], patch->x0 + xi * 64.0f, patch->y0 + yi * 64.0f,
+                        patch->heightmap[yi * 9 + xi] * 2.0f + patch->z0);
+                }
+                R_WaterBeachTri(p[0], p[1], p[3], draw);
+                R_WaterBeachTri(p[0], p[3], p[2], draw);
+            }
+        }
+    }
+}
+
+static void R_WaterBuildBeach(void)
+{
+    float extent;
+    int   i;
+
+    if (beachGround.height) {
+        ri.Free(beachGround.height);
+    }
+    memset(&beachGround, 0, sizeof(beachGround));
+    // the last map's grid is one of its images, which the next map frees
+    tr.beachGroundImage = NULL;
+
+    if (!tr.world || !water.beachSet || !water.numBeachSurfaces || !tr.beachShader[0].program) {
+        return;
+    }
+
+    VectorSet2(beachGround.mins, 1e9f, 1e9f);
+    VectorSet2(beachGround.maxs, -1e9f, -1e9f);
+    R_WaterBeachSurfaces(qfalse);
+    if (beachGround.maxs[0] <= beachGround.mins[0] || beachGround.maxs[1] <= beachGround.mins[1]) {
+        ri.Printf(PRINT_WARNING, "WARNING: %s: no surface of its beachSurface shaders, the beach is everywhere\n", water.file);
+        return;
+    }
+
+    extent            = Q_max(beachGround.maxs[0] - beachGround.mins[0], beachGround.maxs[1] - beachGround.mins[1]);
+    beachGround.texel = Q_max(extent / BEACH_GROUND_SIZE, 4.0f);
+    beachGround.x0    = beachGround.mins[0] - beachGround.texel;
+    beachGround.y0    = beachGround.mins[1] - beachGround.texel;
+    beachGround.width = Q_min(BEACH_GROUND_SIZE, (int)ceil((beachGround.maxs[0] - beachGround.mins[0]) / beachGround.texel) + 2);
+    beachGround.rows  = Q_min(BEACH_GROUND_SIZE, (int)ceil((beachGround.maxs[1] - beachGround.mins[1]) / beachGround.texel) + 2);
+
+    beachGround.height = ri.Malloc(beachGround.width * beachGround.rows * sizeof(float));
+    for (i = 0; i < beachGround.width * beachGround.rows; i++) {
+        beachGround.height[i] = BEACH_GROUND_NONE;
+    }
+    R_WaterBeachSurfaces(qtrue);
+
+    tr.beachGroundImage = R_CreateImage("*beachGround", NULL, beachGround.width, beachGround.rows, IMGTYPE_COLORALPHA,
+        IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+    qglTextureSubImage2DEXT(tr.beachGroundImage->texnum, GL_TEXTURE_2D, 0, 0, 0, beachGround.width, beachGround.rows,
+        GL_RED, GL_FLOAT, beachGround.height);
+    // a height or none: never one between them
+    qglTextureParameteriEXT(tr.beachGroundImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    qglTextureParameteriEXT(tr.beachGroundImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    beachGround.on = qtrue;
+}
+
+void R_WaterLoadWorld(const char *mapName)
+{
+    int i;
+
+    R_WaterReadFile(mapName);
+    // a shore's own texture swapped for the beach's (m3l1a's painted
+    // shoreline strip, a straight bright line once the beach was wet)
+    for (i = 0; i < water.numRemaps; i++) {
+        R_RemapShader(water.remaps[i][0], water.remaps[i][1], "0");
+    }
+    R_WaterBuildSky();
+    R_WaterBuildBeach();
 }
 
 /*
@@ -604,9 +1046,18 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     R_WaterSky(v);
     v[3] = water.chop;
     GLSL_SetUniformVec4(sp, UNIFORM_WATERSKY, v);
+    VectorSet4(v, RB_WaterBindSky(), 0.0f, 0.0f, 0.0f);
+    GLSL_SetUniformVec4(sp, UNIFORM_CUBEMAPINFO, v);
 
     VectorSet4(v, water.foam, water.refraction, water.glints, water.bloodClouds);
     GLSL_SetUniformVec4(sp, UNIFORM_WATERLOOK, v);
+
+    if (water.ocean[0] > 0.0f) {
+        VectorSet4(v, 1.0f / water.ocean[0], water.ocean[1], water.ocean[2], water.ocean[3]);
+    } else {
+        VectorClear4(v);
+    }
+    GLSL_SetUniformVec4(sp, UNIFORM_WATEROCEAN, v);
 
     // where the ripples' grid lies
     if (tr.rippleShader.program && tr.waterRippleImage[0] && ripples.time >= 0.0f) {
@@ -621,6 +1072,17 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     }
     GLSL_SetUniformVec4(sp, UNIFORM_WATERRIPPLES, v);
 
+    // the view under its surface, if it was drawn (R_WaterReflectView)
+    if (backEnd.viewParms.waterReflect && tr.waterReflectImage) {
+        VectorSet4(v, 1.0f, 0.0f, backEnd.viewParms.waterReflectShare[0], backEnd.viewParms.waterReflectShare[1]);
+        GLSL_SetUniformVec4(sp, UNIFORM_WATERREFLECTPLANE, backEnd.viewParms.waterReflectPlane);
+        GLSL_SetUniformMat4(sp, UNIFORM_WATERREFLECTMVP, backEnd.viewParms.waterReflectMvp);
+        GL_BindToTMU(tr.waterReflectImage, TB_SHADOWMAP);
+    } else {
+        VectorClear4(v);
+    }
+    GLSL_SetUniformVec4(sp, UNIFORM_WATERREFLECT, v);
+
     GL_BindToTMU(input->shader->waterImage, TB_DIFFUSEMAP);
     GL_BindToTMU(hasView ? tr.waterSceneImage : tr.whiteImage, TB_LIGHTMAP);
     GL_BindToTMU(hasDepth ? tr.hdrDepthImage : tr.whiteImage, TMU_SOFTDEPTH);
@@ -629,7 +1091,155 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
 
     R_DrawElements(input->numIndexes, input->firstIndex);
 
+    // r_waterReflect 3: the view under the water as it was drawn, in a corner
+    if (r_waterReflect->integer == 3 && backEnd.viewParms.waterReflect && glState.currentFBO) {
+        ivec4_t box;
+
+        box[0] = 0;
+        box[1] = 0;
+        box[2] = glState.currentFBO->width / 3;
+        box[3] = glState.currentFBO->height / 3;
+        FBO_FastBlit(tr.waterReflectFbo, NULL, glState.currentFBO, box, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    }
+
     return qtrue;
+}
+
+/*
+===============
+R_WaterReflectView
+
+What the view's water mirrors, of the world above it: the view drawn again
+first, from under the surface, into tr.waterReflectImage, which the water
+looks itself up in (water_fp.glsl) where it lies at that height. On the
+screen alone (RB_WaterDraw's ray through the view's depth) it can only show
+what the view also sees, so looking down at it a tree went from it.
+
+It is a mirror portal (oblique near plane at the surface, the faces turned)
+that draws what the main view does: entities and sprites as it has them
+(R_AddEntitySurfaces), no water, no viewmodel; no depth prepass, so no sun
+shadow mask either. One height a view: the water nearest under the eye.
+===============
+*/
+// what the last view under the water was, for waterinfo
+static struct {
+    float height;
+    int   surfs;
+    int   frame;
+    int   numPlanes;          // the water planes in view, for waterinfo
+    vec4_t planes[8];         // normal z, height, surfaces, under the eye
+} waterReflectInfo;
+
+void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
+{
+    viewParms_t parms, oldParms;
+    cplane_t    mirror;
+    float       above = 0.0f, d;
+    qboolean    found = qfalse;
+    mat4_t      mvp;
+    int         i;
+
+    tr.viewParms.waterReflect = qfalse;
+
+    if (!r_waterReflect->integer || !tr.waterReflectFbo || !tr.waterShader.program || !tr.world
+        || tr.viewParms.isPortal || tr.viewParms.isPortalSky || tr.viewParms.targetFbo
+        || (tr.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC | VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY))
+        || (tr.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_HUD)) || r_noportals->integer) {
+        return;
+    }
+
+    waterReflectInfo.numPlanes = 0;
+    for (i = 0; i < numDrawSurfs; i++) {
+        shader_t *shader;
+        int       entityNum, fogNum, dlighted, pshadowed;
+        qboolean  bStaticModel;
+        cplane_t  plane;
+        float     h;
+
+        R_DecomposeSort(drawSurfs[i].sort, &entityNum, &shader, &fogNum, &dlighted, &pshadowed, &bStaticModel);
+        if (!shader->waterImage || entityNum != REFENTITYNUM_WORLD) {
+            continue;
+        }
+        R_PlaneForSurface(drawSurfs[i].surface, &plane);
+        if (plane.normal[2] < 0.99f) {
+            continue;
+        }
+        // its height under the eye, for waterinfo
+        h = (plane.dist - plane.normal[0] * tr.viewParms.ori.origin[0] - plane.normal[1] * tr.viewParms.ori.origin[1])
+          / plane.normal[2];
+        {
+            int k;
+
+            for (k = 0; k < waterReflectInfo.numPlanes; k++) {
+                if (fabs(waterReflectInfo.planes[k][1] - h) < 0.5f && fabs(waterReflectInfo.planes[k][0] - plane.normal[2]) < 0.0005f) {
+                    waterReflectInfo.planes[k][2] += 1.0f;
+                    break;
+                }
+            }
+            if (k == waterReflectInfo.numPlanes && k < 8) {
+                VectorSet4(waterReflectInfo.planes[k], plane.normal[2], h, 1.0f, tr.viewParms.ori.origin[2] > h);
+                waterReflectInfo.numPlanes++;
+            }
+        }
+        // how far over it the eye is: a map's water need not lie level
+        // (m3l1a's sea leans by two degrees, thirty units in a thousand)
+        d = DotProduct(tr.viewParms.ori.origin, plane.normal) - plane.dist;
+        if (d <= 0.0f) {
+            continue; // under it
+        }
+        if (!found || d < above) {
+            found  = qtrue;
+            mirror = plane;
+            above  = d;
+        }
+    }
+    if (!found) {
+        return;
+    }
+
+    oldParms = tr.viewParms;
+    parms    = tr.viewParms;
+
+    // the eye and its axes turned over in the surface's plane; it sees what
+    // the eye does above it, so the eye's PVS
+    VectorMA(oldParms.ori.origin, -2.0f * above, mirror.normal, parms.ori.origin);
+    for (i = 0; i < 3; i++) {
+        VectorMA(oldParms.ori.axis[i], -2.0f * DotProduct(oldParms.ori.axis[i], mirror.normal), mirror.normal,
+            parms.ori.axis[i]);
+    }
+    parms.isPortal = qtrue;
+    parms.isMirror = qtrue;
+    VectorCopy(mirror.normal, parms.portalPlane.normal);
+    parms.portalPlane.dist = mirror.dist - 1.0f;
+    parms.zFar             = 0.0f;
+    parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
+
+    // the same share of the image as the view has of the screen
+    parms.targetFbo      = tr.waterReflectFbo;
+    parms.viewportX      = 0;
+    parms.viewportY      = 0;
+    parms.viewportWidth  = Q_max(1, oldParms.viewportWidth * tr.waterReflectFbo->width / glConfig.vidWidth);
+    parms.viewportHeight = Q_max(1, oldParms.viewportHeight * tr.waterReflectFbo->height / glConfig.vidHeight);
+
+    {
+        const int before = tr.refdef.numDrawSurfs;
+
+        R_RenderView(&parms);
+        waterReflectInfo.surfs = tr.refdef.numDrawSurfs - before;
+    }
+    // the water's height under the eye, for waterinfo
+    waterReflectInfo.height = oldParms.ori.origin[2] - above / mirror.normal[2];
+    waterReflectInfo.frame  = tr.frameCount;
+
+    Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
+
+    tr.viewParms                    = oldParms;
+    tr.viewParms.waterReflect       = qtrue;
+    VectorCopy(mirror.normal, tr.viewParms.waterReflectPlane);
+    tr.viewParms.waterReflectPlane[3] = mirror.dist;
+    tr.viewParms.waterReflectShare[0] = parms.viewportWidth / (float)tr.waterReflectFbo->width;
+    tr.viewParms.waterReflectShare[1] = parms.viewportHeight / (float)tr.waterReflectFbo->height;
+    Mat4Copy(mvp, tr.viewParms.waterReflectMvp);
 }
 
 // Reads the map's water file again: for working on one
@@ -721,11 +1331,23 @@ void RB_BeachDraw(void)
         GLSL_SetUniformVec4(sp, UNIFORM_WATERSHORE, v);
         R_WaterSky(v);
         GLSL_SetUniformVec4(sp, UNIFORM_WATERSKY, v);
+        VectorSet4(v, RB_WaterBindSky(), 0.0f, 0.0f, 0.0f);
+        GLSL_SetUniformVec4(sp, UNIFORM_CUBEMAPINFO, v);
         GLSL_SetUniformVec4(sp, UNIFORM_WATERBLOOD, water.blood);
         VectorSet4(v, water.beachReach, water.beachTop, water.puddles, water.puddleSize);
         GLSL_SetUniformVec4(sp, UNIFORM_BEACHWET, v);
         VectorSet4(v, water.swash, 0.0f, 0.0f, 0.0f);
         GLSL_SetUniformVec4(sp, UNIFORM_BEACHSWASH, v);
+
+        // the beach's ground alone (R_WaterBuildBeach)
+        if (beachGround.on && tr.beachGroundImage) {
+            VectorSet4(v, beachGround.x0, beachGround.y0, 1.0f / (beachGround.width * beachGround.texel),
+                1.0f / (beachGround.rows * beachGround.texel));
+            GL_BindToTMU(tr.beachGroundImage, TB_SPECULARMAP);
+        } else {
+            VectorClear4(v);
+        }
+        GLSL_SetUniformVec4(sp, UNIFORM_BEACHGROUND, v);
 
         {
             const int stains = r_waterBlood->value > 0.0f ? numSandStains : 0;
@@ -780,6 +1402,29 @@ void R_WaterInfo_f(void)
     }
     ri.Printf(PRINT_ALL, "  sky %s  chop %g  foam %g  refraction %g  glints %g\n", water.skySet ? va("%g %g %g", water.sky[0], water.sky[1], water.sky[2]) : "(the fog's)",
         water.chop, water.foam, water.refraction, water.glints);
+    if (water.ocean[0] > 0.0f) {
+        ri.Printf(PRINT_ALL, "  ocean %g %g %g %g\n", water.ocean[0], water.ocean[1], water.ocean[2], water.ocean[3]);
+    }
+    if (waterReflectInfo.frame && tr.frameCount - waterReflectInfo.frame < 10) {
+        int k;
+
+        ri.Printf(PRINT_ALL, "  mirrors the world from under the water at %g: %d surfaces\n", waterReflectInfo.height,
+            waterReflectInfo.surfs);
+        for (k = 0; k < waterReflectInfo.numPlanes; k++) {
+            ri.Printf(PRINT_ALL, "    water in view at %g (normal z %.5f): %d surfaces%s\n", waterReflectInfo.planes[k][1],
+                waterReflectInfo.planes[k][0], (int)waterReflectInfo.planes[k][2],
+                waterReflectInfo.planes[k][3] > 0.5f ? "" : ", over the eye");
+        }
+    } else {
+        ri.Printf(PRINT_ALL, "  mirrors only what is on the screen (r_waterReflect %d)\n", r_waterReflect->integer);
+    }
+    if (water.numBeachSurfaces) {
+        ri.Printf(PRINT_ALL, "  beach on %s%s: %s\n", water.beachSurfaces[0], water.numBeachSurfaces > 1 ? " (and more)" : "",
+            beachGround.on ? va("%d x %d texels of %g units", beachGround.width, beachGround.rows, beachGround.texel)
+                           : "none of it found, the beach is everywhere");
+    }
+    ri.Printf(PRINT_ALL, "  skyBox %g  %s\n", water.skyBox,
+        !waterSkyShader ? "(no sky box to mirror)" : waterSkySeen ? va("mirrors %s", waterSkyShader->name) : va("%s, not drawn yet", waterSkyShader->name));
 }
 
 /*

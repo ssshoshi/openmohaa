@@ -62,6 +62,7 @@ cvar_t *r_rtDlights;
 cvar_t *r_rtLightsAtFixtures;
 cvar_t *r_rtCapsules;
 cvar_t *r_rtParticles;
+static cvar_t *r_rtParticleCascade;
 cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
 cvar_t *r_rtCutoff;
@@ -226,6 +227,8 @@ void R_RtRegister(void)
 	r_rtCapsules = ri.Cvar_Get("r_rtCapsules", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtCapsules, "People and bodies cast the realtime lights' shadows as capsules along their bones, for the lights that do not draw them whole (r_rtShadowCharacters, r_rtDynamicLights)");
 	r_rtParticles = ri.Cvar_Get("r_rtParticles", "1", 0);
+	r_rtParticleCascade = ri.Cvar_Get("r_rtParticleCascade", "1", 0);
+	ri.Cvar_SetDescription(r_rtParticleCascade, "Dust, smoke and spray take the sun's shadow from its widest shadow cascade where they are (0: from the screen behind them). Not archived: an A/B switch");
 	ri.Cvar_SetDescription(r_rtParticles, "Dust and smoke sprites take the realtime lights at their corners, not per pixel (0: per pixel, which piles of them make very slow). Not archived: an A/B switch");
 	r_rtDebug = ri.Cvar_Get("r_rtDebug", "0", 0);
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
@@ -2396,6 +2399,14 @@ qboolean R_RtIsFoliage(const shader_t *shader)
 }
 
 // stage < 0: a view the lights take no part in (2D, shadows, models in menus)
+// Whether the sun's widest shadow cascade is there for the particles: drawn
+// with the sun's shadows this frame (RE_RenderScene)
+static qboolean R_RtSunCascade(void)
+{
+	return r_rtParticleCascade->integer && tr.rtSunColor[3] > 0.5f && tr.sunShadowDepthImage[3] && r_sunlightMode->integer && r_depthPrepass->value
+		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL);
+}
+
 void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean lightmapped)
 {
 	static const vec4_t off = { 0, 0, 0, 0 };
@@ -2459,6 +2470,14 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 	}
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
+	// the particles' sun shadow (RtLightParticle): the widest cascade, if the
+	// sun has them this frame
+	{
+		static const mat4_t none = { 0 };
+
+		GLSL_SetUniformMat4(sp, UNIFORM_RTSUNCASCADEMVP,
+			R_RtSunCascade() ? backEnd.refdef.sunShadowMvp[3] : none);
+	}
 	GLSL_SetUniformVec4(sp, UNIFORM_RTAMBIENT, tr.rtAmbient);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSKYCOLOR, tr.rtSkyColor);
 	if (tr.rtSkyColor[3] > 0) {
@@ -2475,6 +2494,7 @@ void R_RtBindTextures(void)
 		GL_BindToTMU(tr.rtCapsuleImage, TMU_RTCAPSULES);
 	}
 	GL_BindToTMU(tr.rtSunColor[3] > 0.5f && tr.screenShadowImage ? tr.screenShadowImage : tr.whiteImage, TMU_RTSUNSHADOW);
+	GL_BindToTMU(R_RtSunCascade() ? tr.sunShadowDepthImage[3] : tr.rtShadowImage[0], TMU_RTSUNCASCADE);
 	// a depth image either way: a shadow sampler on a colour one reads nothing defined
 	GL_BindToTMU(tr.rtSkyImage ? tr.rtSkyImage : tr.rtShadowImage[0], TMU_RTSKY);
 }
