@@ -1354,7 +1354,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 3
+#define RT_BOUNCE_VERSION 4
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
 
 enum {
@@ -1392,6 +1392,7 @@ static struct {
 	unsigned          key;           // what the lights were
 	int               started, spent;
 	int               misses;
+	int               models;        // rays that stopped on a model's clip brush
 	float             weight;
 } rt_bounce;
 
@@ -1516,6 +1517,7 @@ static int64_t R_RtBounceHashKey(const vec3_t p, int dx, int dy, int dz)
 }
 
 static int64_t *rt_sortKeys;
+static int      rt_missByShader[4096]; // what the bounce's rays find no sample nor model on, by shader (developer)
 
 static int R_RtBounceCompareKeys(const void *a, const void *b)
 {
@@ -1766,6 +1768,129 @@ static float R_RtBounceSkyAt(const vec3_t xyz, const vec3_t normal)
 	return (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) ? 0.5f * dir[2] : 0.0f;
 }
 
+// The sample nearest p, of any way it faces but towards the ray that came
+// from dir: what is seen where a ray stopped on a face never drawn (caulk
+// behind a curve, the edge of the terrain), -1 none near
+static int R_RtBounceNearestSeen(const vec3_t p, const vec3_t dir)
+{
+	float best = Square(96.0f);
+	int   found = -1, dx, dy, dz;
+
+	for (dz = -1; dz <= 1; dz++) {
+		for (dy = -1; dy <= 1; dy++) {
+			for (dx = -1; dx <= 1; dx++) {
+				const int64_t key = R_RtBounceHashKey(p, dx, dy, dz);
+				int           lo = 0, hi = rt_bounce.numSamples, k;
+
+				while (lo < hi) {
+					const int mid = (lo + hi) / 2;
+
+					if (rt_bounce.hashKeys[mid] < key) {
+						lo = mid + 1;
+					} else {
+						hi = mid;
+					}
+				}
+				for (k = lo; k < rt_bounce.numSamples && rt_bounce.hashKeys[k] == key; k++) {
+					const rtBounceSample_t *s = &rt_bounce.samples[rt_bounce.hashOrder[k]];
+					const float             d = DistanceSquared(s->xyz, p);
+
+					if (d < best && DotProduct(s->normal, dir) < -0.2f) {
+						best  = d;
+						found = rt_bounce.hashOrder[k];
+					}
+				}
+			}
+		}
+	}
+	return found;
+}
+
+// The colour of the static model a point is in (a ray stopped on the clip
+// brush that stands in for a chair, a hedge), and whether there is one
+static qboolean R_RtModelAlbedoAt(const vec3_t p, vec3_t albedo)
+{
+	float best = 1e30f;
+	int   i, found = -1;
+
+	for (i = 0; i < tr.world->numStaticModels; i++) {
+		const cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
+		float                         d;
+
+		if (!sm->tiki || sm->cull_radius <= 0) {
+			continue;
+		}
+		d = DistanceSquared(sm->origin, p);
+		if (d < Square(sm->cull_radius + 16.0f) && d < best) {
+			best  = d;
+			found = i;
+		}
+	}
+	if (found < 0) {
+		return qfalse;
+	}
+	{
+		const dtiki_t *tiki = tr.world->staticModels[found].tiki;
+		int            k;
+
+		for (k = 0; k < tiki->num_surfaces; k++) {
+			const dtikisurface_t *surf = &tiki->surfaces[k];
+
+			if (surf->numskins && surf->hShader[0] > 0 && surf->hShader[0] < tr.numShaders) {
+				R_RtAlbedo(tr.shaders[surf->hShader[0]], albedo);
+				return qtrue;
+			}
+		}
+	}
+	return qfalse;
+}
+
+/*
+What comes back along a ray from dir that stopped where trace says: what the
+sample there gives back; on a face never drawn, the sample seen behind it;
+on the clip brush round a model, the light there times the model's colour;
+else the light there times RT_BOUNCE_ALBEDO. Its sample, -1 none.
+*/
+static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean withFirst, vec3_t out)
+{
+	vec3_t albedo;
+	int    hit = -1;
+
+	if (!(trace->surfaceFlags & SURF_NODRAW)) {
+		hit = R_RtBounceNearest(trace->endpos, trace->plane.normal);
+	}
+	if (hit < 0) {
+		hit = R_RtBounceNearestSeen(trace->endpos, dir);
+	}
+	if (hit >= 0) {
+		const rtBounceSample_t *o = &rt_bounce.samples[hit];
+
+		if (withFirst) {
+			VectorCopy(o->given, out);
+		} else {
+			VectorCopy(o->direct, out);
+			out[0] *= o->albedo[0];
+			out[1] *= o->albedo[1];
+			out[2] *= o->albedo[2];
+		}
+		return hit;
+	}
+	R_RtBounceDirectAt(trace->endpos, trace->plane.normal, R_RtBounceSkyAt(trace->endpos, trace->plane.normal), out);
+	if ((trace->surfaceFlags & SURF_NODRAW) && R_RtModelAlbedoAt(trace->endpos, albedo)) {
+		out[0] *= albedo[0];
+		out[1] *= albedo[1];
+		out[2] *= albedo[2];
+		rt_bounce.models++;
+	} else {
+		VectorScale(out, RT_BOUNCE_ALBEDO, out);
+		rt_bounce.misses++;
+		if (trace->shaderNum >= 0 && trace->shaderNum < 4096) {
+			rt_missByShader[trace->shaderNum]++;
+		}
+	}
+	return -1;
+}
+
 // What bounces onto a sample once: rays over the half of the world it faces
 static void R_RtBounceGather(int index)
 {
@@ -1804,26 +1929,13 @@ static void R_RtBounceGather(int index)
 		if (trace.startsolid || trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY)) {
 			continue;
 		}
-		hit = R_RtBounceNearest(trace.endpos, trace.plane.normal);
-		if (hit < 0) {
-			// no sample there (what is not lightmapped): its light where it
-			// was hit, a middling colour; once, not again for the second bounce
+		{
 			vec3_t given;
 
-			R_RtBounceDirectAt(trace.endpos, trace.plane.normal, R_RtBounceSkyAt(trace.endpos, trace.plane.normal), given);
-			VectorMA(s->first, RT_BOUNCE_ALBEDO / rt_bounce.rays, given, s->first);
-			rt_bounce.misses++;
-			continue;
-		}
-		hits[r] = hit;
-		{
-			const rtBounceSample_t *o = &rt_bounce.samples[hit];
-			vec3_t                  given;
-
-			VectorCopy(o->direct, given);
-			given[0] *= o->albedo[0];
-			given[1] *= o->albedo[1];
-			given[2] *= o->albedo[2];
+			// a sample's is counted again for the second bounce; what had
+			// none (a model) once
+			hit     = R_RtBounceRadiance(&trace, dir, qfalse, given);
+			hits[r] = hit;
 			VectorMA(s->first, 1.0f / rt_bounce.rays, given, s->first);
 		}
 	}
@@ -1921,7 +2033,6 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		const float phi = r * 2.399963f;
 		vec3_t      dir, to, given;
 		trace_t     trace;
-		int         hit;
 
 		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
 		VectorMA(at, RT_BOUNCE_REACH, dir, to);
@@ -1929,13 +2040,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		if (trace.startsolid || trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY)) {
 			continue;
 		}
-		hit = R_RtBounceNearest(trace.endpos, trace.plane.normal);
-		if (hit >= 0) {
-			VectorCopy(rt_bounce.samples[hit].given, given);
-		} else {
-			R_RtBounceDirectAt(trace.endpos, trace.plane.normal, R_RtBounceSkyAt(trace.endpos, trace.plane.normal), given);
-			VectorScale(given, RT_BOUNCE_ALBEDO, given);
-		}
+		R_RtBounceRadiance(&trace, dir, qtrue, given);
 		// what comes from dir: m + v . N over the sphere (a cosine's two first terms)
 		for (k = 0; k < 3; k++) {
 			p->c[k][3] += given[k] / RT_PROBE_RAYS;
@@ -2133,8 +2238,28 @@ static void R_RtBounceFinish(void)
 	ri.Free(rgb);
 	rt_probes = ri.Malloc(sizeof(rtProbe_t) * RT_PROBE_SLOTS);
 	Com_Memset(rt_probes, 0, sizeof(rtProbe_t) * RT_PROBE_SLOTS);
-	ri.Printf(PRINT_DEVELOPER, "realtime lighting: the bounce, %dx%d, %d samples (%d indoors), %d rays each, %d missed, %.1f s\n",
-		w, h, rt_bounce.numSamples, indoor, rt_bounce.rays, rt_bounce.misses, rt_bounce.spent / 1000.0f);
+	{
+		int k, n;
+
+		for (n = 0; n < 15; n++) {
+			int best = -1;
+
+			for (k = 0; k < 4096 && k < tr.world->numShaders; k++) {
+				if (rt_missByShader[k] > 0 && (best < 0 || rt_missByShader[k] > rt_missByShader[best])) {
+					best = k;
+				}
+			}
+			if (best < 0) {
+				break;
+			}
+			ri.Printf(PRINT_DEVELOPER, "  missed %d on %s (flags %x contents %x)\n", rt_missByShader[best], tr.world->shaders[best].shader,
+				tr.world->shaders[best].surfaceFlags, tr.world->shaders[best].contentFlags);
+			rt_missByShader[best] = 0;
+		}
+		Com_Memset(rt_missByShader, 0, sizeof(rt_missByShader));
+	}
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: the bounce, %dx%d, %d samples (%d indoors), %d rays each, %d on models, %d missed, %.1f s\n",
+		w, h, rt_bounce.numSamples, indoor, rt_bounce.rays, rt_bounce.models, rt_bounce.misses, rt_bounce.spent / 1000.0f);
 	rt_bounce.state = RT_BOUNCE_DONE;
 }
 
