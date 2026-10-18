@@ -521,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    18
+#define NUM_TEXTURE_UNITS    19
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -540,6 +540,7 @@ enum
 #define TMU_RTSKYLM     15 // Added in OPM: the sky each lightmap texel sees (tr_rtlight.c)
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
+#define TMU_RTBOUNCE    18 // Added in OPM: the light bounced onto each lightmap texel (tr_rtlight.c)
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -1005,6 +1006,8 @@ typedef enum
 	UNIFORM_RTSKYMAP,
 	UNIFORM_RTSURFACE,
 	UNIFORM_RTSKYLIGHTMAP,
+	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
+	UNIFORM_RTBOUNCEMAP,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
@@ -2702,6 +2705,8 @@ typedef struct {
     int      rtNumSkyLightmaps;
     vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction
     vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
+    image_t *rtBounceImage;    // the light bounced onto each texel of the lightmaps' first page (R_RtBounce), NULL until worked out
+    vec4_t   rtBounce;         // its scale; w: how far it has come in, 0 none
     int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
     image_t *skelMorphImage;   // Added in OPM: each posed surface's vertexes' morphs: offset, which target (tr_skelgpu.c)
@@ -3302,6 +3307,8 @@ IMPLEMENTATION SPECIFIC FUNCTIONS
 */
 
 void		GLimp_InitExtraExtensions( void );
+// Added in OPM: glGetTexImage, to read a texture back (the realtime lights' colours of what they bounce off)
+extern void (APIENTRY *qglGetTexImageOPM)(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
 
 /*
 ====================================================================
