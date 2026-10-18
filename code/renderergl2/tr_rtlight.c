@@ -359,8 +359,8 @@ light makes to it: there the lights stay where the map compiled them.
 #define RT_LAMP_BULBS  12
 #define RT_LAMP_REACH  512.0f // a light further than this from every lamp is a fill
 #define RT_LAMP_SEEN   16.0f  // a trace that stops this near a lamp got to it
-#define RT_LAMP_MOST   2.0f   // a lamp takes up to this much of what its kind gives
-#define RT_LAMP_NEAR   32.0f  // a lamp's light stops growing this near it: its shade glows, it is no point
+#define RT_LAMP_MOST   1.5f   // a lamp takes up to this much of what its kind gives
+#define RT_LAMP_NEAR   48.0f  // a lamp's light stops growing this near it: its shade glows, it is no point
 
 enum {
 	RT_LAMP_BULB,
@@ -380,6 +380,7 @@ typedef struct {
 	qboolean spot;
 	vec3_t   spotDir;
 	float    spotAngle;
+	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
 } rtLampDef_t;
 
 static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
@@ -474,6 +475,16 @@ static void R_RtLoadLampDefs(void)
 				}
 			}
 			def->numBulbs = Q_min(def->numBulbs + 1, RT_LAMP_BULBS);
+		} else if (!Q_stricmp(token, "shade")) {
+			int   k;
+			float stops;
+
+			for (k = 0; k < 3; k++) {
+				def->shade[k] = atof(COM_ParseExt(&text, qfalse));
+			}
+			stops = atof(COM_ParseExt(&text, qfalse));
+			VectorNormalize(def->shade);
+			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops), def->shade);
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;
 
@@ -612,6 +623,11 @@ static void R_RtLightsAtLamps(byte *isLamp)
 			}
 			VectorNormalize(l->spotDir);
 			l->radiusByDist = tan(DEG2RAD(lamp->def->spotAngle * 0.5f));
+		} else {
+			// its shade, where a spot light keeps its cone's way (RtLight)
+			for (k = 0; k < 3; k++) {
+				VectorMA(l->spotDir, lamp->def->shade[k], sm->axis[k], l->spotDir);
+			}
 		}
 	}
 
@@ -2073,7 +2089,10 @@ static void R_RtFollowFixtures(void)
 				VectorScale(dir, 1.0f / length, dir);
 			}
 		}
-		if (l->spot && VectorNormalize(dir) > 0.5f && DotProduct(dir, l->spotDir) < 0.9998f) {
+		if (l->lamp && !l->spot) {
+			// its shade turns with it
+			VectorCopy(dir, l->spotDir);
+		} else if (l->spot && VectorNormalize(dir) > 0.5f && DotProduct(dir, l->spotDir) < 0.9998f) {
 			VectorCopy(dir, l->spotDir);
 			turned = qtrue;
 		}
