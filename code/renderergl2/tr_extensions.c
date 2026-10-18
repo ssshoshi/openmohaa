@@ -198,6 +198,23 @@ void GLimp_InitExtraExtensions(void)
 		ri.Printf(PRINT_ALL, result[2], extension);
 	}
 
+	// Added in OPM
+	//  OpenGL 4.4 - GL_ARB_buffer_storage, with the 3.2 fences and base vertex
+	//  draws: the tess buffers as one ring mapped for good (r_tessStream).
+	extension = "GL_ARB_buffer_storage";
+	glRefConfig.bufferStorage = qfalse;
+	if (QGL_VERSION_ATLEAST(4, 4) || (QGL_VERSION_ATLEAST(3, 2) && SDL_GL_ExtensionSupported(extension)))
+	{
+		QGL_ARB_buffer_storage_PROCS;
+		glRefConfig.bufferStorage = (qglBufferStorage && qglMapBufferRange && qglUnmapBuffer && qglFenceSync
+			&& qglClientWaitSync && qglDeleteSync && qglDrawElementsBaseVertex) ? qtrue : qfalse;
+		ri.Printf(PRINT_ALL, result[glRefConfig.bufferStorage], extension);
+	}
+	else
+	{
+		ri.Printf(PRINT_ALL, result[2], extension);
+	}
+
 	// OpenGL 3.0 - GL_ARB_framebuffer_object
 	extension = "GL_ARB_framebuffer_object";
 	glRefConfig.framebufferObject = qfalse;

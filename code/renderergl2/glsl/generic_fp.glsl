@@ -56,8 +56,12 @@ void main()
 		rtLight = var_RtParticleLight;
 	else
   #endif
-	if (u_RtStage != RT_STAGE_NONE)
-		rtLight = RtLight(var_RtPos, normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal),
+	// a lightmap stage's sky is read at its lightmap texel (the second
+	// texture's below); the second's lighting is worked out there alone.
+	// The side that faces the normal is GL's back face: Q3 culls GL_FRONT.
+	rt_skyLM = var_DiffuseTex;
+	if (u_RtStage != RT_STAGE_NONE && u_RtStage != RT_STAGE_LIGHTING2)
+		rtLight = RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal),
 			u_RtStage != RT_STAGE_LIT && u_RtParams.y < 1.5);
 
 	if (u_RtStage == RT_STAGE_LIGHTING)
@@ -72,7 +76,17 @@ void main()
 		// lit by its colour, worked out at run time without the lights
 		rgb = color.rgb * (var_Color.rgb + rtLight);
 	}
-	else if (u_RtStage == RT_STAGE_LIT_BAKED || u_RtStage == RT_STAGE_PARTICLE)
+	else if (u_RtStage == RT_STAGE_PARTICLE)
+	{
+		// Dust, smoke and spray keep their own colour (their effect's, or the
+		// grid's light where they are), and the live lights add to it, a
+		// blast's flash brightening them by no more than so much of it. With
+		// all of the light live they were the ambient and the sun at them
+		// instead, dark under an overcast (m3l1a), and a blast's light near
+		// them whited them out a moment.
+		rgb = color.rgb * RtDelta(var_Color.rgb, min(rtLight, var_Color.rgb * 0.75));
+	}
+	else if (u_RtStage == RT_STAGE_LIT_BAKED)
 	{
 		// lit by a colour the map baked: all of it live, the ambient stands in
 		vec3 base = u_RtParams.y > 1.5 ? u_RtAmbient.rgb : var_Color.rgb;
@@ -94,7 +108,8 @@ void main()
 		{
 			if (u_RtParams.y > 1.5)
 				color2.rgb = u_RtAmbient.rgb;
-			color2.rgb = RtDelta(color2.rgb, RtLight(var_RtPos, normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal), u_RtParams.y < 1.5));
+			rt_skyLM   = var_Tex2;
+			color2.rgb = RtDelta(color2.rgb, RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal), u_RtParams.y < 1.5));
 		}
   #endif
 

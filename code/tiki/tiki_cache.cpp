@@ -200,12 +200,27 @@ dtiki_t *TIKI_RegisterTikiFlags(const char *path, qboolean use)
         }
     }
 
+    // Added in OPM: how long a model not loaded before takes (tiki_loadlog),
+    // to find the ones a level loads while it is played
+    const int startedAt = Sys_Milliseconds();
+
     tikianim = TIKI_RegisterTikiAnimFlags(filename, use);
     if (tikianim) {
         tiki = TIKI_LoadTikiModel(tikianim, full_filename, &keyValues);
         if (tiki) {
             // cache the tiki
             (*tikicache)[tiki->name] = tiki;
+        }
+    }
+
+    {
+        static cvar_t *tiki_loadlog;
+
+        if (!tiki_loadlog) {
+            tiki_loadlog = Cvar_Get("tiki_loadlog", "0", 0);
+        }
+        if (tiki_loadlog->integer) {
+            Com_Printf("tiki_loadlog: %d ms loading %s\n", Sys_Milliseconds() - startedAt, full_filename);
         }
     }
 

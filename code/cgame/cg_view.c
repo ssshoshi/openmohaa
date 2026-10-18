@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_parsemsg.h"
 #include "cg_bugreport.h"
 #include "cg_orch.h"
+#include "cg_gore.h"
 
 //============================================================================
 
@@ -1048,6 +1049,25 @@ static void CG_ReportFrameTimers(void)
 
     cgTimerFrames++;
 
+    // Added in OPM: a frame whose cgame ran long, alone (com_hitchLog, ms)
+    {
+        static double  before[CGT_COUNT];
+        static cvar_t *com_hitchLog;
+        const double   total = cgTimerAccum[CGT_TOTAL] - before[CGT_TOTAL];
+
+        if (!com_hitchLog) {
+            com_hitchLog = cgi.Cvar_Get("com_hitchLog", "0", 0);
+        }
+        if (com_hitchLog->integer > 0 && total >= com_hitchLog->integer * 500.0) {
+            Com_sprintf(line, sizeof(line), "hitch cgame %.1fms =", total / 1000.0);
+            for (i = CGT_SNAPSHOTS; i < CGT_COUNT; i++) {
+                Q_strcat(line, sizeof(line), va(" %s %.1f", cgTimerNames[i], (cgTimerAccum[i] - before[i]) / 1000.0));
+            }
+            cgi.Printf("%s\n", line);
+        }
+        memcpy(before, cgTimerAccum, sizeof(before));
+    }
+
     if (cgTimerFrames < cg_frameTimers->integer) {
         return;
     }
@@ -1362,6 +1382,9 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
 
     CG_AddBulletTracers();
     CG_AddBulletImpacts();
+    // Added in OPM
+    //  After the impacts, which note the hits, and every entity.
+    CG_GoreAddToScene();
     CG_AddBeams();
 
     if (cg_acidtrip->integer) {

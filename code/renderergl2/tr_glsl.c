@@ -52,6 +52,14 @@ extern const char *fallbackShader_texturecolor_vp;
 extern const char *fallbackShader_texturecolor_fp;
 extern const char *fallbackShader_tonemap_vp;
 extern const char *fallbackShader_tonemap_fp;
+extern const char *fallbackShader_water_vp;
+extern const char *fallbackShader_beach_vp;
+extern const char *fallbackShader_ripple_vp;
+extern const char *fallbackShader_lens_vp;
+extern const char *fallbackShader_lens_fp;
+extern const char *fallbackShader_ripple_fp;
+extern const char *fallbackShader_beach_fp;
+extern const char *fallbackShader_water_fp;
 extern const char* fallbackShader_greyscale_vp;
 extern const char* fallbackShader_greyscale_fp;
 
@@ -186,9 +194,58 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtShadowStatic",  GLSL_INT },
 	{ "u_RtShadowDynamic", GLSL_INT },
 	{ "u_RtSunShadow",     GLSL_INT },
+	{ "u_RtSunCascade",    GLSL_INT },
+	{ "u_RtSunCascadeMvp", GLSL_MAT16 },
 	{ "u_RtShadowBaked",   GLSL_INT },
 	{ "u_RtCapsules",      GLSL_INT },
-	{ "u_SoftParticle",    GLSL_VEC4 }
+	{ "u_RtList",          GLSL_VEC4_RTLIST },
+	{ "u_RtSky",           GLSL_VEC4_RTSKY },
+	{ "u_RtSkyColor",      GLSL_VEC4 },
+	{ "u_RtSkyMap",        GLSL_INT },
+	{ "u_RtSurface",       GLSL_VEC4 },
+	{ "u_RtSkyLightmap",   GLSL_INT },
+	{ "u_SoftParticle",    GLSL_VEC4 },
+	{ "u_GroundCover",     GLSL_VEC4 },
+	{ "u_SkelBones",       GLSL_INT },
+	{ "u_SkelParams",      GLSL_VEC4 },
+	{ "u_SkelAmbient",     GLSL_VEC4 },
+	{ "u_SkelLights",      GLSL_VEC4_SKELLIGHTS },
+	{ "u_SkelNumDents",    GLSL_INT },
+	{ "u_SkelDents",       GLSL_VEC4_SKELDENTS },
+	{ "u_SkelMorphMap",    GLSL_INT },
+	{ "u_SkelNumMorphs",   GLSL_INT },
+	{ "u_SkelMorphs",      GLSL_VEC4_SKELMORPHS },
+	// Added in OPM: the water program (tr_water.c)
+	{ "u_WaterColor",      GLSL_VEC4 },
+	{ "u_WaterBlood",      GLSL_VEC4 },
+	{ "u_WaterWaves",      GLSL_VEC4 },
+	{ "u_WaterShore",      GLSL_VEC4 },
+	{ "u_WaterSky",        GLSL_VEC4 },
+	{ "u_WaterLook",       GLSL_VEC4 },
+	{ "u_WaterOcean",      GLSL_VEC4 },
+	{ "u_WaterBloodZone",  GLSL_VEC4 },
+	{ "u_WaterSpots",      GLSL_VEC4_WATERSPOTS },
+	{ "u_BeachWet",        GLSL_VEC4 },
+	{ "u_SandStains",      GLSL_VEC4_WATERSPOTS },
+	{ "u_WorldViewProjection", GLSL_MAT16 },
+	{ "u_WaterView",       GLSL_VEC4 },
+	{ "u_BeachSwash",      GLSL_VEC4 },
+	{ "u_BeachGround",     GLSL_VEC4 },
+	{ "u_RippleSim",       GLSL_VEC4 },
+	{ "u_RippleDecay",     GLSL_VEC4 },
+	{ "u_RippleSources",   GLSL_VEC4_WATERSPOTS },
+	{ "u_RippleFoam",      GLSL_VEC4_WATERSPOTS },
+	{ "u_WaterRipples",    GLSL_VEC4 },
+	{ "u_WaterReflect",    GLSL_VEC4 },
+	{ "u_WaterReflectPlane", GLSL_VEC4 },
+	{ "u_WaterReflectMvp", GLSL_MAT16 },
+	{ "u_WaterReflectMap", GLSL_INT },
+	{ "u_LensInfo",        GLSL_VEC4 },
+	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
+	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_Wet",             GLSL_VEC4 },
+	{ "u_WetSky",          GLSL_VEC4 },
+	{ "u_WetSun",          GLSL_VEC4 }
 };
 
 typedef enum
@@ -297,6 +354,8 @@ static const char *rt_glsl =
 	"#define RT_STAGE_PARTICLE  5\n"
 	"#define RT_STAGE_PARTICLE_LIT 6\n"
 	"uniform vec4 u_RtLights[RT_MAX_LIGHTS * 4];\n"
+	// the lights this draw may take, four indexes a vec4; u_RtParams.x of them
+	"uniform vec4 u_RtList[RT_MAX_LIGHTS / 4];\n"
 	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
 	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
 	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
@@ -305,18 +364,47 @@ static const char *rt_glsl =
 	"uniform sampler2DShadow u_RtShadowStatic;\n"
 	"uniform sampler2DShadow u_RtShadowDynamic;\n"
 	"uniform sampler2D u_RtSunShadow;\n"
+	// the sun's widest cascade, for particles: where they are, not behind
+	// them on the screen (a w of 0: none)
+	"uniform sampler2DShadow u_RtSunCascade;\n"
+	"uniform mat4 u_RtSunCascadeMvp;\n"
 	"uniform sampler2DShadow u_RtShadowBaked;\n"
+	// the sky (R_RtUpdateSky): each direction's projection, three rows, then
+	// the direction; its light, w the most world a texel covers (0: none)
+	"uniform vec4 u_RtSky[RT_SKY_DIRS * 4];\n"
+	"uniform vec4 u_RtSkyColor;\n"
+	"uniform sampler2DShadow u_RtSkyMap;\n"
+	// the draw: x for leaves, two sided, how much of the light on one side
+	// comes through the other; y 1 when its vertexes worked out the sky's
+	// light (var_RtSky)
+	"uniform vec4 u_RtSurface;\n"
+	// u_RtSurface.y 2: the sky each texel of the draw's lightmap sees, at rt_skyLM
+	"uniform sampler2D u_RtSkyLightmap;\n"
+	"vec2 rt_skyLM = vec2(0.0);\n"
+	"#if defined(USE_RTSKY_VERTEX)\n"
+	"varying vec3 var_RtSky;\n"
+	"#endif\n"
 	"#if defined(RT_CAPSULES)\n"
 	"uniform sampler2D u_RtCapsules;\n"
 	"#endif\n"
 	"\n"
+	"int RtListed(int k)\n"
+	"{\n"
+	"	vec4 q = u_RtList[k / 4];\n"
+	"	int  c = k - (k / 4) * 4;\n"
+	"	return int(c == 0 ? q.x : c == 1 ? q.y : c == 2 ? q.z : q.w);\n"
+	"}\n"
+	"\n"
 	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth)\n"
 	"{\n"
 	"	vec2  origin = vec2(mod(tile, RT_TILES), floor(tile / RT_TILES));\n"
+	// the four taps (each four texels, filtered) half a texel apart, or as
+	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps
+	"	float spread = max(u_RtSurface.w, 1.0);\n"
 	"	float texel  = 1.0 / RT_TILE_TEXELS;\n"
-	"	vec2  st     = clamp(faceUV, vec2(1.5 * texel), vec2(1.0 - 1.5 * texel));\n"
+	"	vec2  st     = clamp(faceUV, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
 	"	vec2  uv     = (origin + st) / RT_TILES;\n"
-	"	float d      = 0.5 / (RT_TILES * RT_TILE_TEXELS);\n"
+	"	float d      = 0.5 * spread / (RT_TILES * RT_TILE_TEXELS);\n"
 	"	return 0.25 * (shadow2D(atlas, vec3(uv + vec2(-d, -d), depth))\n"
 	"	             + shadow2D(atlas, vec3(uv + vec2( d, -d), depth))\n"
 	"	             + shadow2D(atlas, vec3(uv + vec2(-d,  d), depth))\n"
@@ -390,6 +478,14 @@ static const char *rt_glsl =
 	"			vec4  B = texelFetch(u_RtCapsules, ivec2(c * 2 + 1, 0), 0);\n"
 	"			vec3  d2 = B.xyz - A.xyz;\n"
 	"			vec3  r  = P - A.xyz;\n"
+	// a sphere around the capsule and its softest edge, which the ray
+	// passes wide of for most of a body's capsules: a few products, not
+	// the nearest approach of two segments
+	"			vec3  mid = A.xyz + 0.5 * d2 - P;\n"
+	"			float sm  = clamp(dot(mid, d1) / a, 0.0, 1.0);\n"
+	"			vec3  off = mid - d1 * sm;\n"
+	"			float reach = 0.5 * length(d2) + 1.7 * A.w + 1.0;\n"
+	"			if (dot(off, off) > reach * reach) continue;\n"
 	"			float e  = dot(d2, d2), f = dot(d2, r);\n"
 	// P on or in this capsule: the body itself, not in its shadow
 	"			float tp = e > 1e-4 ? clamp(f / e, 0.0, 1.0) : 0.0;\n"
@@ -407,10 +503,36 @@ static const char *rt_glsl =
 	"			float soft = min(1.0 + 0.03 * s * len, 0.7 * A.w);\n"
 	"			vis *= smoothstep(A.w - soft, A.w + soft, dist);\n"
 	"		}\n"
+	// all but dark already: the rest of the bodies change nothing seen
+	"		if (vis < 0.004) return 0.0;\n"
 	"		i += 1 + n;\n"
 	"	}\n"
 	"#endif\n"
 	"	return vis;\n"
+	"}\n"
+	// How much of the sky a surface at P facing N sees, as an open floor does
+	// all of it: each direction it faces, as much as it faces it, if nothing
+	// is between them in that direction's depth.
+	"vec3 RtSky(vec3 P, vec3 N)\n"
+	"{\n"
+	"	float sum  = 0.0;\n"
+	"	float bias = 1.5 * u_RtSkyColor.w + 2.0;\n"
+	"	for (int k = 0; k < RT_SKY_DIRS; k++)\n"
+	"	{\n"
+	"		vec4  d = u_RtSky[k * 4 + 3];\n"
+	"		float w = dot(N, d.xyz);\n"
+	// a leaf takes what comes through it from behind
+	"		if (w < 0.0) w *= -u_RtSurface.x;\n"
+	"		if (w <= 0.0) continue;\n"
+	"		vec3  Q = P + (N * sign(dot(N, d.xyz)) + d.xyz) * bias;\n"
+	"		vec4  r0 = u_RtSky[k * 4], r1 = u_RtSky[k * 4 + 1], r2 = u_RtSky[k * 4 + 2];\n"
+	"		vec3  c = vec3(dot(r0.xyz, Q) + r0.w, dot(r1.xyz, Q) + r1.w, dot(r2.xyz, Q) + r2.w) * 0.5 + 0.5;\n"
+	"		float t = float(k);\n"
+	"		vec2  tile = vec2(mod(t, RT_SKY_TILES), floor(t / RT_SKY_TILES));\n"
+	"		vec2  st = clamp(c.xy, vec2(1.0 / RT_SKY_TEXELS), vec2(1.0 - 1.0 / RT_SKY_TEXELS));\n"
+	"		sum += w * shadow2D(u_RtSkyMap, vec3((tile + st) / RT_SKY_TILES, c.z));\n"
+	"	}\n"
+	"	return u_RtSkyColor.rgb * sum;\n"
 	"}\n"
 	// the map's lighting and what the lights change of it, never darker than
 	// a part of what it was: the lights' model is too bright near a lamp
@@ -419,13 +541,33 @@ static const char *rt_glsl =
 	"	return max(base + delta, base * u_RtParams.w);\n"
 	"}\n"
 	"#if !defined(RT_VERTEX)\n"
+	// The shine of the lights and the sun (r_rtSpecular, u_RtSurface.z), for
+	// a program that has the view and the surface's roughness: it sets
+	// rt_specOn, rt_specView (to the eye) and rt_specRough before RtLight,
+	// which adds what they bring to rt_spec, as lightall's CalcSpecular has it
+	"bool  rt_specOn    = false;\n"
+	"vec3  rt_specView  = vec3(0.0, 0.0, 1.0);\n"
+	"float rt_specRough = 1.0;\n"
+	"vec3  rt_spec      = vec3(0.0);\n"
+	"float RtSpecular(vec3 N, vec3 L)\n"
+	"{\n"
+	"	vec3  H  = normalize(L + rt_specView);\n"
+	"	float NH = clamp(dot(N, H), 0.0, 1.0);\n"
+	"	float EH = clamp(dot(rt_specView, H), 0.0, 1.0);\n"
+	"	float rr = rt_specRough * rt_specRough;\n"
+	"	float rrrr = rr * rr;\n"
+	"	float dd = NH * NH * (rrrr - 1.0) + 1.0;\n"
+	"	float v  = EH * EH * (rt_specRough + 0.5) + 0.0001;\n"
+	"	return u_RtSurface.z * rrrr / (4.0 * dd * dd * v);\n"
+	"}\n"
 	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
-	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
-	"		if (i >= count) break;\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -434,17 +576,23 @@ static const char *rt_glsl =
 	"		if (d2 >= r2) continue;\n"
 	"		float d   = sqrt(d2);\n"
 	"		float ndl = dot(N, toLight) / d;\n"
+	"		if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
 	"		if (ndl <= 0.0) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
-	// the compiler's point light: intensity * 7500 / distance squared, never nearer than 16
-	"		float att  = ndl * fade * fade / max(d2, 256.0);\n"
+	// the compiler's point light: intensity * 7500 / distance squared, never
+	// nearer than 16; a lamp's, never nearer than the glow of its shade
+	// (l2.w, which a spot light's cone has), and less the way its shade
+	// closes it off (l2.xyz, as long as the part it stops there)
+	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"		float near = l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0;\n"
+	"		float att  = ndl * fade * fade / max(d2, near);\n"
+	"		if (l0.w < 0.5) att *= 1.0 - clamp(dot(toLight, -l2.xyz) / d, 0.0, 1.0);\n"
 	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
 	// flash, a blast): never shadowed, and on top of the map's lighting always
 	"		bool added = l0.w > 1.5;\n"
 	"		if (l0.w > 0.5 && !added)\n"
 	"		{\n"
 	// the compiler's spot light: a cone, with a 32 unit soft edge
-	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
 	"			float along = -dot(toLight, l2.xyz);\n"
 	"			if (along <= 0.001) continue;\n"
 	"			float radiusAtDist = l2.w * along;\n"
@@ -452,43 +600,70 @@ static const char *rt_glsl =
 	"			if (sampleRadius >= radiusAtDist) continue;\n"
 	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
 	"		}\n"
+	// what it would give unshadowed is too little to see: passed over, its
+	// shadow not looked up (u_RtAmbient.w, r_rtCutoff; R_RtReach)
+	"		vec3 most = l1.rgb * att;\n"
+	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
 	// off the surface by a texel and a half of the shadow at that distance
 	"			float texelWorld = 2.0 * d / RT_TILE_TEXELS;\n"
-	"			vec3  v = P + N * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
+	"			vec3  v = P + N * sign(dot(N, toLight)) * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
 	"			float now = RtShadow(l3, v, false);\n"
-	"			if (l3.z >= 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
+	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
 	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
 	"		}\n"
 	"		else if (delta && !added) continue;\n"
 	"		sum += l1.rgb * att;\n"
+	// the shine of what faces it (a leaf's far side takes none)
+	"		if (rt_specOn && !delta && dot(N, toLight) > 0.0)\n"
+	"			rt_spec += l1.rgb * att * RtSpecular(N, toLight / d);\n"
 	"	}\n"
 	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
 	"	{\n"
 	"		float ndl = dot(N, u_RtSunDir.xyz);\n"
+	"		if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
 	"		if (ndl > 0.0)\n"
 	"		{\n"
 	"			float vis = 1.0;\n"
 	"			if (u_RtSunColor.w > 0.5)\n"
 	"				vis = texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r;\n"
 	"			sum += u_RtSunColor.rgb * (ndl * vis);\n"
+	"			if (rt_specOn && dot(N, u_RtSunDir.xyz) > 0.0)\n"
+	"				rt_spec += u_RtSunColor.rgb * (ndl * vis) * RtSpecular(N, u_RtSunDir.xyz);\n"
 	"		}\n"
+	"	}\n"
+	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
+	"	{\n"
+	// soft, and the same over a model or a leaf: worked out at its vertexes
+	// on a lightmap, worked out for each of its texels once a map
+	"		if (u_RtSurface.y > 1.5)\n"
+	"			sum += u_RtSkyColor.rgb * (float(RT_SKY_DIRS) * 0.5) * texture2D(u_RtSkyLightmap, rt_skyLM).r;\n"
+	"		else\n"
+	"#if defined(USE_RTSKY_VERTEX)\n"
+	"		if (u_RtSurface.y > 0.5)\n"
+	"			sum += var_RtSky;\n"
+	"		else\n"
+	"#endif\n"
+	"		sum += RtSky(P, N);\n"
 	"	}\n"
 	"	return sum;\n"
 	"}\n"
 	"#else\n"
 	// dust or smoke at P, lit from every side as it hangs in the light, which
-	// it is not in the shadow maps of; sunUV is where it is on the screen, whose
-	// sun shadow (that of what is behind it) it takes
+	// it is not in the shadow maps of. Its sun shadow is the sun's widest
+	// cascade's at P; without one, the screen's at sunUV, where it is on the
+	// screen (that of what is behind it, which over water is the bottom, and
+	// changes as things pass behind: smoke flickered dark)
 	"vec3 RtLightParticle(vec3 P, vec2 sunUV, bool delta)\n"
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
-	"	for (int i = 0; i < RT_MAX_LIGHTS; i++)\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
-	"		if (i >= count) break;\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -496,11 +671,12 @@ static const char *rt_glsl =
 	"		float r2 = l1.w * l1.w;\n"
 	"		if (d2 >= r2) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
-	"		float att  = fade * fade / max(d2, 256.0);\n"
+	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"		float att  = fade * fade / max(d2, l0.w < 0.5 ? max(l2.w * l2.w, 256.0) : 256.0);\n"
+	"		if (l0.w < 0.5) att *= 1.0 - clamp(dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)), 0.0, 1.0);\n"
 	"		bool added = l0.w > 1.5;\n"
 	"		if (l0.w > 0.5 && !added)\n"
 	"		{\n"
-	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
 	"			float along = -dot(toLight, l2.xyz);\n"
 	"			if (along <= 0.001) continue;\n"
 	"			float radiusAtDist = l2.w * along;\n"
@@ -508,6 +684,8 @@ static const char *rt_glsl =
 	"			if (sampleRadius >= radiusAtDist) continue;\n"
 	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
 	"		}\n"
+	"		vec3 most = l1.rgb * att;\n"
+	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
@@ -521,13 +699,45 @@ static const char *rt_glsl =
 	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
 	"	{\n"
 	"		float vis = 1.0;\n"
-	"		if (u_RtSunColor.w > 0.5)\n"
+	"		vec4 sp = u_RtSunCascadeMvp * vec4(P, 1.0);\n"
+	"		if (u_RtSunColor.w > 0.5 && abs(sp.w) > 0.0)\n"
+	"		{\n"
+	"			if (all(lessThan(abs(sp.xyz), vec3(abs(sp.w)))))\n"
+	"			{\n"
+	"				sp.xyz = sp.xyz * (0.5 / sp.w) + vec3(0.5);\n"
+	"				vis = shadow2D(u_RtSunCascade, vec3(sp.xy, sp.z - 0.0005));\n"
+	"			}\n"
+	"		}\n"
+	"		else if (u_RtSunColor.w > 0.5)\n"
 	"			vis = texture2D(u_RtSunShadow, sunUV).r;\n"
 	"		sum += u_RtSunColor.rgb * vis;\n"
 	"	}\n"
+	// hanging in the air, it is lit as a floor is
+	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
+	"		sum += RtSky(P, vec3(0.0, 0.0, 1.0));\n"
 	"	return sum;\n"
 	"}\n"
 	"#endif\n";
+
+static const char *rt_skyBake_vp =
+	"attribute vec3 attr_Position;\n"
+	"attribute vec3 attr_Normal;\n"
+	"attribute vec4 attr_TexCoord0;\n"
+	"varying vec3 var_P;\n"
+	"varying vec3 var_N;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_Position = vec4(attr_TexCoord0.xy * 2.0 - 1.0, 0.0, 1.0);\n"
+	"	var_P = attr_Position;\n"
+	"	var_N = attr_Normal;\n"
+	"}\n";
+static const char *rt_skyBake_fp =
+	"varying vec3 var_P;\n"
+	"varying vec3 var_N;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_FragColor = vec4(RtSky(var_P, normalize(var_N)).r, 0.0, 0.0, 1.0);\n"
+	"}\n";
 
 static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *dest, int size )
 {
@@ -690,12 +900,14 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 	// Added in OPM: the realtime lights, and for the particles lit at their
 	// corners (USE_RTLIGHT_PARTICLES), the vertex shader too
 	if (extra && ((shaderType == GL_FRAGMENT_SHADER && strstr(extra, "#define USE_RTLIGHT"))
-		|| (shaderType == GL_VERTEX_SHADER && strstr(extra, "#define USE_RTLIGHT_PARTICLES"))))
+		|| (shaderType == GL_VERTEX_SHADER && (strstr(extra, "#define USE_RTLIGHT_PARTICLES") || strstr(extra, "#define USE_RTSKY_VERTEX")))))
 	{
 		if (shaderType == GL_VERTEX_SHADER)
 			Q_strcat(dest, size, "#define RT_VERTEX\n#define texture2D texture\n#define shadow2D texture\n");
 		Q_strcat(dest, size, va("#define RT_MAX_LIGHTS %d\n#define RT_TILES %d.0\n#define RT_TILE_TEXELS %d.0\n#define RT_ZNEAR %f\n",
 			RT_MAX_LIGHTS, RT_ATLAS_TILES, r_rtShadowTile->integer, RT_ZNEAR));
+		Q_strcat(dest, size, va("#define RT_SKY_DIRS %d\n#define RT_SKY_TILES %d.0\n#define RT_SKY_TEXELS %d.0\n",
+			RT_SKY_DIRS, RT_SKY_TILES, r_rtSkyTile->integer));
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
 		if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
 			Q_strcat(dest, size, va("#define RT_CAPSULES\n#define RT_MAX_RUN %d\n", RT_MAX_RUN));
@@ -807,6 +1019,8 @@ static int GLSL_LoadGPUShaderText(const char *name, const char *fallback,
 
 	if (size > destSize)
 	{
+		// Added in OPM: say so, rather than the shader just failing to load
+		ri.Printf(PRINT_WARNING, "GLSL: '%s' is %d bytes, %d more than there is room for after its header\n", filename, size, size - destSize);
 		result = 0;
 	}
 	else
@@ -940,8 +1154,11 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	int attribs, qboolean fragmentShader, const GLchar *extra, qboolean addHeader,
 	const char *fallback_vp, const char *fallback_fp)
 {
-	char vpCode[32000];
-	char fpCode[32000];
+	// Added in OPM: room for lightall, which with its header outgrew 32000
+	// (it failed to load, saying only that it could not); static, as two
+	// such buffers are a lot of stack and the shaders are built one at a time
+	static char vpCode[65536];
+	static char fpCode[65536];
 	char *postHeader;
 	int size;
 	int result;
@@ -1032,6 +1249,24 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 				break;
 			case GLSL_VEC4_RTLIGHTS:
 				size += sizeof(vec4_t) * RT_MAX_LIGHTS * RT_LIGHT_VEC4S;
+				break;
+			case GLSL_VEC4_RTLIST:
+				size += sizeof(vec4_t) * (RT_MAX_LIGHTS / 4);
+				break;
+			case GLSL_VEC4_RTSKY:
+				size += sizeof(vec4_t) * RT_SKY_DIRS * 4;
+				break;
+			case GLSL_VEC4_SKELLIGHTS:
+				size += sizeof(vec4_t) * SKEL_GPU_MAX_LIGHTS * 3;
+				break;
+			case GLSL_VEC4_SKELDENTS:
+				size += sizeof(vec4_t) * SKEL_GPU_MAX_DENTS * 2;
+				break;
+			case GLSL_VEC4_SKELMORPHS:
+				size += sizeof(vec4_t) * (SKEL_GPU_MAX_MORPHS / 4);
+				break;
+			case GLSL_VEC4_WATERSPOTS:
+				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
 				break;
 			default:
 				break;
@@ -1221,11 +1456,9 @@ Added in OPM
 The realtime lights, RT_LIGHT_VEC4S vec4s each (tr_rtlight.c). Only the first
 count are sent; the shader reads no further than u_RtParams.x.
 */
-void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count, int generation)
 {
 	GLint *uniforms = program->uniforms;
-	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
-	int    floats   = count * RT_LIGHT_VEC4S * 4;
 
 	if (uniforms[uniformNum] == -1 || count <= 0) {
 		return;
@@ -1238,16 +1471,198 @@ void GLSL_SetUniformRtLights(shaderProgram_t *program, int uniformNum, const vec
 	}
 
 	if (count > RT_MAX_LIGHTS) {
-		count  = RT_MAX_LIGHTS;
-		floats = count * RT_LIGHT_VEC4S * 4;
+		count = RT_MAX_LIGHTS;
 	}
 
-	if (!memcmp(v, compare, floats * sizeof(float))) {
+	// written once a frame (R_RtRenderShadows): comparing the whole of them
+	// at each draw was kilobytes a draw for nothing
+	if (program->rtLightsGeneration == generation && program->rtLightsCount == count) {
 		return;
 	}
 
-	Com_Memcpy(compare, v, floats * sizeof(float));
+	program->rtLightsGeneration = generation;
+	program->rtLightsCount      = count;
 	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], count * RT_LIGHT_VEC4S, &v[0][0]);
+}
+
+/*
+Added in OPM
+The sky's directions (tr.rtSkyRows): the same for the whole of a map, so sent
+again only when they are drawn again.
+*/
+void GLSL_SetUniformRtSky(shaderProgram_t *program, int uniformNum, const vec4_t *v, int generation)
+{
+	GLint *uniforms = program->uniforms;
+
+	if (uniforms[uniformNum] == -1) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_RTSKY)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformRtSky: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (program->rtSkyGeneration == generation) {
+		return;
+	}
+
+	program->rtSkyGeneration = generation;
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], RT_SKY_DIRS * 4, &v[0][0]);
+}
+
+/*
+Added in OPM
+The lights of a model the vertex program poses (tr_skelgpu.c), vec4s of them;
+sent when they are not what the program has.
+*/
+void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELLIGHTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelLights: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_LIGHTS * 3) {
+		vec4s = SKEL_GPU_MAX_LIGHTS * 3;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+A posed model's gore dents (R_GoreDentsGpu), two vec4s each. Only the vec4s
+that hold them are sent, and only when they are not what the program has.
+*/
+void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELDENTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelDents: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_DENTS * 2) {
+		vec4s = SKEL_GPU_MAX_DENTS * 2;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+A posed model's morph targets' weights, four a vec4. Only the vec4s that hold
+them are sent, and only when they are not what the program has.
+*/
+void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SKELMORPHS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformSkelMorphs: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > SKEL_GPU_MAX_MORPHS / 4) {
+		vec4s = SKEL_GPU_MAX_MORPHS / 4;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+The clouds of blood round bodies in water (tr_water.c), vec4s of them; sent
+when they are not what the program has.
+*/
+void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_WATERSPOTS)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformWaterSpots: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > WATER_MAX_SPOTS) {
+		vec4s = WATER_MAX_SPOTS;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+The realtime lights a draw may take (R_RtSetUniforms), count indexes, four a
+vec4. Only the vec4s that hold them are sent.
+*/
+void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_t *v, int count)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+	int    vec4s    = (count + 3) / 4;
+
+	if (uniforms[uniformNum] == -1 || count <= 0) {
+		return;
+	}
+
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_RTLIST)
+	{
+		ri.Printf( PRINT_WARNING, "GLSL_SetUniformRtList: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+
+	if (vec4s > RT_MAX_LIGHTS / 4) {
+		vec4s = RT_MAX_LIGHTS / 4;
+	}
+
+	if (!memcmp(v, compare, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
 }
 
 void GLSL_SetUniformMat4BoneMatrix(shaderProgram_t *program, int uniformNum, /*const*/ mat4_t *matrix, int numMatricies)
@@ -1361,6 +1776,23 @@ static qboolean GLSL_InitLightallShader(int i)
 	if ((i & LIGHTDEF_ENTITY_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
 		return qfalse;
 
+	// Added in OPM: the tufts are world geometry with no material maps; their
+	// tangent and lightmap arrays hold where each stands and how it sways
+	if ((i & LIGHTDEF_GROUNDCOVER) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION
+		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
+		return qfalse;
+
+	if ((i & LIGHTDEF_GROUNDCOVER) && (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX))
+		return qfalse;
+
+	// Added in OPM: a skeletal model posed from the frame's bones, which
+	// brings its own vertexes, and nothing that reads others
+	if ((i & LIGHTDEF_SKEL_GPU) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_GROUNDCOVER)))
+		return qfalse;
+
+	if ((i & LIGHTDEF_SKEL_GPU) && lightType == LIGHTDEF_USE_LIGHTMAP)
+		return qfalse;
+
 	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
 
 	extradefines[0] = '\0';
@@ -1403,7 +1835,7 @@ static qboolean GLSL_InitLightallShader(int i)
 
 			attribs |= ATTR_TANGENT;
 
-			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_ENTITY_VERTEX_ANIMATION) && !(i & LIGHTDEF_ENTITY_BONE_ANIMATION) && r_parallaxMapping->integer)
+			if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION | LIGHTDEF_SKEL_GPU)) && r_parallaxMapping->integer)
 			{
 				Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP\n");
 				if (r_parallaxMapping->integer > 1)
@@ -1455,6 +1887,8 @@ static qboolean GLSL_InitLightallShader(int i)
 	//  darkens it as ever.
 	if (r_realtimeLighting->integer)
 		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
+	if (R_RtVertexSky())
+		Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
 
 	if ((i & LIGHTDEF_USE_SHADOWMAP) && r_realtimeLighting->integer != 2)
 	{
@@ -1470,6 +1904,19 @@ static qboolean GLSL_InitLightallShader(int i)
 	{
 		Q_strcat(extradefines, 1024, "#define USE_TCGEN\n");
 		Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
+	}
+
+	if (i & LIGHTDEF_GROUNDCOVER)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_GROUNDCOVER\n");
+		attribs |= ATTR_TANGENT | ATTR_LIGHTCOORD;
+	}
+
+	if (i & LIGHTDEF_SKEL_GPU)
+	{
+		Q_strcat(extradefines, 1024, va("#define USE_SKEL_GPU\n#define USE_MODELMATRIX\n#define SKEL_MAX_LIGHTS %d\n#define SKEL_BONE_ROW %d\n#define SKEL_MAX_DENTS %d\n#define SKEL_MAX_MORPHS %d\n", SKEL_GPU_MAX_LIGHTS, SKEL_GPU_BONE_ROW, SKEL_GPU_MAX_DENTS, SKEL_GPU_MAX_MORPHS));
+		attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES
+			| ATTR_TANGENT | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR | ATTR_BONE_WEIGHTS | ATTR_LIGHTDIRECTION;
 	}
 
 	if (i & LIGHTDEF_ENTITY_VERTEX_ANIMATION)
@@ -1511,8 +1958,13 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 
@@ -1618,6 +2070,8 @@ void GLSL_InitGPUShaders(void)
 			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
 		if (R_RtVertexParticles())
 			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT_PARTICLES\n");
+		if (R_RtVertexSky())
+			Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
 		if (r_softParticles->value > 0)
 			Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
 
@@ -1633,8 +2087,11 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);
@@ -1655,6 +2112,23 @@ void GLSL_InitGPUShaders(void)
 	GLSL_SetUniformInt(&tr.textureColorShader, UNIFORM_TEXTUREMAP, TB_DIFFUSEMAP);
 
 	GLSL_FinishGPUShader(&tr.textureColorShader);
+
+	// Added in OPM: the sky a lightmap texel sees, once a map (R_RtBakeSkyLightmaps)
+	if (r_realtimeLighting->integer == 2)
+	{
+		if (!GLSL_InitGPUShader(&tr.rtSkyBakeShader, "rtskybake", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD,
+			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBake_vp, rt_skyBake_fp))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no program for the sky's lightmaps\n");
+		}
+		else
+		{
+			GLSL_InitUniforms(&tr.rtSkyBakeShader);
+			GLSL_SetUniformInt(&tr.rtSkyBakeShader, UNIFORM_RTSKYMAP, TMU_RTSKY);
+			GLSL_FinishGPUShader(&tr.rtSkyBakeShader);
+			numEtcShaders++;
+		}
+	}
 
 	numEtcShaders++;
 
@@ -1728,7 +2202,7 @@ void GLSL_InitGPUShaders(void)
 		// Pre-build every permutation a surface with no material maps can
 		// need, which covers all of stock MOH:AA. Anything carrying a normal,
 		// specular or deluxe map is left to GLSL_GetLightallShader.
-		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP))
+		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER | LIGHTDEF_SKEL_GPU))
 			continue;
 
 		if (!GLSL_InitLightallShader(i))
@@ -1985,6 +2459,87 @@ void GLSL_InitGPUShaders(void)
 		}
 	}
 
+	// Added in OPM: water (tr_water.c). Without it water keeps its own stages.
+	if (r_water->integer && glRefConfig.framebufferObject)
+	{
+		attribs = ATTR_POSITION | ATTR_NORMAL;
+		extradefines[0] = '\0';
+
+		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+		Q_strcat(extradefines, 1024, va("#define WATER_RIPPLE_SIZE %d\n", WATER_RIPPLE_SIZE));
+
+		if (GLSL_InitGPUShader(&tr.waterShader, "water", attribs, qtrue, extradefines, qtrue, fallbackShader_water_vp, fallbackShader_water_fp))
+		{
+			GLSL_InitUniforms(&tr.waterShader);
+
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SCREENDEPTHMAP, TMU_SOFTDEPTH);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_CUBEMAP, TB_CUBEMAP);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_WATERREFLECTMAP, TB_SHADOWMAP);
+
+			GLSL_FinishGPUShader(&tr.waterShader);
+
+			numEtcShaders++;
+		}
+		else
+		{
+			ri.Printf(PRINT_WARNING, "WARNING: the water program did not compile, water keeps its stages\n");
+		}
+
+		// what lands on the lens: drawn over the frame, through its copy
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		extradefines[0] = '\0';
+		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+		if (GLSL_InitGPUShader(&tr.lensShader, "lens", attribs, qtrue, extradefines, qtrue, fallbackShader_lens_vp, fallbackShader_lens_fp))
+		{
+			GLSL_InitUniforms(&tr.lensShader);
+			GLSL_SetUniformInt(&tr.lensShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			GLSL_FinishGPUShader(&tr.lensShader);
+			numEtcShaders++;
+		}
+
+		// its ripples, a step of them
+		if (r_waterRipples->integer)
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+
+			if (GLSL_InitGPUShader(&tr.rippleShader, "ripple", attribs, qtrue, extradefines, qtrue, fallbackShader_ripple_vp, fallbackShader_ripple_fp))
+			{
+				GLSL_InitUniforms(&tr.rippleShader);
+				GLSL_SetUniformInt(&tr.rippleShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+				GLSL_FinishGPUShader(&tr.rippleShader);
+				numEtcShaders++;
+			}
+		}
+
+		// the wet beach the tide leaves: darkened, then the sky in it
+		for (i = 0; i < 2; i++)
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			if (qglesMajorVersion < 3 && glRefConfig.standardDerivatives)
+				Q_strcat(extradefines, 1024, "#extension GL_OES_standard_derivatives : enable\n");
+			Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+			if (i)
+				Q_strcat(extradefines, 1024, "#define BEACH_ADD\n");
+
+			if (!GLSL_InitGPUShader(&tr.beachShader[i], "beach", attribs, qtrue, extradefines, qtrue, fallbackShader_beach_vp, fallbackShader_beach_fp))
+				break;
+
+			GLSL_InitUniforms(&tr.beachShader[i]);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SCREENIMAGEMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_CUBEMAP, TB_CUBEMAP);
+			GLSL_SetUniformInt(&tr.beachShader[i], UNIFORM_SPECULARMAP, TB_SPECULARMAP);
+			GLSL_FinishGPUShader(&tr.beachShader[i]);
+			numEtcShaders++;
+		}
+	}
+
 #if 0
 	attribs = ATTR_POSITION | ATTR_TEXCOORD;
 	extradefines[0] = '\0';
@@ -2026,6 +2581,7 @@ void GLSL_ShutdownGPUShaders(void)
 		GLSL_DeleteGPUShader(&tr.genericShader[i]);
 
 	GLSL_DeleteGPUShader(&tr.textureColorShader);
+	GLSL_DeleteGPUShader(&tr.rtSkyBakeShader);
 
 	for ( i = 0; i < FOGDEF_COUNT; i++)
 		GLSL_DeleteGPUShader(&tr.fogShader[i]);
@@ -2049,6 +2605,11 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
+	GLSL_DeleteGPUShader(&tr.waterShader);
+	GLSL_DeleteGPUShader(&tr.rippleShader);
+	GLSL_DeleteGPUShader(&tr.lensShader);
+	GLSL_DeleteGPUShader(&tr.beachShader[0]);
+	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 
 	for ( i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.depthBlurShader[i]);

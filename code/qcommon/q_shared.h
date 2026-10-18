@@ -1826,6 +1826,10 @@ typedef struct playerState_s {
 #define BUTTON_LEAN_LEFT_BITINDEX		4
 #define BUTTON_LEAN_RIGHT_BITINDEX		5
 #define BUTTON_TALK_BITINDEX			6			// displays talk balloon and disables actions
+// Added in OPM
+//  Bits 7 to 11 carry the weapon commands, these two are the free ones above them
+#define BUTTON_SPRINT_BITINDEX			12			// +sprint: run faster, weapon lowered
+#define BUTTON_AIM_BITINDEX				13			// +aim: down the sights (the client also clears BUTTON_RUN)
 #define BUTTON_ANY_BITINDEX				14			// any key whatsoever
 #define BUTTON_MOUSE_BITINDEX			15			// mouse move
 
@@ -1836,6 +1840,8 @@ typedef struct playerState_s {
 #define BUTTON_LEAN_LEFT       (1 << BUTTON_LEAN_LEFT_BITINDEX)
 #define BUTTON_LEAN_RIGHT      (1 << BUTTON_LEAN_RIGHT_BITINDEX)
 #define	BUTTON_TALK			   (1 << BUTTON_TALK_BITINDEX)			// displays talk balloon and disables actions
+#define BUTTON_SPRINT          (1 << BUTTON_SPRINT_BITINDEX)
+#define BUTTON_AIM             (1 << BUTTON_AIM_BITINDEX)
 #define	BUTTON_ANY			   (1 << BUTTON_ANY_BITINDEX)		   // any key whatsoever
 #define BUTTON_MOUSE           (1 << BUTTON_MOUSE_BITINDEX)
 
@@ -1938,6 +1944,10 @@ typedef struct usercmd_s {
 // first person: fold a skeletal model's head and arms away, leaving the
 // torso and legs.
 #define RF_FIRST_PERSON_BODY		(1<<29)
+// OPM: set by cgame only, never sent by a server. The gore system has been at
+// a skeletal model: refEntity_t gore_dents holds dents to push into it
+// (goreDent_t), and triangles a cut part has folded to nothing are left out.
+#define RF_GORE_DENTS			(1<<27)
 //
 // use this mask when propagating renderfx from one entity to another
 //
@@ -1985,6 +1995,23 @@ typedef struct boneOverride_s {
     int   boneIndex; // local channel index for the entity's tiki, -1 when unused
     float matrix[4][3];
 } boneOverride_t;
+
+// Added in OPM
+//  A dent pushed into a skeletal model: the gore system's craters (a head a
+//  heavy round has gone through, cg_gore.cpp). A sphere sits about the skin,
+//  its middle just outside, and every vertex inside it is pushed straight in,
+//  against dir, to its far side: the part of the sphere inside the model
+//  becomes a hollow, and nothing about it is pushed out sideways. The sphere
+//  is given in the frame of one bone, so the dent goes where that bone goes.
+//  Read by the renderer only from a refEntity with RF_GORE_DENTS.
+typedef struct goreDent_s {
+    int   boneIndex; // local channel index for the entity's tiki
+    float offset[3]; // in the bone's frame, model units (before the model's scale)
+    float dir[3];    // out of the hollow, in the bone's frame
+    float radius;    // model units
+} goreDent_t;
+
+#define MAX_GORE_DENTS 16
 
 typedef enum {
 	TR_STATIONARY,

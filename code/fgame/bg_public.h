@@ -261,6 +261,7 @@ movement on the server game.
 #define PMF_VIEW_JUMP_START (1 << 10)
 #define PMF_LEVELEXIT       (1 << 11)
 #define PMF_TURRET          (1 << 12)
+#define PMF_SPRINTING       (1 << 13) // Added in OPM: sprinting, for the view model's sprint pose
 #define PMF_NO_WEAPONBAR    (1 << 14)
 #define PMF_NO_HUD          (1 << 15)
 
@@ -555,6 +556,16 @@ movement on the server game.
         STAT_SECONDARY_AMMO, // added in 2.0
         STAT_LAST_STAT
     } playerstat_t;
+
+// Added in OPM
+//  The last stat slot, which no stat above reaches: the sprint bar and stance
+//  for cgame (player_stance.cpp). The low byte is the sprint left, 0 to 100.
+#define STAT_OPM_STANCE        (MAX_STATS - 1)
+#define STANCE_STAT_STAMINA    0xff
+#define STANCE_STAT_DIVING     0x100 // in the air in a dive
+#define STANCE_STAT_EXHAUSTED  0x200 // out of sprint, or too hurt to sprint
+#define STANCE_STAT_TIRED      0x400 // slowed down, tired out
+#define STANCE_STAT_CRAWLING   0x800 // crawling: weapon down, not to be fired
 
     extern const char *means_of_death_strings[];
 

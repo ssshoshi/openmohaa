@@ -559,6 +559,9 @@ static void R_FreeWorldImages( void )
 
 	R_IssuePendingRenderCommands();
 
+	// Added in OPM: the sky each of their texels sees
+	R_RtFreeSkyLightmaps();
+
 	if ( tr.lightmaps ) {
 		for ( i = 0; i < tr.numLightmaps; i++ ) {
 			R_FreeImage( tr.lightmaps[i] );
@@ -1833,6 +1836,7 @@ static	void R_LoadSurfaces( lump_t *surfs, lump_t *verts, lump_t *indexLump ) {
 	s_worldData.surfacesViewCount = ri.Hunk_Alloc ( count * sizeof(*s_worldData.surfacesViewCount), h_low );
 	s_worldData.surfacesDlightBits = ri.Hunk_Alloc ( count * sizeof(*s_worldData.surfacesDlightBits), h_low );
 	s_worldData.surfacesPshadowBits = ri.Hunk_Alloc ( count * sizeof(*s_worldData.surfacesPshadowBits), h_low );
+	s_worldData.surfacesRtBits = ri.Hunk_Alloc ( count * sizeof(*s_worldData.surfacesRtBits), h_low );
 
 	// load hdr vertex colors
 	if (r_hdr->integer)
@@ -3967,6 +3971,7 @@ void RE_LoadWorldMap( const char *name ) {
 	// Added in OPM
 	//  From the file as it is, before the lightmaps went into atlases.
 	R_GroundCoverLoadWorld(fileBase, header);
+	R_WaterLoadWorld(s_worldData.baseName);
 
     ri.FS_FreeFile( buffer.v );
 
@@ -4051,6 +4056,8 @@ void R_ClearWorld(void) {
     // Added in OPM
     R_RtFreeWorld();
     R_GroundCoverFree();
+    // the models they were of go with the level
+    R_SkelPosesClear();
 
     if (tr.world) {
         if (tr.world->shaders) {
@@ -4076,6 +4083,9 @@ void R_ClearWorld(void) {
         }
         if (tr.world->surfacesPshadowBits) {
             ri.Hunk_FreeTempMemory(tr.world->surfacesPshadowBits);
+        }
+        if (tr.world->surfacesRtBits) {
+            ri.Hunk_FreeTempMemory(tr.world->surfacesRtBits);
         }
         if (tr.world->marksurfaces) {
             ri.Hunk_FreeTempMemory(tr.world->marksurfaces);

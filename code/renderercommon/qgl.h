@@ -162,6 +162,18 @@ extern void (APIENTRYP qglUnlockArraysEXT) (void);
 	GLE(void, QueryCounter, GLuint id, GLenum target) \
 	GLE(void, GetQueryObjectui64v, GLuint id, GLenum pname, GLuint64 *params) \
 
+// Added in OPM: what streaming vertexes through one mapped buffer takes
+// (GL2's r_tessStream): GL_ARB_buffer_storage (OpenGL 4.4), mapping a range
+// (3.0), fences and drawing from a base vertex (3.2)
+#define QGL_ARB_buffer_storage_PROCS \
+	GLE(void, BufferStorage, GLenum target, GLsizeiptr size, const void *data, GLbitfield flags) \
+	GLE(void *, MapBufferRange, GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access) \
+	GLE(GLboolean, UnmapBuffer, GLenum target) \
+	GLE(GLsync, FenceSync, GLenum condition, GLbitfield flags) \
+	GLE(GLenum, ClientWaitSync, GLsync sync, GLbitfield flags, GLuint64 timeout) \
+	GLE(void, DeleteSync, GLsync sync) \
+	GLE(void, DrawElementsBaseVertex, GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex) \
+
 // OpenGL 1.5, was GL_ARB_vertex_buffer_object
 #define QGL_1_5_PROCS \
 	GLE(void, BindBuffer, GLenum target, GLuint buffer) \
@@ -341,6 +353,7 @@ QGL_2_0_PROCS;
 QGL_3_0_PROCS;
 QGL_ARB_occlusion_query_PROCS;
 QGL_ARB_timer_query_PROCS;
+QGL_ARB_buffer_storage_PROCS;
 QGL_ARB_framebuffer_object_PROCS;
 QGL_ARB_vertex_array_object_PROCS;
 QGL_EXT_direct_state_access_PROCS;

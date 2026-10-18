@@ -44,7 +44,16 @@ SKIP_DIRS = (
     "textures/mohmenu/", "textures/objectives/", "textures/sky/",
     "textures/special/", "textures/sprites/", "textures/test/",
     "textures/mohtest/", "textures/weather/", "textures/tempsign/",
+    "models/fx/",
 )
+
+# Where the images with maps are: world textures, and model skins (most of
+# which are under textures/models/).
+ROOTS = ("textures/", "models/")
+
+# Model skins are cut into islands and don't tile, so their relief is
+# integrated without wrapping, like a clampmap's.
+NO_WRAP_DIRS = ("textures/models/", "models/")
 
 # Blend modes that add to or filter what is already drawn: such a stage is
 # never the lit diffuse stage.
@@ -295,14 +304,17 @@ def collect_uses(vfs):
 
 
 def resolve_image(vfs, base, request_ext):
-    """The file R_LoadImage would load for base (r_ext_compressed_textures 0)."""
+    """The file R_LoadImage would load for base.
+
+    GL2 tries a .dds first, from any pk3, so an installed upscale pk3
+    (tools/texupscale) is what the maps are made from.
+    """
     ext = request_ext or "tga"
-    order = []
+    order = ["dds"]
     if ext == "tga":
         order.append("jpg")     # MOH:AA tries the JPEG first for a .tga
     order.append(ext)
     order += [e for e in ("png", "tga", "jpg") if e not in order]
-    order.append("dds")
     for e in order:
         entry = vfs.files.get(base + "." + e)
         if entry:
@@ -600,7 +612,7 @@ def plan_jobs(vfs, args):
 
     bases = {}
     for path in vfs.files:
-        if not path.startswith("textures/"):
+        if not path.startswith(ROOTS):
             continue
         base, ext = image_base(path)
         if ext:
@@ -634,7 +646,7 @@ def plan_jobs(vfs, args):
         if not entry:
             continue
         preset = pick_preset(base, use)
-        clamp = bool(use and use.clamp)
+        clamp = bool(use and use.clamp) or base.startswith(NO_WRAP_DIRS)
         jobs.append((base, entry, preset, clamp, want_n, want_s))
     return jobs, stats
 

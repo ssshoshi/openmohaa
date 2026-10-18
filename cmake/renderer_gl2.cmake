@@ -22,6 +22,8 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_glsl.c
     ${SOURCE_DIR}/renderergl2/tr_gputimer.c
     ${SOURCE_DIR}/renderergl2/tr_groundcover.c
+    ${SOURCE_DIR}/renderergl2/tr_water.c
+    ${SOURCE_DIR}/renderergl2/tr_lens.c
     ${SOURCE_DIR}/renderergl2/tr_image.c
     ${SOURCE_DIR}/renderergl2/tr_image_dds.c
     ${SOURCE_DIR}/renderergl2/tr_init.c
@@ -35,6 +37,7 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_postprocess.c
     ${SOURCE_DIR}/renderergl2/tr_scene.c
     ${SOURCE_DIR}/renderergl2/tr_shade_calc.c
+    ${SOURCE_DIR}/renderergl2/tr_skelgpu.cpp
     ${SOURCE_DIR}/renderergl2/tr_shade.c
     ${SOURCE_DIR}/renderergl2/tr_shader.c
     ${SOURCE_DIR}/renderergl2/tr_shadows.c

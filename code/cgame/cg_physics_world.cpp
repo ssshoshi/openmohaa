@@ -254,6 +254,7 @@ void CG_PhysicsLoadWorld(void)
     }
     pw_loaded = qtrue;
     Q_strncpyz(pw_map, cgs.mapname, sizeof(pw_map));
+    CG_PhysicsSoundsQuiet();
     pw_standIns = 0;
 
     if (!cgs.mapname[0] || !phys_system) {

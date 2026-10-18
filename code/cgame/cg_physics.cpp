@@ -37,6 +37,7 @@ cvar_t *cg_physics;
 cvar_t *cg_physics_log;
 cvar_t *cg_physics_debug;
 cvar_t *cg_physics_props;
+cvar_t *cg_physics_hanging;
 cvar_t *cg_physics_clipped;
 
 // The simulation's clock: a fixed step, as the ragdolls use, with a few steps
@@ -80,6 +81,7 @@ void CG_InitPhysics(void)
     cg_physics_log   = cgi.Cvar_Get("cg_physics_log", "0", CVAR_ARCHIVE);
     cg_physics_debug = cgi.Cvar_Get("cg_physics_debug", "0", 0);
     cg_physics_props = cgi.Cvar_Get("cg_physics_props", "1", CVAR_ARCHIVE | CVAR_LATCH);
+    cg_physics_hanging = cgi.Cvar_Get("cg_physics_hanging", "1", CVAR_ARCHIVE | CVAR_LATCH);
     // Props the map wraps in invisible clip brushes (most furniture), on a
     // server elsewhere: 0 keeps them fixed, 1 moves them anyway, leaving the
     // clip brush where the prop was for the server to go on colliding players
@@ -88,6 +90,7 @@ void CG_InitPhysics(void)
     cg_physics_clipped = cgi.Cvar_Get("cg_physics_clipped", "0", CVAR_ARCHIVE | CVAR_LATCH);
     cg_physics_furniture = cgi.Cvar_Get("cg_physics_furniture", "1", CVAR_ARCHIVE | CVAR_LATCH);
     CG_PhysicsEditInit();
+    CG_PhysicsSoundsInit();
     phys_lastTime    = 0;
     phys_accum       = 0.0f;
 
@@ -151,6 +154,8 @@ void CG_ShutdownPhysics(void)
 void CG_PhysicsFrame(void)
 {
     if (!phys_system || !cg_physics->integer || !cg.snap) {
+        // The particle solver's corpses are heard without the physics.
+        CG_PhysicsPlayImpacts();
         return;
     }
 
@@ -170,6 +175,8 @@ void CG_PhysicsFrame(void)
         if (!phys_lastTime || cg.time < phys_lastTime || cg.time - phys_lastTime > 1000) {
             phys_lastTime = cg.time;
             phys_accum    = 0.0f;
+            // A game restored, or a long stall: what lies about settles again.
+            CG_PhysicsSoundsQuiet();
         }
 
         phys_accum += (cg.time - phys_lastTime) * 0.001f;
@@ -191,6 +198,7 @@ void CG_PhysicsFrame(void)
             CG_PhysicsMoveMovers((float)(steps + 1) / total, dt);
             CG_PhysicsGrabStep(dt);
             CG_JoltRagdollsStep(dt);
+            CG_PhysicsPropsWater(dt);
             phys_system->Update(dt, 1, phys_temp, phys_jobs);
             CG_PhysicsPropsStepped();
             CG_PhysicsFurnitureStepped();
@@ -208,13 +216,37 @@ void CG_PhysicsFrame(void)
 
         if (cg_physics_log->integer && cg.time - phys_reportTime >= 5000) {
             if (phys_steps) {
+                // what is awake, by whose it is: kinematic (moved each step)
+                // and free
+                JPH::BodyIDVector         awake;
+                const JPH::BodyInterface &bi = phys_system->GetBodyInterfaceNoLock();
+                int                       kin[5] = {0}, dyn[5] = {0};
+
+                phys_system->GetActiveBodies(JPH::EBodyType::RigidBody, awake);
+                for (const JPH::BodyID &id : awake) {
+                    const JPH::uint64 u    = bi.GetUserData(id);
+                    const int         kind = u >= PHYS_USERDATA_RAGDOLL_BASE     ? 4
+                                           : u >= PHYS_USERDATA_FURNITURE_BASE ? 3
+                                           : u >= PHYS_USERDATA_ENTITY_BASE    ? 2
+                                           : u >= PHYS_USERDATA_PROP_BASE      ? 1
+                                                                               : 0;
+                    (bi.GetMotionType(id) == JPH::EMotionType::Dynamic ? dyn : kin)[kind]++;
+                }
+
+                int used, floating, asleep;
+
+                CG_JoltRagdollCounts(&used, &floating, &asleep);
                 cgi.Printf(
-                    "physics: %d steps in the last %.1f s, %.0f us each, worst %.0f us; %d bodies awake\n",
+                    "physics: %d steps in the last %.1f s, %.0f us each, worst %.0f us; %d bodies awake"
+                    " (free/kinematic: world %d/%d props %d/%d entities %d/%d furniture %d/%d ragdolls %d/%d);"
+                    " %d ragdolls, %d afloat, %d of them asleep far off\n",
                     phys_steps,
                     (cg.time - phys_reportTime) * 0.001f,
                     phys_stepUs / phys_steps,
                     phys_worstStepUs,
-                    (int)phys_system->GetNumActiveBodies(JPH::EBodyType::RigidBody)
+                    (int)awake.size(),
+                    dyn[0], kin[0], dyn[1], kin[1], dyn[2], kin[2], dyn[3], kin[3], dyn[4], kin[4],
+                    used, floating, asleep
                 );
             }
             phys_reportTime   = cg.time;
@@ -224,7 +256,10 @@ void CG_PhysicsFrame(void)
         }
 
         CG_PhysicsSendNudges();
+        CG_PhysicsPlayImpacts();
+        CG_PhysicsPlayScrapes();
         CG_PhysicsDrawProps(phys_accum / dt);
+        CG_PhysicsDrawCords(phys_accum / dt);
         CG_PhysicsDrawFurniture(phys_accum / dt);
     }
 

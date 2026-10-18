@@ -360,6 +360,27 @@ void FBO_Init(void)
 		FBO_Bind(NULL);
 	}
 
+	// Added in OPM
+	//  The sky's depth from each of its directions (tr_rtlight.c), depth alone.
+	if (tr.rtSkyImage && tr.rtShadowFbo[0])
+	{
+		tr.rtSkyFbo = FBO_Create("_rtsky", tr.rtSkyImage->width, tr.rtSkyImage->height);
+		FBO_AttachImage(tr.rtSkyFbo, tr.rtSkyImage, GL_DEPTH_ATTACHMENT, 0);
+		FBO_Bind(tr.rtSkyFbo);
+		qglDrawBuffer(GL_NONE);
+		qglReadBuffer(GL_NONE);
+		if (!R_CheckFBO(tr.rtSkyFbo))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no sky depth, the sky does not light\n");
+			tr.rtSkyFbo = NULL;
+		}
+		FBO_Bind(NULL);
+
+		// the sky's lightmaps: a colour page at a time is attached (R_RtBakeSkyLightmaps)
+		if (tr.rtSkyFbo)
+			tr.rtSkyBakeFbo = FBO_Create("_rtskybake", glConfig.maxTextureSize, glConfig.maxTextureSize);
+	}
+
 	if (tr.sunShadowDepthImage[0])
 	{
 		for (i = 0; i < 4; i++)
@@ -419,6 +440,31 @@ void FBO_Init(void)
 		tr.hdrDepthFbo = FBO_Create("_hdrDepth", tr.hdrDepthImage->width, tr.hdrDepthImage->height);
 		FBO_AttachImage(tr.hdrDepthFbo, tr.hdrDepthImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.hdrDepthFbo);
+	}
+
+	if (tr.waterRippleImage[0] && tr.waterRippleImage[1])
+	{
+		tr.waterRippleFbo[0] = FBO_Create("_waterRipple0", WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+		FBO_AttachImage(tr.waterRippleFbo[0], tr.waterRippleImage[0], GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterRippleFbo[0]);
+		tr.waterRippleFbo[1] = FBO_Create("_waterRipple1", WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+		FBO_AttachImage(tr.waterRippleFbo[1], tr.waterRippleImage[1], GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterRippleFbo[1]);
+	}
+
+	if (tr.waterSceneImage)
+	{
+		tr.waterSceneFbo = FBO_Create("_waterScene", tr.waterSceneImage->width, tr.waterSceneImage->height);
+		FBO_AttachImage(tr.waterSceneFbo, tr.waterSceneImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterSceneFbo);
+	}
+
+	if (tr.waterReflectImage)
+	{
+		tr.waterReflectFbo = FBO_Create("_waterReflect", tr.waterReflectImage->width, tr.waterReflectImage->height);
+		FBO_AttachImage(tr.waterReflectFbo, tr.waterReflectImage, GL_COLOR_ATTACHMENT0, 0);
+		FBO_CreateBuffer(tr.waterReflectFbo, GL_DEPTH_COMPONENT24_ARB, 0, 0);
+		R_CheckFBO(tr.waterReflectFbo);
 	}
 
 	if (tr.screenSsaoImage)

@@ -36,7 +36,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 //   1  the lights' direct light is live, and the map's own lighting keeps
 //      the rest;
-//   2  all of it is live: the map's lighting gives way to its ambient light.
+//   2  all of it is live: the map's lighting gives way to its ambient light
+//      and the sky's.
 //
 // A point light's shadow is a cube: six 90 degree faces, each a tile of an
 // atlas. What stands still (the world, terrain, and static models where the
@@ -61,7 +62,22 @@ cvar_t *r_rtDlights;
 cvar_t *r_rtLightsAtFixtures;
 cvar_t *r_rtCapsules;
 cvar_t *r_rtParticles;
+static cvar_t *r_rtParticleCascade;
 cvar_t *r_rtDebug;
+cvar_t *r_rtLightLists;
+cvar_t *r_rtCutoff;
+cvar_t *r_rtSky;
+cvar_t *r_rtSpecular;
+cvar_t *r_rtShadowSoft;
+cvar_t *r_rtSkyLightmaps;
+cvar_t *r_rtSkyTile;
+cvar_t *r_rtShadowCull;
+cvar_t *r_rtMovingLights;
+cvar_t *r_rtLamps;
+
+// the lights a surface may take are a bit each of 64 (drawSurf_t.rtMask),
+// sent four indexes a vec4 (u_RtList)
+typedef char rt_maxLightsFit[(RT_MAX_LIGHTS <= 64 && RT_MAX_LIGHTS % 4 == 0) ? 1 : -1];
 
 // six tiles a light
 #define RT_SLOTS ((RT_ATLAS_TILES * RT_ATLAS_TILES) / 6)
@@ -72,8 +88,20 @@ cvar_t *r_rtDebug;
 
 #define RT_SQRT1_2 0.70710678f
 
+// Leaves, two sided and cut out by their alpha: how much of the light on one
+// side comes through to the other
+#define RT_FOLIAGE_THROUGH 0.6f
+
 // how long a light takes to come in or go out
 #define RT_EASE_SECONDS 0.5f
+
+// a lamp's light moved less than this with its lamp stays where it is
+#define RT_LIGHT_MOVE_EPSILON 0.25f
+
+// frames a moved light's faces out of the view wait before they are drawn
+// again, so that one still moving does not spend the budget every frame on
+// faces it will move away from before they are seen
+#define RT_LIGHT_SETTLE_FRAMES 3
 
 typedef struct {
 	vec3_t   origin;
@@ -95,6 +123,15 @@ typedef struct {
 	int      source;       // its sphere light (tr.sLights)
 	int      mergedInto;   // while loading: the light at its fixture it went into, -1 none
 	int      visFrame;     // the frame a leaf the view may see listed it
+	int      fixture;      // the static model it is the light of (R_RtLightsAtFixtures), -1 none
+	vec3_t   fixtureLocal; // where it is in that model's frame
+	vec3_t   spotDirLocal; // a spot light's direction in that model's frame
+	int      movedFrame;   // the frame it last moved with its fixture
+	qboolean lamp;         // at a lamp's bulbs (R_RtLightsAtLamps): seen by its cluster, not the map's light lists
+	qboolean noShadow;     // the map's fill light no lamp could take: soft, and casting no shadow
+	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
+	float    flicker;      // a flame's: how much it dips
+	float    seed;
 } rtLight_t;
 
 static struct {
@@ -103,12 +140,22 @@ static struct {
 	int        numLights;
 	int       *fromSphere; // each sphere light's, -1 none (dark, for models only)
 	qboolean   leafLights; // the map lists the lights reaching each leaf
+	int        seenCluster;  // the view's cluster the list below is for, -1 none
+	int       *seenLights;   // the lights listed for the leaves it can see
+	int       *candidateOf;  // each light's place among this frame's candidates, -1 none
+	int        numSeen;
 	int        staticOwner[RT_SLOTS]; // the light in each slot, -1 none
 
 	vec3_t     ambient;  // raw
 	qboolean   sun;
 	vec3_t     sunDir;   // towards the sun
 	vec3_t     sunColor; // raw
+
+	vec3_t     skyColor;      // raw: what an open floor takes from all of the sky
+	vec3_t     skyDirs[RT_SKY_DIRS]; // towards the sky
+	int        skyDrawn;      // the directions drawn so far
+	image_t   *skyImage;      // what they were drawn into
+	float      skyWeight;     // eases in once they all are
 
 	int        frame;
 	int        active[RT_MAX_LIGHTS];
@@ -121,6 +168,9 @@ static struct {
 	int        facesDrawn; // this frame, for r_rtDebug
 	int        staticDrawn;
 	int        invalidated;
+	int        movingDrawn;  // this frame, for r_rtDebug: faces drawn for lights that moved
+	int        moverPairs;   // this frame, for r_rtDebug: movers in a dynamic light's range
+	int        moverCulled;  // of those, out of its reach or its light lists
 } rt;
 
 // Something that casts a shadow, followed from frame to frame: once it has
@@ -183,8 +233,34 @@ void R_RtRegister(void)
 	r_rtCapsules = ri.Cvar_Get("r_rtCapsules", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtCapsules, "People and bodies cast the realtime lights' shadows as capsules along their bones, for the lights that do not draw them whole (r_rtShadowCharacters, r_rtDynamicLights)");
 	r_rtParticles = ri.Cvar_Get("r_rtParticles", "1", 0);
+	r_rtParticleCascade = ri.Cvar_Get("r_rtParticleCascade", "1", 0);
+	ri.Cvar_SetDescription(r_rtParticleCascade, "Dust, smoke and spray take the sun's shadow from its widest shadow cascade where they are (0: from the screen behind them). Not archived: an A/B switch");
 	ri.Cvar_SetDescription(r_rtParticles, "Dust and smoke sprites take the realtime lights at their corners, not per pixel (0: per pixel, which piles of them make very slow). Not archived: an A/B switch");
 	r_rtDebug = ri.Cvar_Get("r_rtDebug", "0", 0);
+	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
+	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
+	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
+	r_rtMovingLights = ri.Cvar_Get("r_rtMovingLights", "4", CVAR_ARCHIVE);
+	ri.Cvar_CheckRange(r_rtMovingLights, 0, RT_MAX_LIGHTS, qtrue);
+	ri.Cvar_SetDescription(r_rtMovingLights, "How many of the nearest lamps moving with their models (a lantern knocked over, a lamp swinging) draw their shadows again every frame as they move; the rest catch up once they stop");
+	r_rtShadowCull = ri.Cvar_Get("r_rtShadowCull", "1", 0);
+	ri.Cvar_SetDescription(r_rtShadowCull, "What moves is drawn into a realtime light's shadow only within the light's reach (r_rtCutoff) and where the map lists the light as reaching (0: anywhere in its range). Not archived: an A/B switch");
+	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
+	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
+	r_rtSky = ri.Cvar_Get("r_rtSky", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtSky, "With r_realtimeLighting 2, how strong the sky's light is, as a part of what the map was compiled with (0: none, the shade takes the ambient light alone)");
+	r_rtSpecular = ri.Cvar_Get("r_rtSpecular", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtSpecular, "With r_realtimeLighting 2, how much the realtime lights and the sun shine on surfaces with specular (0: none)");
+	r_rtShadowSoft = ri.Cvar_Get("r_rtShadowSoft", "2", CVAR_ARCHIVE);
+	ri.Cvar_CheckRange(r_rtShadowSoft, 1, 4, qfalse);
+	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
+	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
+	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
+	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtLamps, "With r_realtimeLighting 2, the light comes from the lamps' bulbs (lights/lamps.txt): the map's lights in a room go to a lamp there, a lamp with none gets its own, and those no lamp sees cast no shadow. Applies when a map is loaded");
+	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_CheckRange(r_rtSkyTile, 256, 2048, qtrue);
+	ri.Cvar_SetDescription(r_rtSkyTile, "The size of the sky's depth from each of its directions, which says what sees the sky: the whole map in it");
 }
 
 /*
@@ -202,6 +278,7 @@ static void R_RtParseAmbient(void)
 	qboolean    inWorld = qfalse;
 
 	VectorClear(rt.ambient);
+	VectorClear(rt.skyColor);
 
 	while (p) {
 		const char *token = COM_Parse(&p);
@@ -227,6 +304,8 @@ static void R_RtParseAmbient(void)
 			inWorld = !Q_stricmp(token, "worldspawn") ? qtrue : qfalse;
 		} else if (!Q_stricmp(key, "ambientlight")) {
 			sscanf(token, "%f %f %f", &rt.ambient[0], &rt.ambient[1], &rt.ambient[2]);
+		} else if (!Q_stricmp(key, "sundiffusecolor")) {
+			sscanf(token, "%f %f %f", &rt.skyColor[0], &rt.skyColor[1], &rt.skyColor[2]);
 		}
 	}
 }
@@ -249,18 +328,413 @@ with all their light; and the fixture, which is round the light now, casts no
 shadow of it.
 */
 #define RT_FIXTURE_REACH 40.0f
+#define RT_FIXTURE_TALL  80.0f  // a fixture longer than this keeps its light where the lights are
 #define RT_MERGE_REACH   48.0f // point lights this close are one lamp
 
-static void R_RtLightsAtFixtures(void)
+/*
+=============================================================================
+
+THE LAMPS
+
+A lamp model is one surface with one texture, and the map's lights are seldom
+at it: the level designer lit each room with a few point lights where they
+lit it best, up near the ceiling, a hand or two from the lamps, and put lamps
+on the walls the compiler gave no light at all. Lit live, the light came from
+the air beside the lamps.
+
+lights/lamps.txt (data/opm-lamps, tools/lamps) says where each lamp model's
+bulbs are. With r_realtimeLighting 2 the light comes from them: each of the
+map's point lights goes to the nearest lamp it can see, all of their light
+together in one light at its bulbs; a lamp no light went to gets one of its
+own, as the table gives it; and a light that sees no lamp stays where it is,
+a fill the room was lit with, casting no shadow (there is nothing for it to
+cast one from). The map's spot lights stay as they are.
+
+r_realtimeLighting 1 keeps the map's lighting and takes only the change each
+light makes to it: there the lights stay where the map compiled them.
+=============================================================================
+*/
+
+#define RT_LAMP_DEFS   128
+#define RT_LAMP_BULBS  12
+#define RT_LAMP_REACH  512.0f // a light further than this from every lamp is a fill
+#define RT_LAMP_SEEN   16.0f  // a trace that stops this near a lamp got to it
+#define RT_LAMP_MOST   1.5f   // a lamp takes up to this much of what its kind gives
+#define RT_LAMP_NEAR   48.0f  // a lamp's light stops growing this near it: its shade glows, it is no point
+
+enum {
+	RT_LAMP_BULB,
+	RT_LAMP_SHADED,
+	RT_LAMP_CANDLE,
+	RT_LAMP_LANTERN,
+	RT_LAMP_OFF
+};
+
+typedef struct {
+	char     model[MAX_QPATH]; // without "models/", lowercase
+	int      kind;
+	vec3_t   color;
+	float    intensity;
+	vec3_t   bulbs[RT_LAMP_BULBS];
+	int      numBulbs;
+	qboolean spot;
+	vec3_t   spotDir;
+	float    spotAngle;
+	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
+} rtLampDef_t;
+
+static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
+static int         rt_numLampDefs;
+
+// a model's name as the table keys it: lowercase, no "models/", no doubled slashes
+static void R_RtLampKey(const char *model, char *out, int size)
 {
-	int i, j, merged = 0, fixtures = 0;
+	int o = 0;
+
+	if (!Q_stricmpn(model, "models/", 7)) {
+		model += 7;
+	}
+	for (; *model && o < size - 1; model++) {
+		const char c = *model == '\\' ? '/' : tolower((unsigned char)*model);
+
+		if (c == '/' && o > 0 && out[o - 1] == '/') {
+			continue;
+		}
+		out[o++] = c;
+	}
+	out[o] = 0;
+}
+
+static void R_RtLoadLampDefs(void)
+{
+	union {
+		char *c;
+		void *v;
+	} buffer;
+	char        *text;
+	rtLampDef_t *def = NULL;
+
+	rt_numLampDefs = 0;
+	if (ri.FS_ReadFile("lights/lamps.txt", &buffer.v) <= 0) {
+		return;
+	}
+
+	text = buffer.c;
+	while (1) {
+		const char *token = COM_ParseExt(&text, qtrue);
+
+		if (!token[0]) {
+			break;
+		}
+		if (!strcmp(token, "{")) {
+			continue;
+		}
+		if (!strcmp(token, "}")) {
+			def = NULL;
+			continue;
+		}
+		if (!def) {
+			if (rt_numLampDefs >= RT_LAMP_DEFS) {
+				ri.Printf(PRINT_WARNING, "lights/lamps.txt: more than %d lamps\n", RT_LAMP_DEFS);
+				break;
+			}
+			def = &rt_lampDefs[rt_numLampDefs++];
+			Com_Memset(def, 0, sizeof(*def));
+			R_RtLampKey(token, def->model, sizeof(def->model));
+			def->kind = RT_LAMP_SHADED;
+			VectorSet(def->color, 1.0f, 0.86f, 0.68f);
+			def->intensity = 100;
+			continue;
+		}
+		if (!Q_stricmp(token, "kind")) {
+			token = COM_ParseExt(&text, qfalse);
+			def->kind = !Q_stricmp(token, "bulb")      ? RT_LAMP_BULB
+					  : !Q_stricmp(token, "candle")  ? RT_LAMP_CANDLE
+					  : !Q_stricmp(token, "lantern") ? RT_LAMP_LANTERN
+					  : !Q_stricmp(token, "off")     ? RT_LAMP_OFF
+													 : RT_LAMP_SHADED;
+			if (def->kind == RT_LAMP_CANDLE || def->kind == RT_LAMP_LANTERN) {
+				VectorSet(def->color, 1.0f, 0.68f, 0.38f);
+			}
+		} else if (!Q_stricmp(token, "color")) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				def->color[k] = atof(COM_ParseExt(&text, qfalse));
+			}
+		} else if (!Q_stricmp(token, "intensity")) {
+			def->intensity = atof(COM_ParseExt(&text, qfalse));
+		} else if (!Q_stricmp(token, "bulb")) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				const float v = atof(COM_ParseExt(&text, qfalse));
+
+				if (def->numBulbs < RT_LAMP_BULBS) {
+					def->bulbs[def->numBulbs][k] = v;
+				}
+			}
+			def->numBulbs = Q_min(def->numBulbs + 1, RT_LAMP_BULBS);
+		} else if (!Q_stricmp(token, "shade")) {
+			int   k;
+			float stops;
+
+			for (k = 0; k < 3; k++) {
+				def->shade[k] = atof(COM_ParseExt(&text, qfalse));
+			}
+			stops = atof(COM_ParseExt(&text, qfalse));
+			VectorNormalize(def->shade);
+			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops), def->shade);
+		} else if (!Q_stricmp(token, "spot")) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				def->spotDir[k] = atof(COM_ParseExt(&text, qfalse));
+			}
+			def->spotAngle = atof(COM_ParseExt(&text, qfalse));
+			def->spot      = VectorNormalize(def->spotDir) > 0 && def->spotAngle > 0;
+		}
+		SkipRestOfLine(&text);
+	}
+	ri.FS_FreeFile(buffer.v);
+}
+
+static const rtLampDef_t *R_RtLampDef(const char *model)
+{
+	char key[MAX_QPATH];
+	int  i;
+
+	R_RtLampKey(model, key, sizeof(key));
+	for (i = 0; i < rt_numLampDefs; i++) {
+		if (!strcmp(rt_lampDefs[i].model, key)) {
+			return &rt_lampDefs[i];
+		}
+	}
+	return NULL;
+}
+
+static int R_RtClusterAt(const vec3_t p)
+{
+	const mnode_t *leaf = R_PointInLeaf(p);
+
+	return leaf && leaf->cluster >= 0 && leaf->cluster < tr.world->numClusters ? leaf->cluster : -1;
+}
+
+static float R_RtRangeOf(const vec3_t color)
+{
+	const float brightest = Q_max(color[0], Q_max(color[1], color[2]));
+
+	return Q_min(4096.0f, sqrt(brightest / RT_CUTOFF));
+}
+
+// Whether a light at from sees a lamp's bulbs at to: no wall between them.
+// Traced from the lamp, which hangs in the room, out to the light, which the
+// designer put anywhere, often a hand from a ceiling or a wall: what stops
+// the trace that near the light is beside it. Bulbs a ceiling or a wall cuts
+// through (a lamp's middle can be in one) see from as far as they reach.
+static qboolean R_RtSeesLamp(const vec3_t from, const vec3_t to, float size)
+{
+	trace_t trace;
+	vec3_t  zero = {0, 0, 0};
+
+	ri.CM_BoxTrace(&trace, to, from, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	if (trace.startsolid) {
+		ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		return (trace.fraction >= 0.999f || Distance(trace.endpos, to) < Q_max(RT_LAMP_SEEN, size)) ? qtrue : qfalse;
+	}
+	return (trace.fraction >= 0.999f || Distance(trace.endpos, from) < RT_LAMP_SEEN) ? qtrue : qfalse;
+}
+
+/*
+Each of the map's point lights to the lamp nearest it that it sees, the lamps
+lit, and the lamps the table has marked in isLamp, for R_RtLightsAtFixtures
+to leave alone. rt.lights has room for a light at every static model.
+*/
+static void R_RtLightsAtLamps(byte *isLamp)
+{
+	typedef struct {
+		int    model;
+		vec3_t centre;
+		int    light; // its light in rt.lights
+		int    given; // the map's lights that went to it
+		const rtLampDef_t *def;
+	} lamp_t;
+	lamp_t *lamps;
+	int     numLamps = 0, taken = 0, fills = 0, added = 0;
+	int     numMapLights = rt.numLights;
+	int     i, j, k;
+
+	R_RtLoadLampDefs();
+	if (!rt_numLampDefs) {
+		ri.Printf(PRINT_DEVELOPER, "realtime lighting: no lights/lamps.txt\n");
+		return;
+	}
+
+	lamps = ri.Hunk_AllocateTempMemory(sizeof(lamp_t) * Q_max(1, tr.world->numStaticModels));
 
 	for (i = 0; i < tr.world->numStaticModels; i++) {
 		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
-		vec3_t                  centre, sum, colour;
+		const rtLampDef_t      *def;
+		lamp_t                 *lamp;
+
+		if (!sm->tiki || !(def = R_RtLampDef(sm->model)) || !def->numBulbs) {
+			continue;
+		}
+		isLamp[i]       = 1;
+		sm->rtFixture   = qtrue;
+		if (def->kind == RT_LAMP_OFF) {
+			continue;
+		}
+
+		lamp        = &lamps[numLamps++];
+		lamp->model = i;
+		lamp->given = 0;
+		lamp->def   = def;
+		// the middle of its bulbs, in the world
+		VectorCopy(sm->origin, lamp->centre);
+		for (j = 0; j < def->numBulbs; j++) {
+			for (k = 0; k < 3; k++) {
+				VectorMA(lamp->centre, def->bulbs[j][k] * sm->scale / def->numBulbs, sm->axis[k], lamp->centre);
+			}
+		}
+	}
+
+	// a light at each lamp, as the table has it, until the map's lights come to it
+	for (i = 0; i < numLamps; i++) {
+		lamp_t                       *lamp = &lamps[i];
+		const cStaticModelUnpacked_t *sm   = &tr.world->staticModels[lamp->model];
+		rtLight_t                    *l    = &rt.lights[rt.numLights];
+
+		lamp->light = rt.numLights++;
+		Com_Memset(l, 0, sizeof(*l));
+		l->source     = -1;
+		l->mergedInto = -1;
+		l->staticSlot = -1;
+		l->fixture    = lamp->model;
+		l->lamp       = qtrue;
+		l->cluster    = R_RtClusterAt(lamp->centre);
+		l->seed       = (float)(lamp->model % 97) * 0.37f;
+		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.14f : lamp->def->kind == RT_LAMP_LANTERN ? 0.08f : 0.0f;
+		VectorCopy(lamp->centre, l->origin);
+		if (lamp->def->spot) {
+			l->spot = qtrue;
+			for (k = 0; k < 3; k++) {
+				VectorMA(l->spotDir, lamp->def->spotDir[k], sm->axis[k], l->spotDir);
+			}
+			VectorNormalize(l->spotDir);
+			l->radiusByDist = tan(DEG2RAD(lamp->def->spotAngle * 0.5f));
+		} else {
+			// its shade, where a spot light keeps its cone's way (RtLight)
+			for (k = 0; k < 3; k++) {
+				VectorMA(l->spotDir, lamp->def->shade[k], sm->axis[k], l->spotDir);
+			}
+		}
+	}
+
+	// The map's point lights, each to the nearest lamp it sees. A lamp takes
+	// no more than RT_LAMP_MOST of what its kind gives: a light the designer
+	// lit a whole room with, put five units from a wall in a sconce, burnt a
+	// white hole in the wall. What it does not take stays where it was, a
+	// fill with no shadow.
+	for (j = 0; j < numMapLights; j++) {
+		rtLight_t *l    = &rt.lights[j];
+		float      best = RT_LAMP_REACH;
+		int        to   = -1;
+
+		if (l->range <= 0 || l->spot) {
+			continue;
+		}
+		for (i = 0; i < numLamps; i++) {
+			const float d = Distance(l->origin, lamps[i].centre);
+
+			if (d < best && R_RtSeesLamp(l->origin, lamps[i].centre, tr.world->staticModels[lamps[i].model].cull_radius)) {
+				best = d;
+				to   = i;
+			}
+		}
+		if (r_rtDebug->integer) {
+			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f) intensity %.0f: %s\n", l->source, l->origin[0], l->origin[1], l->origin[2],
+				Q_max(l->color[0], Q_max(l->color[1], l->color[2])) / 7500.0f,
+				to < 0 ? "a fill" : va("to %s at (%.0f %.0f %.0f), %.0f away", tr.world->staticModels[lamps[to].model].model, lamps[to].centre[0], lamps[to].centre[1], lamps[to].centre[2], best));
+		}
+		if (to < 0) {
+			l->noShadow = qtrue;
+			fills++;
+			continue;
+		}
+		{
+			rtLight_t  *into = &rt.lights[lamps[to].light];
+			const float most = lamps[to].def->intensity * 7500.0f * RT_LAMP_MOST;
+			const float has  = Q_max(into->color[0], Q_max(into->color[1], into->color[2]));
+			const float its  = Q_max(l->color[0], Q_max(l->color[1], l->color[2]));
+			const float give = its > 0 ? Q_min(1.0f, Q_max(0.0f, most - has) / its) : 0;
+
+			VectorMA(into->color, give, l->color, into->color);
+			if (give >= 0.999f) {
+				l->range      = 0;
+				l->mergedInto = lamps[to].light;
+			} else {
+				VectorScale(l->color, 1.0f - give, l->color);
+				l->range    = R_RtRangeOf(l->color);
+				l->noShadow = qtrue;
+				fills++;
+			}
+			lamps[to].given++;
+		}
+		taken++;
+	}
+
+	// the lamps none came to light as the table has them
+	for (i = 0; i < numLamps; i++) {
+		rtLight_t *l = &rt.lights[lamps[i].light];
+
+		if (!lamps[i].given) {
+			VectorScale(lamps[i].def->color, lamps[i].def->intensity * 7500.0f, l->color);
+			added++;
+		}
+		l->range = R_RtRangeOf(l->color);
+	}
+
+	// a spot light at a lamp (a shade's cone) goes and turns with it
+	for (j = 0; j < rt.numLights; j++) {
+		rtLight_t *l = &rt.lights[j];
+
+		if (!l->spot || l->range <= 0 || l->fixture >= 0) {
+			continue;
+		}
+		for (i = 0; i < numLamps; i++) {
+			if (Distance(l->origin, lamps[i].centre) < RT_FIXTURE_REACH) {
+				l->fixture = lamps[i].model;
+				break;
+			}
+		}
+	}
+
+	ri.Hunk_FreeTempMemory(lamps);
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps, %d of the map's lights went to them, %d lit their own, %d fills\n",
+		numLamps, taken, added, fills);
+}
+
+static void R_RtLightsAtFixtures(void)
+{
+	int   i, j, merged = 0, fixtures = 0;
+	byte *isLamp = ri.Hunk_AllocateTempMemory(Q_max(1, tr.world->numStaticModels));
+
+	Com_Memset(isLamp, 0, Q_max(1, tr.world->numStaticModels));
+	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
+		R_RtLightsAtLamps(isLamp);
+	}
+
+	for (i = 0; i < tr.world->numStaticModels; i++) {
+		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
+		vec3_t                  centre, sum, colour, boxMins, boxMaxs;
+		qboolean                tall;
 		float                   weight = 0;
 		int                     count  = 0, keep = -1;
 
+		if (isLamp[i]) {
+			continue;
+		}
 		sm->rtFixture = qfalse;
 		if (!sm->tiki || !R_RtIsFixture(sm)) {
 			continue;
@@ -268,9 +742,11 @@ static void R_RtLightsAtFixtures(void)
 		sm->rtFixture = qtrue;
 		fixtures++;
 
-		// its middle
-		VectorAdd(sm->tiki->a->mins, sm->tiki->a->maxs, centre);
-		VectorScale(centre, 0.5f * sm->tiki->load_scale * sm->scale, centre);
+		// its middle, and its box in its own frame
+		VectorScale(sm->tiki->a->mins, sm->tiki->load_scale * sm->scale, boxMins);
+		VectorScale(sm->tiki->a->maxs, sm->tiki->load_scale * sm->scale, boxMaxs);
+		VectorAdd(boxMins, boxMaxs, centre);
+		VectorScale(centre, 0.5f, centre);
 		{
 			vec3_t local;
 
@@ -280,6 +756,11 @@ static void R_RtLightsAtFixtures(void)
 				VectorMA(centre, local[j], sm->axis[j], centre);
 			}
 		}
+		// A long one -- a bulb at the end of a wire two hundred units long --
+		// takes the lights near any of it, and its light stays where they
+		// are, at the bulb, rather than going to the middle of the wire.
+		tall = (boxMaxs[0] - boxMins[0] > RT_FIXTURE_TALL || boxMaxs[1] - boxMins[1] > RT_FIXTURE_TALL
+				|| boxMaxs[2] - boxMins[2] > RT_FIXTURE_TALL) ? qtrue : qfalse;
 
 		if (!r_rtLightsAtFixtures->integer) {
 			continue;
@@ -291,7 +772,34 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *l = &rt.lights[j];
 			float      w;
 
-			if (l->spot || l->range <= 0 || Distance(l->origin, centre) > RT_FIXTURE_REACH) {
+			if (l->range <= 0 || l->lamp) {
+				continue;
+			}
+			if (tall) {
+				vec3_t d;
+				float  out = 0;
+				int    k;
+
+				// how far outside its box
+				VectorSubtract(l->origin, sm->origin, d);
+				for (k = 0; k < 3; k++) {
+					const float v = DotProduct(d, sm->axis[k]);
+
+					out += Square(v < boxMins[k] ? boxMins[k] - v : v > boxMaxs[k] ? v - boxMaxs[k] : 0);
+				}
+				if (out > Square(RT_FIXTURE_REACH)) {
+					continue;
+				}
+			} else if (Distance(l->origin, centre) > RT_FIXTURE_REACH) {
+				continue;
+			}
+
+			// A spot light at a lamp (a shaded lamp's cone down onto what it
+			// lights) stays one of its own, and goes and turns with the lamp
+			if (l->spot) {
+				if (l->fixture < 0) {
+					l->fixture = i;
+				}
 				continue;
 			}
 
@@ -315,7 +823,12 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *l = &rt.lights[keep];
 			float      brightest;
 
-			VectorCopy(centre, l->origin);
+			l->fixture = i;
+			if (tall) {
+				VectorScale(sum, 1.0f / Q_max(weight, 1e-6f), l->origin);
+			} else {
+				VectorCopy(centre, l->origin);
+			}
 			VectorCopy(colour, l->color);
 			brightest = Q_max(l->color[0], Q_max(l->color[1], l->color[2]));
 			l->range  = Q_min(4096.0f, sqrt(brightest / RT_CUTOFF));
@@ -332,7 +845,7 @@ static void R_RtLightsAtFixtures(void)
 		float      weight;
 		int        count = 0;
 
-		if (l->spot || l->range <= 0) {
+		if (l->spot || l->range <= 0 || l->lamp) {
 			continue;
 		}
 		weight = l->color[0] + l->color[1] + l->color[2];
@@ -342,7 +855,7 @@ static void R_RtLightsAtFixtures(void)
 			rtLight_t *o = &rt.lights[j];
 			float      w;
 
-			if (o->spot || o->range <= 0 || Distance(o->origin, l->origin) > RT_MERGE_REACH) {
+			if (o->spot || o->range <= 0 || o->lamp || Distance(o->origin, l->origin) > RT_MERGE_REACH) {
 				continue;
 			}
 			w = o->color[0] + o->color[1] + o->color[2];
@@ -364,6 +877,24 @@ static void R_RtLightsAtFixtures(void)
 		}
 	}
 
+	// where each lamp's light is on its lamp, so that it goes where the lamp
+	// is moved (R_RtFollowFixtures)
+	for (i = 0; i < rt.numLights; i++) {
+		rtLight_t                    *l = &rt.lights[i];
+		const cStaticModelUnpacked_t *sm;
+		vec3_t                        d;
+
+		if (l->fixture < 0 || l->range <= 0) {
+			continue;
+		}
+		sm = &tr.world->staticModels[l->fixture];
+		VectorSubtract(l->origin, sm->origin, d);
+		for (j = 0; j < 3; j++) {
+			l->fixtureLocal[j] = DotProduct(d, sm->axis[j]);
+			l->spotDirLocal[j] = DotProduct(l->spotDir, sm->axis[j]);
+		}
+	}
+
 	// those taken into others go; each sphere light is its own light's, or
 	// that of the one it went into (the leaves list sphere lights)
 	{
@@ -379,7 +910,9 @@ static void R_RtLightsAtFixtures(void)
 			const rtLight_t *l = &rt.lights[i];
 			int              to = newIndex[i] >= 0 ? newIndex[i] : (l->mergedInto >= 0 ? newIndex[l->mergedInto] : -1);
 
-			rt.fromSphere[l->source] = to;
+			if (l->source >= 0) {
+				rt.fromSphere[l->source] = to;
+			}
 		}
 		for (i = 0, j = 0; i < rt.numLights; i++) {
 			if (rt.lights[i].range > 0) {
@@ -390,7 +923,435 @@ static void R_RtLightsAtFixtures(void)
 		ri.Hunk_FreeTempMemory(newIndex);
 	}
 
+	ri.Hunk_FreeTempMemory(isLamp);
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d fixtures, %d lights taken into them or their neighbours\n", fixtures, merged);
+}
+
+/*
+=============================================================================
+
+THE SKY
+
+The map was compiled with a sky that lights what is open to it. In the shade
+of the sun, an open wall of a sunlit map has three to six times the
+worldspawn's ambient light in its lightmap, about half of what the sun gives
+it face on, and an open floor all of it: the sky's light is the sun's colour,
+or its sundiffusecolor where the map sets one, from all of the sky. With
+r_realtimeLighting 2 the lightmaps give way to the ambient light, and that
+shade went black.
+
+So the sky lights live too, from RT_SKY_DIRS directions spread evenly over it.
+The depth of the world from each, all of the map in a tile of one atlas, drawn
+once a map, says which of them a pixel sees (RtSky in the shaders): a roof
+keeps the sky off what is under it, a window lets some in.
+
+=============================================================================
+*/
+
+static float rt_skyTexel; // the most world a texel of the sky's depth covers
+
+static void R_RtSetupSky(void)
+{
+	const float golden = M_PI * (3.0f - sqrtf(5.0f));
+	int         k;
+
+	if (VectorCompare(rt.skyColor, vec3_origin) && rt.sun) {
+		VectorCopy(rt.sunColor, rt.skyColor);
+	}
+
+	// as many from each part of the sky: evenly in height is evenly over it
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		const float z = (k + 0.5f) / RT_SKY_DIRS;
+		const float r = sqrtf(1.0f - z * z);
+
+		VectorSet(rt.skyDirs[k], r * cosf(k * golden), r * sinf(k * golden), z);
+	}
+
+	rt.skyDrawn  = 0;
+	rt.skyImage  = NULL;
+	rt.skyWeight = 0;
+	rt_skyTexel  = 0;
+}
+
+// The depth of what stands still, the whole map, looking down from the sky
+// along one of its directions, into its tile.
+static void R_RtRenderSkyDir(int k)
+{
+	const int    size = r_rtSkyTile->integer;
+	const float *mins = tr.world->bmodels[0].bounds[0];
+	const float *maxs = tr.world->bmodels[0].bounds[1];
+	viewParms_t  parms;
+	vec3_t       axis[3], origin, bounds[2];
+	mat4_t       view, mvp;
+	int          c, firstDrawSurf, firstSpriteSurf;
+
+	VectorNegate(rt.skyDirs[k], axis[0]);
+	if (fabsf(axis[0][2]) > 0.9f) {
+		VectorSet(axis[2], 0, 1, 0);
+	} else {
+		VectorSet(axis[2], 0, 0, 1);
+	}
+	CrossProduct(axis[2], axis[0], axis[1]);
+	VectorNormalize(axis[1]);
+	CrossProduct(axis[0], axis[1], axis[2]);
+
+	VectorAdd(mins, maxs, origin);
+	VectorScale(origin, 0.5f, origin);
+
+	Mat4View(axis, origin, view);
+	ClearBounds(bounds[0], bounds[1]);
+	for (c = 0; c < 8; c++) {
+		vec4_t point, viewPoint;
+
+		VectorSet4(point, (c & 1) ? maxs[0] : mins[0], (c & 2) ? maxs[1] : mins[1], (c & 4) ? maxs[2] : mins[2], 1.0f);
+		Mat4Transform(view, point, viewPoint);
+		AddPointToBounds(viewPoint, bounds[0], bounds[1]);
+	}
+	rt_skyTexel = Q_max(rt_skyTexel, Q_max(bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]) / size);
+
+	Com_Memset(&parms, 0, sizeof(parms));
+	parms.viewportX      = (k % RT_SKY_TILES) * size;
+	parms.viewportY      = (k / RT_SKY_TILES) * size;
+	parms.viewportWidth  = size;
+	parms.viewportHeight = size;
+	parms.fovX           = 90;
+	parms.fovY           = 90;
+	parms.targetFbo      = tr.rtSkyFbo;
+	parms.flags          = VPF_DEPTHSHADOW | VPF_DEPTHCLAMP | VPF_ORTHOGRAPHIC | VPF_NOVIEWMODEL | VPF_RTSKY;
+	parms.zFar           = bounds[1][0];
+	VectorCopy(origin, parms.ori.origin);
+	VectorCopy(axis[0], parms.ori.axis[0]);
+	VectorCopy(axis[1], parms.ori.axis[1]);
+	VectorCopy(axis[2], parms.ori.axis[2]);
+	VectorCopy(origin, parms.pvsOrigin);
+
+	// as the sun's cascades are drawn (R_RenderSunShadowMaps), with the
+	// world alone
+	tr.viewCount++;
+	tr.viewParms                = parms;
+	tr.viewParms.frameSceneNum = tr.frameSceneNum;
+	tr.viewParms.frameCount    = tr.frameCount;
+	firstDrawSurf               = tr.refdef.numDrawSurfs;
+	firstSpriteSurf             = tr.refdef.numSpriteSurfs;
+	tr.viewCount++;
+
+	R_RotateForViewer();
+	R_SetupProjectionOrtho(&tr.viewParms, bounds);
+	R_AddWorldSurfaces();
+	R_SortDrawSurfs(tr.refdef.drawSurfs + firstDrawSurf, tr.refdef.numDrawSurfs - firstDrawSurf,
+		tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf);
+
+	// the rows of the projection that give the tile's x, y and depth, for
+	// the shaders, and the direction
+	Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
+	for (c = 0; c < 3; c++) {
+		VectorSet4(tr.rtSkyRows[k * 4 + c], mvp[c], mvp[4 + c], mvp[8 + c], mvp[12 + c]);
+	}
+	VectorCopy(rt.skyDirs[k], tr.rtSkyRows[k * 4 + 3]);
+	tr.rtSkyRows[k * 4 + 3][3] = 0;
+	tr.rtSkyGeneration++;
+}
+
+/*
+The sky each texel of a lightmap sees, as RtSky works it out for a pixel,
+worked out once a map: a lightmapped surface then reads it as it reads its
+lightmap (u_RtSurface.y 2), one fetch for the sky's sixteen. The surfaces of
+each page are drawn into a page of their own, at their lightmap coordinates,
+each texel from where it is on its surface (the terrain at its full detail);
+the texels no surface covers take their neighbours', as the lightmap's own
+filtering reads them at the edges.
+*/
+typedef struct {
+	vec3_t xyz;
+	vec3_t normal;
+	vec2_t lm;
+} rtBakeVert_t;
+
+typedef struct {
+	rtBakeVert_t *verts;
+	int           num, max;
+} rtBakeList_t;
+
+static void R_RtBakeAdd(rtBakeList_t *list, const vec3_t xyz, const vec3_t normal, float s, float t)
+{
+	rtBakeVert_t *v;
+
+	if (list->num == list->max) {
+		rtBakeVert_t *grown;
+
+		list->max = Q_max(4096, list->max * 2);
+		grown     = ri.Malloc(sizeof(rtBakeVert_t) * list->max);
+		if (list->verts) {
+			Com_Memcpy(grown, list->verts, sizeof(rtBakeVert_t) * list->num);
+			ri.Free(list->verts);
+		}
+		list->verts = grown;
+	}
+	v = &list->verts[list->num++];
+	VectorCopy(xyz, v->xyz);
+	VectorCopy(normal, v->normal);
+	v->lm[0] = s;
+	v->lm[1] = t;
+}
+
+// The triangles of the surfaces lit by one page of the lightmaps
+static void R_RtBakeGather(int page, rtBakeList_t *list)
+{
+	int i, j, r, c;
+
+	for (i = 0; i < tr.world->numWorldSurfaces; i++) {
+		const msurface_t      *surf = &tr.world->surfaces[i];
+		const srfBspSurface_t *bsp  = (const srfBspSurface_t *)surf->data;
+
+		if (!surf->shader || surf->shader->lightmapIndex != page || !surf->data) {
+			continue;
+		}
+		if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
+			continue;
+		}
+		for (j = 0; j < bsp->numIndexes; j++) {
+			srfVert_t *v = &bsp->verts[bsp->indexes[j]];
+			vec3_t     normal;
+
+			R_VaoUnpackNormal(normal, v->normal);
+			R_RtBakeAdd(list, v->xyz, normal, v->lightmap[0], v->lightmap[1]);
+		}
+	}
+
+	// the terrain, a 9 by 9 grid a patch, its lightmap spread over it as
+	// R_PreTessellateTerrain spreads it
+	for (i = 0; i < tr.world->numTerraPatches; i++) {
+		cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
+		const float            size  = (float)(patch->drawinfo.lmapSize - 1) / 128.0f;
+		const float            sizeS = tr.fatLightmapCols > 0 ? size / tr.fatLightmapCols : size;
+		const float            sizeT = tr.fatLightmapRows > 0 ? size / tr.fatLightmapRows : size;
+
+		if (!patch->shader || patch->shader->lightmapIndex != page) {
+			continue;
+		}
+		for (r = 0; r < 8; r++) {
+			for (c = 0; c < 8; c++) {
+				static const int corner[6][2] = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 1, 0 } };
+
+				for (j = 0; j < 6; j++) {
+					const int rr = r + corner[j][0], cc = c + corner[j][1];
+					vec3_t    xyz, normal;
+
+					VectorSet(xyz, patch->x0 + cc * 64.0f, patch->y0 + rr * 64.0f, patch->heightmap[rr * 9 + cc] * 2.0f + patch->z0);
+					R_VaoUnpackNormal(normal, patch->normals[rr * 9 + cc]);
+					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f, patch->t + sizeT * rr / 8.0f);
+				}
+			}
+		}
+	}
+}
+
+// The texels no surface covered (alpha 0) take the average of the covered
+// ones around them, a ring at a time.
+static void R_RtBakeDilate(byte *texels, int width, int height, int rings)
+{
+	byte *next = ri.Malloc(width * height * 4);
+	int   n, x, y;
+
+	for (n = 0; n < rings; n++) {
+		Com_Memcpy(next, texels, width * height * 4);
+		for (y = 0; y < height; y++) {
+			for (x = 0; x < width; x++) {
+				int sum = 0, count = 0, dx, dy;
+
+				if (texels[(y * width + x) * 4 + 3]) {
+					continue;
+				}
+				for (dy = -1; dy <= 1; dy++) {
+					for (dx = -1; dx <= 1; dx++) {
+						const int nx = x + dx, ny = y + dy;
+
+						if (nx < 0 || ny < 0 || nx >= width || ny >= height || !texels[(ny * width + nx) * 4 + 3]) {
+							continue;
+						}
+						sum += texels[(ny * width + nx) * 4];
+						count++;
+					}
+				}
+				if (count) {
+					next[(y * width + x) * 4]     = sum / count;
+					next[(y * width + x) * 4 + 3] = 255;
+				}
+			}
+		}
+		Com_Memcpy(texels, next, width * height * 4);
+	}
+	ri.Free(next);
+}
+
+static void R_RtBakeSkyLightmaps(void)
+{
+	rtBakeList_t list;
+	vec4_t       color, off = { 0, 0, 0, 0 };
+	int          page, total = 0;
+
+	if (!tr.rtSkyBakeShader.program || !tr.rtSkyBakeFbo || !tr.lightmaps || tr.numLightmaps <= 0 || tr.rtSkyLightmaps) {
+		return;
+	}
+
+	tr.rtNumSkyLightmaps = tr.numLightmaps;
+	tr.rtSkyLightmaps    = ri.Malloc(sizeof(image_t *) * tr.numLightmaps);
+	Com_Memset(tr.rtSkyLightmaps, 0, sizeof(image_t *) * tr.numLightmaps);
+	Com_Memset(&list, 0, sizeof(list));
+
+	// RtSky's sum over an open floor is half its directions: kept in a byte
+	VectorSet4(color, 2.0f / RT_SKY_DIRS, 2.0f / RT_SKY_DIRS, 2.0f / RT_SKY_DIRS, rt_skyTexel);
+
+	for (page = 0; page < tr.numLightmaps; page++) {
+		const image_t *lightmap = tr.lightmaps[page];
+		image_t       *image;
+		byte          *texels;
+		GLuint         vao, vbo;
+
+		if (!lightmap) {
+			continue;
+		}
+		list.num = 0;
+		R_RtBakeGather(page, &list);
+		if (!list.num) {
+			continue;
+		}
+		total += list.num / 3;
+
+		image = R_CreateImage(va("*rtskylm%d", page), NULL, lightmap->width, lightmap->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+
+		FBO_Bind(tr.rtSkyBakeFbo);
+		FBO_AttachImage(tr.rtSkyBakeFbo, image, GL_COLOR_ATTACHMENT0_EXT, 0);
+		qglDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+		if (!R_CheckFBO(tr.rtSkyBakeFbo)) {
+			FBO_Bind(NULL);
+			R_FreeImage(image);
+			break;
+		}
+		qglViewport(0, 0, image->width, image->height);
+		qglScissor(0, 0, image->width, image->height);
+		qglClearColor(0, 0, 0, 0);
+		qglClear(GL_COLOR_BUFFER_BIT);
+
+		GL_State(GLS_DEPTHTEST_DISABLE);
+		GL_Cull(CT_TWO_SIDED);
+		GLSL_BindProgram(&tr.rtSkyBakeShader);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSKYCOLOR, color);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSURFACE, off);
+		GLSL_SetUniformRtSky(&tr.rtSkyBakeShader, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
+		GL_BindToTMU(tr.rtSkyImage, TMU_RTSKY);
+
+		R_BindNullVao();
+		qglGenVertexArrays(1, &vao);
+		qglBindVertexArray(vao);
+		qglGenBuffers(1, &vbo);
+		qglBindBuffer(GL_ARRAY_BUFFER, vbo);
+		qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * list.num, list.verts, GL_STATIC_DRAW);
+		qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+		qglEnableVertexAttribArray(ATTR_INDEX_NORMAL);
+		qglEnableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+		qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
+		qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
+		qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
+
+		// the triangles, then their edges, for the texels along them whose
+		// middles the triangles miss
+		qglDrawArrays(GL_TRIANGLES, 0, list.num);
+		qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+		qglDrawArrays(GL_TRIANGLES, 0, list.num);
+		qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+		texels = ri.Malloc(image->width * image->height * 4);
+		qglReadPixels(0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		R_RtBakeDilate(texels, image->width, image->height, 3);
+		qglTextureSubImage2DEXT(image->texnum, GL_TEXTURE_2D, 0, 0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		ri.Free(texels);
+
+		qglDisableVertexAttribArray(ATTR_INDEX_POSITION);
+		qglDisableVertexAttribArray(ATTR_INDEX_NORMAL);
+		qglDisableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+		qglBindBuffer(GL_ARRAY_BUFFER, 0);
+		qglDeleteBuffers(1, &vbo);
+		qglBindVertexArray(0);
+		qglDeleteVertexArrays(1, &vao);
+		FBO_Bind(NULL);
+
+		tr.rtSkyLightmaps[page] = image;
+	}
+
+	if (list.verts) {
+		ri.Free(list.verts);
+	}
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: the sky over %d triangles of %d lightmap pages\n", total, tr.numLightmaps);
+}
+
+void R_RtFreeSkyLightmaps(void)
+{
+	int i;
+
+	if (!tr.rtSkyLightmaps) {
+		return;
+	}
+	for (i = 0; i < tr.rtNumSkyLightmaps; i++) {
+		if (tr.rtSkyLightmaps[i]) {
+			R_FreeImage(tr.rtSkyLightmaps[i]);
+		}
+	}
+	ri.Free(tr.rtSkyLightmaps);
+	tr.rtSkyLightmaps    = NULL;
+	tr.rtNumSkyLightmaps = 0;
+}
+
+#define RT_SKY_PER_FRAME 4
+#define RT_SKY_WAIT      8 // world frames after a map comes in: the terrain
+                           // the main view picked is what the depth views draw
+
+// The sky's light for the shaders (tr.rtSkyColor), its directions drawn first,
+// a few a frame.
+static void R_RtUpdateSky(float bake, float ease)
+{
+	float norm = 0;
+	int   k, drawn = 0;
+
+	VectorClear4(tr.rtSkyColor);
+	if (!R_RtLitLive() || !tr.rtSkyFbo || r_rtSky->value <= 0 || VectorCompare(rt.skyColor, vec3_origin)) {
+		rt.skyWeight = 0;
+		return;
+	}
+
+	// drawn again into new images (vid_restart)
+	if (rt.skyImage != tr.rtSkyImage) {
+		R_RtFreeSkyLightmaps();
+		rt.skyImage  = tr.rtSkyImage;
+		rt.skyDrawn  = 0;
+		rt.skyWeight = 0;
+		rt_skyTexel  = 0;
+	}
+
+	while (rt.skyDrawn < RT_SKY_DIRS && rt.frame > RT_SKY_WAIT && drawn < RT_SKY_PER_FRAME) {
+		R_RtRenderSkyDir(rt.skyDrawn++);
+		drawn++;
+		if (rt.skyDrawn == RT_SKY_DIRS) {
+			ri.Printf(PRINT_DEVELOPER, "realtime lighting: the sky from %d directions, %.0f units a texel\n", RT_SKY_DIRS, rt_skyTexel);
+		}
+	}
+	if (rt.skyDrawn < RT_SKY_DIRS) {
+		return;
+	}
+	// a frame after the last of them, which the backend has drawn by now
+	if (!drawn && !tr.rtSkyLightmaps) {
+		R_RtBakeSkyLightmaps();
+	}
+
+	// an open floor sees all of it
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		norm += rt.skyDirs[k][2];
+	}
+
+	rt.skyWeight = Q_min(1.0f, rt.skyWeight + ease);
+	VectorScale(rt.skyColor, bake * r_rtSky->value * rt.skyWeight / norm, tr.rtSkyColor);
+	tr.rtSkyColor[3] = rt_skyTexel;
 }
 
 void R_RtLoadWorld(void)
@@ -403,7 +1364,8 @@ void R_RtLoadWorld(void)
 		return;
 	}
 
-	rt.lights     = ri.Malloc(sizeof(rtLight_t) * Q_max(1, tr.numSLights));
+	// and a light for each static model, which may be a lamp (R_RtLightsAtLamps)
+	rt.lights     = ri.Malloc(sizeof(rtLight_t) * Q_max(1, tr.numSLights + tr.world->numStaticModels));
 	rt.fromSphere = ri.Malloc(sizeof(int) * Q_max(1, tr.numSLights));
 	rt.numLights  = 0;
 	for (i = 0; i < tr.numSLights; i++) {
@@ -425,6 +1387,7 @@ void R_RtLoadWorld(void)
 		Com_Memset(l, 0, sizeof(*l));
 		l->source     = i;
 		l->mergedInto = -1;
+		l->fixture    = -1;
 		VectorCopy(sl->origin, l->origin);
 		VectorScale(sl->color, sl->intensity * 7500.0f, l->color);
 		l->spot         = sl->spot_light ? qtrue : qfalse;
@@ -450,6 +1413,13 @@ void R_RtLoadWorld(void)
 		rt.staticOwner[i] = -1;
 	}
 
+	rt.seenLights  = ri.Malloc(sizeof(int) * Q_max(1, rt.numLights));
+	rt.seenCluster = -1;
+	rt.candidateOf = ri.Malloc(sizeof(int) * Q_max(1, rt.numLights));
+	for (i = 0; i < rt.numLights; i++) {
+		rt.candidateOf[i] = -1;
+	}
+
 	// the sun as worldspawn has it (R_Sphere_InitLights scaled it for models)
 	rt.sun = s_sun.exists;
 	if (rt.sun) {
@@ -459,6 +1429,7 @@ void R_RtLoadWorld(void)
 	}
 
 	R_RtParseAmbient();
+	R_RtSetupSky();
 
 	rt.loaded = qtrue;
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lights%s\n", rt.numLights, rt.sun ? " and the sun" : "");
@@ -471,6 +1442,12 @@ void R_RtFreeWorld(void)
 	}
 	if (rt.fromSphere) {
 		ri.Free(rt.fromSphere);
+	}
+	if (rt.seenLights) {
+		ri.Free(rt.seenLights);
+	}
+	if (rt.candidateOf) {
+		ri.Free(rt.candidateOf);
 	}
 	Com_Memset(&rt, 0, sizeof(rt));
 	tr.rtNumActive = 0;
@@ -558,13 +1535,13 @@ static void R_RtRenderFace(const rtLight_t *l, int atlas, int tile, int face)
 }
 
 // Is a sphere in any of a light's faces? A bit a face.
-static int R_RtFacesTouched(const rtLight_t *l, const vec3_t centre, float radius)
+static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre, float radius)
 {
 	vec3_t v;
 	int    faces = 0, f;
 
 	VectorSubtract(centre, l->origin, v);
-	if (DotProduct(v, v) > Square(l->range + radius)) {
+	if (DotProduct(v, v) > Square(range + radius)) {
 		return 0;
 	}
 
@@ -595,8 +1572,10 @@ static int R_RtFacesTouched(const rtLight_t *l, const vec3_t centre, float radiu
 
 // Things that move this frame, as spheres.
 typedef struct {
-	vec3_t centre;
-	float  radius;
+	vec3_t   centre;
+	float    radius;
+	uint64_t lights; // the candidates (R_RtRenderShadows) that reach it, a bit each
+	uint64_t *casts; // its entity's or static model's rtLights
 } rtMover_t;
 
 #define RT_MAX_MOVERS 1024
@@ -611,7 +1590,7 @@ static void R_RtStandingSphere(const vec3_t centre, float radius)
 		rtLight_t *l = &rt.lights[i];
 
 		if (l->staticSlot >= 0 && l->staticFaces) {
-			l->staticFaces &= ~R_RtFacesTouched(l, centre, radius);
+			l->staticFaces &= ~R_RtFacesTouched(l, l->range, centre, radius);
 		}
 	}
 }
@@ -706,6 +1685,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		float          radius, pose[10];
 
 		ent->rtCaster = 0;
+		ent->rtLights = ~(uint64_t)0;
 		if (ent->e.reType != RT_MODEL) {
 			continue;
 		}
@@ -774,6 +1754,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		if ((ent->rtCaster & RT_CASTS_MOVING) && count < RT_MAX_MOVERS) {
 			VectorCopy(centre, movers[count].centre);
 			movers[count].radius = radius;
+			movers[count].casts  = &ent->rtLights;
 			count++;
 		}
 	}
@@ -792,6 +1773,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
 		float                   pose[10];
 
+		sm->rtLights = ~(uint64_t)0;
 		if (!sm->moved || !sm->tiki) {
 			continue;
 		}
@@ -805,6 +1787,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		if ((sm->rtCaster & RT_CASTS_MOVING) && count < RT_MAX_MOVERS) {
 			VectorCopy(sm->origin, movers[count].centre);
 			movers[count].radius = sm->cull_radius;
+			movers[count].casts  = &sm->rtLights;
 			count++;
 		}
 	}
@@ -890,6 +1873,12 @@ static int R_RtGatherBodies(vec4_t *out)
 			continue;
 		}
 		if (!R_RtIsCharacter(&ent->e)) {
+			continue;
+		}
+		// one that has lain still long enough is drawn into the shadow faces
+		// of what stands still, of every light: as capsules too, it cast two
+		// shadows wherever a light had no faces for what moves
+		if (r_rtShadowCharacters->integer && ent->rtCaster == RT_CASTS_STANDING) {
 			continue;
 		}
 		n = R_RtCharacterCapsules(&ent->e, &out[(count + 1) * 2], RT_MAX_BODY_ENTRIES - count - 1);
@@ -983,6 +1972,148 @@ void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs)
 }
 
 /*
+How far a light gives a pixel facing it at least cutoff, unshadowed: the
+shaders pass it over beyond (RtLight), so the lists of the lights a surface
+may take (R_RtSphereMask and the rest) can leave it out there. What it gives
+falls with distance all the way to its reach (the compiler's falloff,
+faded to nothing at the edge), so the distance is found by halving.
+
+Every light gives most near its reach least: a lamp of the map is lit out to
+where it adds a raw lightmap unit, faded, and most of the pixels it reaches
+are in its outer shell, where it adds a fraction of the smallest step a
+screen shows, and each was paying for its shadow taps all the same. -1: it
+gives cutoff nowhere.
+*/
+static float R_RtReach(const vec4_t colorRange, float cutoff)
+{
+	const float range = colorRange[3];
+	const float peak  = Q_max(colorRange[0], Q_max(colorRange[1], colorRange[2]));
+	float       lo = 0, hi = range;
+	int         i;
+
+	if (cutoff <= 0 || range <= 0) {
+		return range;
+	}
+	// what it gives at d, as RtLight works it out with ndl 1 and no spot cone
+#define RT_GIVES(d) (peak * Square(1.0f - Square(d) / Square(range)) / Q_max(Square(d), 256.0f))
+	if (RT_GIVES(0.0f) < cutoff) {
+		return -1.0f;
+	}
+	for (i = 0; i < 20; i++) {
+		const float mid = (lo + hi) * 0.5f;
+
+		if (RT_GIVES(mid) >= cutoff) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+#undef RT_GIVES
+	return hi;
+}
+
+/*
+The candidate lights that reach a mover: those the map lists for any leaf its
+bounds touch (the lists R_RtMarkSeenLights reads). A lamp behind a wall from it
+is not among them, and a shadow is cast only between a light and what it
+lights: the mover can darken nothing for that lamp, and its faces need not be
+drawn again as it moves. All of them where the map has no such lists.
+*/
+static uint64_t R_RtLeafLights(const mnode_t *node, const vec3_t mins, const vec3_t maxs, const int *candidateOf)
+{
+	uint64_t lights = 0;
+	int      k;
+
+	while (node->contents == CONTENTS_NODE) {
+		const int side = BoxOnPlaneSide(mins, maxs, node->plane);
+
+		if (side == 3) {
+			lights |= R_RtLeafLights(node->children[0], mins, maxs, candidateOf);
+			node = node->children[1];
+		} else {
+			node = node->children[side == 1 ? 0 : 1];
+		}
+	}
+
+	for (k = 0; k < node->numlights; k++) {
+		const spherel_t *sl = node->lights[k];
+		int              index, c;
+
+		if (sl == &tr.sSunLight) {
+			continue;
+		}
+		index = rt.fromSphere[sl - tr.sLights];
+		if (index >= 0 && (c = candidateOf[index]) >= 0) {
+			lights |= (uint64_t)1 << c;
+		}
+	}
+	return lights;
+}
+
+/*
+A lamp's light goes where its lamp is: a lantern knocked off a table, a lamp
+set swinging. Its shadow of what stands still was drawn from where it was, and
+is drawn again from where it is (R_RtRenderShadows).
+*/
+static void R_RtFollowFixtures(void)
+{
+	int i, j;
+
+	for (i = 0; i < rt.numLights; i++) {
+		rtLight_t                    *l = &rt.lights[i];
+		const cStaticModelUnpacked_t *sm;
+		vec3_t                        origin, dir;
+		qboolean                      turned = qfalse;
+
+		if (l->fixture < 0 || l->fixture >= tr.world->numStaticModels) {
+			continue;
+		}
+		sm = &tr.world->staticModels[l->fixture];
+		if (!sm->moved) {
+			continue;
+		}
+		VectorCopy(sm->origin, origin);
+		VectorClear(dir);
+		for (j = 0; j < 3; j++) {
+			VectorMA(origin, l->fixtureLocal[j], sm->axis[j], origin);
+			VectorMA(dir, l->spotDirLocal[j], sm->axis[j], dir);
+		}
+		// a spot light turns with it. The axes may be scaled down to almost
+		// nothing, for a model the client draws in its place, and
+		// VectorNormalize leaves a vector that short as it is: brought back
+		// to their length first.
+		{
+			const float length = VectorLength(sm->axis[2]);
+
+			if (length > 0.0f) {
+				VectorScale(dir, 1.0f / length, dir);
+			}
+		}
+		if (l->lamp && !l->spot) {
+			// its shade turns with it
+			VectorCopy(dir, l->spotDir);
+		} else if (l->spot && VectorNormalize(dir) > 0.5f && DotProduct(dir, l->spotDir) < 0.9998f) {
+			VectorCopy(dir, l->spotDir);
+			turned = qtrue;
+		}
+		if (!turned && DistanceSquared(origin, l->origin) < Square(RT_LIGHT_MOVE_EPSILON)) {
+			continue;
+		}
+		VectorCopy(origin, l->origin);
+		l->movedFrame  = rt.frame;
+		l->staticFaces = 0;
+		if (l->lamp) {
+			const int cluster = R_RtClusterAt(origin);
+
+			if (cluster != l->cluster) {
+				l->cluster     = cluster;
+				rt.seenCluster = -1; // the view's list is made again
+			}
+		}
+	}
+}
+
+/*
 ===============
 R_RtRenderShadows
 
@@ -991,16 +2122,60 @@ their shadows, and what the shaders are told of them.
 ===============
 */
 // Whether a light reaches into the view's four sides at all
-static qboolean R_RtReachesView(const rtLight_t *l, const cplane_t frustum[4])
+static qboolean R_RtReachesView(const rtLight_t *l, float range, const cplane_t frustum[4])
 {
 	int k;
 
 	for (k = 0; k < 4; k++) {
-		if (DotProduct(l->origin, frustum[k].normal) - frustum[k].dist < -l->range) {
+		if (DotProduct(l->origin, frustum[k].normal) - frustum[k].dist < -range) {
 			return qfalse;
 		}
 	}
 	return qtrue;
+}
+
+/*
+Which of a light's faces may be seen: a bit each. A face holds the shadows of
+what is within its 90 degree pyramid out to the light's reach, which is read
+only by the pixels in it; a face whose pyramid is wholly behind one of the
+view's sides, or behind the view, is read by none of the view's pixels. The
+pyramid is its apex and the four corners of its far side, and the sides are
+moved out a little, for the shaders' offset off a surface and the shadow
+taps' spread.
+*/
+#define RT_FACE_VIEW_MARGIN 32.0f
+
+static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frustum[5])
+{
+	int faces = 0, f, c, k;
+
+	for (f = 0; f < 6; f++) {
+		vec3_t axis[3], points[5];
+
+		R_RtFaceAxes(f, axis);
+		VectorCopy(l->origin, points[0]);
+		for (c = 0; c < 4; c++) {
+			VectorMA(l->origin, range, axis[0], points[c + 1]);
+			VectorMA(points[c + 1], (c & 1) ? range : -range, axis[1], points[c + 1]);
+			VectorMA(points[c + 1], (c & 2) ? range : -range, axis[2], points[c + 1]);
+		}
+
+		for (k = 0; k < 5; k++) {
+			for (c = 0; c < 5; c++) {
+				if (DotProduct(points[c], frustum[k].normal) - frustum[k].dist > -RT_FACE_VIEW_MARGIN) {
+					break;
+				}
+			}
+			if (c == 5) {
+				break; // all of it behind this side
+			}
+		}
+		if (k == 5) {
+			faces |= 1 << f;
+		}
+	}
+
+	return faces;
 }
 
 /*
@@ -1009,6 +2184,9 @@ leaf in the view's PVS. A lamp across town whose reach takes in the view cone
 but whose light never gets past the walls in between is not one of them, and
 does not push the ones that matter out of the few that are lit.
 False when the map has no such lists, or the view is outside the world.
+
+They are the same for as long as the view stays in its cluster, so they are
+listed once for it rather than every leaf of the map gone through each frame.
 */
 static qboolean R_RtMarkSeenLights(const vec3_t vieworg)
 {
@@ -1024,6 +2202,15 @@ static qboolean R_RtMarkSeenLights(const vec3_t vieworg)
 	if (!leaf || leaf->cluster < 0 || leaf->cluster >= tr.world->numClusters) {
 		return qfalse;
 	}
+	if (leaf->cluster == rt.seenCluster) {
+		for (i = 0; i < rt.numSeen; i++) {
+			rt.lights[rt.seenLights[i]].visFrame = rt.frame;
+		}
+		return qtrue;
+	}
+	rt.seenCluster = leaf->cluster;
+	rt.numSeen     = 0;
+
 	vis = tr.world->vis + leaf->cluster * tr.world->clusterBytes;
 
 	for (i = tr.world->numDecisionNodes; i < tr.world->numnodes; i++) {
@@ -1043,12 +2230,38 @@ static qboolean R_RtMarkSeenLights(const vec3_t vieworg)
 				continue;
 			}
 			index = rt.fromSphere[sl - tr.sLights];
-			if (index >= 0) {
-				rt.lights[index].visFrame = rt.frame;
+			if (index >= 0 && rt.lights[index].visFrame != rt.frame) {
+				rt.lights[index].visFrame   = rt.frame;
+				rt.seenLights[rt.numSeen++] = index;
 			}
 		}
 	}
+	// a lamp's light is not where the map's lists put the lights it took
+	// (nor in them, if it is its own): it is seen where its cluster is
+	for (i = 0; i < rt.numLights; i++) {
+		rtLight_t *l = &rt.lights[i];
+
+		if (l->lamp && l->visFrame != rt.frame
+			&& (l->cluster < 0 || (vis[l->cluster >> 3] & (1 << (l->cluster & 7))))) {
+			l->visFrame                 = rt.frame;
+			rt.seenLights[rt.numSeen++] = i;
+		}
+	}
 	return qtrue;
+}
+
+// A flame's light: a few waves out of step, mostly slow, with a quick one
+// over them, never brighter than the lamp, and down by flicker at the most
+static float R_RtFlicker(const rtLight_t *l, int time)
+{
+	float t, w;
+
+	if (l->flicker <= 0) {
+		return 1.0f;
+	}
+	t = time * 0.001f + l->seed;
+	w = 0.45f * sin(t * 2.3f) + 0.3f * sin(t * 5.9f + 1.3f) + 0.25f * sin(t * 13.7f + 0.4f);
+	return 1.0f - l->flicker * (0.5f + 0.5f * w);
 }
 
 void R_RtRenderShadows(const refdef_t *fd)
@@ -1060,25 +2273,39 @@ void R_RtRenderShadows(const refdef_t *fd)
 	int       numBodies;
 	rtMover_t movers[RT_MAX_MOVERS];
 	int       numMovers;
-	int       i, budget, dynamicSlots = 0, dynamicLights = 0;
-	float     scale;
+	int       i, budget, dynamicSlots = 0, dynamicLights = 0, movingLights = 0;
+	float     scale, bake, reach;
 	int       shift;
 	qboolean  seen;
-	cplane_t  frustum[4];
+	cplane_t  frustum[5];
 
-	tr.rtNumActive = 0;
-	if (!R_RtActive() || (fd->rdflags & RDF_NOWORLDMODEL)) {
+	if (!R_RtActive()) {
+		tr.rtNumActive = 0;
 		return;
 	}
+	// A scene without the world (a model in a menu) takes no part in the
+	// lights, and leaves them as the world's scene set them: the backend
+	// draws every scene of the frame after all of them are set up, and the
+	// world's surfaces were told which of these lights reach them.
+	if (fd->rdflags & RDF_NOWORLDMODEL) {
+		return;
+	}
+	tr.rtNumActive = 0;
 
 	rt.frame++;
 	rt.facesDrawn  = 0;
 	rt.staticDrawn = 0;
 	rt.invalidated = 0;
+	rt.movingDrawn = 0;
+
+	R_RtFollowFixtures();
 
 	// lightmap units: what R_ColorShiftLightingBytes does to them, over 255
 	shift = r_mapOverBrightBits->integer - tr.overbrightBits;
-	scale = (float)(1 << Q_max(0, shift)) / 255.0f * r_rtScale->value;
+	// r_rtScale is for the lights' falloff, brighter near a lamp than the
+	// compiler's: the sun, the sky and the ambient light are as the map has them
+	bake  = (float)(1 << Q_max(0, shift)) / 255.0f;
+	scale = bake * r_rtScale->value;
 
 	// the four sides of the view: what moves is drawn into the shadows of the
 	// lights that reach into it alone (the lighting itself does not look at it)
@@ -1098,7 +2325,9 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorMA(frustum[2].normal, yc, fd->viewaxis[2], frustum[2].normal);
 		VectorScale(fd->viewaxis[0], ys, frustum[3].normal);
 		VectorMA(frustum[3].normal, -yc, fd->viewaxis[2], frustum[3].normal);
-		for (i = 0; i < 4; i++) {
+		// and what is behind it
+		VectorCopy(fd->viewaxis[0], frustum[4].normal);
+		for (i = 0; i < 5; i++) {
 			frustum[i].dist = DotProduct(fd->vieworg, frustum[i].normal);
 		}
 	}
@@ -1152,6 +2381,36 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	numMovers = r_rtShadows->integer ? R_RtTrackCasters(movers) : 0;
 	budget    = r_rtFacesPerFrame->integer;
+	rt.moverPairs = rt.moverCulled = 0;
+
+	// which of the candidates reach each mover, by the map's light lists
+	for (i = 0; i < numCandidates; i++) {
+		rt.candidateOf[candidates[i]] = i;
+	}
+	{
+		uint64_t lamps = 0;
+
+		// lamps are not in the map's lists: every mover may shadow them
+		for (i = 0; i < numCandidates; i++) {
+			if (rt.lights[candidates[i]].lamp) {
+				lamps |= (uint64_t)1 << i;
+			}
+		}
+	for (i = 0; i < numMovers; i++) {
+		if (rt.leafLights && r_rtShadowCull->integer) {
+			vec3_t mins, maxs;
+
+			VectorSet(mins, movers[i].centre[0] - movers[i].radius, movers[i].centre[1] - movers[i].radius, movers[i].centre[2] - movers[i].radius);
+			VectorSet(maxs, movers[i].centre[0] + movers[i].radius, movers[i].centre[1] + movers[i].radius, movers[i].centre[2] + movers[i].radius);
+			movers[i].lights = R_RtLeafLights(tr.world->nodes, mins, maxs, rt.candidateOf) | lamps;
+		} else {
+			movers[i].lights = ~(uint64_t)0;
+		}
+	}
+	}
+	for (i = 0; i < numCandidates; i++) {
+		rt.candidateOf[candidates[i]] = -1;
+	}
 	numBodies = R_RtGatherBodies(bodies);
 	rt.numPacked = 0;
 
@@ -1165,7 +2424,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 		l->lastUsed = rt.frame;
 
-		if (r_rtShadows->integer) {
+		if (r_rtShadows->integer && !l->noShadow) {
 			int f;
 
 			// what stands still: drawn once, a few faces a frame
@@ -1173,7 +2432,22 @@ void R_RtRenderShadows(const refdef_t *fd)
 				l->weight = 0;
 				continue;
 			}
-			for (f = 0; f < 6 && budget > 0; f++) {
+			// a lamp that moved this frame: the faces the view reads, now,
+			// for the nearest few (r_rtMovingLights); the rest of its faces
+			// once it has come to rest
+			if (l->movedFrame == rt.frame && chosen && movingLights < r_rtMovingLights->integer && l->staticReady) {
+				const int inView = R_RtFacesInView(l, l->range, frustum);
+
+				movingLights++;
+				for (f = 0; f < 6; f++) {
+					if (inView & (1 << f)) {
+						R_RtRenderFace(l, 0, l->staticSlot * 6 + f, f);
+						rt.movingDrawn++;
+						l->staticFaces |= 1 << f;
+					}
+				}
+			}
+			for (f = 0; f < 6 && budget > 0 && rt.frame - l->movedFrame > RT_LIGHT_SETTLE_FRAMES; f++) {
 				if (l->staticFaces & (1 << f)) {
 					continue;
 				}
@@ -1201,25 +2475,65 @@ void R_RtRenderShadows(const refdef_t *fd)
 			ready = l->staticReady;
 
 			// what moves: drawn every frame, in the faces it is in, for the
-			// nearest lights
-			if (ready && chosen && dynamicLights < r_rtDynamicLights->integer && R_RtReachesView(l, frustum))
+			// nearest lights. A shadow falls between a light and what it
+			// lights, so what is past the light's reach (where it gives a
+			// pixel less than r_rtCutoff, R_RtReach), or that its light does
+			// not reach (the map's light lists), darkens nothing that shows.
+			if (r_rtShadowCull->integer) {
+				vec4_t colorRange;
+
+				VectorScale(l->color, scale, colorRange);
+				colorRange[3] = l->range;
+				reach = R_RtReach(colorRange, r_rtCutoff->value);
+			} else {
+				reach = l->range;
+			}
+			if (ready && chosen && reach > 0 && dynamicLights < r_rtDynamicLights->integer && R_RtReachesView(l, reach, frustum))
 			{
 				int faces = 0, m;
 
 				for (m = 0; m < numMovers; m++) {
-					faces |= R_RtFacesTouched(l, movers[m].centre, movers[m].radius);
+					int touched;
+
+					if (!(movers[m].lights & ((uint64_t)1 << i))) {
+						if (r_rtDebug->integer && R_RtFacesTouched(l, l->range, movers[m].centre, movers[m].radius)) {
+							rt.moverPairs++;
+							rt.moverCulled++;
+						}
+						// nor is it drawn in the faces the others need
+						*movers[m].casts &= ~((uint64_t)1 << i);
+						continue;
+					}
+					touched = R_RtFacesTouched(l, reach, movers[m].centre, movers[m].radius);
+					if (!touched && r_rtShadowCull->integer) {
+						*movers[m].casts &= ~((uint64_t)1 << i);
+					}
+					if (r_rtDebug->integer && R_RtFacesTouched(l, l->range, movers[m].centre, movers[m].radius)) {
+						rt.moverPairs++;
+						rt.moverCulled += !touched;
+					}
+					faces |= touched;
 				}
 				if (faces && dynamicSlots < RT_SLOTS) {
 					const int slot = dynamicSlots++;
+					// None of the view's pixels reads the faces out of it, so
+					// they are not drawn. The light keeps its place among the
+					// few all the same: had the faces out of view not counted,
+					// the places went round the lights as the view turned, and
+					// what moves lost and found its shadows in patches.
+					const int drawn = faces & R_RtFacesInView(l, reach, frustum);
 
 					dynamicLights++;
+					tr.rtCandidate = i;
 					for (f = 0; f < 6; f++) {
-						if (faces & (1 << f)) {
+						if (drawn & (1 << f)) {
 							R_RtRenderFace(l, 1, slot * 6 + f, f);
 						}
 					}
-					// the faces go in the fraction, a bit each
-					dynamicTile = slot * 6 + faces / 64.0f;
+					// the faces go in the fraction, a bit each; with none drawn
+					// the people still take no capsules for this light, as
+					// when they were drawn into faces of it
+					dynamicTile = slot * 6 + drawn / 64.0f;
 				}
 			}
 		}
@@ -1236,12 +2550,13 @@ void R_RtRenderShadows(const refdef_t *fd)
 		data = &tr.rtLightData[tr.rtNumActive * RT_LIGHT_VEC4S];
 		VectorCopy(l->origin, data[0]);
 		data[0][3] = l->spot ? 1.0f : 0.0f;
-		// eased as it is lit: smoothstep
-		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight), data[1]);
+		// eased as it is lit: smoothstep; a flame dips and comes back
+		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight) * R_RtFlicker(l, fd->time), data[1]);
 		data[1][3] = l->range;
 		VectorCopy(l->spotDir, data[2]);
-		data[2][3] = l->radiusByDist;
-		data[3][0] = r_rtShadows->integer ? (float)(l->staticSlot * 6) : -1.0f;
+		// a point light's: how near it its light stops growing (RtLight)
+		data[2][3] = l->spot ? l->radiusByDist : l->lamp ? RT_LAMP_NEAR : 0.0f;
+		data[3][0] = r_rtShadows->integer && !l->noShadow ? (float)(l->staticSlot * 6) : -1.0f;
 		data[3][1] = dynamicTile;
 		// the people are in its shadow faces as they are, or else capsules
 		data[3][2] = r_rtShadowCharacters->integer && dynamicTile >= 0 ? -1.0f : R_RtLightCapsules(l, bodies, numBodies);
@@ -1288,11 +2603,19 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	VectorSet4(tr.rtParams, (float)tr.rtNumActive, (float)r_realtimeLighting->integer, r_rtShadows->integer ? 1.0f : 0.0f,
 		Com_Clamp(0.0f, 1.0f, r_rtDarkest->value));
+	// how far each light's light is worth looking up (R_RtReach)
+	for (i = 0; i < tr.rtNumActive; i++) {
+		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], r_rtCutoff->value);
+	}
+
+	// each program is sent the lights once a frame, not compared with them
+	// at every draw (GLSL_SetUniformRtLights)
+	tr.rtLightGeneration++;
 
 	if (rt.sun) {
 		VectorCopy(rt.sunDir, tr.rtSunDir);
 		tr.rtSunDir[3] = 1.0f;
-		VectorScale(rt.sunColor, scale, tr.rtSunColor);
+		VectorScale(rt.sunColor, bake, tr.rtSunColor);
 		// the screen shadow the depth prepass leaves (RB_RenderDrawSurfList)
 		tr.rtSunColor[3] = (tr.screenShadowImage && tr.sunShadows && r_depthPrepass->value && r_sunlightMode->integer) ? 1.0f : 0.0f;
 	} else {
@@ -1300,12 +2623,14 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorClear4(tr.rtSunColor);
 	}
 
-	VectorScale(rt.ambient, scale * r_rtAmbient->value, tr.rtAmbient);
-	tr.rtAmbient[3] = 1.0f;
+	VectorScale(rt.ambient, bake * r_rtAmbient->value, tr.rtAmbient);
+	R_RtUpdateSky(bake, ease);
+	// the least a light may add to a pixel and be looked up there (RtLight)
+	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
 
 	if (r_rtDebug->integer) {
-		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers, faces drawn %d standing %d moving (%d lights), %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
-			tr.rtNumActive, numChosen, numSorted, numMovers, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn, dynamicSlots, rt.invalidated, numBodies, rt.numPacked,
+		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d reach the view), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
+			tr.rtNumActive, numChosen, numSorted, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
 		rt.particleDraws = rt.particleVerts = 0;
 		for (i = 0; r_rtDebug->integer > 2 && i < numBodies; i += 1 + (int)bodies[i * 2 + 1][0]) {
@@ -1334,6 +2659,113 @@ SHADING
 
 =============================================================================
 */
+
+/*
+Which of the lights a surface may take.
+
+Every pixel the lights shade went through all of them, though a light gives
+nothing past its reach and most surfaces are within reach of a few. So the
+surfaces are told, as they are added to a view, which lights reach their
+bounds (drawSurf_t.rtMask, a bit for each in tr.rtLightData), and each draw
+sends the shaders the list of those (u_RtList). The test is the one the
+shaders make at each pixel, against the bounds, a little wider: a light left
+out of a list is one that would have given the surface nothing.
+*/
+
+// The lights there are to choose from in this view; RT_MASK_ALL in a view
+// they take no part in (a shadow), so that nothing is culled there for none.
+uint64_t R_RtViewMask(void)
+{
+	if (!R_RtActive() || !r_rtLightLists->integer || (tr.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+		|| (tr.refdef.rdflags & RDF_NOWORLDMODEL)) {
+		return RT_MASK_ALL;
+	}
+	return ((uint64_t)1 << tr.rtNumActive) - 1;
+}
+
+uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates)
+{
+	uint64_t mask = 0, m;
+	int      i;
+
+	if (candidates == RT_MASK_ALL) {
+		return RT_MASK_ALL;
+	}
+
+	for (i = 0, m = candidates; m && i < tr.rtNumActive; i++, m >>= 1) {
+		const float *origin = tr.rtLightData[i * RT_LIGHT_VEC4S];
+		const float  reach  = tr.rtLightReach[i] + radius + RT_CULL_MARGIN;
+
+		if ((m & 1) && tr.rtLightReach[i] >= 0 && DistanceSquared(origin, centre) < reach * reach) {
+			mask |= (uint64_t)1 << i;
+		}
+	}
+	return mask;
+}
+
+uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates)
+{
+	uint64_t mask = 0, m;
+	int      i, k;
+
+	if (candidates == RT_MASK_ALL) {
+		return RT_MASK_ALL;
+	}
+
+	for (i = 0, m = candidates; m && i < tr.rtNumActive; i++, m >>= 1) {
+		const float *origin = tr.rtLightData[i * RT_LIGHT_VEC4S];
+		const float  reach  = tr.rtLightReach[i] + RT_CULL_MARGIN;
+		float        d2     = 0;
+
+		if (!(m & 1) || tr.rtLightReach[i] < 0) {
+			continue;
+		}
+		// from the light to the nearest point of the box
+		for (k = 0; k < 3; k++) {
+			if (origin[k] < mins[k]) {
+				d2 += Square(mins[k] - origin[k]);
+			} else if (origin[k] > maxs[k]) {
+				d2 += Square(origin[k] - maxs[k]);
+			}
+		}
+		if (d2 < reach * reach) {
+			mask |= (uint64_t)1 << i;
+		}
+	}
+	return mask;
+}
+
+// The lights that reach the front of a plane, and through back those that
+// reach behind it: the world's nodes split them as they split the world.
+uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *back)
+{
+	uint64_t front = 0, m;
+	int      i;
+
+	*back = 0;
+	if (candidates == RT_MASK_ALL) {
+		*back = RT_MASK_ALL;
+		return RT_MASK_ALL;
+	}
+
+	for (i = 0, m = candidates; m && i < tr.rtNumActive; i++, m >>= 1) {
+		const float *origin = tr.rtLightData[i * RT_LIGHT_VEC4S];
+		const float  reach  = tr.rtLightReach[i] + RT_CULL_MARGIN;
+		float        dist;
+
+		if (!(m & 1) || tr.rtLightReach[i] < 0) {
+			continue;
+		}
+		dist = DotProduct(origin, plane->normal) - plane->dist;
+		if (dist > -reach) {
+			front |= (uint64_t)1 << i;
+		}
+		if (dist < reach) {
+			*back |= (uint64_t)1 << i;
+		}
+	}
+	return front;
+}
 
 // How a stage takes the lights (RT_STAGE_*). lightall adds them by itself.
 /*
@@ -1403,8 +2835,31 @@ int R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean 
 	return kind;
 }
 
+// Whether the sky's light is worked out at the vertexes of what has no
+// lightmap (r_realtimeLighting 2): it takes texture fetches in the vertex
+// shader (GLSL 1.30)
+qboolean R_RtVertexSky(void)
+{
+	return r_realtimeLighting->integer == 2 && R_RtVertexParticles();
+}
+
+// Leaves: two sided, and cut out by their alpha
+qboolean R_RtIsFoliage(const shader_t *shader)
+{
+	return (shader && shader->cullType == CT_TWO_SIDED && shader->stages[0] && (shader->stages[0]->stateBits & GLS_ATEST_BITS))
+		? qtrue : qfalse;
+}
+
 // stage < 0: a view the lights take no part in (2D, shadows, models in menus)
-void R_RtSetUniforms(shaderProgram_t *sp, int stage)
+// Whether the sun's widest shadow cascade is there for the particles: drawn
+// with the sun's shadows this frame (RE_RenderScene)
+static qboolean R_RtSunCascade(void)
+{
+	return r_rtParticleCascade->integer && tr.rtSunColor[3] > 0.5f && tr.sunShadowDepthImage[3] && r_sunlightMode->integer && r_depthPrepass->value
+		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL);
+}
+
+void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean lightmapped)
 {
 	static const vec4_t off = { 0, 0, 0, 0 };
 
@@ -1415,15 +2870,71 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage)
 		return;
 	}
 
-	GLSL_SetUniformInt(sp, UNIFORM_RTSTAGE, stage);
-	GLSL_SetUniformVec4(sp, UNIFORM_RTPARAMS, tr.rtParams);
-	if (!tr.rtNumActive && !tr.rtSunDir[3] && tr.rtParams[1] < 1.5f) {
-		return;
+	{
+		// the lights this draw's surfaces may take (R_RtViewMask), and so
+		// the shaders' loop over them
+		vec4_t   list[RT_MAX_LIGHTS / 4];
+		vec4_t   params;
+		float   *index = &list[0][0];
+		uint64_t m;
+		int      i, count = 0;
+
+		for (i = 0, m = tess.rtMask; m && i < tr.rtNumActive; i++, m >>= 1) {
+			if (m & 1) {
+				index[count++] = (float)i;
+			}
+		}
+		for (i = count; i & 3; i++) {
+			index[i] = 0;
+		}
+
+		GLSL_SetUniformInt(sp, UNIFORM_RTSTAGE, stage);
+		{
+			vec4_t surface;
+
+			float sky = lightmapped || !R_RtVertexSky() ? 0.0f : 1.0f;
+
+			// a lightmap's sky is a pixel's own: its vertexes are a wall's
+			// corners; read from the sky's page for its lightmap's, if there is one
+			if (lightmap && tr.rtSkyLightmaps && r_rtSkyLightmaps->integer && tr.rtSkyColor[3] > 0) {
+				int page;
+
+				for (page = 0; page < tr.rtNumSkyLightmaps && page < tr.numLightmaps; page++) {
+					if (tr.lightmaps[page] == lightmap && tr.rtSkyLightmaps[page]) {
+						GL_BindToTMU(tr.rtSkyLightmaps[page], TMU_RTSKYLM);
+						sky = 2.0f;
+						break;
+					}
+				}
+			}
+			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, sky,
+				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value);
+			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
+		}
+		VectorCopy4(tr.rtParams, params);
+		params[0] = (float)count;
+		GLSL_SetUniformVec4(sp, UNIFORM_RTPARAMS, params);
+		if (!count && !tr.rtSunDir[3] && tr.rtParams[1] < 1.5f) {
+			return;
+		}
+		GLSL_SetUniformRtLights(sp, UNIFORM_RTLIGHTS, (const vec4_t *)tr.rtLightData, tr.rtNumActive, tr.rtLightGeneration);
+		GLSL_SetUniformRtList(sp, UNIFORM_RTLIST, list, count);
 	}
-	GLSL_SetUniformRtLights(sp, UNIFORM_RTLIGHTS, (const vec4_t *)tr.rtLightData, tr.rtNumActive);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
+	// the particles' sun shadow (RtLightParticle): the widest cascade, if the
+	// sun has them this frame
+	{
+		static const mat4_t none = { 0 };
+
+		GLSL_SetUniformMat4(sp, UNIFORM_RTSUNCASCADEMVP,
+			R_RtSunCascade() ? backEnd.refdef.sunShadowMvp[3] : none);
+	}
 	GLSL_SetUniformVec4(sp, UNIFORM_RTAMBIENT, tr.rtAmbient);
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSKYCOLOR, tr.rtSkyColor);
+	if (tr.rtSkyColor[3] > 0) {
+		GLSL_SetUniformRtSky(sp, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
+	}
 }
 
 void R_RtBindTextures(void)
@@ -1435,6 +2946,9 @@ void R_RtBindTextures(void)
 		GL_BindToTMU(tr.rtCapsuleImage, TMU_RTCAPSULES);
 	}
 	GL_BindToTMU(tr.rtSunColor[3] > 0.5f && tr.screenShadowImage ? tr.screenShadowImage : tr.whiteImage, TMU_RTSUNSHADOW);
+	GL_BindToTMU(R_RtSunCascade() ? tr.sunShadowDepthImage[3] : tr.rtShadowImage[0], TMU_RTSUNCASCADE);
+	// a depth image either way: a shadow sampler on a colour one reads nothing defined
+	GL_BindToTMU(tr.rtSkyImage ? tr.rtSkyImage : tr.rtShadowImage[0], TMU_RTSKY);
 }
 
 /*

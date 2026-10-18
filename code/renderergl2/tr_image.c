@@ -2421,13 +2421,19 @@ static int numImageLoaders = ARRAY_LEN( imageLoaders );
 
 /*
 =================
-R_LoadImage
+R_LoadImageFile
 
-Loads any of the supported image types into a canonical
-32 bit format.
+Loads any of the supported image formats into a canonical 32 bit format.
+
+A .dds of the same name is tried first unless allowDDS is false. In ioq3 that
+was tied to r_ext_compressed_textures, which also compresses every other
+texture as it is uploaded, so a block compressed texture pack could only be
+had with lossy driver compression of everything else. OPM: block compressed
+.dds files are used whenever present; r_ext_compressed_textures now only picks
+the upload compression of the rest.
 =================
 */
-void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips )
+static void R_LoadImageFile( const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips, qboolean allowDDS )
 {
 	qboolean orgNameFailed = qfalse;
 	int orgLoader = -1;
@@ -2452,39 +2458,9 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 	Q_strncpyz(ddsName, base, sizeof(ddsName));
 	Q_strcat(ddsName, sizeof(ddsName), ".dds");
 
-	if (r_ext_compressed_textures->integer) {
-		// Try DDS first
+	if (allowDDS) {
 		R_LoadDDS(ddsName, pic, width, height, picFormat, numMips);
 		if (*pic) return;
-
-		// Then try explicitly requested extension (if not DDS)
-		if (ext && *ext && Q_stricmp(ext, "dds")) {
-			for (i = 0; i < numImageLoaders; i++) {
-				if (!Q_stricmp(ext, imageLoaders[i].ext)) {
-					imageLoaders[i].ImageLoader(localName, pic, width, height);
-					if (*pic) return;
-					orgNameFailed = qtrue;
-					orgLoader = i;
-					break;
-				}
-			}
-			COM_StripExtension(name, localName, sizeof(localName));
-		}
-
-		// Then probe all supported formats except the failed one
-		for (i = 0; i < numImageLoaders; i++) {
-			if (i == orgLoader)
-				continue;
-			altName = va("%s.%s", localName, imageLoaders[i].ext);
-			imageLoaders[i].ImageLoader(altName, pic, width, height);
-			if (*pic) {
-				if (orgNameFailed)
-					ri.Printf(PRINT_DEVELOPER, "WARNING: %s not present, using %s instead\n", name, altName);
-				return;
-			}
-		}
-
-		return;
 	}
 
 	//
@@ -2550,11 +2526,15 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 		}
 	}
 
-	// Finally, allow DDS fallback even when compressed textures are off
-	if (!*pic) {
+	// Finally, a DDS is better than nothing
+	if (!allowDDS) {
 		R_LoadDDS(ddsName, pic, width, height, picFormat, numMips);
-		if (*pic) ri.Printf(PRINT_DEVELOPER, "WARNING: falling back to compressed texture %s when r_ext_compressed_textures=0\n", ddsName);
 	}
+}
+
+void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips )
+{
+	R_LoadImageFile(name, pic, width, height, picFormat, numMips, qtrue);
 }
 
 // Added in OPM
@@ -2563,11 +2543,8 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, GLenum 
 void R_LoadImageUncompressed( const char *name, byte **pic, int *width, int *height, GLenum *picFormat )
 {
 	int numMips;
-	int saved = r_ext_compressed_textures->integer;
 
-	r_ext_compressed_textures->integer = 0;
-	R_LoadImage( name, pic, width, height, picFormat, &numMips );
-	r_ext_compressed_textures->integer = saved;
+	R_LoadImageFile(name, pic, width, height, picFormat, &numMips, qfalse);
 }
 
 
@@ -2588,6 +2565,7 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	int picNumMips;
 	long	hash;
 	imgFlags_t checkFlagsTrue, checkFlagsFalse;
+	int		imgStartedAt, imgLoadedAt; // Added in OPM: tiki_loadlog 2
 
 	if (!name) {
 		return NULL;
@@ -2617,8 +2595,13 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	//
 	// load the pic from disk
 	//
+	imgStartedAt = ri.Milliseconds();
 	R_LoadImage( name, &pic, &width, &height, &picFormat, &picNumMips );
+	imgLoadedAt = ri.Milliseconds();
 	if ( pic == NULL ) {
+		if ( imgLoadedAt - imgStartedAt >= 3 && ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 ) {
+			ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms looking for image %s, not found\n", imgLoadedAt - imgStartedAt, name );
+		}
 		return NULL;
 	}
 
@@ -2748,6 +2731,10 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 
 	image = R_CreateImage2( ( char * ) name, pic, width, height, picFormat, picNumMips, type, flags, 0 );
 	ri.Free( pic );
+	if ( ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 && ri.Milliseconds() - imgStartedAt >= 3 ) {
+		ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms image %s (%dx%d, %d mips, format 0x%x): %d reading, %d the rest\n", ri.Milliseconds() - imgStartedAt, name,
+			width, height, picNumMips, picFormat, imgLoadedAt - imgStartedAt, ri.Milliseconds() - imgLoadedAt );
+	}
 	return image;
 }
 
@@ -2984,8 +2971,29 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenScratchImage = R_CreateImage("screenScratch", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
 
 		// Added in OPM: soft particles read the view's depth from it too
-		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0)
+		// and water, to see how deep it is (tr_water.c)
+		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer)
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+
+		// Added in OPM: the view before its water, which the water shows through (tr_water.c)
+		if (r_water->integer)
+			tr.waterSceneImage = R_CreateImage("*waterScene", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+
+		// Added in OPM: the view water mirrors (tr_water.c), at half the
+		// screen's size, or all of it at r_waterReflect 2
+		if (r_water->integer)
+		{
+			const int shift = r_waterReflect->integer == 2 ? 0 : 1;
+
+			tr.waterReflectImage = R_CreateImage("*waterReflect", NULL, width >> shift, height >> shift, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+		}
+
+		// Added in OPM: the water's ripples (tr_water.c)
+		if (r_water->integer && r_waterRipples->integer)
+		{
+			tr.waterRippleImage[0] = R_CreateImage("*waterRipple0", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.waterRippleImage[1] = R_CreateImage("*waterRipple1", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
 
 		if (r_drawSunRays->integer)
 			tr.sunRaysImage = R_CreateImage("*sunRays", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
@@ -3050,6 +3058,19 @@ void R_CreateBuiltinImages( void ) {
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			}
+
+			// all of it live (r_realtimeLighting 2): the sky's depth from each
+			// of its directions, a tile each (R_RtRenderSkyDir)
+			if (r_realtimeLighting->integer == 2)
+			{
+				const int skySize = r_rtSkyTile->integer * RT_SKY_TILES;
+
+				tr.rtSkyImage = R_CreateImage("*rtsky", NULL, skySize, skySize, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT16);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			}
 		}
 
 		if (r_sunlightMode->integer)
@@ -3069,6 +3090,9 @@ void R_CreateBuiltinImages( void ) {
 			tr.renderCubeImage = R_CreateImage("*renderCube", NULL, r_cubemapSize->integer, r_cubemapSize->integer, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_MIPMAP | IMGFLAG_CUBEMAP, rgbFormat);
 		}
 	}
+
+	// Added in OPM: the bones of the models the vertex program poses
+	R_SkelGpuInitImage();
 }
 
 

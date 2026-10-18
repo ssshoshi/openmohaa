@@ -1546,6 +1546,19 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 				   int fogIndex, int dlightMap, int pshadowMap, int cubemap ) {
 	int			index;
 
+	// Added in OPM
+	//  Leaves keep no sky off what is under them, as the compiler had them
+	//  (tr_rtlight.c), nor off each other.
+	if ((tr.viewParms.flags & VPF_RTSKY) && shader->stages[0] && (shader->stages[0]->stateBits & GLS_ATEST_BITS)) {
+		return;
+	}
+
+	// Added in OPM
+	//  The view water mirrors has none in it (tr_water.c).
+	if ((tr.viewParms.flags & VPF_WATERREFLECT) && shader->waterImage) {
+		return;
+	}
+
 	// instead of checking for overflow, we just mask the index
 	// so it wraps around
 	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
@@ -1557,6 +1570,8 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 		| tr.shiftedIsStatic;
 	tr.refdef.drawSurfs[index].cubemapIndex = cubemap;
 	tr.refdef.drawSurfs[index].surface = surface;
+	// Added in OPM: the realtime lights that may reach it (R_RtViewMask)
+	tr.refdef.drawSurfs[index].rtMask = ~tr.rtDrawCulled;
 	tr.refdef.numDrawSurfs++;
 }
 
@@ -1626,6 +1641,10 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs,
 		return;
 	}
 
+	// Added in OPM
+	//  What the view's water mirrors, drawn before it (tr_water.c).
+	R_WaterReflectView( drawSurfs, numDrawSurfs );
+
 	// check for any pass through drawing, which
 	// may cause another view to be rendered first
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
@@ -1665,6 +1684,10 @@ static void R_AddEntitySurface (int entityNum)
 
 	ent->needDlights = qfalse;
 
+	// Added in OPM: all the realtime lights, unless the model's own code
+	// finds which reach it (R_AddSkelSurfaces, R_AddBrushModelSurfaces)
+	tr.rtDrawCulled = 0;
+
 	// preshift the value we are going to OR into the drawsurf sort
 	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
 
@@ -1694,7 +1717,8 @@ static void R_AddEntitySurface (int entityNum)
 		return;
 	}
 
-	if (tr.viewParms.isPortal) {
+	// (the view water mirrors is a portal that sees what the main view does)
+	if (tr.viewParms.isPortal && !(tr.viewParms.flags & VPF_WATERREFLECT)) {
 		if (!(ent->e.renderfx & (RF_WRAP_FRAMES | RF_SHADOW_PLANE))) {
 			return;
 		}
@@ -1797,11 +1821,13 @@ void R_AddEntitySurfaces (void) {
 			//  A realtime light's shadow of what stands still, or of what moves.
 			if ((tr.viewParms.flags & VPF_RTSTATIC) && !(tr.refdef.entities[i].rtCaster & RT_CASTS_STANDING))
 				continue;
-			if ((tr.viewParms.flags & VPF_RTDYNAMIC) && !(tr.refdef.entities[i].rtCaster & RT_CASTS_MOVING))
+			if ((tr.viewParms.flags & VPF_RTDYNAMIC) && (!(tr.refdef.entities[i].rtCaster & RT_CASTS_MOVING)
+				|| !(tr.refdef.entities[i].rtLights & ((uint64_t)1 << tr.rtCandidate))))
 				continue;
 
 			R_AddEntitySurface(i);
 		}
+		tr.rtDrawCulled = 0;
 
 		tr.pc.t_entitySurfaces += R_MicroSeconds() - tStart;
 		tr.pc.c_entitySubmissions += tr.refdef.num_entities;
@@ -1814,13 +1840,20 @@ void R_AddEntitySurfaces (void) {
 R_GenerateDrawSurfs
 ====================
 */
+// Added in OPM: where a scene's view went, ms, for com_hitchLog
+int r_viewMs[6]; // world, polygons, entities, sprites, sort, other views
+
 void R_GenerateDrawSurfs( void ) {
+	int at = ri.Milliseconds(), now;
+
 	R_AddWorldSurfaces ();
+	now = ri.Milliseconds(); r_viewMs[0] += now - at; at = now;
 
 	// Added in OPM
 	//  A realtime light's shadow of what stands still has the world alone.
 	if (!(tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)))
 		R_AddPolygonSurfaces();
+	now = ri.Milliseconds(); r_viewMs[1] += now - at; at = now;
 
 	// set the projection matrix with the minimum zfar
 	// now that we have the world bounded
@@ -1842,6 +1875,7 @@ void R_GenerateDrawSurfs( void ) {
 		return;
 
 	R_AddEntitySurfaces ();
+	now = ri.Milliseconds(); r_viewMs[2] += now - at; at = now;
 
 	if (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC))
 		return;
@@ -1851,6 +1885,7 @@ void R_GenerateDrawSurfs( void ) {
     //=========================
     R_AddSpriteSurfaces();
 	//=========================
+	r_viewMs[3] += ri.Milliseconds() - at;
 }
 
 /*
@@ -2194,9 +2229,14 @@ void R_RenderView (viewParms_t *parms) {
 		numDrawSurfs = MAX_DRAWSURFS;
 	}
 
-	R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf,
-        tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf
-	);
+	{
+		const int at = ri.Milliseconds();
+
+		R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf,
+			tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf
+		);
+		r_viewMs[4] += ri.Milliseconds() - at;
+	}
 
 	// draw main system development information (surface outlines, etc)
 	R_DebugGraphics();
@@ -2649,6 +2689,81 @@ static float CalcSplit(float n, float f, float i, float m)
 }
 
 
+/*
+=================
+Sun cascade casters
+
+Added in OPM. A cascade is a box around a slice of the view, as the sun sees
+it, and everything in that box was drawn into it. But the box is square to
+the sun, and the slice is a pyramid's: looking across the sun's light, the box
+takes in much the view never sees, and the models there were drawn into the
+cascade though no shadow of theirs could fall where the view takes it from.
+A model is a caster only if its sphere, swept the way its shadow goes, comes
+into the slice: outside a side of it, and going away from that side, its
+shadow is nowhere the view sees through this cascade.
+=================
+*/
+static struct {
+	qboolean active;
+	cplane_t planes[6]; // the slice's, facing in
+	vec3_t   shadowDir;
+} sunCaster;
+
+#define SUN_CASTER_SLICE_PAD 32.0f  // the slice taken a little longer each way
+#define SUN_CASTER_REACH     8192.0f // how far a shadow can go
+
+static void R_SetSunCasterSlice(const refdef_t *fd, const vec3_t shadowDir, float zNear, float zFar)
+{
+	const float xs = tan(fd->fov_x * M_PI / 360.0f), ys = tan(fd->fov_y * M_PI / 360.0f);
+	float       len;
+	int         i;
+
+	// left, right, top, bottom: through the eye, facing in
+	len = sqrt(xs * xs + 1.0f);
+	VectorScale(fd->viewaxis[0], xs / len, sunCaster.planes[0].normal);
+	VectorMA(sunCaster.planes[0].normal, 1.0f / len, fd->viewaxis[1], sunCaster.planes[0].normal);
+	VectorScale(fd->viewaxis[0], xs / len, sunCaster.planes[1].normal);
+	VectorMA(sunCaster.planes[1].normal, -1.0f / len, fd->viewaxis[1], sunCaster.planes[1].normal);
+	len = sqrt(ys * ys + 1.0f);
+	VectorScale(fd->viewaxis[0], ys / len, sunCaster.planes[2].normal);
+	VectorMA(sunCaster.planes[2].normal, 1.0f / len, fd->viewaxis[2], sunCaster.planes[2].normal);
+	VectorScale(fd->viewaxis[0], ys / len, sunCaster.planes[3].normal);
+	VectorMA(sunCaster.planes[3].normal, -1.0f / len, fd->viewaxis[2], sunCaster.planes[3].normal);
+	for (i = 0; i < 4; i++) {
+		sunCaster.planes[i].dist = DotProduct(fd->vieworg, sunCaster.planes[i].normal);
+	}
+
+	// the slice's near and far
+	VectorCopy(fd->viewaxis[0], sunCaster.planes[4].normal);
+	sunCaster.planes[4].dist = DotProduct(fd->vieworg, fd->viewaxis[0]) + zNear - SUN_CASTER_SLICE_PAD;
+	VectorNegate(fd->viewaxis[0], sunCaster.planes[5].normal);
+	sunCaster.planes[5].dist = -(DotProduct(fd->vieworg, fd->viewaxis[0]) + zFar + SUN_CASTER_SLICE_PAD);
+
+	VectorCopy(shadowDir, sunCaster.shadowDir);
+	sunCaster.active = qtrue;
+}
+
+qboolean R_SunCasterCulled(const vec3_t centre, float radius)
+{
+	int i;
+
+	if (!sunCaster.active || !(tr.viewParms.flags & VPF_ORTHOGRAPHIC) || !(tr.viewParms.flags & VPF_DEPTHSHADOW)) {
+		return qfalse;
+	}
+
+	for (i = 0; i < 6; i++) {
+		const cplane_t *p = &sunCaster.planes[i];
+		const float     d = DotProduct(centre, p->normal) - p->dist;
+		const float     k = DotProduct(sunCaster.shadowDir, p->normal);
+
+		// the most of the sweep inside this side
+		if (d + (k > 0 ? k * SUN_CASTER_REACH : 0) < -radius) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 {
 	viewParms_t		shadowParms;
@@ -2727,6 +2842,12 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 	// Make up a projection
 	VectorScale(lightDir, -1.0f, lightViewAxis[0]);
+
+	// Added in OPM: the models whose shadows can fall in the slice (the last
+	// cascade is the whole level's, not the view's)
+	sunCaster.active = qfalse;
+	if (level != 3)
+		R_SetSunCasterSlice(fd, lightViewAxis[0], splitZNear, splitZFar);
 
 	if (level == 3 || lightViewIndependentOfCameraView)
 	{
@@ -3005,6 +3126,8 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 		Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, tr.refdef.sunShadowMvp[level]);
 	}
+
+	sunCaster.active = qfalse;
 }
 
 void R_RenderCubemapSide( int cubemapIndex, int cubemapSide, qboolean subscene )
@@ -3172,9 +3295,17 @@ void R_AddSpriteSurf(surfaceType_t* surface, shader_t* shader, float zDistance)
 		zDistance = MAX_SPRITE_DIST_SQUARED;
 	}
 
-	index = tr.refdef.numSpriteSurfs % MAX_SPRITES;
+	// every view of the frame (the water reflection among them) adds its sprites after
+	// the last view's, so the list can outgrow MAX_SPRITES; wrapping the index left the
+	// view's range pointing at unwritten entries with no surface
+	if (tr.refdef.numSpriteSurfs >= MAX_SPRITESURFS) {
+		return;
+	}
+
+	index = tr.refdef.numSpriteSurfs;
     tr.refdef.spriteSurfs[index].sort = (int)(MAX_SPRITE_DIST_SQUARED - zDistance) | (shader->sortedIndex << QSORT_SHADERNUM_SHIFT);
     tr.refdef.spriteSurfs[index].surface = surface;
+    tr.refdef.spriteSurfs[index].rtMask = RT_MASK_ALL;
     tr.refdef.numSpriteSurfs++;
 }
 
@@ -3201,7 +3332,7 @@ void R_AddSpriteSurfaces()
 			}
 		}
         
-		if (tr.viewParms.isPortal) {
+		if (tr.viewParms.isPortal && !(tr.viewParms.flags & VPF_WATERREFLECT)) {
 			if (!(sprite->renderfx & (RF_SHADOW_PLANE | RF_WRAP_FRAMES))) {
 				continue;
 			}

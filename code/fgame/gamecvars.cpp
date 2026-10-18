@@ -337,9 +337,34 @@ cvar_t *g_door_reopen_blocked;
 
 // Whether to run a map's add-on script (maps/<map>_opm.scr) next to its own
 cvar_t *g_mapaddons;
+cvar_t *g_placeddead;
+cvar_t *g_precacheScriptModels;
 
 // How hard an explosion pushes the player (RadiusDamage); 0 for not at all
 cvar_t *g_blastpush;
+
+// Prone, diving and sprinting in single player (player_stance.cpp)
+cvar_t *g_prone;
+cvar_t *g_prone_speed;
+cvar_t *g_prone_raise_time;
+cvar_t *g_dive_run;
+cvar_t *g_dive_run_up;
+cvar_t *g_dive_sprint;
+cvar_t *g_dive_sprint_up;
+cvar_t *g_sprint;
+cvar_t *g_sprint_speed;
+cvar_t *g_sprint_time;
+cvar_t *g_sprint_recover;
+cvar_t *g_sprint_minhealth;
+cvar_t *g_sprint_tired_speed;
+cvar_t *g_sprint_tired_time;
+
+// A grenade on the ground throws its fragments up and out (RadiusDamage)
+cvar_t *g_grenade_cone;
+cvar_t *g_grenade_cone_min;
+cvar_t *g_grenade_prone;
+cvar_t *g_grenade_prone_close;
+cvar_t *g_grenade_push;
 
 // Enemy AI improvements (see ai_enhance.h)
 cvar_t *ai_enhanced;
@@ -808,8 +833,30 @@ void CVAR_Init(void)
     g_door_reopen_blocked = gi.Cvar_Get("g_door_reopen_blocked", "1", 0);
 
     g_mapaddons = gi.Cvar_Get("g_mapaddons", "1", CVAR_ARCHIVE);
+    g_placeddead = gi.Cvar_Get("g_placeddead", "1", CVAR_ARCHIVE);
+    g_precacheScriptModels = gi.Cvar_Get("g_precacheScriptModels", "1", CVAR_ARCHIVE);
 
     g_blastpush = gi.Cvar_Get("g_blastpush", "1", CVAR_ARCHIVE);
+
+    g_prone            = gi.Cvar_Get("g_prone", "1", CVAR_ARCHIVE);
+    g_prone_speed      = gi.Cvar_Get("g_prone_speed", "0.3", 0);
+    g_prone_raise_time = gi.Cvar_Get("g_prone_raise_time", "0.35", 0);
+    g_dive_run         = gi.Cvar_Get("g_dive_run", "190", 0);
+    g_dive_run_up      = gi.Cvar_Get("g_dive_run_up", "155", 0);
+    g_dive_sprint      = gi.Cvar_Get("g_dive_sprint", "320", 0);
+    g_dive_sprint_up   = gi.Cvar_Get("g_dive_sprint_up", "180", 0);
+    g_sprint           = gi.Cvar_Get("g_sprint", "1", CVAR_ARCHIVE);
+    g_sprint_speed     = gi.Cvar_Get("g_sprint_speed", "1.4", 0);
+    g_sprint_time      = gi.Cvar_Get("g_sprint_time", "8", 0);
+    g_sprint_recover   = gi.Cvar_Get("g_sprint_recover", "1", 0);
+    g_sprint_minhealth = gi.Cvar_Get("g_sprint_minhealth", "25", 0);
+    g_sprint_tired_speed = gi.Cvar_Get("g_sprint_tired_speed", "0.6", 0);
+    g_sprint_tired_time  = gi.Cvar_Get("g_sprint_tired_time", "3", 0);
+    g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
+    g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
+    g_grenade_prone       = gi.Cvar_Get("g_grenade_prone", "0.5", 0);
+    g_grenade_prone_close = gi.Cvar_Get("g_grenade_prone_close", "64", 0);
+    g_grenade_push        = gi.Cvar_Get("g_grenade_push", "80", 0);
 
     ai_enhanced        = gi.Cvar_Get("ai_enhanced", "1", CVAR_ARCHIVE);
     ai_debug           = gi.Cvar_Get("ai_debug", "0", 0);

@@ -25,9 +25,12 @@ build/deepbump/venv/bin/python tools/matgen/matgen.py --parallax --install
 `--game` (or `MATGEN_GAME`) points at the directory holding the pk3s; it defaults to
 `/mnt/d/Medal of Honor/main`.
 
-- **Which textures.** Textures are resolved the way the engine resolves them: pk3s sorted by
-  name, later ones win, and a `.tga` request is served by a `.jpg` of the same name first. So
-  installed texture packs (such as AA HD or HRRTM) are what the maps are made from.
+- **Which textures.** World textures and model skins (`textures/`, `models/`), resolved the
+  way the GL2 renderer resolves them: pk3s sorted by name, later ones win, a `.dds` of the name
+  first, and a `.tga` request is served by a `.jpg` of the same name before the `.tga`. So
+  installed texture packs (such as AA HD or HRRTM) and the upscale pk3 (`tools/texupscale`)
+  are what the maps are made from; rebuild after installing or rebuilding either. Model skins
+  don't tile, so their relief is found without wrapping around the edges.
 - **Skipped.** UI, sky, sprite, effect and tool directories, textures only used by additive,
   filter, environment-mapped, sky or sprite stages, and textures that already ship their own
   `_n`, `_nh` or `_s` map.

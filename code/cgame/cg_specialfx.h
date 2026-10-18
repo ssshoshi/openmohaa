@@ -152,6 +152,10 @@ typedef enum {
     //  (CG_MakeExplosionEffect).
     SFX_OPM_EARTH_GREN,
     SFX_OPM_EARTH_BAZOOKA,
+    //  Something going into water: small (a helmet, a grenade) and large (a
+    //  body, a crate) (CG_WaterSplashEffect, opm-water data).
+    SFX_OPM_WATER_SPLASH_SMALL,
+    SFX_OPM_WATER_SPLASH_LARGE,
     SFX_TEST_EFFECT,
     SFX_COUNT
 } SpecialEffects;

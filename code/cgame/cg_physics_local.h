@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../physics/phys_jolt.h"
 #include "../physics/phys_world.h"
 #include "../physics/phys_furniture.h"
+#include "../physics/phys_impact.h"
 
 #include "cg_physics.h"
 
@@ -56,10 +57,22 @@ void CG_PhysicsDrawWorld(void);
 void CG_PhysicsLoadProps(void);
 void CG_PhysicsUnloadProps(void);
 void CG_PhysicsPropsStepped(void);
+void CG_PhysicsPropsWater(float dt);
 void CG_PhysicsDrawProps(float frac);
+void CG_PhysicsDrawCords(float frac); // Added in OPM: lamps on cords (cg_physics_props.cpp)
 void CG_PhysicsImpulse(JPH::BodyID id, const vec3_t point, const vec3_t impulse);
 void CG_PhysicsBlast(const vec3_t centre, float radius, float strength);
 void CG_PhysicsMaterialFor(const char *name, float *arealDensity, float *friction, float *restitution);
+physSoundMat_t CG_PhysicsSoundMatFor(const char *name);
+
+// cg_physics_sounds.cpp: what bodies striking things sound like. Contacts are
+// noted from the listener and played after the steps; a world just made is
+// quiet for a moment.
+void CG_PhysicsSoundsInit(void);
+void CG_PhysicsSoundsQuiet(void);
+void CG_PhysicsImpactContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold);
+void CG_PhysicsPlayImpacts(void);
+void CG_PhysicsPlayScrapes(void);
 
 extern cvar_t *cg_physics_furniture;
 
@@ -104,6 +117,8 @@ void CG_PhysicsReloadWorld(void);
 
 // A body's mass in kilograms, or 0 if it does not move; a prop's body.
 float    CG_PhysicsBodyMass(JPH::BodyID id);
+// Takes hold of a body at a point of it, for the grabber, carried dist along the view.
+qboolean CG_PhysicsGrabBodyAt(JPH::BodyID id, const vec3_t point, float dist);
 qboolean CG_PhysicsPropBody(int prop, JPH::BodyID *id);
 // The static models that have moved from where the map put them.
 void CG_PhysicsMovedStaticModels(std::vector<int> *out);
@@ -123,8 +138,10 @@ void CG_PhysicsPlayerPushes(void);
 void CG_PhysicsPushBody(JPH::BodyID id, const vec3_t dir, float speed);
 void CG_PhysicsPushPropsInBox(const vec3_t mins, const vec3_t maxs, const vec3_t dir, float speed);
 void CG_PhysicsGrabStep(float dt);
+qboolean CG_PhysicsGrabbedBody(JPH::BodyID *id);
 
 void CG_JoltRagdollsStep(float dt);
+void CG_JoltRagdollCounts(int *used, int *floating, int *asleep);
 void CG_JoltRagdollsUnload(void);
 void CG_JoltRagdollContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold);
 

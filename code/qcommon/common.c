@@ -2482,6 +2482,23 @@ void Com_ReportFrameTimers( void )
 	int           i;
 	double        accounted;
 
+	// Added in OPM: one frame that ran long, alone, where its time went
+	// (com_hitchLog, in ms): an average over hundreds of frames hides it
+	{
+		static cvar_t *com_hitchLog;
+
+		if ( !com_hitchLog ) {
+			com_hitchLog = Cvar_Get( "com_hitchLog", "0", 0 );
+		}
+		if ( com_hitchLog->integer > 0 && com_frameUsec[FRAMETIMER_FRAME] >= com_hitchLog->integer * 1000.0 ) {
+			Com_Printf( "hitch %.0fms = sleep %.1f events %.1f server %.1f (game %.1f) client %.1f (cgame %.1f sound %.1f)\n",
+				com_frameUsec[FRAMETIMER_FRAME] / 1000.0, com_frameUsec[FRAMETIMER_SLEEP] / 1000.0,
+				com_frameUsec[FRAMETIMER_EVENTS] / 1000.0, com_frameUsec[FRAMETIMER_SERVER] / 1000.0,
+				com_frameUsec[FRAMETIMER_GAME] / 1000.0, com_frameUsec[FRAMETIMER_CLIENT] / 1000.0,
+				com_frameUsec[FRAMETIMER_CGAME] / 1000.0, com_frameUsec[FRAMETIMER_SOUND] / 1000.0 );
+		}
+	}
+
 	if ( !com_frameTimers->integer ) {
 		Com_Memset( com_frameUsec, 0, sizeof( com_frameUsec ) );
 		Com_Memset( accum, 0, sizeof( accum ) );

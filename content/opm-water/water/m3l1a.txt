@@ -1,0 +1,45 @@
+// m3l1a, Omaha Beach: grey-green Channel water churned with sand, a long
+// swell rolling in from the north onto the beach, and blood in the surf.
+// See code/renderergl2/tr_water.c (how it looks) and code/cgame/cg_water.cpp
+// (how it moves the bodies in it).
+
+color 0.07 0.095 0.085
+clarity 60
+waves 0 1 520 6.5 5
+surf 22
+drift 3
+surge 45
+
+// the waterline is at y -770; blood thick in the surf, thinning out to sea
+shore -770
+blood 0.2 0.022 0.016 0.45
+bloodReach 150 520
+bloodClouds 0.6
+
+// the tide is going out: wet sand up the beach from the waterline, with
+// water standing in its hollows, and red under the dead lying on it
+beach 1200 -440
+puddles 0.3 110
+// each wave runs on up the sand this far at most, and back
+swash 170
+// the beach is the sand above the water alone: the sand under it is another
+// shader, which the water's own reflection is over already. The beach is all
+// drawn as its light sand (pjspick5), which the craters' patches are painted
+// to sit in: the painted shoreline strip along the waterline (a straight
+// bright band) and the darker set4_covered, lit apart from pjspick5, met it in
+// straight lines of light and dark
+remapShader textures/mohtest/omaha_set4_shoreline textures/test/omaha_pjspick5
+remapShader textures/mohtest/omaha_set4_covered textures/test/omaha_pjspick5
+beachSurface textures/test/omaha_pjspick5
+beachSurface textures/mohtest/omaha_set4_shoreline
+// and the sand above it, so the wet ends at the tide's ragged line, not
+// along the edges of the textures
+beachSurface textures/mohtest/omaha_set4_covered
+
+chop 1
+// the open Channel: waves of the open sea over the swell, gathering into
+// ragged crests and running in to the shore (the longest about 27 m), big and choppy
+ocean 170 120 0.5 28
+foam 1
+refraction 0.03
+glints 0.15

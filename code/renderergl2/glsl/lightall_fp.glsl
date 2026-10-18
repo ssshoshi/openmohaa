@@ -53,6 +53,98 @@ uniform vec4      u_CubeMapInfo;
 
 uniform int       u_AlphaTest;
 
+// Added in OPM: wet (tr_water.c). What has been in the sea or under the
+// spray, up to the mark the tide reached, is wet, after Lagarde's wet
+// surfaces in Remember Me: not a layer over the lit surface but the surface
+// changed before it is lit. Water filling a porous surface's pores darkens
+// it and deepens its colour (stone, wood, cloth; paint and metal hardly);
+// wet, any surface is smoother, and a film of water over it smoother still:
+// it flattens the bumps of its normal map, reflects as water does, and gives
+// back the sun as a small hard highlight and the sky most at a glancing look.
+// The film dries first: under the mark is a band that is dark but no longer
+// shines.
+uniform vec4      u_Wet;    // how wet, the mark's height, 0, 0
+uniform vec4      u_WetSky; // the sky it gives back
+uniform vec4      u_WetSun; // towards the sun, and how bright it is
+uniform vec3      u_ViewOrigin;
+varying vec3      var_WetPos;
+varying vec3      var_WetNormal;
+
+float WetNoise(vec2 p)
+{
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+	float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+	float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// How wet it is here (x: the water in it; y: the film on it) and which way
+// the surface itself faces (zw unused)
+vec2 WetAmount(out vec3 surfN)
+{
+	// faces' winding as the rest of this file has it: the front is the back
+	surfN = normalize(!gl_FrontFacing ? var_WetNormal : -var_WetNormal);
+	if (u_Wet.x <= 0.0)
+		return vec2(0.0);
+
+	// up to the mark, which is not a ruled line; the film a little below it
+	float mark = u_Wet.y + (WetNoise(var_WetPos.xy / 70.0 + var_WetPos.z / 50.0) - 0.5) * 16.0;
+	float soak = u_Wet.x * (1.0 - smoothstep(mark - 8.0, mark + 2.0, var_WetPos.z));
+	float film = u_Wet.x * (1.0 - smoothstep(mark - 22.0, mark - 8.0, var_WetPos.z));
+
+	// the ground is the wet beach's (beach_fp.glsl): only what stands up
+	float up = 1.0 - 0.85 * smoothstep(0.75, 0.95, surfN.z);
+
+	// the film runs down what stands up in streaks, here thick, there thin
+	float runs = smoothstep(0.25, 0.85, WetNoise(vec2(dot(var_WetPos.xy, vec2(0.11, 0.08)), var_WetPos.z * 0.03)));
+	film *= mix(1.0, mix(0.45, 1.0, runs), 1.0 - abs(surfN.z));
+
+	return vec2(soak, film) * up;
+}
+
+// How porous a surface is, by how rough and how metallic it looks: rough
+// and dull drinks the water, smooth or metallic sheds it
+float WetPorosity(float roughness, vec3 specular)
+{
+	float metal = smoothstep(0.08, 0.4, max(max(specular.r, specular.g), specular.b));
+	return smoothstep(0.25, 0.75, roughness) * (1.0 - metal);
+}
+
+// The water in it: darker, deeper in colour; smoother. Lagarde's factors.
+void WetMaterial(vec2 wet, float porosity, inout vec3 diffuse, inout float roughness)
+{
+	float factor = mix(1.0, 0.45, porosity);
+	float lum    = dot(diffuse, vec3(0.2125, 0.7154, 0.0721));
+
+	diffuse   = mix(vec3(lum), diffuse, 1.0 + 0.25 * wet.x * porosity);
+	diffuse   = max(diffuse, vec3(0.0)) * mix(1.0, factor, wet.x);
+	roughness = roughness * mix(1.0, factor, 0.5 * wet.x);
+	// the film: water's own smoothness
+	roughness = mix(roughness, 0.12, wet.y);
+}
+
+// What the film gives back with no cubemap: the sky above the horizon, the
+// dark beach and sea below it, with the fresnel of a surface this rough and
+// as much of the sky as the surface's light says it sees
+vec3 WetSky(vec3 N, vec3 E, float roughness, vec3 specular, vec3 light)
+{
+	float NE  = clamp(dot(N, E), 0.0, 1.0);
+	vec3  R   = reflect(-E, N);
+	vec3  sky = u_WetSky.rgb * mix(0.12, 1.0, smoothstep(-0.15, 0.35, R.z));
+	vec3  F   = specular + (max(vec3(1.0 - roughness), specular) - specular) * pow(1.0 - NE, 5.0);
+	float sees = clamp(dot(light, vec3(0.2125, 0.7154, 0.0721)) * 1.6, 0.25, 1.0);
+	// seen edge on, the film's own ripples hide what it gives back: at a
+	// model's outline, where its normal turns from the eye, the most of it
+	// was a bright line a pixel wide (a Higgins boat's side)
+	float edge = smoothstep(0.0, 0.25, dot(N, E));
+
+	return sky * F * sees * (1.0 - roughness) * edge;
+}
+
 #if defined(USE_RTLIGHT)
 varying vec3      var_RtPos;
 varying vec3      var_RtNormal;
@@ -194,6 +286,20 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 
 	return 1.0;
 }
+
+// Added in OPM: LightRay for a light in tangent space. No direction (a model
+// lit per vertex) or a light at or below the surface's plane casts no relief
+// shadow: dividing by z there made the ray NaN, and whatever that fetch read
+// put black blotches in every crevice. The shadow fades in over the first few
+// degrees above the plane, where the ray would stretch across the texture.
+float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap)
+{
+	float fade = smoothstep(0.0, 0.1, lightDir.z);
+	if (fade <= 0.0)
+		return 1.0;
+
+	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap), fade);
+}
 #endif
 
 vec3 CalcDiffuse(vec3 diffuseAlbedo, float NH, float EH, float roughness)
@@ -323,7 +429,10 @@ void main()
 #if defined(USE_PARALLAXMAP)
 	vec3 offsetDir = E * tangentToWorld;
 
-	offsetDir.xy *= -u_NormalScale.a / offsetDir.z;
+	// Added in OPM: the offset grows as 1/z toward grazing views, without
+	// bound, and slid the texture across the surface as the view moved. Cap
+	// it at 4x the depth, and fade it out where the surface is seen edge on.
+	offsetDir.xy *= -u_NormalScale.a * smoothstep(0.0, 0.25, offsetDir.z) / max(offsetDir.z, 0.25);
 
 	texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap);
 #endif
@@ -347,13 +456,22 @@ void main()
 			discard;
 	}
 
+	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
+	// how much sky it sees
+	vec3 wetSurfN;
+	vec2 wet       = WetAmount(wetSurfN);
+	vec3 wetLight  = lightColor;
+
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	L = var_LightDir.xyz;
   #if defined(USE_DELUXEMAP)
 	L += (texture2D(u_DeluxeMap, var_TexCoords.zw).xyz - vec3(0.5)) * u_EnableTextures.y;
   #endif
 	float sqrLightDist = dot(L, L);
-	L /= sqrt(sqrLightDist);
+	// Added in OPM: no direction at all (a model lit per vertex) is no light
+	// from any way: all of it ambient, as it was where the division made it
+	// NaN and the driver's clamps turned that to nothing
+	L = sqrLightDist > 0.0 ? L * inversesqrt(sqrLightDist) : vec3(0.0);
 
   #if defined(USE_LIGHT_VECTOR)
 	attenuation  = CalcLightAttenuation(float(var_LightDir.w > 0.0), var_LightDir.w / sqrLightDist);
@@ -389,9 +507,7 @@ void main()
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	offsetDir = L * tangentToWorld;
-	offsetDir.xy *= u_NormalScale.a / offsetDir.z;
-	lightColor *= LightRay(texCoords, offsetDir.xy, u_NormalMap);
+	float parallaxShadow = ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
   #endif
 
 
@@ -411,6 +527,12 @@ void main()
 	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
   #else
 	ambientColor = var_ColorAmbient.rgb;
+  #endif
+
+  #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
+	// Added in OPM: the relief shadows only the direct light, after the
+	// ambient is split off; shadowing it all left lightmapped crevices black
+	lightColor *= parallaxShadow;
   #endif
 
 	NL = clamp(dot(N, L), 0.0, 1.0);
@@ -457,6 +579,21 @@ void main()
   #elif defined(GLOSS_IS_SHININESS)
 	float roughness = pow(2.0 / (8190.0 * gloss + 2.0), 0.25);
   #endif
+
+	// Added in OPM: wet, the material before it is lit; the film flattens
+	// the normal map's bumps
+	if (wet.x > 0.0)
+	{
+		// what drinks the water holds less of it on top
+		float porosity = WetPorosity(roughness, specular.rgb);
+		wet.y *= mix(1.0, 0.5, porosity);
+		WetMaterial(wet, porosity, diffuse.rgb, roughness);
+		specular.rgb = mix(specular.rgb, max(specular.rgb, vec3(0.02)), wet.y);
+		N  = normalize(mix(N, surfNormal, 0.8 * wet.y));
+		NL = clamp(dot(N, L), 0.0, 1.0);
+		NE = clamp(dot(N, E), 0.0, 1.0);
+		NH = clamp(dot(N, H), 0.0, 1.0);
+	}
 
 	reflectance  = CalcDiffuse(diffuse.rgb, NH, EH, roughness);
 
@@ -534,9 +671,7 @@ void main()
 	//lightColor *= CalcLightAttenuation(float(u_PrimaryLightDir.w > 0.0), u_PrimaryLightDir.w / sqrLightDist);
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	offsetDir = L2 * tangentToWorld;
-	offsetDir.xy *= u_NormalScale.a / offsetDir.z;
-	lightColor *= LightRay(texCoords, offsetDir.xy, u_NormalMap);
+	lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;
@@ -546,21 +681,62 @@ void main()
 	gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
   #endif
 
+	// Added in OPM: what the wet film gives back (a cubemap's reflection is
+	// the surface's own), and the sun where no primary light pass draws it
+	if (wet.y > 0.0)
+	{
+    #if !defined(USE_CUBEMAP)
+		gl_FragColor.rgb += wet.y * WetSky(N, E, roughness, specular.rgb, wetLight);
+    #endif
+    #if !defined(USE_PRIMARY_LIGHT) && !defined(SHADOWMAP_MODULATE)
+		{
+			vec3 Hs = normalize(u_WetSun.xyz + E);
+			gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(N, u_WetSun.xyz), 0.0, 1.0)
+				* CalcSpecular(specular.rgb, clamp(dot(N, Hs), 0.0, 1.0), clamp(dot(E, Hs), 0.0, 1.0), roughness);
+		}
+    #endif
+	}
+
 #else
 
-	gl_FragColor.rgb = diffuse.rgb * lightColor;
+	// Added in OPM: wet, with no material maps: a porous dull surface
+	if (wet.x > 0.0)
+	{
+		float wetRough = 0.6;
+		vec3  Ew       = normalize(u_ViewOrigin - var_WetPos);
+		vec3  Hs       = normalize(u_WetSun.xyz + Ew);
+		vec3  F0       = vec3(0.02);
+
+		wet.y *= 0.65;
+		WetMaterial(wet, 0.7, diffuse.rgb, wetRough);
+		gl_FragColor.rgb  = diffuse.rgb * lightColor;
+		gl_FragColor.rgb += wet.y * WetSky(wetSurfN, Ew, wetRough, F0, wetLight);
+		gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(wetSurfN, u_WetSun.xyz), 0.0, 1.0)
+			* CalcSpecular(F0, clamp(dot(wetSurfN, Hs), 0.0, 1.0), clamp(dot(Ew, Hs), 0.0, 1.0), wetRough);
+	}
+	else
+		gl_FragColor.rgb = diffuse.rgb * lightColor;
 
 #endif
 
 	gl_FragColor.a = alpha;
+
 
 #if defined(USE_RTLIGHT)
 	// Added in OPM: the realtime lights, on the surface's own colour
 	{
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 		vec3 rtNormal = N;
+
+		// the lights' and the sun's shine, with all of the light live
+		rt_specOn    = u_RtParams.y > 1.5 && u_RtSurface.z > 0.0;
+		rt_specView  = E;
+		rt_specRough = roughness;
   #else
-		vec3 rtNormal = normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+  #endif
+  #if defined(USE_LIGHTMAP)
+		rt_skyLM = var_TexCoords.zw;
   #endif
   #if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
 		// the map's own lighting: with the direct light live alone
@@ -570,6 +746,9 @@ void main()
 		// lit at run time: the lights, when all of it is live
 		if (u_RtParams.y > 1.5)
 			gl_FragColor.rgb += diffuse.rgb * RtLight(var_RtPos, rtNormal, false);
+  #endif
+  #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+		gl_FragColor.rgb += rt_spec * specular.rgb;
   #endif
 	}
 #endif

@@ -257,6 +257,14 @@ void IN_LeanLeftUp(void) { IN_KeyUp(&in_buttons[4]); }
 void IN_LeanRightDown(void) { IN_KeyDown(&in_buttons[5]); }
 void IN_LeanRightUp(void) { IN_KeyUp(&in_buttons[5]); }
 
+// Added in OPM
+//  Sprint and aim down the sights get button bits of their own. Aiming walks,
+//  as the ironsight mods aim when the player walks (see CL_CmdButtons).
+void IN_SprintDown(void) { IN_KeyDown(&in_buttons[BUTTON_SPRINT_BITINDEX]); }
+void IN_SprintUp(void) { IN_KeyUp(&in_buttons[BUTTON_SPRINT_BITINDEX]); }
+void IN_AimDown(void) { IN_KeyDown(&in_buttons[BUTTON_AIM_BITINDEX]); }
+void IN_AimUp(void) { IN_KeyUp(&in_buttons[BUTTON_AIM_BITINDEX]); }
+
 void IN_SpeedDown(void) {IN_KeyDown(&in_speed);}
 void IN_SpeedUp(void) {IN_KeyUp(&in_speed);}
 void IN_StrafeDown(void) {IN_KeyDown(&in_strafe);}
@@ -689,6 +697,12 @@ void CL_CmdButtons( usercmd_t *cmd ) {
 		cmd->buttons |= BUTTON_RUN;
 	}
 
+	// Added in OPM
+	//  Aiming down the sights walks
+	if ( in_buttons[BUTTON_AIM_BITINDEX].active ) {
+		cmd->buttons &= ~BUTTON_RUN;
+	}
+
 	if (cge) {
 		// send weapon commands from cg
 		cmd->buttons |= cge->CG_WeaponCommandButtonBits();
@@ -750,6 +764,12 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+
+	// Added in OPM
+	//  The joystick sets BUTTON_RUN again, aiming down the sights still walks
+	if ( in_buttons[BUTTON_AIM_BITINDEX].active ) {
+		cmd.buttons &= ~BUTTON_RUN;
+	}
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {
@@ -1239,6 +1259,10 @@ void CL_InitInput( void ) {
 	Cmd_AddCommand("-leanright", IN_LeanRightUp);
 	Cmd_AddCommand("+speed", IN_SpeedDown);
 	Cmd_AddCommand("-speed", IN_SpeedUp);
+	Cmd_AddCommand("+sprint", IN_SprintDown);
+	Cmd_AddCommand("-sprint", IN_SprintUp);
+	Cmd_AddCommand("+aim", IN_AimDown);
+	Cmd_AddCommand("-aim", IN_AimUp);
 	Cmd_AddCommand("+button0", IN_Button0Down);
 	Cmd_AddCommand("-button0", IN_Button0Up);
 	Cmd_AddCommand("+button1", IN_Button1Down);
@@ -1317,6 +1341,10 @@ void CL_ShutdownInput(void)
 	Cmd_RemoveCommand("-moveright");
 	Cmd_RemoveCommand("+speed");
 	Cmd_RemoveCommand("-speed");
+	Cmd_RemoveCommand("+sprint");
+	Cmd_RemoveCommand("-sprint");
+	Cmd_RemoveCommand("+aim");
+	Cmd_RemoveCommand("-aim");
 	Cmd_RemoveCommand("+attack");
 	Cmd_RemoveCommand("-attack");
 	Cmd_RemoveCommand("+button0");
