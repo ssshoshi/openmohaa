@@ -1996,7 +1996,17 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
         tess.texCoords[baseVertex + j][1][1] = surf->pStaticTexCoords[j][1][1];
     }
 
-    if (backEndData->staticModelData) {
+    if (backEnd.currentStaticModel->noVertexData) {
+        // the map's light is for another model: the light grid's where it stands
+        const byte *grid = (const byte *)&backEnd.currentStaticModel->iGridLighting;
+
+        for (i = 0; i < render_count; i++) {
+            tess.vertexColors[baseVertex + i][0] = grid[0];
+            tess.vertexColors[baseVertex + i][1] = grid[1];
+            tess.vertexColors[baseVertex + i][2] = grid[2];
+            tess.vertexColors[baseVertex + i][3] = 0xFF;
+        }
+    } else if (backEndData->staticModelData) {
         const size_t offset =
             backEnd.currentStaticModel->firstVertexData + staticSurf->ofsStaticData * sizeof(color4ub_t);
         assert(offset < tr.world->numStaticModelData * sizeof(color4ub_t));
