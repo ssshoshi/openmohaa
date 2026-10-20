@@ -1181,11 +1181,13 @@ static qboolean GC_Clear(vec3_t xyz, float below, float above)
     // drawn as triangles of its heightmap, not the smooth surface sampled
     // here, so it gets a tolerance and the tuft goes where the ground is: a
     // little up, more down, as a road laid over terrain is a few units up
-    // and the terrain under it unlit.
+    // and the terrain under it unlit. What it lands on has to be grass too: a
+    // floor laid just over the grass (a house built on the field) is not.
     VectorSet(start, xyz[0], xyz[1], xyz[2] + 64);
     VectorSet(end, xyz[0], xyz[1], xyz[2] - below - 4);
     ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
-    if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f || trace.endpos[2] > xyz[2] + above || trace.endpos[2] < xyz[2] - below) {
+    if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f || trace.endpos[2] > xyz[2] + above || trace.endpos[2] < xyz[2] - below
+        || !(trace.surfaceFlags & SURF_GRASS)) {
         return qfalse;
     }
     xyz[2] = trace.endpos[2];

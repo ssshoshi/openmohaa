@@ -521,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    18
+#define NUM_TEXTURE_UNITS    19
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -540,6 +540,7 @@ enum
 #define TMU_RTSKYLM     15 // Added in OPM: the sky each lightmap texel sees (tr_rtlight.c)
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
+#define TMU_RTBOUNCE    18 // Added in OPM: the light bounced onto each lightmap texel (tr_rtlight.c)
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -1005,6 +1006,11 @@ typedef enum
 	UNIFORM_RTSKYMAP,
 	UNIFORM_RTSURFACE,
 	UNIFORM_RTSKYLIGHTMAP,
+	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
+	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
+	UNIFORM_RTPROBEG,
+	UNIFORM_RTPROBEB,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
@@ -1705,6 +1711,14 @@ typedef struct cStaticModelUnpacked_s {
     int rtCaster; // once moved, RT_CASTS_*
     uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
+    int rtProbeState; // its bounce (R_RtStaticModelProbe): 0 not yet, 1 worked out, 2 no probe sees it
+    vec4_t rtProbe[3];
+
+    // Added in OPM
+    //  The map's light for it, a colour a vertex, is for another model than the
+    //  one loaded under its name (a remodelled prop, or a mod's): it is lit by
+    //  the light grid instead (RB_SurfaceStaticModel).
+    qboolean noVertexData;
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
@@ -2702,6 +2716,8 @@ typedef struct {
     int      rtNumSkyLightmaps;
     vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction
     vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
+    image_t *rtBounceImage;    // the light bounced onto each texel of the lightmaps' first page (R_RtBounce), NULL until worked out
+    vec4_t   rtBounce;         // its scale; w: how far it has come in, 0 none
     int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
     image_t *skelMorphImage;   // Added in OPM: each posed surface's vertexes' morphs: offset, which target (tr_skelgpu.c)
@@ -3088,6 +3104,8 @@ int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean
 qboolean R_RtVertexParticles(void);
 qboolean R_RtIsFoliage(const shader_t *shader);
 qboolean R_RtVertexSky(void);
+qboolean R_RtProbesLive(void);
+#define RT_POLY_BATCH 96 // how far apart the polygons of a batch the probes light may be
 qboolean R_RtIsCharacter(const refEntity_t *ent);
 int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
@@ -3302,6 +3320,10 @@ IMPLEMENTATION SPECIFIC FUNCTIONS
 */
 
 void		GLimp_InitExtraExtensions( void );
+// Added in OPM: whether the shaders are built with the bounce of the realtime lights (r_rtBounce at their build)
+qboolean R_RtBounceCompiled(void);
+// Added in OPM: glGetTexImage, to read a texture back (the realtime lights' colours of what they bounce off)
+extern void (APIENTRY *qglGetTexImageOPM)(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
 
 /*
 ====================================================================
@@ -3377,6 +3399,10 @@ typedef struct shaderCommands_s
 	// distance, wind)
 	qboolean    groundCover;
 	vec4_t      groundCoverParams;
+
+	// Added in OPM: the batch is polygons (marks, decals): the realtime
+	// bounce lights them from the probes where they are (R_RtSetUniforms)
+	qboolean    polys;
 
 	// Added in OPM: the batch is a skeletal surface the vertex program poses
 	// from the frame's bones (tr_skelgpu.c); tess holds its indexes alone

@@ -204,6 +204,11 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyMap",        GLSL_INT },
 	{ "u_RtSurface",       GLSL_VEC4 },
 	{ "u_RtSkyLightmap",   GLSL_INT },
+	{ "u_RtBounce",        GLSL_VEC4 },
+	{ "u_RtBounceMap",     GLSL_INT },
+	{ "u_RtProbeR",        GLSL_VEC4 },
+	{ "u_RtProbeG",        GLSL_VEC4 },
+	{ "u_RtProbeB",        GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
@@ -380,6 +385,13 @@ static const char *rt_glsl =
 	"uniform vec4 u_RtSurface;\n"
 	// u_RtSurface.y 2: the sky each texel of the draw's lightmap sees, at rt_skyLM
 	"uniform sampler2D u_RtSkyLightmap;\n"
+	// the light bounced onto each texel of the lightmap (R_RtBounce), at rt_skyLM; its scale, w 1 on
+	"uniform vec4 u_RtBounce;\n"
+	"uniform sampler2D u_RtBounceMap;\n"
+	// on what has no lightmap, from the probes round it: for each colour m + v . N (xyz v, w m)
+	"uniform vec4 u_RtProbeR;\n"
+	"uniform vec4 u_RtProbeG;\n"
+	"uniform vec4 u_RtProbeB;\n"
 	"vec2 rt_skyLM = vec2(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
@@ -582,9 +594,24 @@ static const char *rt_glsl =
 	// the compiler's point light: intensity * 7500 / distance squared, never nearer than 16
 	"		float att  = ndl * fade * fade / max(d2, 256.0);\n"
 	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
-	// flash, a blast): never shadowed, and on top of the map's lighting always
-	"		bool added = l0.w > 1.5;\n"
-	"		if (l0.w > 0.5 && !added)\n"
+	// flash, a blast): never shadowed, and on top of the map's lighting
+	// always; 3 a lamp's (R_RtLightsAtLamps)
+	"		bool added = l0.w > 1.5 && l0.w < 2.5;\n"
+	"		if (l0.w > 2.5)\n"
+	"		{\n"
+	// a lamp's: never nearer than the glow of its shade (l2.w), and less the
+	// way its shade closes it off (l2.xyz, as long as the part it stops
+	// there): a shade stops what leaves past its rim, so a little over square
+	// to it all of it is stopped (a bell shade's ceiling, near and far).
+	// Longer than a whole, the shade is a ring round the lamp (a lampshade
+	// open at both ends): what leaves near square to its axis is held back
+	"			vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"			float shut = length(l2.xyz);\n"
+	"			att = ndl * fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
+	"			if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) / (d * shut));\n"
+	"			else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
+	"		}\n"
+	"		else if (l0.w > 0.5 && !added)\n"
 	"		{\n"
 	// the compiler's spot light: a cone, with a 32 unit soft edge
 	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
@@ -643,6 +670,13 @@ static const char *rt_glsl =
 	"#endif\n"
 	"		sum += RtSky(P, N);\n"
 	"	}\n"
+	// what the sun, the sky and the lamps light round it gives back
+	"#if defined(RT_BOUNCE)\n"
+	"	if (u_RtBounce.w > 0.5 && u_RtSurface.y > 1.5 && !delta)\n"
+	"		sum += u_RtBounce.rgb * texture2D(u_RtBounceMap, rt_skyLM).rgb;\n"
+	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
+	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
+	"#endif\n"
 	"	return sum;\n"
 	"}\n"
 	"#else\n"
@@ -667,8 +701,16 @@ static const char *rt_glsl =
 	"		if (d2 >= r2) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
 	"		float att  = fade * fade / max(d2, 256.0);\n"
-	"		bool added = l0.w > 1.5;\n"
-	"		if (l0.w > 0.5 && !added)\n"
+	"		bool added = l0.w > 1.5 && l0.w < 2.5;\n"
+	"		if (l0.w > 2.5)\n"
+	"		{\n"
+	"			vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"			float shut = length(l2.xyz);\n"
+	"			att = fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
+	"			if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);\n"
+	"			else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);\n"
+	"		}\n"
+	"		else if (l0.w > 0.5 && !added)\n"
 	"		{\n"
 	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
 	"			float along = -dot(toLight, l2.xyz);\n"
@@ -905,6 +947,9 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
 		if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
 			Q_strcat(dest, size, va("#define RT_CAPSULES\n#define RT_MAX_RUN %d\n", RT_MAX_RUN));
+		// the bounce (R_RtBounce), only where it is on: its reads cost every lit pixel even off
+		if (R_RtBounceCompiled())
+			Q_strcat(dest, size, "#define RT_BOUNCE\n");
 		Q_strcat(dest, size, rt_glsl);
 	}
 
@@ -1957,6 +2002,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2086,6 +2132,7 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);

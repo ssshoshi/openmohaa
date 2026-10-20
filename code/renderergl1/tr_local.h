@@ -1006,6 +1006,12 @@ typedef struct cStaticModelUnpacked_s {
     float cull_radius;
     int iGridLighting;
     float lodpercentage[2];
+
+    // Added in OPM
+    //  The map's light for it, a colour a vertex, is for another model than the
+    //  one loaded under its name (a remodelled prop, or a mod's): it is lit by
+    //  the light grid instead (RB_SurfaceStaticModel).
+    qboolean noVertexData;
 } cStaticModelUnpacked_t;
 
 extern	void (*rb_surfaceTable[SF_NUM_SURFACE_TYPES])(void *);

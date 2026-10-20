@@ -45,12 +45,18 @@ double R_MicroSeconds(void)
 	return (double)SDL_GetPerformanceCounter() * 1000000.0 / (double)freq;
 }
 
+// Added in OPM
+void (APIENTRY *qglGetTexImageOPM)(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
+
 void GLimp_InitExtraExtensions(void)
 {
 	char *extension;
 	const char* result[3] = { "...ignoring %s\n", "...using %s\n", "...%s not found\n" };
 	qboolean q_gl_version_at_least_3_0;
 	qboolean q_gl_version_at_least_3_2;
+
+	// Added in OPM: to read a texture back (tr_rtlight.c)
+	qglGetTexImageOPM = (void (APIENTRY *)(GLenum, GLint, GLenum, GLenum, void *))SDL_GL_GetProcAddress("glGetTexImage");
 
 	q_gl_version_at_least_3_0 = QGL_VERSION_ATLEAST( 3, 0 );
 	q_gl_version_at_least_3_2 = QGL_VERSION_ATLEAST( 3, 2 );

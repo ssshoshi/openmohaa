@@ -85,6 +85,7 @@ void R_InitStaticModels(void)
         AxisCopy(pSM->axis, pSM->baseAxis);
         pSM->moved    = qfalse;
         pSM->rtCaster = 0;
+        pSM->rtProbeState = 0;
 
         if (!strnicmp(pSM->model, "models", 6)) {
             Q_strncpyz(szTemp, pSM->model, sizeof(szTemp));
@@ -102,6 +103,30 @@ void R_InitStaticModels(void)
         }
 
         pSM->radius = ri.TIKI_GlobalRadius(pSM->tiki);
+
+        // Added in OPM
+        //  The map keeps a colour for each vertex of the model as it was when
+        //  the map was compiled, all its meshes' surfaces in a row. A model
+        //  since made again with another count would read another's colours,
+        //  or past the end of them.
+        {
+            int numVerts = 0;
+
+            for (j = 0; j < pSM->tiki->numMeshes; j++) {
+                const skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+                const skelSurfaceGame_t *surf;
+
+                for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext) {
+                    numVerts += surf->numVerts;
+                }
+            }
+            pSM->noVertexData = numVerts != pSM->numVertexData
+                             || pSM->firstVertexData / (int)sizeof(color4ub_t) + numVerts > tr.world->numStaticModelData;
+            if (pSM->noVertexData) {
+                ri.Printf(PRINT_DEVELOPER, "static model %s has %d vertexes, the map's light is for %d: lit by the grid\n",
+                    szTemp, numVerts, pSM->numVertexData);
+            }
+        }
 
         //
         // register shaders
