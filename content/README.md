@@ -10,7 +10,9 @@ the original from your own paks, the copy the game would load (the last pak in
 load order that has it), and applies the diff. Files from elsewhere that are
 not ours either are listed with where to download them (`*.fetch`, one
 `<path in the pak> <url>` a line), and the build fetches them. Files of our own
-go in as they are, at their path under the folder.
+go in as they are, at their path under the folder. Images made from the
+game's own are recipes (`*.derive`, one `<path in the pak> <game path> scale <k>`
+a line: the game's image with its colours times k), made at build time.
 
     tools/content/pack.py                    # every pak, into build/content/
     tools/content/pack.py opm-hrrtm-blood    # one of them
@@ -24,7 +26,7 @@ go in as they are, at their path under the folder.
 | Pak | Needs | What it does |
 |---|---|---|
 | `opm-cabinet-ragdoll` | retail | The man who falls out of a shot hidden cabinet (`global/cabinet.scr`, m3l2, m5l1a, m5l1b) dies once he is clear of it, so the ragdoll takes over his fall. |
-| `opm-hrrtm-blood` | HRRTM Blood Effects Addon | Bullet hits on people splatter the wall behind at once and at full strength, light hits as well as hard ones. Built from the addon's own effect, so without the addon it is not built. |
+| `opm-hrrtm-blood` | HRRTM Blood Effects Addon | Bullet hits on people splatter the wall behind at once and at full strength, light hits as well as hard ones. Built from the addon's own effect, so without the addon it is not built. Its two wall splats three times brighter (`blood.derive`): the addon's are near black. |
 | `opm-gore` | nothing | The gore system's shaders and textures (`cg_gore.cpp`): wounds, drops, splashes and pools. All our own; the textures are drawn by `tools/content/gore_textures.py`. |
 | `opm-physics` | internet, once | What corpses and props sound like striking things: the `phys_*` aliases the physics plays (`code/physics/phys_impact.cpp`), on Half-Life 2's and Day of Defeat: Source's physics recordings. Those are Valve's, so `physics.fetch` lists where the build downloads them from (kept in `~/.cache/openmohaa-content`) and only the pak built here has them. |
 | `opm-water` | nothing | How a map's water looks and moves (`water/<map>.txt`, read by `tr_water.c` and `cg_water.cpp`), and m3l1a's: grey-green Channel water, a swell rolling in onto Omaha, blood in the surf, the falling tide's wet sand with water standing on it and red under the dead, and the men of the first waves lying in the surf (`maps/m3l1a_opm.scr`), whom the waves lift, roll and wash up the beach. Patched: the bullet splash in water (`bh_water_lite`/`_hard.tik`: a column and a crown of drops, the rings left to the water itself) and m3l1a's scripted MG hits (`bhit`), which now show a real round's wound and blood (`global/opm_realhit.scr`, our own). |

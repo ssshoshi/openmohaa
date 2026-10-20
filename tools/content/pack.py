@@ -5,10 +5,11 @@ Each content/<name>/ folder becomes one pak. A *.patch file in it is a unified
 diff against a game file (retail or mod) that is not ours to publish: the
 original is taken from the player's own paks, the one the game would load
 (the last pak in load order that has it, opm paks left out), and the diff is
-applied to it. A *.fetch file lists files that are not ours either and are
-not in the game, one `<path in the pak> <url>` a line: each is downloaded when
-the pak is built (once; kept in ~/.cache/openmohaa-content) and goes in at its
-path. Any other file is our own and goes in as it is, at its path under the
+applied to it. A *.derive file makes images from the game's own, one
+`<path in the pak> <game path> scale <k>` a line: its colours times k. A
+*.fetch file lists files that are not ours either and are not in the game,
+one `<path in the pak> <url>` a line: each is downloaded when the pak is built
+(once; kept in ~/.cache/openmohaa-content) and goes in at its path. Any other file is our own and goes in as it is, at its path under the
 folder.
 
     pack.py                         build every pak into build/content/
@@ -52,8 +53,8 @@ def game_paks(game):
     return [p for p in paks if not os.path.basename(p).lower().startswith(PREFIX + "opm-")]
 
 
-def original(game, path):
-    """The game's own copy of path, with LF line ends, and the pak it came from."""
+def game_file(game, path):
+    """The game's own copy of path, as it is, and the pak it came from."""
     found = None
     for pak in game_paks(game):
         with zipfile.ZipFile(pak) as z:
@@ -62,8 +63,31 @@ def original(game, path):
                 found = (z.read(names[path.lower()]), pak)
     if not found:
         raise Skip(f"{path} is not in any pak under {game}/main")
-    data, pak = found
+    return found
+
+
+def original(game, path):
+    """The game's own copy of path, with LF line ends, and the pak it came from."""
+    data, pak = game_file(game, path)
     return data.decode("latin1").replace("\r\n", "\n"), pak
+
+
+def derive(game, line):
+    """A file made from one of the game's: `<path in the pak> <game path> scale <k>`,
+    an image with its colours times k (its alpha kept), written as a TGA."""
+    from PIL import Image
+
+    words = line.split()
+    if len(words) != 4 or words[2] != "scale":
+        sys.exit(f"bad derive line: {line}")
+    path, source, k = words[0], words[1], float(words[3])
+    data, pak = game_file(game, source)
+    image = Image.open(io.BytesIO(data)).convert("RGBA")
+    r, g, b, a = image.split()
+    r, g, b = (c.point(lambda v: min(255, round(v * k))) for c in (r, g, b))
+    out = io.BytesIO()
+    Image.merge("RGBA", (r, g, b, a)).save(out, "TGA")
+    return path, out.getvalue(), pak
 
 
 def patch_target(patch_file):
@@ -138,6 +162,14 @@ def build(name, game, out):
                 text, pak = original(game, path)
                 files[path] = apply(text, full).replace("\n", "\r\n").encode("latin1")
                 print(f"  {path}  (patched from {os.path.basename(pak)})")
+            elif fn.endswith(".derive"):
+                with open(full) as f:
+                    for line in f:
+                        line = line.split("#")[0].strip()
+                        if line:
+                            path, data, pak = derive(game, line)
+                            files[path] = data
+                            print(f"  {path}  (derived from {os.path.basename(pak)})")
             elif fn.endswith(".fetch"):
                 count = 0
                 with open(full) as f:

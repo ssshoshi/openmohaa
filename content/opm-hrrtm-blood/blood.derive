@@ -1,0 +1,4 @@
+# The addon's wall splats are near black (21 2 0 on average): three times
+# brighter they read as blood on a lit wall
+textures/opm_hrrtm/blood_splat.tga textures/effects/blood_splat.tga scale 3
+textures/opm_hrrtm/blood_splat2.tga textures/effects/blood_splat2.tga scale 3
