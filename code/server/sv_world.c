@@ -233,7 +233,9 @@ void SV_LinkEntity( gentity_t *gEnt ) {
 		gEnt->s.solid = 0;
 		break;
 	case SOLID_BBOX:
-		if( !gEnt->r.contents || ( gEnt->r.contents == CONTENTS_SHOOTONLY ) )
+		// Added in OPM: weapon clip stops shots alone (the physics helmets and
+		// magazines): the client predicting the player into it was stopped
+		if( !gEnt->r.contents || ( gEnt->r.contents == CONTENTS_SHOOTONLY ) || ( gEnt->r.contents == CONTENTS_WEAPONCLIP ) )
 		{
 			gEnt->s.solid = 0;
 		}
