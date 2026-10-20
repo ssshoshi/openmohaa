@@ -282,15 +282,37 @@ RB_SurfacePolychain
 static void RB_SurfacePolychain( srfPoly_t *p ) {
 	int		i;
 	int		numv;
+	vec3_t	normal, e1, e2;
+	int16_t	iNormal[4];
 
 	RB_CheckVao(tess.vao);
 
+	// Added in OPM: the bounce lights a batch of them from the probes at its
+	// middle, so one far from the batch's first starts its own
+	if (tess.polys && tess.numVertexes && R_RtProbesLive() && Distance(p->verts[0].xyz, tess.xyz[0]) > RT_POLY_BATCH) {
+		RB_EndSurface();
+		RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+	}
+
 	RB_CHECKOVERFLOW( p->numVerts, 3*(p->numVerts - 2) );
+	tess.polys = qtrue;
+
+	// Added in OPM: the polygon's plane is its normal, for the realtime
+	// lights (a mark on a wall faces as the wall does)
+	VectorClear(normal);
+	if (p->numVerts >= 3) {
+		VectorSubtract(p->verts[1].xyz, p->verts[0].xyz, e1);
+		VectorSubtract(p->verts[2].xyz, p->verts[0].xyz, e2);
+		CrossProduct(e2, e1, normal);
+		VectorNormalize(normal);
+	}
+	R_VaoPackNormal(iNormal, normal);
 
 	// fan triangles into the tess array
 	numv = tess.numVertexes;
 	for ( i = 0; i < p->numVerts; i++ ) {
 		VectorCopy( p->verts[i].xyz, tess.xyz[numv] );
+		VectorCopy4( iNormal, tess.normal[numv] );
 		tess.texCoords[numv][0] = p->verts[i].st[0];
 		tess.texCoords[numv][1] = p->verts[i].st[1];
 		tess.color[numv][0] = (int)p->verts[i].modulate[0] * 257;

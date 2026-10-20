@@ -4062,6 +4062,12 @@ qboolean R_RtVertexSky(void)
 	return r_realtimeLighting->integer == 2 && R_RtVertexParticles();
 }
 
+// Whether the bounce lights what has no lightmap from its probes
+qboolean R_RtProbesLive(void)
+{
+	return R_RtLitLive() && rt_probes && tr.rtBounce[3] > 0 ? qtrue : qfalse;
+}
+
 // Leaves: two sided, and cut out by their alpha
 qboolean R_RtIsFoliage(const shader_t *shader)
 {
@@ -4147,6 +4153,19 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 						VectorCopy(backEnd.currentEntity->e.origin, origin);
 						origin[2] += 32.0f; // a person's middle, not their feet
 					}
+					on = R_RtProbesAt(origin, probe);
+				} else if (sky < 1.5f && tr.rtBounce[3] > 0 && tess.polys && tess.numVertexes) {
+					// marks and decals: from the probes at the batch's middle,
+					// as the wall they are on takes the bounce map
+					vec3_t mins, maxs, origin;
+					int    v;
+
+					ClearBounds(mins, maxs);
+					for (v = 0; v < tess.numVertexes; v++) {
+						AddPointToBounds(tess.xyz[v], mins, maxs);
+					}
+					VectorAdd(mins, maxs, origin);
+					VectorScale(origin, 0.5f, origin);
 					on = R_RtProbesAt(origin, probe);
 				}
 				GLSL_SetUniformVec4(sp, UNIFORM_RTBOUNCE, on ? tr.rtBounce : none);

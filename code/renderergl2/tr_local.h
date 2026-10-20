@@ -3102,6 +3102,8 @@ int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean
 qboolean R_RtVertexParticles(void);
 qboolean R_RtIsFoliage(const shader_t *shader);
 qboolean R_RtVertexSky(void);
+qboolean R_RtProbesLive(void);
+#define RT_POLY_BATCH 96 // how far apart the polygons of a batch the probes light may be
 qboolean R_RtIsCharacter(const refEntity_t *ent);
 int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
@@ -3395,6 +3397,10 @@ typedef struct shaderCommands_s
 	// distance, wind)
 	qboolean    groundCover;
 	vec4_t      groundCoverParams;
+
+	// Added in OPM: the batch is polygons (marks, decals): the realtime
+	// bounce lights them from the probes where they are (R_RtSetUniforms)
+	qboolean    polys;
 
 	// Added in OPM: the batch is a skeletal surface the vertex program poses
 	// from the frame's bones (tr_skelgpu.c); tess holds its indexes alone

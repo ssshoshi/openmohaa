@@ -326,6 +326,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.skin.valid = qfalse;
 	tess.skin.deferred = qfalse;
 	tess.groundCover = qfalse;
+	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
@@ -2679,6 +2680,7 @@ void RB_EndSurface( void ) {
 	tess.useCacheVao = qfalse;
 	tess.useInternalVao = qfalse;
 	tess.groundCover = qfalse;
+	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 
 	GLimp_LogComment( "----------\n" );
