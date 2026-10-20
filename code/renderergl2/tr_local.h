@@ -1711,6 +1711,8 @@ typedef struct cStaticModelUnpacked_s {
     int rtCaster; // once moved, RT_CASTS_*
     uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
+    int rtProbeState; // its bounce (R_RtStaticModelProbe): 0 not yet, 1 worked out, 2 no probe sees it
+    vec4_t rtProbe[3];
 
     // Added in OPM
     //  The map's light for it, a colour a vertex, is for another model than the

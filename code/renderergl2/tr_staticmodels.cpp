@@ -85,6 +85,7 @@ void R_InitStaticModels(void)
         AxisCopy(pSM->axis, pSM->baseAxis);
         pSM->moved    = qfalse;
         pSM->rtCaster = 0;
+        pSM->rtProbeState = 0;
 
         if (!strnicmp(pSM->model, "models", 6)) {
             Q_strncpyz(szTemp, pSM->model, sizeof(szTemp));

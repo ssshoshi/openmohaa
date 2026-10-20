@@ -1361,7 +1361,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 4
+#define RT_BOUNCE_VERSION 5
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
 
 enum {
@@ -2105,6 +2105,139 @@ static qboolean R_RtProbesAt(const vec3_t origin, vec4_t out[3])
 	return qtrue;
 }
 
+// The bounce at a point of a model that stands still, from the probes round
+// it that can see it: a probe through a wall (the next room, the street) is
+// not its light. The eight round it, else those of the cube of 64 round them,
+// nearer ones more. A probe stopped no further than reach short of it sees it:
+// furniture stands in a solid clip box of its own size. qfalse while one it
+// would take is not worked out yet.
+static qboolean R_RtProbesSeenAt(const vec3_t at, float reach, vec4_t out[3], qboolean *none)
+{
+	vec3_t zero = {0, 0, 0};
+	int    base[3], ring, k;
+	float  total = 0;
+
+	*none = qfalse;
+	for (k = 0; k < 3; k++) {
+		VectorClear4(out[k]);
+		base[k] = (int)floor(at[k] / RT_PROBE_GRID);
+	}
+	for (ring = 0; ring < 2 && total <= 0; ring++) {
+		const int lo = -ring, hi = 1 + ring;
+		int       x, y, z;
+		qboolean  waiting = qfalse;
+
+		for (x = lo; x <= hi; x++) {
+			for (y = lo; y <= hi; y++) {
+				for (z = lo; z <= hi; z++) {
+					rtProbe_t *p;
+					vec3_t     pos;
+					trace_t    trace;
+					float      w;
+
+					if (ring && x >= 0 && x <= 1 && y >= 0 && y <= 1 && z >= 0 && z <= 1) {
+						continue; // the first ring's
+					}
+					p = R_RtProbe(base[0] + x, base[1] + y, base[2] + z, qtrue);
+					if (!p || p->state == RT_PROBE_SOLID) {
+						continue;
+					}
+					if (p->state != RT_PROBE_READY) {
+						waiting = qtrue;
+						continue;
+					}
+					VectorSet(pos, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
+					ri.CM_BoxTrace(&trace, pos, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+					if (trace.startsolid || Distance(trace.endpos, at) > reach) {
+						continue;
+					}
+					w = 1.0f / (Distance(pos, at) + 16.0f);
+					for (k = 0; k < 3; k++) {
+						VectorMA4(out[k], w, p->c[k], out[k]);
+					}
+					total += w;
+				}
+			}
+		}
+		if (waiting) {
+			return qfalse;
+		}
+	}
+	if (total <= 0) {
+		*none = qtrue;
+		return qtrue;
+	}
+	for (k = 0; k < 3; k++) {
+		VectorScale4(out[k], 1.0f / total, out[k]);
+	}
+	return qtrue;
+}
+
+// The middle of a static model, where its bounce is taken: not its origin,
+// which a model may have at a corner, or inside the wall it stands against;
+// and how far it reaches from it
+static float R_RtStaticModelMiddle(const cStaticModelUnpacked_t *sm, vec3_t out)
+{
+	vec3_t local, half;
+	int    k;
+
+	VectorCopy(sm->origin, out);
+	if (!sm->tiki || !sm->tiki->a) {
+		out[2] += 8.0f;
+		return 16.0f;
+	}
+	for (k = 0; k < 3; k++) {
+		local[k] = (sm->tiki->a->mins[k] + sm->tiki->a->maxs[k]) * 0.5f * sm->tiki->load_scale * sm->scale;
+		half[k]  = (sm->tiki->a->maxs[k] - sm->tiki->a->mins[k]) * 0.5f * sm->tiki->load_scale * sm->scale;
+	}
+	for (k = 0; k < 3; k++) {
+		VectorMA(out, local[k], sm->axis[k], out);
+	}
+	return VectorLength(half) + 2.0f;
+}
+
+// A static model's bounce, worked out once
+static qboolean R_RtStaticModelProbe(cStaticModelUnpacked_t *sm, vec4_t out[3])
+{
+	if (sm->rtProbeState == 0 || sm->moved) {
+		vec3_t   middle;
+		qboolean none;
+		float    reach = R_RtStaticModelMiddle(sm, middle);
+
+		if (!R_RtProbesSeenAt(middle, reach, sm->rtProbe, &none)) {
+			return qfalse;
+		}
+		if (sm->moved) {
+			sm->rtProbeState = 0;
+			Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
+			return !none;
+		}
+		sm->rtProbeState = none ? 2 : 1;
+	}
+	Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
+	return sm->rtProbeState == 1;
+}
+
+// r_rtProbeInfo <static model>: where its bounce comes from
+static void R_RtProbeInfo_f(void)
+{
+	cStaticModelUnpacked_t *sm;
+	vec3_t                  middle;
+	float                   reach;
+	int                     n = atoi(ri.Cmd_Argv(1));
+
+	if (!tr.world || n < 0 || n >= tr.world->numStaticModels) {
+		ri.Printf(PRINT_ALL, "r_rtProbeInfo <static model number>\n");
+		return;
+	}
+	sm = &tr.world->staticModels[n];
+	reach = R_RtStaticModelMiddle(sm, middle);
+	ri.Printf(PRINT_ALL, "%s origin %.0f %.0f %.0f middle %.0f %.0f %.0f reach %.0f, state %d\n", sm->model, sm->origin[0], sm->origin[1],
+		sm->origin[2], middle[0], middle[1], middle[2], reach, sm->rtProbeState);
+	ri.Printf(PRINT_ALL, "  mean %.2f %.2f %.2f, toward %.2f %.2f %.2f (red)\n", sm->rtProbe[0][3], sm->rtProbe[1][3], sm->rtProbe[2][3],
+		sm->rtProbe[0][0], sm->rtProbe[0][1], sm->rtProbe[0][2]);
+}
+
 // What the lights, the sun and the sky were, for the kept bounce
 static unsigned R_RtBounceKey(void)
 {
@@ -2143,17 +2276,70 @@ static const char *R_RtBounceFile(void)
 }
 
 // The bounce made into its image, each texel no sample covers taking its neighbours'
-static void R_RtBounceUpload(const float *rgb)
-{
-	const int w = rt_bounce.width, h = rt_bounce.height;
-	float    *texels = ri.Malloc(sizeof(float) * 4 * w * h);
-	float    *next   = ri.Malloc(sizeof(float) * 4 * w * h);
-	int       i, n, x, y;
+// The bounce's texture, at the lightmap's own size: each texel from the
+// samples round where it is (R_RtBounceAround), not one sample a texel, which
+// spread one over faces apart (a wall and the side of its window) and into
+// the next chart of the page
+static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec3_t out);
 
-	for (i = 0; i < w * h; i++) {
-		VectorCopy(&rgb[i * 3], &texels[i * 4]);
-		texels[i * 4 + 3] = rt_bounce.cellSample && rt_bounce.cellSample[i] >= 0 ? 1.0f : (rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2] > 0 ? 1.0f : 0.0f);
+static void R_RtBounceUpload(const float *values)
+{
+	const int    w = tr.lightmaps[0]->width, h = tr.lightmaps[0]->height;
+	float       *texels = ri.Malloc(sizeof(float) * 4 * w * h);
+	float       *next   = ri.Malloc(sizeof(float) * 4 * w * h);
+	rtBakeList_t list;
+	int          i, n, x, y;
+
+	Com_Memset(texels, 0, sizeof(float) * 4 * w * h);
+	Com_Memset(&list, 0, sizeof(list));
+	R_RtBakeGather(0, &list);
+	for (i = 0; i + 2 < list.num; i += 3) {
+		const rtBakeVert_t *v[3] = { &list.verts[i], &list.verts[i + 1], &list.verts[i + 2] };
+		float               tx[3], ty[3], area;
+		int                 x0, x1, y0, y1, k;
+
+		for (k = 0; k < 3; k++) {
+			tx[k] = v[k]->lm[0] * w;
+			ty[k] = v[k]->lm[1] * h;
+		}
+		area = (tx[1] - tx[0]) * (ty[2] - ty[0]) - (tx[2] - tx[0]) * (ty[1] - ty[0]);
+		if (fabs(area) < 1e-8f) {
+			continue;
+		}
+		x0 = Q_max(0, (int)floor(Q_min(tx[0], Q_min(tx[1], tx[2]))));
+		x1 = Q_min(w - 1, (int)ceil(Q_max(tx[0], Q_max(tx[1], tx[2]))));
+		y0 = Q_max(0, (int)floor(Q_min(ty[0], Q_min(ty[1], ty[2]))));
+		y1 = Q_min(h - 1, (int)ceil(Q_max(ty[0], Q_max(ty[1], ty[2]))));
+		for (y = y0; y <= y1 && y <= y0 + 4096; y++) {
+			for (x = x0; x <= x1 && x <= x0 + 4096; x++) {
+				const float px = x + 0.5f, py = y + 0.5f;
+				float       b[3];
+				vec3_t      xyz = { 0, 0, 0 }, normal = { 0, 0, 0 };
+
+				if (texels[(y * w + x) * 4 + 3] > 0) {
+					continue;
+				}
+				b[0] = ((tx[1] - px) * (ty[2] - py) - (tx[2] - px) * (ty[1] - py)) / area;
+				b[1] = ((tx[2] - px) * (ty[0] - py) - (tx[0] - px) * (ty[2] - py)) / area;
+				b[2] = 1.0f - b[0] - b[1];
+				if (b[0] < -0.01f || b[1] < -0.01f || b[2] < -0.01f) {
+					continue;
+				}
+				for (k = 0; k < 3; k++) {
+					VectorMA(xyz, b[k], v[k]->xyz, xyz);
+					VectorMA(normal, b[k], v[k]->normal, normal);
+				}
+				if (VectorNormalize(normal) > 0 && R_RtBounceAround(xyz, normal, values, &texels[(y * w + x) * 4])) {
+					texels[(y * w + x) * 4 + 3] = 1.0f;
+				}
+			}
+		}
 	}
+	if (list.verts) {
+		ri.Free(list.verts);
+	}
+
+	// round each chart's edge, for the filtering
 	for (n = 0; n < 2; n++) {
 		Com_Memcpy(next, texels, sizeof(float) * 4 * w * h);
 		for (y = 0; y < h; y++) {
@@ -2189,13 +2375,76 @@ static void R_RtBounceUpload(const float *rgb)
 	ri.Free(next);
 }
 
+// The bounce at a point of a surface, from the samples round it on the same
+// surface: near (RT_BOUNCE_SMOOTH), facing the same way and in the same plane,
+// nearer ones more; else those near facing about the same way. Each sample is
+// a few rays, and a texel of the bounce's took the wall a window is in and its
+// side looking out together: the wall came out in patches.
+#define RT_BOUNCE_SMOOTH 96.0f
+
+static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec3_t out)
+{
+	int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		vec3_t sum = { 0, 0, 0 };
+		float  total = 0;
+		int    dx, dy, dz;
+
+		for (dz = -1; dz <= 1; dz++) {
+			for (dy = -1; dy <= 1; dy++) {
+				for (dx = -1; dx <= 1; dx++) {
+					const int64_t key = R_RtBounceHashKey(xyz, dx, dy, dz);
+					int           lo = 0, hi = rt_bounce.numSamples, k;
+
+					while (lo < hi) {
+						const int mid = (lo + hi) / 2;
+
+						if (rt_bounce.hashKeys[mid] < key) {
+							lo = mid + 1;
+						} else {
+							hi = mid;
+						}
+					}
+					for (k = lo; k < rt_bounce.numSamples && rt_bounce.hashKeys[k] == key; k++) {
+						const int               j = rt_bounce.hashOrder[k];
+						const rtBounceSample_t *o = &rt_bounce.samples[j];
+						vec3_t                  delta;
+						float                   d, w;
+
+						if (DotProduct(o->normal, normal) < (pass ? 0.5f : 0.9f)) {
+							continue;
+						}
+						VectorSubtract(o->xyz, xyz, delta);
+						if (!pass && fabs(DotProduct(delta, normal)) > 16.0f) {
+							continue;
+						}
+						d = VectorLength(delta);
+						if (d >= RT_BOUNCE_SMOOTH) {
+							continue;
+						}
+						w = 1.0f - d / RT_BOUNCE_SMOOTH;
+						w *= w;
+						VectorMA(sum, w, &values[j * 3], sum);
+						total += w;
+					}
+				}
+			}
+		}
+		if (total > 0) {
+			VectorScale(sum, 1.0f / total, out);
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 static void R_RtBounceFinish(void)
 {
 	const int w = rt_bounce.width, h = rt_bounce.height;
-	float    *rgb = ri.Malloc(sizeof(float) * 3 * w * h + 12);
+	float    *values = ri.Malloc(sizeof(float) * 3 * Q_max(1, rt_bounce.numSamples));
 	int       i, r, indoor = 0;
 
-	Com_Memset(rgb, 0, sizeof(float) * 3 * w * h + 12);
 	// the second bounce: what the first gave each, given back once more
 	for (i = 0; i < rt_bounce.numSamples; i++) {
 		const rtBounceSample_t *s    = &rt_bounce.samples[i];
@@ -2215,7 +2464,7 @@ static void R_RtBounceFinish(void)
 		if (s->sky < RT_BOUNCE_OUTDOOR) {
 			indoor++;
 		}
-		VectorCopy(total, &rgb[s->cell * 3]);
+		VectorCopy(total, &values[i * 3]);
 	}
 	for (i = 0; i < rt_bounce.numSamples; i++) {
 		rtBounceSample_t *s = &rt_bounce.samples[i];
@@ -2226,23 +2475,22 @@ static void R_RtBounceFinish(void)
 		s->given[2] *= s->albedo[2];
 	}
 
-	// kept: the key, the size, the texels, what each sample gives back
+	// kept: the key, the size, each sample's bounce and what it gives back
 	{
-		const int texels = sizeof(float) * 3 * w * h;
-		const int size   = 20 + texels + sizeof(float) * 3 * rt_bounce.numSamples;
-		byte     *file   = ri.Malloc(size);
+		const int size = 20 + sizeof(float) * 6 * rt_bounce.numSamples;
+		byte     *file = ri.Malloc(size);
 		int       head[5] = { RT_BOUNCE_VERSION, (int)rt_bounce.key, w, h, rt_bounce.numSamples };
 
 		Com_Memcpy(file, head, 20);
-		Com_Memcpy(file + 20, rgb, texels);
+		Com_Memcpy(file + 20, values, sizeof(float) * 3 * rt_bounce.numSamples);
 		for (i = 0; i < rt_bounce.numSamples; i++) {
-			Com_Memcpy(file + 20 + texels + i * 12, rt_bounce.samples[i].given, 12);
+			Com_Memcpy(file + 20 + sizeof(float) * 3 * rt_bounce.numSamples + i * 12, rt_bounce.samples[i].given, 12);
 		}
 		ri.FS_WriteFile(R_RtBounceFile(), file, size);
 		ri.Free(file);
 	}
-	R_RtBounceUpload(rgb);
-	ri.Free(rgb);
+	R_RtBounceUpload(values);
+	ri.Free(values);
 	rt_probes = ri.Malloc(sizeof(rtProbe_t) * RT_PROBE_SLOTS);
 	Com_Memset(rt_probes, 0, sizeof(rtProbe_t) * RT_PROBE_SLOTS);
 	{
@@ -2284,13 +2532,13 @@ static qboolean R_RtBounceLoad(void)
 	if (len <= 0) {
 		return qfalse;
 	}
-	if (len == 20 + (long)sizeof(float) * 3 * (w * h + rt_bounce.numSamples)) {
+	if (len == 20 + (long)sizeof(float) * 6 * rt_bounce.numSamples) {
 		int head[5];
 
 		Com_Memcpy(head, buffer.b, 20);
 		if (head[0] == RT_BOUNCE_VERSION && (unsigned)head[1] == rt_bounce.key && head[2] == w && head[3] == h
 			&& head[4] == rt_bounce.numSamples) {
-			const byte *given = buffer.b + 20 + sizeof(float) * 3 * w * h;
+			const byte *given = buffer.b + 20 + sizeof(float) * 3 * rt_bounce.numSamples;
 			int         i;
 
 			R_RtBounceUpload((const float *)(buffer.b + 20));
@@ -4145,15 +4393,16 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 					vec3_t origin;
 
 					if (backEnd.currentStaticModel) {
-						VectorCopy(backEnd.currentStaticModel->origin, origin);
-						origin[2] += 8.0f;
-					} else if (backEnd.currentEntity->e.renderfx & RF_LIGHTING_ORIGIN) {
-						VectorCopy(backEnd.currentEntity->e.lightingOrigin, origin);
+						on = R_RtStaticModelProbe(backEnd.currentStaticModel, probe);
 					} else {
-						VectorCopy(backEnd.currentEntity->e.origin, origin);
-						origin[2] += 32.0f; // a person's middle, not their feet
+						if (backEnd.currentEntity->e.renderfx & RF_LIGHTING_ORIGIN) {
+							VectorCopy(backEnd.currentEntity->e.lightingOrigin, origin);
+						} else {
+							VectorCopy(backEnd.currentEntity->e.origin, origin);
+							origin[2] += 32.0f; // a person's middle, not their feet
+						}
+						on = R_RtProbesAt(origin, probe);
 					}
-					on = R_RtProbesAt(origin, probe);
 				} else if (sky < 1.5f && tr.rtBounce[3] > 0 && tess.polys && tess.numVertexes) {
 					// marks and decals: from the probes at the batch's middle,
 					// as the wall they are on takes the bounce map
@@ -4379,9 +4628,11 @@ void R_RtTestCommands(qboolean add)
 	if (add) {
 		ri.Cmd_AddCommand("r_rtTestMove", R_RtTestMove_f);
 		ri.Cmd_AddCommand("r_rtTestBody", R_RtTestBody_f);
+		ri.Cmd_AddCommand("r_rtProbeInfo", R_RtProbeInfo_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
+		ri.Cmd_RemoveCommand("r_rtProbeInfo");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}
