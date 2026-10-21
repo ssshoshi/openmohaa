@@ -2070,7 +2070,9 @@ void		R_Modellist_f (void);
 
 //====================================================
 
-#define	MAX_DRAWIMAGES			2048
+// OPM: was 2048; the old map's images go only once the new one is registered
+//  (R_FreeUnusedImages), and with the material maps one SP map holds ~1250
+#define	MAX_DRAWIMAGES			4096
 #define	MAX_SKINS				1024
 
 
