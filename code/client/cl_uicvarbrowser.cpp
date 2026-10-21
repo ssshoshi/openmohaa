@@ -523,7 +523,7 @@ public:
     UIField    *filter, *value;
     UILabel    *filterLabel, *valueLabel, *countLabel, *selectedLabel;
     UIButton   *views[4];
-    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton;
+    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton, *modelsButton;
 
     int view;
     str lastFilter;
@@ -582,7 +582,8 @@ public:
             static const char *titles[] = {"All", "Changed", "Latched", "Cheats"};
             views[i] = MakeButton(titles[i], va("cvarbrowser_view %s", cvb_viewNames[i]));
         }
-        countLabel = MakeLabel("");
+        countLabel   = MakeLabel("");
+        modelsButton = MakeButton("Models", "cvarbrowser; modelbrowser");
 
         list = new UICvarList();
         list->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
@@ -640,7 +641,8 @@ public:
             views[i]->setFrame(UIRect2D(x, pad, 74, rowH));
             x += 78;
         }
-        countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 12, rowH));
+        countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 92, rowH));
+        modelsButton->setFrame(UIRect2D(s.width - pad - 74, pad, 74, rowH));
 
         const float listTop = pad * 2 + rowH;
         const float editTop = s.height - pad - rowH;
@@ -902,7 +904,16 @@ static void CVB_Close(void)
     // Back to the game, unless a menu is up.
     if (clc.state == CA_ACTIVE && !UI_MenuActive()) {
         UI_ActivateView3D();
+        // The mouse back to looking around, unless the console still has it.
+        if (!UI_ConsoleIsVisible()) {
+            IN_MouseOff();
+        }
     }
+}
+
+void UI_CloseCvarBrowser(void)
+{
+    CVB_Close();
 }
 
 // cvarbrowser [name]: opens the window, or closes it when open. With a name,
@@ -932,6 +943,9 @@ void UI_CvarBrowser_f(void)
         cvb_window->Select(name);
     }
     uWinMan.ActivateControl(cvb_window);
+    // A cursor for it, as a menu has: opened from a key in game, the mouse
+    // would still turn the view.
+    IN_MouseOn();
 }
 
 // cvarbrowser_view <all|changed|latched|cheats>

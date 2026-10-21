@@ -170,6 +170,59 @@ compile errors come back. `--file x.scr --label main` runs a file from a label.
 without recompiling it (recompiling ends a script's running threads, so only
 files under `orch/` are recompiled).
 
+## Spawning models (remaster comparisons)
+
+`orch.py spawn <model...>` puts models where the player looks, in a row facing
+them, on the floor, not solid. The game does the placing: its `spawnmodel`
+command (`fgame/g_orch.cpp`, single player), which the in-game model browser
+uses too. A model is a `.tik` path (globs allowed;
+`models/` and `.tik` may be left off) or just a file name (`cart`, `*crate*`).
+The row backs off until all of it is in view; `--at x y z` and `--face <yaw>`
+place it by hand. `--clear` removes everything spawned (a load does too).
+
+To compare remastered props with the originals in game:
+
+```bash
+tools/orchestrator/orch.py remaster-pak ~/remaster-all/zzz-remaster-all.pk3   # or a work folder
+tools/orchestrator/orch.py stop; tools/orchestrator/orch.py launch --save X     # loads the pak
+tools/orchestrator/orch.py spawn --compare cart armchairposh '*crate*'
+tools/orchestrator/orch.py spawn --list '*chair*'                              # what has a remaster
+```
+
+`remaster-pak` copies each remastered `.skd` and each `.tik` that uses one
+under `models/remaster/`, with the path switched around that `skelmodel` line
+only, so both versions load at once and the originals stay as they are. The
+pak goes in the install's home (`zzzzzzzzzzzz-orch-remaster.pk3`); it holds
+game data, so it is never committed, and `reset` leaves it alone. With
+`--compare` each original stands on the left and its remaster on its right.
+
+In game, HOME (bound on the first run; `modelbrowser`, or the Models button in
+the F7 cvar browser) opens a window with every model, filtered by name; it has
+the mouse and keyboard without the console, and HOME or Escape closes it.
+"Remastered" lists only those with a remaster. Spawn original (or a double-click), Spawn remaster and Spawn both
+(the remaster on the original's right) close the window and put the model where
+you look; the remaster buttons are dimmed for a model without one. Clear
+removes them. `modelbrowser <name>` opens it on
+that model, selected.
+
+"Soldiers" lists the soldiers (`models/human/`) and swaps the spawn buttons for
+AI on/off, Attack on/off, Weapon (cycles through the model's own `case weapon`
+names) and Health (empty: the model's own), kept between sessions, and Spawn
+soldier. That is the game's `spawnactor [-noai] [-noattack] [-health n]
+[-weapon name] <model.tik>`, or from here:
+
+```bash
+tools/orchestrator/orch.py soldier german_wehrmact_soldier --weapon MP40 --health 250
+tools/orchestrator/orch.py soldier german_wehrmact_soldier --noai      # a target that stands still
+tools/orchestrator/orch.py soldier german_wehrmact_soldier --weapons   # what it can carry
+```
+
+No AI is `ai_off` (the soldier stands; unlike a map's `ai_off` actor it still
+dies). No attack is `enableEnemy 0`: its AI runs but it takes no enemy, unless
+the player blocks its way (stock behaviour). On m0_techdemo soldiers stand
+frozen whatever the settings: test fighting on a campaign map. Bind it to a key with
+`bind <key> modelbrowser`, and the same key closes it.
+
 ## Testing without a microphone
 
 ```bash
