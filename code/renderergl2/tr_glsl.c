@@ -673,7 +673,11 @@ static const char *rt_glsl =
 	// what the sun, the sky and the lamps light round it gives back
 	"#if defined(RT_BOUNCE)\n"
 	"	if (u_RtBounce.w > 0.5 && u_RtSurface.y > 1.5 && !delta)\n"
-	"		sum += u_RtBounce.rgb * texture2D(u_RtBounceMap, rt_skyLM).rgb;\n"
+	// x out under the sky, y deep in a room, by how far in its texel is (alpha)
+	"	{\n"
+	"		vec4 b = texture2D(u_RtBounceMap, rt_skyLM);\n"
+	"		sum += mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb;\n"
+	"	}\n"
 	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
 	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
 	"#endif\n"

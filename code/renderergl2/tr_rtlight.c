@@ -270,7 +270,7 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtLamps, "With r_realtimeLighting 2, the light comes from the lamps' bulbs (lights/lamps.txt): the map's lights in a room go to a lamp there, a lamp with none gets its own, and those no lamp sees cast no shadow. Applies when a map is loaded");
 	r_rtBounce = ri.Cvar_Get("r_rtBounce", "3", CVAR_ARCHIVE);
 	rt_bounceCompiled = r_rtBounce->value > 0;
-	ri.Cvar_SetDescription(r_rtBounce, "With r_realtimeLighting 2, how strong the light the sun, the sky and the lamps put on what they reach is where it bounces onto the rest, worked out once a map (rtbounce/<map>.bnc): 1 as it would be, more for the eye that grows used to a room (0: none, and from 0 or to it needs vid_restart: the shaders are built with it or without)");
+	ri.Cvar_SetDescription(r_rtBounce, "With r_realtimeLighting 2, how strong the light the sun, the sky and the lamps put on what they reach is where it bounces onto the rest, worked out once a map (rtbounce/<map>.bnc): 1 as it would be, more for the eye that grows used to a room; where the sky is seen its fill stands in for it (0: none, and from 0 or to it needs vid_restart: the shaders are built with it or without)");
 	r_rtBounceRays = ri.Cvar_Get("r_rtBounceRays", "32", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtBounceRays, 4, 128, qtrue);
 	ri.Cvar_SetDescription(r_rtBounceRays, "The rays each texel of the bounce gathers its light by: more is smoother and slower to work out. Applies when a map is loaded");
@@ -1377,6 +1377,7 @@ typedef struct {
 	vec3_t normal;
 	vec3_t albedo;
 	float  sky;
+	float  indoor; // R_RtBounceIndoor of it
 	vec3_t direct; // raw lightmap units, as the sun's and the lamps' colours are
 	vec3_t first;  // what bounced onto it once
 	vec3_t given;  // what it gives back: its colour times all of that, for the probes
@@ -1403,6 +1404,44 @@ static struct {
 	float             weight;
 } rt_bounce;
 
+
+/*
+The bounce is for where the sky does not reach. Out under it, the sky's fill
+(R_RtSetupSky gives it the sun's colour) already stands in for the light off
+the ground and the walls round about: the bounce there as well lit dm/mohdm1's
+courtyards twice, half as bright again and the shade gone from under the trees.
+So it comes in as less of the sky is seen, all of it deep in a room.
+*/
+#define RT_BOUNCE_IN_FROM 0.05f // seeing this share of the sky it would out in the open, it is in a room: all of the bounce
+#define RT_BOUNCE_IN_TO   0.25f // and this share (a courtyard, the street): none
+
+// How far in a point is (0 out under the sky, 1 deep in a room), by the share
+// of the sky it sees of what it would see facing the same way in the open
+static float R_RtBounceIndoor(float share)
+{
+	const float t = Q_min(1.0f, Q_max(0.0f, (share - RT_BOUNCE_IN_FROM) / (RT_BOUNCE_IN_TO - RT_BOUNCE_IN_FROM)));
+
+	return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
+// The sky a surface facing normal sees in the open, as its sky lightmap counts it
+// (RtSky, an open floor 1): a wall out under the sky sees not half as much
+static float R_RtSkyOpen(const vec3_t normal)
+{
+	float sum = 0;
+	int   k;
+
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		sum += Q_max(0.0f, DotProduct(normal, rt.skyDirs[k]));
+	}
+	return sum / (RT_SKY_DIRS * 0.5f);
+}
+
+// The bounce's scale at a point as far in as indoor (0 out under the sky, 1 deep in a room)
+static float R_RtBounceScale(float indoor)
+{
+	return (r_rtBounce ? Q_max(0.0f, r_rtBounce->value) : 0.0f) * indoor;
+}
 
 static vec3_t rt_albedo[MAX_SHADERS];
 static byte   rt_albedoDone[MAX_SHADERS];
@@ -1663,6 +1702,12 @@ static void R_RtBounceSamples(void)
 			const int sy = Q_min(rt_bounce.skyHeight - 1, (int)((cy + 0.5f) * rt_bounce.skyHeight / h));
 
 			s->sky = rt_bounce.sky[(sy * rt_bounce.skyWidth + sx) * 4] / 255.0f;
+		}
+		{
+			const float open = R_RtSkyOpen(s->normal);
+
+			// what faces down sees none of it anywhere: under the eaves is in
+			s->indoor = R_RtBounceIndoor(open > 0.05f ? s->sky / open : 0.0f);
 		}
 	}
 
@@ -1972,6 +2017,7 @@ typedef struct {
 	int    x, y, z;
 	int    state;
 	vec4_t c[3]; // r, g, b: the way it is brightest (x y z), the mean (w)
+	float  indoor; // R_RtBounceIndoor of the share of the sky it sees over it
 } rtProbe_t;
 
 static rtProbe_t *rt_probes;
@@ -2022,6 +2068,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 {
 	vec3_t         at, zero = {0, 0, 0};
 	const mnode_t *leaf;
+	float          up, open; // the rays up the sky, as a lightmap's sky counts them
 	int            r, k;
 
 	VectorSet(at, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
@@ -2033,6 +2080,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 	for (k = 0; k < 3; k++) {
 		VectorClear4(p->c[k]);
 	}
+	up = open = 0;
 	for (r = 0; r < RT_PROBE_RAYS; r++) {
 		// spread over the sphere: a spiral of even area
 		const float z   = 1.0f - (2.0f * r + 1.0f) / RT_PROBE_RAYS;
@@ -2044,7 +2092,13 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
 		VectorMA(at, RT_BOUNCE_REACH, dir, to);
 		ri.CM_BoxTrace(&trace, at, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		if (z > 0) {
+			up += z;
+		}
 		if (trace.startsolid || trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY)) {
+			if (z > 0 && !trace.startsolid) {
+				open += z;
+			}
 			continue;
 		}
 		R_RtBounceRadiance(&trace, dir, qtrue, given);
@@ -2054,7 +2108,8 @@ static void R_RtProbeCompute(rtProbe_t *p)
 			VectorMA(p->c[k], 2.0f * given[k] / RT_PROBE_RAYS, dir, p->c[k]);
 		}
 	}
-	p->state = RT_PROBE_READY;
+	p->indoor = R_RtBounceIndoor(up > 0 ? open / up : 0.0f);
+	p->state  = RT_PROBE_READY;
 }
 
 // The probes wanted since, as many as there is time for
@@ -2092,7 +2147,7 @@ static qboolean R_RtProbesAt(const vec3_t origin, vec4_t out[3])
 			continue;
 		}
 		for (k = 0; k < 3; k++) {
-			VectorMA4(out[k], w, p->c[k], out[k]);
+			VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
 		}
 		total += w;
 	}
@@ -2153,7 +2208,7 @@ static qboolean R_RtProbesSeenAt(const vec3_t at, float reach, vec4_t out[3], qb
 					}
 					w = 1.0f / (Distance(pos, at) + 16.0f);
 					for (k = 0; k < 3; k++) {
-						VectorMA4(out[k], w, p->c[k], out[k]);
+						VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
 					}
 					total += w;
 				}
@@ -2280,7 +2335,7 @@ static const char *R_RtBounceFile(void)
 // samples round where it is (R_RtBounceAround), not one sample a texel, which
 // spread one over faces apart (a wall and the side of its window) and into
 // the next chart of the page
-static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec3_t out);
+static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec4_t out);
 
 static void R_RtBounceUpload(const float *values)
 {
@@ -2329,8 +2384,9 @@ static void R_RtBounceUpload(const float *values)
 					VectorMA(xyz, b[k], v[k]->xyz, xyz);
 					VectorMA(normal, b[k], v[k]->normal, normal);
 				}
+				// its alpha 1 + how far in it is, while 0 says not yet filled
 				if (VectorNormalize(normal) > 0 && R_RtBounceAround(xyz, normal, values, &texels[(y * w + x) * 4])) {
-					texels[(y * w + x) * 4 + 3] = 1.0f;
+					texels[(y * w + x) * 4 + 3] += 1.0f;
 				}
 			}
 		}
@@ -2344,7 +2400,7 @@ static void R_RtBounceUpload(const float *values)
 		Com_Memcpy(next, texels, sizeof(float) * 4 * w * h);
 		for (y = 0; y < h; y++) {
 			for (x = 0; x < w; x++) {
-				vec3_t sum = { 0, 0, 0 };
+				vec4_t sum = { 0, 0, 0, 0 };
 				int    count = 0, dx, dy;
 
 				if (texels[(y * w + x) * 4 + 3] > 0) {
@@ -2357,17 +2413,19 @@ static void R_RtBounceUpload(const float *values)
 						if (nx < 0 || ny < 0 || nx >= w || ny >= h || texels[(ny * w + nx) * 4 + 3] <= 0) {
 							continue;
 						}
-						VectorAdd(sum, &texels[(ny * w + nx) * 4], sum);
+						VectorAdd4(sum, &texels[(ny * w + nx) * 4], sum);
 						count++;
 					}
 				}
 				if (count) {
-					VectorScale(sum, 1.0f / count, &next[(y * w + x) * 4]);
-					next[(y * w + x) * 4 + 3] = 1.0f;
+					VectorScale4(sum, 1.0f / count, &next[(y * w + x) * 4]);
 				}
 			}
 		}
 		Com_Memcpy(texels, next, sizeof(float) * 4 * w * h);
+	}
+	for (i = 0; i < w * h; i++) {
+		texels[i * 4 + 3] = Q_max(0.0f, texels[i * 4 + 3] - 1.0f);
 	}
 	tr.rtBounceImage = R_CreateImage("*rtbounce", NULL, w, h, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 	qglTextureSubImage2DEXT(tr.rtBounceImage->texnum, GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, texels);
@@ -2382,13 +2440,13 @@ static void R_RtBounceUpload(const float *values)
 // side looking out together: the wall came out in patches.
 #define RT_BOUNCE_SMOOTH 96.0f
 
-static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec3_t out)
+static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec4_t out)
 {
 	int pass;
 
 	for (pass = 0; pass < 2; pass++) {
 		vec3_t sum = { 0, 0, 0 };
-		float  total = 0;
+		float  total = 0, indoor = 0;
 		int    dx, dy, dz;
 
 		for (dz = -1; dz <= 1; dz++) {
@@ -2426,6 +2484,7 @@ static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const fl
 						w = 1.0f - d / RT_BOUNCE_SMOOTH;
 						w *= w;
 						VectorMA(sum, w, &values[j * 3], sum);
+						indoor += w * o->indoor;
 						total += w;
 					}
 				}
@@ -2433,6 +2492,7 @@ static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const fl
 		}
 		if (total > 0) {
 			VectorScale(sum, 1.0f / total, out);
+			out[3] = indoor / total;
 			return qtrue;
 		}
 	}
@@ -2638,8 +2698,8 @@ static void R_RtBounceStep(float bake, float ease)
 	R_RtProbesWork(ri.Milliseconds());
 
 	rt_bounce.weight = Q_min(1.0f, rt_bounce.weight + ease);
-	VectorSet4(tr.rtBounce, bake * r_rtBounce->value * rt_bounce.weight, bake * r_rtBounce->value * rt_bounce.weight,
-		bake * r_rtBounce->value * rt_bounce.weight, tr.rtBounceImage ? 1.0f : 0.0f);
+	VectorSet4(tr.rtBounce, bake * rt_bounce.weight * R_RtBounceScale(0), bake * rt_bounce.weight * R_RtBounceScale(1),
+		bake * rt_bounce.weight, tr.rtBounceImage ? 1.0f : 0.0f);
 }
 
 static void R_RtBakeSkyLightmaps(void)
@@ -4417,7 +4477,14 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 					VectorScale(origin, 0.5f, origin);
 					on = R_RtProbesAt(origin, probe);
 				}
-				GLSL_SetUniformVec4(sp, UNIFORM_RTBOUNCE, on ? tr.rtBounce : none);
+				if (on && sky < 1.5f) {
+					vec4_t scale; // the probes are scaled each for how far in it is
+
+					VectorSet4(scale, tr.rtBounce[2], tr.rtBounce[2], tr.rtBounce[2], tr.rtBounce[3]);
+					GLSL_SetUniformVec4(sp, UNIFORM_RTBOUNCE, scale);
+				} else {
+					GLSL_SetUniformVec4(sp, UNIFORM_RTBOUNCE, on ? tr.rtBounce : none);
+				}
 				if (on && sky < 1.5f) {
 					GLSL_SetUniformVec4(sp, UNIFORM_RTPROBER, probe[0]);
 					GLSL_SetUniformVec4(sp, UNIFORM_RTPROBEG, probe[1]);
