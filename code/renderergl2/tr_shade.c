@@ -1669,7 +1669,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		// went through all of the lights for nothing
 		if (R_RtActive())
 		{
-			if (!backEnd.projection2D && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+			if (!backEnd.projection2D && !backEnd.screenOverlay && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
 				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
 			{
 				const int kind = R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader);

@@ -451,6 +451,7 @@ void RB_BeginDrawingView (void) {
 }
 
 
+
 /*
 ==================
 RB_RenderDrawSurfList
@@ -525,6 +526,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				continue;
 
 			// fast path, same as previous sort
+			// (Added in OPM: in pieces where the realtime lights differ)
+			if (R_RtSplitBatch(drawSurf->rtMask)) {
+				RB_EndSurface();
+				RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+				backEnd.pc.c_surfBatches++;
+				tess.rtMask = 0;
+			}
 			tess.rtMask |= drawSurf->rtMask;
 			backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
 			RB_SurfProfSurface( *drawSurf->surface );
@@ -779,6 +787,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
         }
 
 		// add the triangles for this surface
+		// (Added in OPM: in pieces where the realtime lights differ)
+		if (R_RtSplitBatch(drawSurf->rtMask)) {
+			RB_EndSurface();
+			RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+			backEnd.pc.c_surfBatches++;
+			tess.rtMask = 0;
+		}
 		tess.rtMask |= drawSurf->rtMask;
 		backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
 		RB_SurfProfSurface( *drawSurf->surface );
@@ -1764,6 +1779,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		RB_ShadowFinish();		
 
 		// add light flares on lights that aren't obscured
+		R_GpuTimerBegin(GPUTIMER_FLARES);
 		RB_RenderFlares();
 
 		//
@@ -1774,6 +1790,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		}
 
 		RB_DrawDebugLines();
+		R_GpuTimerEnd(GPUTIMER_FLARES);
 		//=========================
 	}
 
@@ -2512,7 +2529,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		//=========================
 		case RC_SPRITE_SURFS:
 			R_CpuTimerBegin(CPUTIMER_SPRITES);
+			R_GpuTimerBegin(GPUTIMER_SPRITES);
 			data = RB_SpriteSurfs( data );
+			R_GpuTimerEnd(GPUTIMER_SPRITES);
 			R_CpuTimerEnd(CPUTIMER_SPRITES);
 			break;
 		//=========================
