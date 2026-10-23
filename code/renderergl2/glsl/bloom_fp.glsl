@@ -81,9 +81,35 @@ vec3 Up(vec2 uv)
 	return (Fetch(uv + vec2(-t.x, -t.y)) + Fetch(uv + vec2(t.x, -t.y)) + Fetch(uv + vec2(-t.x, t.y)) + Fetch(uv + vec2(t.x, t.y))) * 0.25;
 }
 
+// Contrast adaptive sharpening (after AMD's FidelityFX CAS), on the tone
+// mapped frame: the cross round the pixel taken from it by as much as the
+// local contrast leaves room for, so edges sharpen without halos and flat
+// parts and noise are left alone; w how much (0 to 1)
+vec3 Sharpen(vec2 uv)
+{
+	vec2  t  = u_BloomTexel.xy;
+	vec3  e  = Fetch(uv);
+	vec3  n  = Fetch(uv + vec2(0.0, t.y));
+	vec3  s  = Fetch(uv - vec2(0.0, t.y));
+	vec3  w  = Fetch(uv - vec2(t.x, 0.0));
+	vec3  ea = Fetch(uv + vec2(t.x, 0.0));
+	vec3  mn = min(e, min(min(n, s), min(w, ea)));
+	vec3  mx = max(e, max(max(n, s), max(w, ea)));
+	vec3  amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(0.0001)), 0.0, 1.0));
+	vec3  wt  = -amp / mix(8.0, 5.0, clamp(u_BloomParams.w, 0.0, 1.0));
+
+	return clamp((e + (n + s + w + ea) * wt) / (1.0 + 4.0 * wt), 0.0, 1.0);
+}
+
 void main()
 {
 	vec3 c;
+
+	if (u_BloomParams.x > 2.5)
+	{
+		gl_FragColor = vec4(Sharpen(var_Tex), 1.0);
+		return;
+	}
 
 	if (u_BloomParams.x < 0.5)
 		c = Bright(First(var_Tex));

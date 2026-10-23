@@ -501,6 +501,7 @@ cvar_t *r_bloom;
 cvar_t *r_bloomThreshold;
 cvar_t *r_bloomKnee;
 cvar_t *r_bloomEmissive;
+cvar_t *r_sharpen;
 
 void R_BloomRegisterCvars(void)
 {
@@ -508,6 +509,8 @@ void R_BloomRegisterCvars(void)
 	ri.Cvar_SetDescription(r_bloom, "How much what is brighter than white glows into what is round it (0: no bloom; needs r_hdr and r_postProcess)");
 	r_bloomThreshold = ri.Cvar_Get("r_bloomThreshold", "1.2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_bloomThreshold, "How bright a pixel must be, before the tone map, to glow (1: what the tone map makes white)");
+	r_sharpen = ri.Cvar_Get("r_sharpen", "0.3", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_sharpen, "Sharpens the tone mapped frame where its contrast leaves room, without halos (0 to 1; 0: off; needs r_toneMap)");
 	r_bloomEmissive = ri.Cvar_Get("r_bloomEmissive", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_bloomEmissive, "How many times brighter than white the lamps' bulbs, flames and glass are, so that they bloom (1: as white as they were)");
 	r_bloomKnee = ri.Cvar_Get("r_bloomKnee", "0.5", CVAR_ARCHIVE);
@@ -598,4 +601,56 @@ void RB_Bloom(FBO_t *fbo, ivec4_t box)
 		GL_Cull(CT_TWO_SIDED);
 		RB_InstantQuad2(quadVerts, texCoords);
 	}
+}
+
+/*
+=============
+RB_Sharpen
+
+Added in OPM
+Copies the tone mapped frame back to the view, sharpened (bloom_fp.glsl's
+Sharpen, after AMD's contrast adaptive sharpening): the textures' detail
+the MSAA resolve and the upscaled textures' filtering soften. Returns qfalse
+when it is off, for the plain copy.
+=============
+*/
+qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox)
+{
+	shaderProgram_t *sp = &tr.bloomShader;
+	vec4_t           quadVerts[4], params, texel;
+	vec2_t           texCoords[4];
+	image_t         *image;
+	float            x0, y0, x1, y1;
+
+	if (r_sharpen->value <= 0 || !sp->program || !src || !dst || !src->colorImage[0]) {
+		return qfalse;
+	}
+	image = src->colorImage[0];
+	x0 = srcBox[0] / (float)image->width;
+	y0 = srcBox[1] / (float)image->height;
+	x1 = (srcBox[0] + srcBox[2]) / (float)image->width;
+	y1 = (srcBox[1] + srcBox[3]) / (float)image->height;
+
+	FBO_Bind(dst);
+	qglViewport(dstBox[0], dstBox[1], dstBox[2], dstBox[3]);
+	qglScissor(dstBox[0], dstBox[1], dstBox[2], dstBox[3]);
+	VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet2(texCoords[0], x0, y1);
+	VectorSet2(texCoords[1], x1, y1);
+	VectorSet2(texCoords[2], x1, y0);
+	VectorSet2(texCoords[3], x0, y0);
+
+	GLSL_BindProgram(sp);
+	GL_BindToTMU(image, TB_COLORMAP);
+	VectorSet4(params, 3.0f, 0, 0, r_sharpen->value);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMPARAMS, params);
+	VectorSet4(texel, 1.0f / image->width, 1.0f / image->height, x1 - 0.5f / image->width, y1 - 0.5f / image->height);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, texel);
+	GL_State(GLS_DEPTHTEST_DISABLE);
+	GL_Cull(CT_TWO_SIDED);
+	RB_InstantQuad2(quadVerts, texCoords);
+	return qtrue;
 }

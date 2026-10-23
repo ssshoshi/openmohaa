@@ -3957,6 +3957,8 @@ extern cvar_t *r_bloomKnee;
 extern cvar_t *r_bloomEmissive;
 void R_BloomRegisterCvars(void);
 void RB_Bloom(FBO_t *fbo, ivec4_t box);
+qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox);
+extern cvar_t *r_sharpen;
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);
