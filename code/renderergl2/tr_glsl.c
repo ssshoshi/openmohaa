@@ -2414,6 +2414,7 @@ void GLSL_InitGPUShaders(void)
 			Q_strcat(extradefines, 1024, "#define USE_SHADOW_CASCADE\n");
 
 		Q_strcat(extradefines, 1024, va("#define r_shadowMapSize %f\n", r_shadowMapSize->value));
+		Q_strcat(extradefines, 1024, va("#define r_sunShadowFarSize %f\n", (float)R_SunShadowFarSize()));
 		Q_strcat(extradefines, 1024, va("#define r_shadowCascadeZFar %f\n", r_shadowCascadeZFar->value));
 
 		if (!GLSL_InitGPUShader(&tr.shadowmaskShader, "shadowmask", attribs, qtrue, extradefines, qtrue, fallbackShader_shadowmask_vp, fallbackShader_shadowmask_fp))
