@@ -785,6 +785,8 @@ typedef enum {
     CGM_ANIMFLAGS,      // cgi.Anim_Flags over MAX_FRAMEINFOS
     CGM_FOOTIK,         // TAF_AUTOSTEPS block: Tag_NumForName + TIKI_IsOnGround
     CGM_ADDREF,         // cgi.R_AddRefEntityToScene
+    CGM_RAGDOLL,        // CG_RagdollUpdateEntity
+    CGM_EMITTERS,       // CG_UpdateEntityEmitters
 
     CGM_COUNT
 } cgModelAnimTimerId_t;

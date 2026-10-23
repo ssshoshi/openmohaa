@@ -350,7 +350,7 @@ void RB_BeginDrawingView (void) {
 		FBO_t *fbo = backEnd.viewParms.targetFbo;
 
 		if (fbo == NULL)
-			fbo = tr.renderFbo;
+			fbo = RB_TargetFbo();
 
 		if (tr.renderCubeFbo && fbo == tr.renderCubeFbo)
 		{
@@ -936,7 +936,7 @@ void RE_StretchRaw (int x, int y, int w, int h, int cols, int rows, const byte *
 
 	if (glRefConfig.framebufferObject)
 	{
-		FBO_Bind(tr.renderFbo);
+		FBO_Bind(RB_TargetFbo());
 	}
 
 	RB_SetGL2D();
@@ -1042,7 +1042,7 @@ const void *RB_StretchPic ( const void *data ) {
 	cmd = (const stretchPicCommand_t *)data;
 
 	if (glRefConfig.framebufferObject)
-		FBO_Bind(tr.renderFbo);
+		FBO_Bind(RB_TargetFbo());
 
 	RB_SetGL2D();
 
@@ -1838,6 +1838,7 @@ const void	*RB_DrawBuffer( const void *data ) {
 	// that draws only 2D (a fullscreen menu) would otherwise show the last 3D
 	// frame, view weapon and all, through every translucent part of the UI.
 	// A 3D frame covers the whole target anyway, so this changes nothing there.
+	backEnd.postFbo = NULL;
 	if (glRefConfig.framebufferObject && tr.renderFbo) {
 		FBO_Bind(tr.renderFbo);
 		// The UI may have left a small scissor box behind; whatever draws
@@ -2030,7 +2031,12 @@ static void RB_PresentToScreen(void)
 
 	const FBO_t *src = NULL;
 
-	if (tr.renderFbo && tr.renderFbo->colorImage[0])
+	if (backEnd.postFbo)
+	{
+		// Added in OPM: resolved already, by the post process
+		src = backEnd.postFbo;
+	}
+	else if (tr.renderFbo && tr.renderFbo->colorImage[0])
 	{
 		// texture-backed render FBO
 		src = tr.renderFbo;
@@ -2107,6 +2113,7 @@ const void	*RB_SwapBuffers( const void *data ) {
 	RB_PresentToScreen();
 	R_CpuTimerEnd(CPUTIMER_PRESENT);
 	R_GpuTimerEnd(GPUTIMER_PRESENT);
+	backEnd.postFbo = NULL;
 
 	// Added in OPM
 	RB_TakeDeferredScreenshot();
@@ -2201,15 +2208,18 @@ const void *RB_PostProcess(const void *data)
 
 	R_GpuTimerBegin(GPUTIMER_POSTPROCESS);
 
-	srcFbo = tr.renderFbo;
-	dstFbo = tr.renderFbo;
+	srcFbo = RB_TargetFbo();
+	dstFbo = srcFbo;
 
-	if (tr.msaaResolveFbo)
+	if (tr.msaaResolveFbo && !backEnd.postFbo)
 	{
 		// Resolve the MSAA before anything else
 		// Can't resolve just part of the MSAA FBO, so multiple views will suffer a performance hit here
-		FBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-		srcFbo = tr.msaaResolveFbo;
+		// (OPM: the colour alone, its depth resolved for the sun's shadow
+		// mask already; and the rest of the frame stays on the resolved
+		// image, RB_TargetFbo, not copied back to be resolved again)
+		FBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		srcFbo = dstFbo = backEnd.postFbo = tr.msaaResolveFbo;
 	}
 
 	dstBox[0] = backEnd.viewParms.viewportX;

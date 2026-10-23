@@ -1494,7 +1494,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     //  Drive dead characters with the client-side ragdoll. This has to happen
     //  after the animation parameters are final and before anything queries a
     //  tag, so that attached entities and the shadow follow the simulated pose.
+    CGM_BEGIN(CGM_RAGDOLL);
     CG_RagdollUpdateEntity(cent, &model);
+    CGM_END(CGM_RAGDOLL);
 
     CGM_BEGIN(CGM_ATTACH);
     if (cent->currentState.parent != ENTITYNUM_NONE) {
@@ -1937,7 +1939,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         CGM_END(CGM_ADDREF);
     }
 
+    CGM_BEGIN(CGM_EMITTERS);
     CG_UpdateEntityEmitters(s1->number, &model, cent);
+    CGM_END(CGM_EMITTERS);
 
     if (s1->usageIndex == cent->usageIndexLast) {
         // process the exit commands of the last animations
