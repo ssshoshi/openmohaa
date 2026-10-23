@@ -487,6 +487,14 @@ void main()
 		if (alpha < 0.5)
 			discard;
 	}
+	// Added in OPM: alpha to coverage (RB_AlphaToCoverage): the same cut, as a
+	// ramp a pixel wide that the samples it covers smooth
+	else if (u_AlphaTest == 4)
+	{
+		alpha = clamp((alpha - 0.5) / max(fwidth(alpha), 0.0001) + 0.5, 0.0, 1.0);
+		if (alpha <= 0.0)
+			discard;
+	}
 
 	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
 	// how much sky it sees

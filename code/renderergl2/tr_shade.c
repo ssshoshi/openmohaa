@@ -1516,6 +1516,34 @@ static qboolean RB_DepthPrepassed( const shaderCommands_t *input )
 	return ( first->stateBits & GLS_DEPTHMASK_TRUE ) ? qtrue : qfalse;
 }
 
+/*
+** RB_AlphaToCoverage
+
+Added in OPM: a stage cut out by its alpha (alphaFunc GE128) and not blended,
+drawn into the multisampled view: its alpha becomes a pixel wide ramp at the
+cut (u_AlphaTest 4) that MSAA turns into how many samples it covers, so a
+leaf's edge is smoothed as a wall's is, not stair-stepped.
+*/
+static qboolean alphaToCoverageOn;
+
+static void RB_SetAlphaToCoverage( qboolean on )
+{
+	if ( on != alphaToCoverageOn ) {
+		if ( on )
+			qglEnable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+		else
+			qglDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+		alphaToCoverageOn = on;
+	}
+}
+
+static qboolean RB_AlphaToCoverage( const shaderStage_t *pStage )
+{
+	return r_alphaToCoverage->integer && tr.msaaResolveFbo && glState.currentFBO == tr.renderFbo
+		&& !backEnd.projection2D && (pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80
+		&& !(pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+}
+
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
@@ -1779,12 +1807,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 		else if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80)
 		{
-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 3);
+			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, RB_AlphaToCoverage(pStage) ? 4 : 3);
 		}
 		else
 		{
 			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 		}
+		RB_SetAlphaToCoverage(RB_AlphaToCoverage(pStage));
 
 
 		{
@@ -2066,6 +2095,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		if (backEnd.depthFill)
 			break;
 	}
+
+	RB_SetAlphaToCoverage(qfalse);
 }
 
 
