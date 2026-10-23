@@ -3105,6 +3105,7 @@ void R_RtRenderShadows(const refdef_t *fd);
 void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs);
 void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean lightmapped);
 uint64_t R_RtViewMask(void);
+qboolean R_RtSplitBatch(uint64_t surfMask);
 uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates);
 uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates);
 uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *back);

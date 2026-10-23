@@ -65,6 +65,7 @@ cvar_t *r_rtParticles;
 static cvar_t *r_rtParticleCascade;
 cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
+cvar_t *r_rtBatchSplit;
 cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
@@ -257,6 +258,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtShadowCull, "What moves is drawn into a realtime light's shadow only within the light's reach (r_rtCutoff) and where the map lists the light as reaching (0: anywhere in its range). Not archived: an A/B switch");
 	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
 	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
+	r_rtBatchSplit = ri.Cvar_Get("r_rtBatchSplit", "1", 0);
+	ri.Cvar_SetDescription(r_rtBatchSplit, "A batch of world surfaces is drawn in pieces where the next surface would bring lights the batch does not have, so that a wall is not shaded with the lights of the whole room (0: one batch, all of their lights). Not archived: an A/B switch");
 	r_rtSky = ri.Cvar_Get("r_rtSky", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtSky, "With r_realtimeLighting 2, how strong the sky's light is, as a part of what the map was compiled with (0: none, the shade takes the ambient light alone)");
 	r_rtSpecular = ri.Cvar_Get("r_rtSpecular", "1", CVAR_ARCHIVE);
@@ -4208,6 +4211,24 @@ uint64_t R_RtViewMask(void)
 		return RT_MASK_ALL;
 	}
 	return ((uint64_t)1 << tr.rtNumActive) - 1;
+}
+
+/*
+Whether a world surface about to join the batch should start a new one: it
+would bring lights the batch does not have, and every pixel of the batch
+would then go through them: a shader's surfaces across a room together take
+more of its lights than any one of them, and the batch was shaded with all
+of them. More draws for fewer lights a pixel: m3l2's lamp room 864 -> 985
+draws, main3d 4.73 -> 4.28 ms on the card.
+*/
+qboolean R_RtSplitBatch(uint64_t surfMask)
+{
+	if (!r_rtBatchSplit->integer || !tess.numIndexes || surfMask == RT_MASK_ALL || tess.rtMask == RT_MASK_ALL
+		|| backEnd.depthFill || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+		|| backEnd.currentEntity != &tr.worldEntity || backEnd.currentStaticModel || !R_RtActive()) {
+		return qfalse;
+	}
+	return (surfMask & ~tess.rtMask) ? qtrue : qfalse;
 }
 
 uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates)

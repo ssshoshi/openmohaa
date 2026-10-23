@@ -451,6 +451,7 @@ void RB_BeginDrawingView (void) {
 }
 
 
+
 /*
 ==================
 RB_RenderDrawSurfList
@@ -525,6 +526,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				continue;
 
 			// fast path, same as previous sort
+			// (Added in OPM: in pieces where the realtime lights differ)
+			if (R_RtSplitBatch(drawSurf->rtMask)) {
+				RB_EndSurface();
+				RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+				backEnd.pc.c_surfBatches++;
+				tess.rtMask = 0;
+			}
 			tess.rtMask |= drawSurf->rtMask;
 			backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
 			RB_SurfProfSurface( *drawSurf->surface );
@@ -779,6 +787,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
         }
 
 		// add the triangles for this surface
+		// (Added in OPM: in pieces where the realtime lights differ)
+		if (R_RtSplitBatch(drawSurf->rtMask)) {
+			RB_EndSurface();
+			RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+			backEnd.pc.c_surfBatches++;
+			tess.rtMask = 0;
+		}
 		tess.rtMask |= drawSurf->rtMask;
 		backEnd.rtSurfaceCulled = ~drawSurf->rtMask;
 		RB_SurfProfSurface( *drawSurf->surface );
