@@ -209,6 +209,14 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtProbeR",        GLSL_VEC4 },
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
+	{ "u_RtClusterMap",    GLSL_INT },
+	{ "u_RtClusterList",   GLSL_INT },
+	{ "u_RtClusterOrigin", GLSL_VEC4 },
+	{ "u_RtClusterLeft",   GLSL_VEC4 },
+	{ "u_RtClusterUp",     GLSL_VEC4 },
+	{ "u_RtClusterFwd",    GLSL_VEC4 },
+	{ "u_RtClusterGrid",   GLSL_VEC4 },
+	{ "u_RtDrawMask",      GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
@@ -392,12 +400,57 @@ static const char *rt_glsl =
 	"uniform vec4 u_RtProbeR;\n"
 	"uniform vec4 u_RtProbeG;\n"
 	"uniform vec4 u_RtProbeB;\n"
+	// the view in clusters (R_RtBuildClusters): for each, where its lights
+	// start in the list and how many; the draw's own lights as a mask, so a
+	// light the map keeps from its surfaces (the next room's) stays out
+	"#if defined(RT_CLUSTERS)\n"
+	"uniform sampler2D u_RtClusterMap;\n"
+	"uniform sampler2D u_RtClusterList;\n"
+	"uniform vec4 u_RtClusterOrigin;\n"
+	"uniform vec4 u_RtClusterLeft;\n"
+	"uniform vec4 u_RtClusterUp;\n"
+	"uniform vec4 u_RtClusterFwd;\n"
+	"uniform vec4 u_RtClusterGrid;\n"
+	"uniform vec4 u_RtDrawMask;\n"
+	"#endif\n"
 	"vec2 rt_skyLM = vec2(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
 	"#endif\n"
 	"#if defined(RT_CAPSULES)\n"
 	"uniform sampler2D u_RtCapsules;\n"
+	"#endif\n"
+	"\n"
+	"#if defined(RT_CLUSTERS)\n"
+	// the cluster P is in, as the CPU put the lights in them: where its
+	// lights start in the list (x) and how many (y); y < 0 outside the view
+	"vec2 RtCluster(vec3 P)\n"
+	"{\n"
+	"	vec3  v = P - u_RtClusterOrigin.xyz;\n"
+	"	float z = dot(v, u_RtClusterFwd.xyz);\n"
+	"	if (z <= 0.0) return vec2(0.0, -1.0);\n"
+	"	float nl = dot(v, u_RtClusterLeft.xyz) * u_RtClusterLeft.w / z;\n"
+	"	float nu = dot(v, u_RtClusterUp.xyz) * u_RtClusterUp.w / z;\n"
+	"	float tx = clamp(floor((0.5 - 0.5 * nl) * u_RtClusterGrid.x), 0.0, u_RtClusterGrid.x - 1.0);\n"
+	"	float ty = clamp(floor((0.5 + 0.5 * nu) * u_RtClusterGrid.y), 0.0, u_RtClusterGrid.y - 1.0);\n"
+	"	float s  = z < u_RtClusterGrid.w ? 0.0 : min(u_RtClusterGrid.z - 1.0, 1.0 + floor(log2(z / u_RtClusterGrid.w) * u_RtClusterFwd.w));\n"
+	"	return texelFetch(u_RtClusterMap, ivec2(int(tx * u_RtClusterGrid.z + s), int(ty)), 0).xy;\n"
+	"}\n"
+	"\n"
+	"int RtClusterLight(int n)\n"
+	"{\n"
+	"	int  t = n / 4;\n"
+	"	vec4 q = texelFetch(u_RtClusterList, ivec2(t - (t / RT_CLUSTER_LIST_W) * RT_CLUSTER_LIST_W, t / RT_CLUSTER_LIST_W), 0);\n"
+	"	int  c = n - t * 4;\n"
+	"	return int(c == 0 ? q.x : c == 1 ? q.y : c == 2 ? q.z : q.w);\n"
+	"}\n"
+	"\n"
+	"bool RtDrawTakes(int i)\n"
+	"{\n"
+	"	int   chunk = i / 16;\n"
+	"	float m = chunk == 0 ? u_RtDrawMask.x : chunk == 1 ? u_RtDrawMask.y : chunk == 2 ? u_RtDrawMask.z : u_RtDrawMask.w;\n"
+	"	return mod(floor(m / exp2(float(i - chunk * 16))), 2.0) > 0.5;\n"
+	"}\n"
 	"#endif\n"
 	"\n"
 	"int RtListed(int k)\n"
@@ -576,10 +629,25 @@ static const char *rt_glsl =
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
 	"	int  count = int(u_RtParams.x);\n"
+	// in the view the clusters are for: the lights of P's cluster, those of
+	// them the draw takes; elsewhere the draw's list
+	"#if defined(RT_CLUSTERS)\n"
+	"	int  first = -1;\n"
+	"	if (u_RtClusterOrigin.w > 0.5 && count > 0)\n"
+	"	{\n"
+	"		vec2 c = RtCluster(P);\n"
+	"		if (c.y >= 0.0) { first = int(c.x); count = int(c.y); }\n"
+	"	}\n"
+	"#endif\n"
 	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
 	"		if (k >= count) break;\n"
+	"#if defined(RT_CLUSTERS)\n"
+	"		int   i  = first >= 0 ? RtClusterLight(first + k) : RtListed(k);\n"
+	"		if (first >= 0 && !RtDrawTakes(i)) continue;\n"
+	"#else\n"
 	"		int   i  = RtListed(k);\n"
+	"#endif\n"
 	"		vec4  l0 = u_RtLights[i * 4];\n"
 	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
 	"		vec3  toLight = l0.xyz - P;\n"
@@ -951,6 +1019,10 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
 		if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
 			Q_strcat(dest, size, va("#define RT_CAPSULES\n#define RT_MAX_RUN %d\n", RT_MAX_RUN));
+		// and the view's clusters (R_RtBuildClusters), by the same
+		if (shaderType == GL_FRAGMENT_SHADER && r_rtClusters->integer
+			&& (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30))
+			Q_strcat(dest, size, va("#define RT_CLUSTERS\n#define RT_CLUSTER_LIST_W %d\n", RT_CLUSTER_LIST_W));
 		// the bounce (R_RtBounce), only where it is on: its reads cost every lit pixel even off
 		if (R_RtBounceCompiled())
 			Q_strcat(dest, size, "#define RT_BOUNCE\n");
@@ -2007,6 +2079,8 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCLUSTERMAP,    TMU_RTCLUSTERS);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTCLUSTERLIST,   TMU_RTCLUSTERLIST);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2137,6 +2211,8 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCLUSTERMAP,    TMU_RTCLUSTERS);
+		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCLUSTERLIST,   TMU_RTCLUSTERLIST);
 		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 		GLSL_FinishGPUShader(&tr.genericShader[i]);

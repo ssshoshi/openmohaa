@@ -3049,6 +3049,16 @@ void R_CreateBuiltinImages( void ) {
 			// fetched texel by texel: a float texture that must filter may not be complete
 			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			// the view's clusters and their lights (R_RtBuildClusters), fetched the same way
+			if (glRefConfig.glslMajorVersion > 1 || glRefConfig.glslMinorVersion >= 30)
+			{
+				tr.rtClusterImage = R_CreateImage("*rtclusters", NULL, RT_CLUSTER_MAX_X * RT_CLUSTER_SLICES, RT_CLUSTER_MAX_Y, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+				tr.rtClusterListImage = R_CreateImage("*rtclusterlist", NULL, RT_CLUSTER_LIST_W, RT_CLUSTER_LIST_H, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+				qglTextureParameterfEXT(tr.rtClusterImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				qglTextureParameterfEXT(tr.rtClusterImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				qglTextureParameterfEXT(tr.rtClusterListImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				qglTextureParameterfEXT(tr.rtClusterListImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			}
 
 			for ( x = 0; x < (r_realtimeLighting->integer == 1 ? 3 : 2); x++)
 			{

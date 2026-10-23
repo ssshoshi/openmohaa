@@ -521,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    19
+#define NUM_TEXTURE_UNITS    21
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -541,6 +541,16 @@ enum
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
 #define TMU_RTBOUNCE    18 // Added in OPM: the light bounced onto each lightmap texel (tr_rtlight.c)
+#define TMU_RTCLUSTERS  19 // Added in OPM: each cluster of the view, where its lights start in the list and how many (R_RtBuildClusters)
+#define TMU_RTCLUSTERLIST 20 // Added in OPM: the clusters' lights, four indexes a texel
+#define RT_CLUSTER_PX      64    // a cluster's width and height on the screen, in pixels
+#define RT_CLUSTER_SLICES  16    // and how many deep: the first to RT_CLUSTER_Z0, the rest to RT_CLUSTER_ZMAX a step apart in log2
+#define RT_CLUSTER_Z0      32.0f
+#define RT_CLUSTER_ZMAX    16384.0f
+#define RT_CLUSTER_MAX_X   128   // the most across and down (8192 by 4608 pixels)
+#define RT_CLUSTER_MAX_Y   72
+#define RT_CLUSTER_LIST_W  1024  // the list's texture, four indexes a texel
+#define RT_CLUSTER_LIST_H  256
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -1011,6 +1021,14 @@ typedef enum
 	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
+	UNIFORM_RTCLUSTERMAP,    // Added in OPM: the view's clusters and their lights (R_RtBuildClusters)
+	UNIFORM_RTCLUSTERLIST,
+	UNIFORM_RTCLUSTERORIGIN, // the view's origin, w 1 when the draw is in the view the clusters are for
+	UNIFORM_RTCLUSTERLEFT,   // the view's left, w 1 / tan(fov_x / 2)
+	UNIFORM_RTCLUSTERUP,     // its up, w 1 / tan(fov_y / 2)
+	UNIFORM_RTCLUSTERFWD,    // its forward, w the slices a step of log2 of the depth
+	UNIFORM_RTCLUSTERGRID,   // clusters across, down, deep, the first's depth
+	UNIFORM_RTDRAWMASK,      // the lights the draw may take, 16 bits a component
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
@@ -2717,6 +2735,8 @@ typedef struct {
     vec4_t   rtSunColor;
     vec4_t   rtAmbient;
     image_t *rtCapsuleImage;   // two texels a capsule: (a, radius), (b, 0)
+    image_t *rtClusterImage;     // Added in OPM: the view's clusters (R_RtBuildClusters)
+    image_t *rtClusterListImage; // and their lights
     image_t *rtSkyImage;       // the sky's depth from each of its directions, a tile each
     FBO_t   *rtSkyFbo;
     FBO_t   *rtSkyBakeFbo;     // the sky's lightmaps are drawn through it, a page at a time
@@ -2888,6 +2908,7 @@ extern  cvar_t  *r_realtimeLighting;
 extern  cvar_t  *r_rtScale;
 extern  cvar_t  *r_rtShadows;
 extern  cvar_t  *r_rtShadowTile;
+extern  cvar_t  *r_rtClusters;
 extern  cvar_t  *r_rtSky;
 extern  cvar_t  *r_rtSkyTile;
 extern  cvar_t  *r_rtFacesPerFrame;

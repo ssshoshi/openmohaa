@@ -66,6 +66,7 @@ static cvar_t *r_rtParticleCascade;
 cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
 cvar_t *r_rtBatchSplit;
+cvar_t *r_rtClusters;
 cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
@@ -258,6 +259,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtShadowCull, "What moves is drawn into a realtime light's shadow only within the light's reach (r_rtCutoff) and where the map lists the light as reaching (0: anywhere in its range). Not archived: an A/B switch");
 	r_rtLightLists = ri.Cvar_Get("r_rtLightLists", "1", 0);
 	ri.Cvar_SetDescription(r_rtLightLists, "Each draw takes only the realtime lights that reach its surfaces' bounds (0: every draw takes them all). Not archived: an A/B switch");
+	r_rtClusters = ri.Cvar_Get("r_rtClusters", "0", CVAR_LATCH);
+	ri.Cvar_SetDescription(r_rtClusters, "A pixel of the view goes through only the realtime lights that reach its part of the view (64 pixels across, 16 deep), not every light its draw's surfaces take (0: the draw's). Needs vid_restart. Not archived: an A/B switch");
 	r_rtBatchSplit = ri.Cvar_Get("r_rtBatchSplit", "1", 0);
 	ri.Cvar_SetDescription(r_rtBatchSplit, "A batch of world surfaces is drawn in pieces where the next surface would bring lights the batch does not have, so that a wall is not shaded with the lights of the whole room (0: one batch, all of their lights). Not archived: an A/B switch");
 	r_rtSky = ri.Cvar_Get("r_rtSky", "1", CVAR_ARCHIVE);
@@ -3792,6 +3795,161 @@ static float R_RtFlicker(const rtLight_t *l, int time)
 	return 1.0f - l->flicker * (0.5f + 0.5f * w);
 }
 
+/*
+The view in clusters (Added in OPM)
+
+A pixel went through every light its draw takes, and a draw's surfaces in a
+room are within reach of most of its lamps (twenty on m3l2), though a pixel
+is reached by a few. So the view is cut into clusters, RT_CLUSTER_PX pixels
+across and down and RT_CLUSTER_SLICES deep, each told which lights reach it
+(each light's reach as a sphere against the cluster's box), and a pixel of
+the view goes through its cluster's lights alone, those of them its draw
+takes (u_RtDrawMask). The shaders find the cluster from where the pixel is
+in the world, as this does, so the view's other passes and its viewport
+change nothing. Any other view (a reflection, the sky's portal) keeps the
+draw's list.
+*/
+static struct {
+	qboolean valid;
+	vec3_t   origin, axis[3];
+	float    fovX, fovY;
+	vec4_t   uOrigin, uLeft, uUp, uFwd, uGrid;
+	uint64_t masks[RT_CLUSTER_MAX_X * RT_CLUSTER_MAX_Y * RT_CLUSTER_SLICES];
+	vec4_t   cells[RT_CLUSTER_MAX_X * RT_CLUSTER_SLICES * RT_CLUSTER_MAX_Y];
+	vec4_t   list[RT_CLUSTER_LIST_W * RT_CLUSTER_LIST_H];
+} rtc;
+
+static float R_RtClusterNear(int s, float k)
+{
+	return s <= 0 ? 0.0f : RT_CLUSTER_Z0 * powf(2.0f, (s - 1) / k);
+}
+
+static int R_RtClusterSlice(float z, float k)
+{
+	if (z < RT_CLUSTER_Z0) {
+		return 0;
+	}
+	return Q_min(RT_CLUSTER_SLICES - 1, 1 + (int)floorf(log2f(z / RT_CLUSTER_Z0) * k));
+}
+
+static void R_RtBuildClusters(const refdef_t *fd)
+{
+	const float k     = (RT_CLUSTER_SLICES - 1) / log2f(RT_CLUSTER_ZMAX / RT_CLUSTER_Z0);
+	const int   tx    = Q_min(RT_CLUSTER_MAX_X, (fd->width + RT_CLUSTER_PX - 1) / RT_CLUSTER_PX);
+	const int   ty    = Q_min(RT_CLUSTER_MAX_Y, (fd->height + RT_CLUSTER_PX - 1) / RT_CLUSTER_PX);
+	const float tanX  = tanf(DEG2RAD(fd->fov_x) * 0.5f);
+	const float tanY  = tanf(DEG2RAD(fd->fov_y) * 0.5f);
+	const int   cells = tx * ty * RT_CLUSTER_SLICES;
+	int         i, c, numList = 0;
+
+	rtc.valid = qfalse;
+	if (!r_rtClusters->integer || !tr.rtClusterImage || !tr.rtNumActive || tx <= 0 || ty <= 0 || tanX <= 0 || tanY <= 0) {
+		return;
+	}
+
+	Com_Memset(rtc.masks, 0, sizeof(rtc.masks[0]) * cells);
+	for (i = 0; i < tr.rtNumActive; i++) {
+		const float *o = tr.rtLightData[i * RT_LIGHT_VEC4S];
+		const float  r = tr.rtLightReach[i] + RT_CULL_MARGIN;
+		vec3_t       v;
+		float        x, y, z;
+		int          s, s0, s1;
+
+		if (tr.rtLightReach[i] < 0) {
+			continue;
+		}
+		VectorSubtract(o, fd->vieworg, v);
+		z = DotProduct(v, fd->viewaxis[0]);
+		x = DotProduct(v, fd->viewaxis[1]);
+		y = DotProduct(v, fd->viewaxis[2]);
+		if (z + r <= 0) {
+			continue;
+		}
+		s0 = R_RtClusterSlice(Q_max(0.0f, z - r), k);
+		s1 = R_RtClusterSlice(z + r, k);
+		for (s = s0; s <= s1; s++) {
+			// the part of the sphere in the slice, as a box
+			const float a  = Q_max(R_RtClusterNear(s, k), z - r);
+			const float b  = s == RT_CLUSTER_SLICES - 1 ? z + r : Q_min(R_RtClusterNear(s + 1, k), z + r);
+			const float dz = (z >= a && z <= b) ? 0.0f : Q_min(fabsf(a - z), fabsf(b - z));
+			const float rr = sqrtf(Q_max(0.0f, r * r - dz * dz));
+			int         x0 = 0, x1 = tx - 1, y0 = 0, y1 = ty - 1, cx, cy;
+
+			if (a > b) {
+				continue;
+			}
+			// on the screen: the box's corners, nearest and farthest; at the
+			// eye it covers the whole of it
+			if (a > 1.0f) {
+				const float l0 = Q_min((x - rr) / a, (x - rr) / b) / tanX, l1 = Q_max((x + rr) / a, (x + rr) / b) / tanX;
+				const float u0 = Q_min((y - rr) / a, (y - rr) / b) / tanY, u1 = Q_max((y + rr) / a, (y + rr) / b) / tanY;
+
+				if (l0 > 1 || l1 < -1 || u0 > 1 || u1 < -1) {
+					continue;
+				}
+				// left is the first column, so the most to the left is the least
+				x0 = Q_max(0, (int)floorf((0.5f - 0.5f * l1) * tx));
+				x1 = Q_min(tx - 1, (int)floorf((0.5f - 0.5f * l0) * tx));
+				y0 = Q_max(0, (int)floorf((0.5f + 0.5f * u0) * ty));
+				y1 = Q_min(ty - 1, (int)floorf((0.5f + 0.5f * u1) * ty));
+			}
+			for (cy = y0; cy <= y1; cy++) {
+				for (cx = x0; cx <= x1; cx++) {
+					rtc.masks[(cy * tx + cx) * RT_CLUSTER_SLICES + s] |= (uint64_t)1 << i;
+				}
+			}
+		}
+	}
+
+	// in the texture: a row a line of clusters, each column of them its slices
+	for (c = 0; c < cells; c++) {
+		uint64_t m     = rtc.masks[c];
+		int      first = numList;
+
+		for (i = 0; m; i++, m >>= 1) {
+			if (m & 1) {
+				if (numList >= RT_CLUSTER_LIST_W * RT_CLUSTER_LIST_H * 4) {
+					return; // more than the list holds: the draws' lists this frame
+				}
+				((float *)rtc.list)[numList++] = (float)i;
+			}
+		}
+		VectorSet4(rtc.cells[c], (float)first, (float)(numList - first), 0, 0);
+	}
+
+	qglTextureSubImage2DEXT(tr.rtClusterImage->texnum, GL_TEXTURE_2D, 0, 0, 0, tx * RT_CLUSTER_SLICES, ty, GL_RGBA, GL_FLOAT, rtc.cells);
+	if (numList) {
+		const int texels = (numList + 3) / 4;
+		const int rows   = (texels + RT_CLUSTER_LIST_W - 1) / RT_CLUSTER_LIST_W;
+
+		qglTextureSubImage2DEXT(tr.rtClusterListImage->texnum, GL_TEXTURE_2D, 0, 0, 0, RT_CLUSTER_LIST_W, rows, GL_RGBA, GL_FLOAT, rtc.list);
+	}
+
+	VectorCopy(fd->vieworg, rtc.origin);
+	AxisCopy(fd->viewaxis, rtc.axis);
+	rtc.fovX = fd->fov_x;
+	rtc.fovY = fd->fov_y;
+	VectorCopy(fd->vieworg, rtc.uOrigin);
+	rtc.uOrigin[3] = 1.0f;
+	VectorCopy(fd->viewaxis[1], rtc.uLeft);
+	rtc.uLeft[3] = 1.0f / tanX;
+	VectorCopy(fd->viewaxis[2], rtc.uUp);
+	rtc.uUp[3] = 1.0f / tanY;
+	VectorCopy(fd->viewaxis[0], rtc.uFwd);
+	rtc.uFwd[3] = k;
+	VectorSet4(rtc.uGrid, (float)tx, (float)ty, (float)RT_CLUSTER_SLICES, RT_CLUSTER_Z0);
+	rtc.valid = qtrue;
+}
+
+// whether the view being drawn is the one the clusters are for
+static qboolean R_RtClusterView(void)
+{
+	return rtc.valid && !backEnd.viewParms.isPortal && !(backEnd.viewParms.flags & VPF_WATERREFLECT)
+		&& VectorCompare(backEnd.viewParms.ori.origin, rtc.origin)
+		&& VectorCompare(backEnd.viewParms.ori.axis[0], rtc.axis[0]) && VectorCompare(backEnd.viewParms.ori.axis[2], rtc.axis[2])
+		&& fabsf(backEnd.viewParms.fovX - rtc.fovX) < 0.01f && fabsf(backEnd.viewParms.fovY - rtc.fovY) < 0.01f;
+}
+
 void R_RtRenderShadows(const refdef_t *fd)
 {
 	float     sorted[1024][2];
@@ -4136,6 +4294,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	for (i = 0; i < tr.rtNumActive; i++) {
 		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], r_rtCutoff->value);
 	}
+	R_RtBuildClusters(fd);
 
 	// each program is sent the lights once a frame, not compared with them
 	// at every draw (GLSL_SetUniformRtLights)
@@ -4524,6 +4683,25 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 		}
 		GLSL_SetUniformRtLights(sp, UNIFORM_RTLIGHTS, (const vec4_t *)tr.rtLightData, tr.rtNumActive, tr.rtLightGeneration);
 		GLSL_SetUniformRtList(sp, UNIFORM_RTLIST, list, count);
+		if (tr.rtClusterImage) {
+			static const vec4_t none = { 0, 0, 0, 0 };
+
+			if (R_RtClusterView()) {
+				vec4_t mask;
+
+				for (i = 0; i < 4; i++) {
+					mask[i] = (float)((tess.rtMask >> (i * 16)) & 0xffff);
+				}
+				GLSL_SetUniformVec4(sp, UNIFORM_RTDRAWMASK, mask);
+				GLSL_SetUniformVec4(sp, UNIFORM_RTCLUSTERORIGIN, rtc.uOrigin);
+				GLSL_SetUniformVec4(sp, UNIFORM_RTCLUSTERLEFT, rtc.uLeft);
+				GLSL_SetUniformVec4(sp, UNIFORM_RTCLUSTERUP, rtc.uUp);
+				GLSL_SetUniformVec4(sp, UNIFORM_RTCLUSTERFWD, rtc.uFwd);
+				GLSL_SetUniformVec4(sp, UNIFORM_RTCLUSTERGRID, rtc.uGrid);
+			} else {
+				GLSL_SetUniformVec4(sp, UNIFORM_RTCLUSTERORIGIN, none);
+			}
+		}
 	}
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
@@ -4554,6 +4732,10 @@ void R_RtBindTextures(void)
 	GL_BindToTMU(R_RtSunCascade() ? tr.sunShadowDepthImage[3] : tr.rtShadowImage[0], TMU_RTSUNCASCADE);
 	// a depth image either way: a shadow sampler on a colour one reads nothing defined
 	GL_BindToTMU(tr.rtSkyImage ? tr.rtSkyImage : tr.rtShadowImage[0], TMU_RTSKY);
+	if (tr.rtClusterImage) {
+		GL_BindToTMU(tr.rtClusterImage, TMU_RTCLUSTERS);
+		GL_BindToTMU(tr.rtClusterListImage, TMU_RTCLUSTERLIST);
+	}
 }
 
 /*
