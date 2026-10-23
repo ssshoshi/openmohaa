@@ -57,7 +57,7 @@ void Draw_StretchPic(float x, float y, float w, float h, float s1, float t1, flo
     R_IssuePendingRenderCommands();
 
     if (glRefConfig.framebufferObject)
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
 
     if (hShader) {
         shader = R_GetShaderByHandle(hShader);
@@ -115,7 +115,7 @@ void Draw_StretchPic2(float x, float y, float w, float h, float s1, float t1, fl
     R_IssuePendingRenderCommands();
 
     if (glRefConfig.framebufferObject)
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
 
     if (hShader) {
         shader = R_GetShaderByHandle(hShader);
@@ -168,7 +168,7 @@ void Draw_TilePic(float x, float y, float w, float h, qhandle_t hShader) {
     R_IssuePendingRenderCommands();
 
     if (glRefConfig.framebufferObject)
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
 
     if (hShader) {
         shader = R_GetShaderByHandle(hShader);
@@ -217,7 +217,7 @@ void Draw_TilePicOffset(float x, float y, float w, float h, qhandle_t hShader, i
     R_IssuePendingRenderCommands();
 
     if (glRefConfig.framebufferObject)
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
 
     if (hShader) {
         shader = R_GetShaderByHandle(hShader);
@@ -266,7 +266,7 @@ void Draw_TrianglePic(const vec2_t vPoints[3], const vec2_t vTexCoords[3], qhand
     R_IssuePendingRenderCommands();
 
     if (glRefConfig.framebufferObject)
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
 
     if (hShader) {
         shader = R_GetShaderByHandle(hShader);
@@ -394,7 +394,7 @@ void AddBox(float x, float y, float w, float h) {
 
     if (glRefConfig.framebufferObject)
     {
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
     }
 
     color[0] = backEnd.color2D[0] / 255.0;
@@ -437,7 +437,7 @@ void DrawBox(float x, float y, float w, float h) {
 
     if (glRefConfig.framebufferObject)
     {
-        FBO_Bind(tr.renderFbo);
+        FBO_Bind(RB_TargetFbo());
     }
 
     color[0] = backEnd.color2D[0] / 255.0;

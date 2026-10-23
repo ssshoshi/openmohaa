@@ -2436,6 +2436,11 @@ typedef struct {
 
 	qboolean	projection2D;	// if qtrue, drawstretchpic doesn't need to change modes
 	qboolean	screenOverlay;	// Added in OPM: lens flares, quads on the screen that no light reaches
+	// Added in OPM: with MSAA, the resolved image the post process left, which
+	// the rest of the frame (2D, any later scene) draws on and is presented
+	// from, rather than copied back into the multisampled one and resolved
+	// again (RB_TargetFbo); NULL until then
+	FBO_t		*postFbo;
 	byte		color2D[4];
 	qboolean	vertexes2D;		// shader needs to be finished
 	trRefEntity_t	entity2D;	// currentEntity will point at this when doing 2D rendering
@@ -2738,7 +2743,11 @@ typedef struct {
 } trGlobals_t;
 
 extern backEndState_t	backEnd;
+
 extern trGlobals_t	tr;
+
+// Added in OPM: where the frame draws now (backEndState_t.postFbo)
+static ID_INLINE FBO_t *RB_TargetFbo(void) { return backEnd.postFbo ? backEnd.postFbo : tr.renderFbo; }
 extern glstate_t	glState;		// outside of TR since it shouldn't be cleared during ref re-init
 extern glRefConfig_t glRefConfig;
 
