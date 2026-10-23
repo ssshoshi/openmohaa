@@ -59,6 +59,8 @@ extern const char *fallbackShader_lens_vp;
 extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_bloom_vp;
 extern const char *fallbackShader_bloom_fp;
+extern const char *fallbackShader_bevel_vp;
+extern const char *fallbackShader_bevel_fp;
 extern const char *fallbackShader_ripple_fp;
 extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
@@ -254,7 +256,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },
 	{ "u_WetSky",          GLSL_VEC4 },
-	{ "u_WetSun",          GLSL_VEC4 }
+	{ "u_WetSun",          GLSL_VEC4 },
+	{ "u_EdgeBevel",       GLSL_VEC4 },
+	{ "u_EdgeBevelMap",    GLSL_INT }
 };
 
 typedef enum
@@ -1936,6 +1940,9 @@ static qboolean GLSL_InitLightallShader(int i)
 		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
 	if (R_RtVertexSky())
 		Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
+	// Added in OPM: the edges' bevel (RB_EdgeBevel), only where it is on
+	if (r_edgeBevel->value > 0 && r_depthPrepass->integer)
+		Q_strcat(extradefines, 1024, "#define USE_EDGEBEVEL\n");
 
 	if ((i & LIGHTDEF_USE_SHADOWMAP) && r_realtimeLighting->integer != 2)
 	{
@@ -2011,6 +2018,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_EDGEBEVELMAP,    TMU_EDGEBEVEL);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2561,6 +2569,29 @@ void GLSL_InitGPUShaders(void)
 			numEtcShaders++;
 		}
 
+		// the edges' bevel (RB_EdgeBevel): the view's normals from its depth,
+		// then how far they turn at the edges round each pixel
+		if (r_edgeBevel->value > 0)
+		{
+			for (i = 0; i < 2; i++)
+			{
+				attribs = ATTR_POSITION | ATTR_TEXCOORD;
+				extradefines[0] = '\0';
+				if (qglesMajorVersion < 3 && glRefConfig.standardDerivatives)
+					Q_strcat(extradefines, 1024, "#extension GL_OES_standard_derivatives : enable\n");
+				if (!i)
+					Q_strcat(extradefines, 1024, "#define BEVEL_NORMALS\n");
+
+				if (!GLSL_InitGPUShader(&tr.edgeBevelShader[i], "bevel", attribs, qtrue, extradefines, qtrue, fallbackShader_bevel_vp, fallbackShader_bevel_fp))
+					break;
+
+				GLSL_InitUniforms(&tr.edgeBevelShader[i]);
+				GLSL_SetUniformInt(&tr.edgeBevelShader[i], UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+				GLSL_FinishGPUShader(&tr.edgeBevelShader[i]);
+				numEtcShaders++;
+			}
+		}
+
 		// its ripples, a step of them
 		if (r_waterRipples->integer)
 		{
@@ -2670,6 +2701,8 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.bloomShader);
+	GLSL_DeleteGPUShader(&tr.edgeBevelShader[0]);
+	GLSL_DeleteGPUShader(&tr.edgeBevelShader[1]);
 	GLSL_DeleteGPUShader(&tr.beachShader[0]);
 	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 

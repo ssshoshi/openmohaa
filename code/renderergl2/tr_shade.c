@@ -1740,6 +1740,23 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			}
 			GLSL_SetUniformVec4(sp, UNIFORM_SOFTPARTICLE, soft);
 		}
+		// Added in OPM: the edges' bevel (RB_EdgeBevel), on what is solid:
+		// not what is cut out by its alpha, nor blended over what is behind,
+		// nor the view weapon, whose depth is squeezed nearer than it is
+		else if (r_edgeBevel->value > 0)
+		{
+			vec4_t bevel;
+
+			VectorSet4(bevel, backEnd.viewParms.zNear > 0 ? backEnd.viewParms.zNear : r_znear->value, backEnd.viewParms.zFar, 0.0f, r_edgeBevelStrength->value < 0 ? 1.0f : 0.0f);
+			if (backEnd.edgeBevel && !backEnd.depthFill && !backEnd.projection2D
+				&& !(pStage->stateBits & (GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS))
+				&& !(backEnd.currentEntity && (backEnd.currentEntity->e.renderfx & RF_DEPTHHACK)))
+			{
+				bevel[2] = 1.0f;
+				GL_BindToTMU(tr.edgeBevelImage[1], TMU_EDGEBEVEL);
+			}
+			GLSL_SetUniformVec4(sp, UNIFORM_EDGEBEVEL, bevel);
+		}
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);

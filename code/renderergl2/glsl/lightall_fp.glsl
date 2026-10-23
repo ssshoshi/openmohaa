@@ -150,6 +150,38 @@ varying vec3      var_RtPos;
 varying vec3      var_RtNormal;
 #endif
 
+#if defined(USE_EDGEBEVEL)
+// Added in OPM: the edges' bevel (RB_EdgeBevel, bevel_fp.glsl): how far the
+// normal turns here toward the faces round it. Only where this is the
+// surface the prepass saw at this pixel (not one in front that it left out,
+// nor the view weapon, drawn nearer than it is)
+uniform sampler2D u_EdgeBevelMap;
+uniform vec4      u_EdgeBevel; // zNear, zFar, on, show the turn (r_edgeBevelStrength below 0)
+
+vec3 EdgeBevel()
+{
+	if (u_EdgeBevel.z <= 0.0)
+		return vec3(0.0);
+
+	vec4  b   = texture2D(u_EdgeBevelMap, gl_FragCoord.xy * r_FBufScale);
+	float n   = u_EdgeBevel.x, f = u_EdgeBevel.y;
+	float lin = 2.0 * n * f / (f + n - (2.0 * gl_FragCoord.z - 1.0) * (f - n));
+
+	if (!(b.w > 0.0) || abs(b.w - lin) > 1.0 + lin * 0.01 || !(dot(b.xyz, b.xyz) < 4.0))
+		return vec3(0.0);
+	return b.xyz;
+}
+
+// N turned by it, unless that leaves no way at all to face
+vec3 EdgeBevelTurn(vec3 N)
+{
+	vec3  t  = N + EdgeBevel();
+	float tt = dot(t, t);
+
+	return tt > 0.01 ? t * inversesqrt(tt) : N;
+}
+#endif
+
 uniform vec4      u_GlobalFogColor;
 uniform vec2      u_GlobalFogParams;
 
@@ -534,6 +566,10 @@ void main()
 
 	N = normalize(N);
 
+  #if defined(USE_EDGEBEVEL)
+	N = EdgeBevelTurn(N);
+  #endif
+
   #if defined(USE_SHADOWMAP) 
 	vec2 shadowTex = gl_FragCoord.xy * r_FBufScale;
 	float shadowValue = texture2D(u_ShadowMap, shadowTex).r;
@@ -775,6 +811,9 @@ void main()
 		rt_specRough = roughness;
   #else
 		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+    #if defined(USE_EDGEBEVEL)
+		rtNormal = EdgeBevelTurn(rtNormal);
+    #endif
   #endif
   #if defined(USE_LIGHTMAP)
 		rt_skyLM = var_TexCoords.zw;
@@ -792,6 +831,11 @@ void main()
 		gl_FragColor.rgb += rt_spec * specular.rgb;
   #endif
 	}
+#endif
+
+#if defined(USE_EDGEBEVEL)
+	if (u_EdgeBevel.w > 0.5)
+		gl_FragColor.rgb = u_EdgeBevel.z > 0.0 ? abs(EdgeBevel()) * 2.0 : vec3(1.0, 0.0, 1.0);
 #endif
 
 	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer

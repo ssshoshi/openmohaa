@@ -446,6 +446,17 @@ void FBO_Init(void)
 		}
 	}
 
+	// Added in OPM: the edges' bevel (RB_EdgeBevel)
+	if (tr.edgeBevelImage[0])
+	{
+		for (i = 0; i < 2; i++)
+		{
+			tr.edgeBevelFbo[i] = FBO_Create(va("_edgeBevel%d", i), tr.edgeBevelImage[i]->width, tr.edgeBevelImage[i]->height);
+			FBO_AttachImage(tr.edgeBevelFbo[i], tr.edgeBevelImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.edgeBevelFbo[i]);
+		}
+	}
+
 	if (tr.hdrDepthImage)
 	{
 		tr.hdrDepthFbo = FBO_Create("_hdrDepth", tr.hdrDepthImage->width, tr.hdrDepthImage->height);

@@ -173,6 +173,8 @@ cvar_t  *r_skelCull;
 cvar_t  *r_prepassFarModels;
 cvar_t  *r_skinCache;
 cvar_t  *r_softParticles;
+cvar_t  *r_edgeBevel;
+cvar_t  *r_edgeBevelStrength;
 cvar_t  *r_alphaToCoverage;
 cvar_t  *r_ignoreDstAlpha;
 
@@ -1703,6 +1705,11 @@ void R_Register( void )
 	r_alphaToCoverage = ri.Cvar_Get( "r_alphaToCoverage", "1", CVAR_ARCHIVE );
 	ri.Cvar_SetDescription( r_alphaToCoverage, "With MSAA (r_ext_framebuffer_multisample), the edges of leaves, grass and fences cut out by their alpha are smoothed by it as the rest are, not stair-stepped (0: cut as ever)" );
 	ri.Cvar_SetDescription( r_softParticles, "Dust and smoke fade out over this many units where they meet walls, floors and ceilings (0 off; needs r_depthPrepass)" );
+	// Added in OPM: the edges of walls and boxes rounded in their lighting (RB_EdgeBevel)
+	r_edgeBevel = ri.Cvar_Get( "r_edgeBevel", "0", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_edgeBevel, "Rounds the lighting of edges and corners over this many units either side, as if worn (0 off; needs r_depthPrepass; turning it on from 0 needs vid_restart)" );
+	r_edgeBevelStrength = ri.Cvar_Get( "r_edgeBevelStrength", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_edgeBevelStrength, "How much of the way r_edgeBevel turns the lighting at an edge (1: half way between its faces at the edge itself; below 0, shows the turn as colour)" );
 	r_ignoreDstAlpha = ri.Cvar_Get( "r_ignoreDstAlpha", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	//

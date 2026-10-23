@@ -2972,7 +2972,7 @@ void R_CreateBuiltinImages( void ) {
 
 		// Added in OPM: soft particles read the view's depth from it too
 		// and water, to see how deep it is (tr_water.c)
-		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer)
+		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer || r_edgeBevel->value > 0)
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 
 		// Added in OPM: the view before its water, which the water shows through (tr_water.c)
@@ -3031,6 +3031,16 @@ void R_CreateBuiltinImages( void ) {
 			for (x = 0; x < BLOOM_LEVELS; x++)
 			{
 				tr.bloomImage[x] = R_CreateImage(va("*bloom%d", x), NULL, Q_max(1, width >> (x + 1)), Q_max(1, height >> (x + 1)), IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			}
+		}
+
+		// Added in OPM: the edges' bevel (RB_EdgeBevel): a normal and the depth
+		// a pixel, then the turn and the depth
+		if (r_edgeBevel->value > 0 && r_depthPrepass->integer)
+		{
+			for (x = 0; x < 2; x++)
+			{
+				tr.edgeBevelImage[x] = R_CreateImage(va("*edgeBevel%d", x), NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			}
 		}
 

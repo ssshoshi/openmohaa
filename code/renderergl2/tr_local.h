@@ -521,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    19
+#define NUM_TEXTURE_UNITS    20
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -541,6 +541,7 @@ enum
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
 #define TMU_RTBOUNCE    18 // Added in OPM: the light bounced onto each lightmap texel (tr_rtlight.c)
+#define TMU_EDGEBEVEL   19 // Added in OPM: how far each pixel's normal turns at the edges round it (RB_EdgeBevel)
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -1055,6 +1056,8 @@ typedef enum
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
 	UNIFORM_WETSKY,
 	UNIFORM_WETSUN,
+	UNIFORM_EDGEBEVEL,     // Added in OPM: the edges' bevel (RB_EdgeBevel): zNear, zFar, on, -
+	UNIFORM_EDGEBEVELMAP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2234,6 +2237,7 @@ typedef enum {
 	GPUTIMER_PRESENT,
 	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
 	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
+	GPUTIMER_EDGEBEVEL, // Added in OPM: the edges' bevel (RB_EdgeBevel)
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2454,6 +2458,7 @@ typedef struct {
 	qboolean    depthFill;
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
+	qboolean    edgeBevel; // Added in OPM: this view's edges are bevelled, in tr.edgeBevelImage[1] (RB_EdgeBevel)
 	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
 	float       greyscale;
 
@@ -2535,6 +2540,7 @@ typedef struct {
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
 	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
+	image_t                 *edgeBevelImage[2]; // Added in OPM: the view's normals from its depth, then how far they turn at its edges (RB_EdgeBevel)
 	image_t					*calcLevelsImage;
 	image_t					*targetLevelsImage;
 	image_t					*fixedLevelsImage;
@@ -2560,6 +2566,7 @@ typedef struct {
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
 	FBO_t                   *bloomFbo[BLOOM_LEVELS];
+	FBO_t                   *edgeBevelFbo[2];
 	FBO_t					*calcLevelsFbo;
 	FBO_t					*targetLevelsFbo;
 	FBO_t					*sunShadowFbo[4];
@@ -2619,6 +2626,7 @@ typedef struct {
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
+	shaderProgram_t edgeBevelShader[2]; // Added in OPM: the edges' bevel (RB_EdgeBevel): the normals, then the bevel
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
@@ -2931,6 +2939,8 @@ extern  cvar_t  *r_skelCull;
 extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
 extern  cvar_t  *r_softParticles;
+extern  cvar_t  *r_edgeBevel;
+extern  cvar_t  *r_edgeBevelStrength;
 extern  cvar_t  *r_alphaToCoverage;
 extern  cvar_t  *r_ignoreDstAlpha;
 

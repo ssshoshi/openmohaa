@@ -1146,6 +1146,80 @@ void RB_SetupFog( void )
 
 /*
 =============
+RB_EdgeBevel
+
+Added in OPM: the edges' bevel (r_edgeBevel). From the prepass's depth,
+each pixel's normal (tr.edgeBevelImage[0]), then how far it turns toward
+the faces within r_edgeBevel units of it (tr.edgeBevelImage[1]), which the
+lighting adds to its own (lightall_fp.glsl). See bevel_fp.glsl.
+=============
+*/
+static void RB_EdgeBevel(void)
+{
+	vec4_t quadVerts[4];
+	vec2_t texCoords[4];
+	vec4_t box, info, params;
+	vec3_t viewVector;
+	float  zmax, xmax, ymax;
+	int    pass;
+
+	if (!tr.edgeBevelFbo[1] || !tr.edgeBevelShader[1].program || !backEnd.softDepth
+		|| backEnd.viewParms.isPortal || backEnd.viewParms.isPortalSky)
+		return;
+
+	box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+	box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+
+	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
+	texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
+	texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
+	texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
+
+	VectorSet4(quadVerts[0], -1.0f,  1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[1],  1.0f,  1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[2],  1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+
+	zmax = backEnd.viewParms.zFar;
+	ymax = zmax * tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+	xmax = zmax * tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+
+	// a unit, a unit away, is this many pixels
+	VectorSet4(info, backEnd.viewParms.zNear > 0 ? backEnd.viewParms.zNear : r_znear->value, zmax, r_edgeBevel->value,
+		backEnd.viewParms.viewportHeight / (2.0f * tan(backEnd.viewParms.fovY * M_PI / 360.0f)));
+	VectorSet4(params, 1.0f / tr.edgeBevelImage[0]->width, 1.0f / tr.edgeBevelImage[0]->height, fabs(r_edgeBevelStrength->value), 0.0f);
+
+	for (pass = 0; pass < 2; pass++)
+	{
+		shaderProgram_t *sp = &tr.edgeBevelShader[pass];
+
+		FBO_Bind(tr.edgeBevelFbo[pass]);
+		qglViewport(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+		qglScissor(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+		GL_State(GLS_DEPTHTEST_DISABLE);
+
+		GLSL_BindProgram(sp);
+		GL_BindToTMU(pass ? tr.edgeBevelImage[0] : tr.hdrDepthImage, TB_COLORMAP);
+
+		VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, viewVector);
+		VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWLEFT, viewVector);
+		VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWUP, viewVector);
+		GLSL_SetUniformVec4(sp, UNIFORM_VIEWINFO, info);
+		GLSL_SetUniformVec4(sp, UNIFORM_EDGEBEVEL, params);
+
+		RB_InstantQuad2(quadVerts, texCoords);
+	}
+
+	backEnd.edgeBevel = qtrue;
+}
+
+/*
+=============
 RB_DrawSurfs
 
 =============
@@ -1461,6 +1535,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	backEnd.edgeBevel = qfalse;
 	backEnd.waterScene = qfalse;
 	backEnd.depthPrepassed = qfalse;
 
@@ -1540,6 +1615,14 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 				FBO_BlitFromTexture(tr.renderDepthImage, srcTexCoords, NULL, tr.hdrDepthFbo, NULL, NULL, NULL, 0);
 				backEnd.softDepth = qtrue;
+			}
+
+			// Added in OPM: the edges' bevel, from that depth
+			if (r_edgeBevel->value > 0)
+			{
+				R_GpuTimerBegin(GPUTIMER_EDGEBEVEL);
+				RB_EdgeBevel();
+				R_GpuTimerEnd(GPUTIMER_EDGEBEVEL);
 			}
 
 			if (r_sunlightMode->integer && backEnd.viewParms.flags & VPF_USESUNLIGHT)
@@ -1743,6 +1826,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		R_CpuTimerBegin(CPUTIMER_MAIN3D);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 		backEnd.depthPrepassed = qfalse;
+		backEnd.edgeBevel = qfalse;
 
 		if (r_drawSun->integer)
 		{
