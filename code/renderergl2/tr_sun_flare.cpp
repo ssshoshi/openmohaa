@@ -541,6 +541,7 @@ void R_DrawLensFlares()
     GL_SetProjectionMatrix(matrix);
 
     tess.no_global_fog = qtrue;
+    backEnd.screenOverlay = qtrue;
     R_DrawSunFlare();
 
     for (i = 0; i < backEnd.refdef.num_entities; i++) {
@@ -604,6 +605,11 @@ void R_DrawLensFlares()
     }
 
     R_DrawSunFlareBlend();
+    // drawn before it is cleared: the stream batches until the next begin
+    if (tess.numIndexes) {
+        RB_EndSurface();
+    }
+    backEnd.screenOverlay = qfalse;
     tess.no_global_fog = qfalse;
 
     GL_SetProjectionMatrix(oldProjection);

@@ -1764,6 +1764,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		RB_ShadowFinish();		
 
 		// add light flares on lights that aren't obscured
+		R_GpuTimerBegin(GPUTIMER_FLARES);
 		RB_RenderFlares();
 
 		//
@@ -1774,6 +1775,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		}
 
 		RB_DrawDebugLines();
+		R_GpuTimerEnd(GPUTIMER_FLARES);
 		//=========================
 	}
 
@@ -2512,7 +2514,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		//=========================
 		case RC_SPRITE_SURFS:
 			R_CpuTimerBegin(CPUTIMER_SPRITES);
+			R_GpuTimerBegin(GPUTIMER_SPRITES);
 			data = RB_SpriteSurfs( data );
+			R_GpuTimerEnd(GPUTIMER_SPRITES);
 			R_CpuTimerEnd(CPUTIMER_SPRITES);
 			break;
 		//=========================

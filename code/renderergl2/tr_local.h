@@ -2228,12 +2228,17 @@ typedef enum {
 	GPUTIMER_MAIN3D,
 	GPUTIMER_POSTPROCESS,
 	GPUTIMER_PRESENT,
+	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
+	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
 
 typedef struct {
 	float		msec[GPUTIMER_COUNT];
+	// Added in OPM: the frame's untimed time ("other"), by the pass it came
+	// before; the frame's own slot is what came after the last pass
+	float		gapBefore[GPUTIMER_COUNT];
 	qboolean	valid;
 	int			overflowed;
 	int			numMarks;
@@ -2430,6 +2435,7 @@ typedef struct {
 	qboolean	skyRenderedThisView;	// flag for drawing sun
 
 	qboolean	projection2D;	// if qtrue, drawstretchpic doesn't need to change modes
+	qboolean	screenOverlay;	// Added in OPM: lens flares, quads on the screen that no light reaches
 	byte		color2D[4];
 	qboolean	vertexes2D;		// shader needs to be finished
 	trRefEntity_t	entity2D;	// currentEntity will point at this when doing 2D rendering

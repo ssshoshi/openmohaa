@@ -56,6 +56,7 @@ static int             gpuOverflowed;
 // than whichever single frame happened to be read back. One frame is a bad
 // sample: the first frames of a map are far heavier than the rest.
 static double          gpuAccum[GPUTIMER_COUNT];
+static double          gpuGapAccum[GPUTIMER_COUNT];
 static int             gpuAccumFrames;
 
 static void R_GpuTimerFrameBegin(void);
@@ -72,7 +73,9 @@ const char *const gpuTimerNames[GPUTIMER_COUNT] = {
 	"shadowmask",
 	"main3d",
 	"post",
-	"present"
+	"present",
+	"flares",
+	"sprites"
 };
 
 /*
@@ -225,6 +228,9 @@ void R_GpuTimerFrameEnd(void)
 	GLuint64         open[GPUTIMER_COUNT];
 	qboolean         isOpen[GPUTIMER_COUNT];
 	double           totals[GPUTIMER_COUNT];
+	double           gaps[GPUTIMER_COUNT];
+	GLuint64         idleSince = 0;
+	int              depth = 0;
 
 	if (!gpuInited)
 		return;
@@ -260,6 +266,7 @@ void R_GpuTimerFrameEnd(void)
 	for (i = 0; i < GPUTIMER_COUNT; i++)
 	{
 		totals[i] = 0.0;
+		gaps[i] = 0.0;
 		isOpen[i] = qfalse;
 		open[i] = 0;
 	}
@@ -273,6 +280,24 @@ void R_GpuTimerFrameEnd(void)
 
 		if (mark->id < 0 || mark->id >= GPUTIMER_COUNT)
 			continue;
+
+		// the time no pass was open, charged to the pass that ended it
+		if (mark->id == GPUTIMER_FRAME)
+		{
+			if (!mark->isEnd)
+				idleSince = stamp;
+			else if (!depth && idleSince)
+				gaps[GPUTIMER_FRAME] += (double)(stamp - idleSince) / 1000000.0;
+		}
+		else if (!mark->isEnd)
+		{
+			if (!depth++ && idleSince)
+				gaps[mark->id] += (double)(stamp - idleSince) / 1000000.0;
+		}
+		else if (depth > 0 && !--depth)
+		{
+			idleSince = stamp;
+		}
 
 		if (!mark->isEnd)
 		{
@@ -293,7 +318,10 @@ void R_GpuTimerFrameEnd(void)
 	if (frame->numMarks > 4)
 	{
 		for (i = 0; i < GPUTIMER_COUNT; i++)
+		{
 			gpuAccum[i] += totals[i];
+			gpuGapAccum[i] += gaps[i];
+		}
 
 		gpuAccumFrames++;
 	}
@@ -329,7 +357,9 @@ qboolean R_GpuTimerReport(gpuTimerResults_t *out, int *numFrames, int minFrames)
 	for (i = 0; i < GPUTIMER_COUNT; i++)
 	{
 		out->msec[i] = (float)(gpuAccum[i] / gpuAccumFrames);
+		out->gapBefore[i] = (float)(gpuGapAccum[i] / gpuAccumFrames);
 		gpuAccum[i] = 0.0;
+		gpuGapAccum[i] = 0.0;
 	}
 
 	out->valid = qtrue;
