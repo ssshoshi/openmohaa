@@ -3024,6 +3024,16 @@ void R_CreateBuiltinImages( void ) {
 			tr.quarterImage[x] = R_CreateImage(va("*quarter%d", x), NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
 		}
 
+		// Added in OPM: the bloom's levels (RB_Bloom), as bright as the view
+		// can be: only with r_hdr's float target is there more than white
+		if (r_hdr->integer && hdrFormat != GL_RGBA8)
+		{
+			for (x = 0; x < BLOOM_LEVELS; x++)
+			{
+				tr.bloomImage[x] = R_CreateImage(va("*bloom%d", x), NULL, Q_max(1, width >> (x + 1)), Q_max(1, height >> (x + 1)), IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			}
+		}
+
 		if (r_ssao->integer)
 		{
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);

@@ -667,6 +667,7 @@ typedef struct shader_s {
 	qboolean	entityMergable;			// merge across entites optimizable (smoke, blood)
 
 	qboolean	isSky;
+	qboolean	emissive;	// Added in OPM: a lamp's bulb, flame or glass, which glows (r_bloomEmissive)
 	skyParms_t	sky;
 	fogParms_t	fogParms;
 
@@ -1049,6 +1050,8 @@ typedef enum
 	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
 	UNIFORM_LENSSPOTS,
 	UNIFORM_LENSLOOK,
+	UNIFORM_BLOOMPARAMS,   // Added in OPM: the bloom (RB_Bloom, glsl/bloom_fp.glsl)
+	UNIFORM_BLOOMTEXEL,
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
 	UNIFORM_WETSKY,
 	UNIFORM_WETSUN,
@@ -2072,6 +2075,7 @@ void		R_Modellist_f (void);
 
 // OPM: was 2048; the old map's images go only once the new one is registered
 //  (R_FreeUnusedImages), and with the material maps one SP map holds ~1250
+#define BLOOM_LEVELS 6 // Added in OPM: half the view's size down to a 64th (RB_Bloom)
 #define	MAX_DRAWIMAGES			4096
 #define	MAX_SKINS				1024
 
@@ -2530,6 +2534,7 @@ typedef struct {
 	image_t					*screenScratchImage;
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
+	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
 	image_t					*calcLevelsImage;
 	image_t					*targetLevelsImage;
 	image_t					*fixedLevelsImage;
@@ -2554,6 +2559,7 @@ typedef struct {
 	FBO_t					*screenScratchFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
+	FBO_t                   *bloomFbo[BLOOM_LEVELS];
 	FBO_t					*calcLevelsFbo;
 	FBO_t					*targetLevelsFbo;
 	FBO_t					*sunShadowFbo[4];
@@ -2612,6 +2618,7 @@ typedef struct {
 	shaderProgram_t greyscaleShader;
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
+	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
@@ -3943,6 +3950,13 @@ void RB_WaterSawSky(const shader_t *sh);
 
 // Added in OPM: what is on the lens (tr_lens.c)
 extern cvar_t *r_lens;
+// Added in OPM: the bloom (tr_postprocess.c)
+extern cvar_t *r_bloom;
+extern cvar_t *r_bloomThreshold;
+extern cvar_t *r_bloomKnee;
+extern cvar_t *r_bloomEmissive;
+void R_BloomRegisterCvars(void);
+void RB_Bloom(FBO_t *fbo, ivec4_t box);
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);

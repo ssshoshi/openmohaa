@@ -435,6 +435,17 @@ void FBO_Init(void)
 		}
 	}
 
+	// Added in OPM: the bloom's levels (RB_Bloom)
+	if (tr.bloomImage[0])
+	{
+		for (i = 0; i < BLOOM_LEVELS; i++)
+		{
+			tr.bloomFbo[i] = FBO_Create(va("_bloom%d", i), tr.bloomImage[i]->width, tr.bloomImage[i]->height);
+			FBO_AttachImage(tr.bloomFbo[i], tr.bloomImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.bloomFbo[i]);
+		}
+	}
+
 	if (tr.hdrDepthImage)
 	{
 		tr.hdrDepthFbo = FBO_Create("_hdrDepth", tr.hdrDepthImage->width, tr.hdrDepthImage->height);

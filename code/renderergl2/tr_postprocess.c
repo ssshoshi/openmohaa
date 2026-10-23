@@ -483,3 +483,119 @@ void RB_GaussianBlur(FBO_t *srcFbo, FBO_t *dstFbo, float blur)
 		FBO_Blit(tr.textureScratchFbo[0], srcBox, NULL, dstFbo, dstBox, NULL, color, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 	}
 }
+
+/*
+=============
+RB_Bloom
+
+Added in OPM
+What is brighter than the scene's white glows into what is round it, as
+through a lens: a lamp's bulb, the sun off a window, a muzzle flash. Before
+the tone map, from the frame's float image: its bright part halved
+(bloom_fp.glsl), halved again down the levels, then widened back up them,
+each added onto the next bigger, and the biggest onto the frame, scaled by
+r_bloom.
+=============
+*/
+cvar_t *r_bloom;
+cvar_t *r_bloomThreshold;
+cvar_t *r_bloomKnee;
+cvar_t *r_bloomEmissive;
+
+void R_BloomRegisterCvars(void)
+{
+	r_bloom = ri.Cvar_Get("r_bloom", "0.15", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloom, "How much what is brighter than white glows into what is round it (0: no bloom; needs r_hdr and r_postProcess)");
+	r_bloomThreshold = ri.Cvar_Get("r_bloomThreshold", "1.2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloomThreshold, "How bright a pixel must be, before the tone map, to glow (1: what the tone map makes white)");
+	r_bloomEmissive = ri.Cvar_Get("r_bloomEmissive", "2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloomEmissive, "How many times brighter than white the lamps' bulbs, flames and glass are, so that they bloom (1: as white as they were)");
+	r_bloomKnee = ri.Cvar_Get("r_bloomKnee", "0.5", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloomKnee, "How softly the glow starts below r_bloomThreshold");
+}
+
+static void RB_BloomPass(image_t *src, const vec4_t srcBox, FBO_t *dst, float mode, float scale, int blend)
+{
+	shaderProgram_t *sp = &tr.bloomShader;
+	vec4_t           quadVerts[4], params, texel;
+	vec2_t           texCoords[4];
+	const float      x0 = srcBox[0], y0 = srcBox[1], x1 = srcBox[2], y1 = srcBox[3];
+
+	FBO_Bind(dst);
+	qglViewport(0, 0, dst->width, dst->height);
+	qglScissor(0, 0, dst->width, dst->height);
+
+	VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet2(texCoords[0], x0, y1);
+	VectorSet2(texCoords[1], x1, y1);
+	VectorSet2(texCoords[2], x1, y0);
+	VectorSet2(texCoords[3], x0, y0);
+
+	GLSL_BindProgram(sp);
+	GL_BindToTMU(src, TB_COLORMAP);
+	VectorSet4(params, mode, r_bloomThreshold->value, r_bloomKnee->value, scale);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMPARAMS, params);
+	// half a texel in from the edge of what is read, past which is the clamp
+	VectorSet4(texel, 1.0f / src->width, 1.0f / src->height, x1 - 0.5f / src->width, y1 - 0.5f / src->height);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, texel);
+
+	GL_State(GLS_DEPTHTEST_DISABLE | blend);
+	GL_Cull(CT_TWO_SIDED);
+	RB_InstantQuad2(quadVerts, texCoords);
+}
+
+void RB_Bloom(FBO_t *fbo, ivec4_t box)
+{
+	image_t *frame;
+	vec4_t   whole = { 0, 0, 1, 1 }, part;
+	int      i;
+
+	if (r_bloom->value <= 0 || !tr.bloomFbo[0] || !tr.bloomShader.program || !fbo || !fbo->colorImage[0]
+		|| (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || backEnd.viewParms.isPortal) {
+		return;
+	}
+	frame = fbo->colorImage[0];
+
+	// the view's part of the frame
+	VectorSet4(part, box[0] / (float)frame->width, box[1] / (float)frame->height,
+		(box[0] + box[2]) / (float)frame->width, (box[1] + box[3]) / (float)frame->height);
+
+	RB_BloomPass(frame, part, tr.bloomFbo[0], 0.0f, 1.0f, 0);
+	for (i = 1; i < BLOOM_LEVELS; i++) {
+		RB_BloomPass(tr.bloomImage[i - 1], whole, tr.bloomFbo[i], 1.0f, 1.0f, 0);
+	}
+	for (i = BLOOM_LEVELS - 1; i > 0; i--) {
+		RB_BloomPass(tr.bloomImage[i], whole, tr.bloomFbo[i - 1], 2.0f, 1.0f, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+	}
+
+	// onto the view, widened once more
+	{
+		shaderProgram_t *sp = &tr.bloomShader;
+		vec4_t           quadVerts[4], params, texel;
+		vec2_t           texCoords[4];
+
+		FBO_Bind(fbo);
+		qglViewport(box[0], box[1], box[2], box[3]);
+		qglScissor(box[0], box[1], box[2], box[3]);
+		VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+		VectorSet2(texCoords[0], 0, 1);
+		VectorSet2(texCoords[1], 1, 1);
+		VectorSet2(texCoords[2], 1, 0);
+		VectorSet2(texCoords[3], 0, 0);
+		GLSL_BindProgram(sp);
+		GL_BindToTMU(tr.bloomImage[0], TB_COLORMAP);
+		VectorSet4(params, 2.0f, r_bloomThreshold->value, r_bloomKnee->value, r_bloom->value);
+		GLSL_SetUniformVec4(sp, UNIFORM_BLOOMPARAMS, params);
+		VectorSet4(texel, 1.0f / tr.bloomImage[0]->width, 1.0f / tr.bloomImage[0]->height, 1.0f - 0.5f / tr.bloomImage[0]->width, 1.0f - 0.5f / tr.bloomImage[0]->height);
+		GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, texel);
+		GL_State(GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+		GL_Cull(CT_TWO_SIDED);
+		RB_InstantQuad2(quadVerts, texCoords);
+	}
+}

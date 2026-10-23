@@ -1825,6 +1825,7 @@ void R_Register( void )
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
 	R_LensRegisterCvars();
+	R_BloomRegisterCvars();
 	R_SkelGpuRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is

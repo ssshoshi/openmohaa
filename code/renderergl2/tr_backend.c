@@ -2242,6 +2242,10 @@ const void *RB_PostProcess(const void *data)
 	srcBox[2] = backEnd.viewParms.viewportWidth;
 	srcBox[3] = backEnd.viewParms.viewportHeight;
 
+	// Added in OPM: what is brighter than white glows, before the tone map
+	if (srcFbo && r_hdr->integer)
+		RB_Bloom(srcFbo, srcBox);
+
 	if (srcFbo)
 	{
 		if (r_hdr->integer && (r_toneMap->integer || r_forceToneMap->integer))
