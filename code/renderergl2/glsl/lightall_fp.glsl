@@ -192,13 +192,32 @@ float SampleDepth(sampler2D normalMap, vec2 t)
   #endif
 }
 
-float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
+// Added in OPM: the depth read with the pixel's own gradients, so that a
+// search that stops at its hit (non-uniform flow, where implicit derivatives
+// are undefined) still reads the mip the pixel would
+#if __VERSION__ >= 130
+#define PARALLAX_GRAD
+float SampleDepthGrad(sampler2D normalMap, vec2 t, vec2 gx, vec2 gy)
+{
+  #if defined(SWIZZLE_NORMALMAP)
+	return 1.0 - textureGrad(normalMap, t, gx, gy).r;
+  #else
+	return 1.0 - textureGrad(normalMap, t, gx, gy).a;
+  #endif
+}
+#else
+#define SampleDepthGrad(m, t, gx, gy) SampleDepth(m, t)
+#endif
+
+// (OPM: steps, as many as the relief spans pixels, 16 at most; the search
+// stops at the first point inside, which was all it kept)
+float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, vec2 gy, float steps)
 {
 	const int linearSearchSteps = 16;
 	const int binarySearchSteps = 6;
 
 	// current size of search window
-	float size = 1.0 / float(linearSearchSteps);
+	float size = 1.0 / steps;
 
 	// adjust position if offset above surface
 	dp -= ds * r_parallaxMapOffset;
@@ -212,30 +231,35 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
 	// texture depth at best depth
 	float texDepth = 0.0;
 
-	float prevT = SampleDepth(normalMap, dp);
+	float prevT = SampleDepthGrad(normalMap, dp, gx, gy);
 	float prevTexDepth = prevT;
 
 	// search front to back for first point inside object
 	for(int i = 0; i < linearSearchSteps - 1; ++i)
 	{
+		if (float(i) >= steps - 1.0)
+			break;
+
 		depth += size;
 		
-		float t = SampleDepth(normalMap, dp + ds * depth);
+		float t = SampleDepthGrad(normalMap, dp + ds * depth, gx, gy);
 		
-		if(bestDepth > 0.996)		// if no depth found yet
-			if(depth >= t)
-			{
-				bestDepth = depth;	// store best depth
-				texDepth = t;
-				prevTexDepth = prevT;
-			}
+		if(depth >= t)
+		{
+			bestDepth = depth;	// store best depth
+			texDepth = t;
+			prevTexDepth = prevT;
+#if defined(PARALLAX_GRAD)
+			break;
+#endif
+		}
 		prevT = t;
 	}
 
 	depth = bestDepth;
 
 #if !defined (USE_RELIEFMAP)
-	float div = 1.0 / (1.0 + (prevTexDepth - texDepth) * float(linearSearchSteps));
+	float div = 1.0 / (1.0 + (prevTexDepth - texDepth) * steps);
 	bestDepth -= (depth - size - prevTexDepth) * div;
 #else
 	// recurse around first point (depth) for closest match
@@ -243,7 +267,7 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
 	{
 		size *= 0.5;
 
-		float t = SampleDepth(normalMap, dp + ds * depth);
+		float t = SampleDepthGrad(normalMap, dp + ds * depth, gx, gy);
 		
 		if(depth >= t)
 		{
@@ -434,7 +458,15 @@ void main()
 	// it at 4x the depth, and fade it out where the surface is seen edge on.
 	offsetDir.xy *= -u_NormalScale.a * smoothstep(0.0, 0.25, offsetDir.z) / max(offsetDir.z, 0.25);
 
-	texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap);
+	// Added in OPM: how far the deepest of it moves on the screen. Under half
+	// a pixel (a wall across the room) it cannot be seen, and is not searched
+	// for, nor its shadows; above, a step a pixel, 4 to 16.
+	vec2  parallaxGx = dFdx(texCoords), parallaxGy = dFdy(texCoords);
+	float reliefPixels = length(offsetDir.xy) / max(max(length(parallaxGx), length(parallaxGy)), 1e-7);
+	bool  parallaxOn = reliefPixels >= 0.5;
+
+	if (parallaxOn)
+		texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap, parallaxGx, parallaxGy, clamp(ceil(reliefPixels), 4.0, 16.0));
 #endif
 
 	vec4 diffuse = texture2D(u_DiffuseMap, texCoords);
@@ -507,7 +539,7 @@ void main()
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	float parallaxShadow = ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
+	float parallaxShadow = parallaxOn ? ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap) : 1.0;
   #endif
 
 
@@ -671,7 +703,8 @@ void main()
 	//lightColor *= CalcLightAttenuation(float(u_PrimaryLightDir.w > 0.0), u_PrimaryLightDir.w / sqrLightDist);
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
+	if (parallaxOn)
+		lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;
