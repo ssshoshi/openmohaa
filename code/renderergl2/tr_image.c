@@ -3087,7 +3087,10 @@ void R_CreateBuiltinImages( void ) {
 		{
 			for ( x = 0; x < 4; x++)
 			{
-				tr.sunShadowDepthImage[x] = R_CreateImage(va("*sunshadowdepth%i", x), NULL, r_shadowMapSize->integer, r_shadowMapSize->integer, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
+				// (OPM: the last, the whole level's, at its own size)
+				const int size = x == 3 ? R_SunShadowFarSize() : r_shadowMapSize->integer;
+
+				tr.sunShadowDepthImage[x] = R_CreateImage(va("*sunshadowdepth%i", x), NULL, size, size, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
 				qglTextureParameterfEXT(tr.sunShadowDepthImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
 				qglTextureParameterfEXT(tr.sunShadowDepthImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
 			}
@@ -3529,6 +3532,21 @@ void	R_SkinList_f( void ) {
 image_t* R_RefreshImageFile(const char* name, imgType_t type, imgFlags_t flags) {
 	// FIXME: unimplemented (GL2)
 	return NULL;
+}
+
+/*
+===============
+R_SunShadowFarSize
+
+Added in OPM: the size of the sun's whole-level cascade (r_sunShadowFarSize),
+no smaller than the others and no bigger than the card takes
+===============
+*/
+int R_SunShadowFarSize(void)
+{
+	int size = r_sunShadowFarSize->integer > 0 ? r_sunShadowFarSize->integer : r_shadowMapSize->integer;
+
+	return Com_Clamp(r_shadowMapSize->integer, glConfig.maxTextureSize, size);
 }
 
 /*

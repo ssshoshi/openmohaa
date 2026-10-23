@@ -41,10 +41,12 @@ float random( const vec2 p )
   return mod( 123456789., 1e-7 + 256. * dot(p,r) );  
 }
 
-float PCF(const sampler2DShadow shadowmap, const vec2 st, const float dist)
+// (OPM: size, the map's texels across: the whole level's cascade has its own,
+// r_sunShadowFarSize)
+float PCF(const sampler2DShadow shadowmap, const vec2 st, const float dist, const float size)
 {
 	float mult;
-	float scale = 2.0 / r_shadowMapSize;
+	float scale = 2.0 / size;
 
 #if 0
 	// from http://http.developer.nvidia.com/GPUGems/gpugems_ch11.html
@@ -113,7 +115,11 @@ void main()
 #endif
 	{
 		shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-		result = PCF(u_ShadowMap, shadowpos.xy, shadowpos.z);
+#if defined(USE_SHADOW_CASCADE)
+		result = PCF(u_ShadowMap, shadowpos.xy, shadowpos.z, r_shadowMapSize);
+#else
+		result = PCF(u_ShadowMap, shadowpos.xy, shadowpos.z, r_sunShadowFarSize);
+#endif
 	}
 #if defined(USE_SHADOW_CASCADE)
 	else
@@ -123,7 +129,7 @@ void main()
 		if (all(lessThan(abs(shadowpos.xyz), vec3(abs(shadowpos.w)))))
 		{
 			shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-			result = PCF(u_ShadowMap2, shadowpos.xy, shadowpos.z);
+			result = PCF(u_ShadowMap2, shadowpos.xy, shadowpos.z, r_shadowMapSize);
 		}
 		else
 		{
@@ -132,13 +138,13 @@ void main()
 			if (all(lessThan(abs(shadowpos.xyz), vec3(abs(shadowpos.w)))))
 			{
 				shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-				result = PCF(u_ShadowMap3, shadowpos.xy, shadowpos.z);
+				result = PCF(u_ShadowMap3, shadowpos.xy, shadowpos.z, r_shadowMapSize);
 			}
 			else
 			{
 				shadowpos = u_ShadowMvp4 * biasPos;
 				shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-				result = PCF(u_ShadowMap4, shadowpos.xy, shadowpos.z);
+				result = PCF(u_ShadowMap4, shadowpos.xy, shadowpos.z, r_sunShadowFarSize);
 			}
 		}
 	}

@@ -2920,6 +2920,7 @@ extern  cvar_t  *r_sunShadowScale;
 extern  cvar_t  *r_shadowFilter;
 extern  cvar_t  *r_shadowBlur;
 extern  cvar_t  *r_shadowMapSize;
+extern  cvar_t  *r_sunShadowFarSize;
 extern  cvar_t  *r_shadowCascadeZNear;
 extern  cvar_t  *r_shadowCascadeZFar;
 extern  cvar_t  *r_shadowCascadeZBias;
@@ -3305,6 +3306,7 @@ int R_DistanceCullLocalPointAndRadius(float fDist, const vec3_t pt, float radius
 int R_DistanceCullPointAndRadius(float fDist, const vec3_t pt, float radius);
 qboolean R_ImageExists(const char* name);
 void R_FreeImage(image_t *image);
+int R_SunShadowFarSize(void);
 void R_MarkImagesPermanent( void );
 void R_FreeUnusedImages( void );
 int R_CountTextureMemory();

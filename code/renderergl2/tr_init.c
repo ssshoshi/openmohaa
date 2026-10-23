@@ -162,6 +162,7 @@ cvar_t  *r_sunShadowScale;
 cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
 cvar_t  *r_shadowMapSize;
+cvar_t  *r_sunShadowFarSize;
 cvar_t  *r_shadowCascadeZNear;
 cvar_t  *r_shadowCascadeZFar;
 cvar_t  *r_shadowCascadeZBias;
@@ -1658,6 +1659,8 @@ void R_Register( void )
 	r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowBlur = ri.Cvar_Get("r_shadowBlur", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	r_shadowMapSize = ri.Cvar_Get("r_shadowMapSize", "1024", CVAR_ARCHIVE | CVAR_LATCH);
+	r_sunShadowFarSize = ri.Cvar_Get("r_sunShadowFarSize", "4096", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_sunShadowFarSize, "Texels across the sun's last shadow cascade, the whole level's, which gives every shadow past r_shadowCascadeZFar. Drawn once (again only when the sun moves), so unlike r_shadowMapSize it costs memory, not frame time: 4096 is 64 MB (0: as r_shadowMapSize)");
 	r_shadowCascadeZNear = ri.Cvar_Get( "r_shadowCascadeZNear", "8", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZFar = ri.Cvar_Get( "r_shadowCascadeZFar", "1024", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZBias = ri.Cvar_Get( "r_shadowCascadeZBias", "0", CVAR_ARCHIVE | CVAR_LATCH );
