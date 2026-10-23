@@ -933,7 +933,7 @@ double cgmAccum[CGM_COUNT];
 double cgmOpen[CGM_COUNT];
 
 static const char *const cgmNames[CGM_COUNT] = {
-    "animparms", "attach", "shadow", "animflags", "footik", "addref"
+    "animparms", "attach", "shadow", "animflags", "footik", "addref", "ragdoll", "emitters"
 };
 
 double       cgEntTypeTime[CG_ENT_TYPES];
