@@ -1718,6 +1718,14 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			}
 		}
 
+		// Added in OPM: the edges' wear, on what the lightmaps light
+		if (pStage->glslShaderGroup == tr.lightallShader)
+		{
+			const qboolean lightmapped = (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP;
+
+			R_EdgeWearSetUniforms(sp, lightmapped && !backEnd.depthFill && !backEnd.projection2D ? pStage->bundle[TB_LIGHTMAP].image[0] : NULL);
+		}
+
 		// Added in OPM: dust and smoke fade out where they meet what is behind
 		// them, rather than showing where their quads cut into it
 		if (pStage->glslShaderGroup != tr.lightallShader)

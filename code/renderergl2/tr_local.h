@@ -521,7 +521,7 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    19
+#define NUM_TEXTURE_UNITS    20
 
 #define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -541,6 +541,7 @@ enum
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
 #define TMU_RTBOUNCE    18 // Added in OPM: the light bounced onto each lightmap texel (tr_rtlight.c)
+#define TMU_EDGEWEAR    19 // Added in OPM: how near each lightmap texel is to an edge, and which kind (tr_edgewear.c)
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
@@ -1055,6 +1056,8 @@ typedef enum
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
 	UNIFORM_WETSKY,
 	UNIFORM_WETSUN,
+	UNIFORM_EDGEWEAR,      // Added in OPM: the edges' wear (tr_edgewear.c): on, wear, dirt, its width
+	UNIFORM_EDGEWEARMAP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2535,6 +2538,7 @@ typedef struct {
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
 	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
+	image_t                 *edgeWearImage; // Added in OPM: the edges round each texel of the lightmaps' first page (tr_edgewear.c)
 	image_t					*calcLevelsImage;
 	image_t					*targetLevelsImage;
 	image_t					*fixedLevelsImage;
@@ -2931,6 +2935,30 @@ extern  cvar_t  *r_skelCull;
 extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
 extern  cvar_t  *r_softParticles;
+
+// Added in OPM: the triangles of the surfaces a page of the lightmaps lights,
+// at their lightmap coordinates (tr_rtlight.c), for what is worked out over
+// them once a map: the sky each texel sees, the bounce, the edges' wear
+typedef struct {
+	vec3_t          xyz;
+	vec3_t          normal;
+	vec2_t          lm;
+	const shader_t *shader; // what it is, for the colour it bounces (R_RtBounce)
+	qboolean        terrain;
+} rtBakeVert_t;
+
+typedef struct {
+	rtBakeVert_t *verts;
+	int           num, max;
+} rtBakeList_t;
+
+void R_RtBakeGather(int page, rtBakeList_t *list);
+
+// Added in OPM: the edges' wear (tr_edgewear.c)
+extern  cvar_t  *r_edgeWear;
+void R_EdgeWearRegister(void);
+void R_EdgeWearStep(void);
+void R_EdgeWearSetUniforms(shaderProgram_t *sp, const image_t *lightmap);
 extern  cvar_t  *r_alphaToCoverage;
 extern  cvar_t  *r_ignoreDstAlpha;
 

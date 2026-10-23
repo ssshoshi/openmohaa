@@ -254,7 +254,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },
 	{ "u_WetSky",          GLSL_VEC4 },
-	{ "u_WetSun",          GLSL_VEC4 }
+	{ "u_WetSun",          GLSL_VEC4 },
+	{ "u_EdgeWear",        GLSL_VEC4 },
+	{ "u_EdgeWearMap",     GLSL_INT }
 };
 
 typedef enum
@@ -1936,6 +1938,9 @@ static qboolean GLSL_InitLightallShader(int i)
 		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
 	if (R_RtVertexSky())
 		Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
+	// Added in OPM: the edges' wear (tr_edgewear.c), where it is on
+	if (r_edgeWear->value > 0 && (i & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP)
+		Q_strcat(extradefines, 1024, "#define USE_EDGEWEAR\n");
 
 	if ((i & LIGHTDEF_USE_SHADOWMAP) && r_realtimeLighting->integer != 2)
 	{
@@ -2011,6 +2016,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_EDGEWEARMAP,     TMU_EDGEWEAR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 

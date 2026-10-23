@@ -1703,6 +1703,7 @@ void R_Register( void )
 	r_alphaToCoverage = ri.Cvar_Get( "r_alphaToCoverage", "1", CVAR_ARCHIVE );
 	ri.Cvar_SetDescription( r_alphaToCoverage, "With MSAA (r_ext_framebuffer_multisample), the edges of leaves, grass and fences cut out by their alpha are smoothed by it as the rest are, not stair-stepped (0: cut as ever)" );
 	ri.Cvar_SetDescription( r_softParticles, "Dust and smoke fade out over this many units where they meet walls, floors and ceilings (0 off; needs r_depthPrepass)" );
+	R_EdgeWearRegister();
 	r_ignoreDstAlpha = ri.Cvar_Get( "r_ignoreDstAlpha", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	//

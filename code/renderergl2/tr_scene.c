@@ -556,6 +556,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 
 	RE_BeginScene(fd);
 
+	// Added in OPM: the edges' wear, worked out once a map (tr_edgewear.c)
+	if (!( fd->rdflags & RDF_NOWORLDMODEL ))
+		R_EdgeWearStep();
+
 	// SmileTheory: playing with shadow mapping
 	if (!( fd->rdflags & RDF_NOWORLDMODEL ) && tr.refdef.num_dlights && r_dlightMode->integer >= 2)
 	{

@@ -1203,18 +1203,6 @@ each texel from where it is on its surface (the terrain at its full detail);
 the texels no surface covers take their neighbours', as the lightmap's own
 filtering reads them at the edges.
 */
-typedef struct {
-	vec3_t          xyz;
-	vec3_t          normal;
-	vec2_t          lm;
-	const shader_t *shader; // what it is, for the colour it bounces (R_RtBounce)
-} rtBakeVert_t;
-
-typedef struct {
-	rtBakeVert_t *verts;
-	int           num, max;
-} rtBakeList_t;
-
 static void R_RtBakeAdd(rtBakeList_t *list, const vec3_t xyz, const vec3_t normal, float s, float t, const shader_t *shader)
 {
 	rtBakeVert_t *v;
@@ -1236,10 +1224,12 @@ static void R_RtBakeAdd(rtBakeList_t *list, const vec3_t xyz, const vec3_t norma
 	v->lm[0] = s;
 	v->lm[1] = t;
 	v->shader = shader;
+	v->terrain = qfalse;
 }
 
-// The triangles of the surfaces lit by one page of the lightmaps
-static void R_RtBakeGather(int page, rtBakeList_t *list)
+// The triangles of the surfaces lit by one page of the lightmaps (and the
+// edges' wear, tr_edgewear.c)
+void R_RtBakeGather(int page, rtBakeList_t *list)
 {
 	int i, j, r, c;
 
@@ -1284,6 +1274,7 @@ static void R_RtBakeGather(int page, rtBakeList_t *list)
 					VectorSet(xyz, patch->x0 + cc * 64.0f, patch->y0 + rr * 64.0f, patch->heightmap[rr * 9 + cc] * 2.0f + patch->z0);
 					R_VaoUnpackNormal(normal, patch->normals[rr * 9 + cc]);
 					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f, patch->t + sizeT * rr / 8.0f, patch->shader);
+					list->verts[list->num - 1].terrain = qtrue;
 				}
 			}
 		}

@@ -406,6 +406,58 @@ vec4 hitCube(vec3 ray, vec3 pos, vec3 invSize, float lod, samplerCube tex)
 }
 #endif
 
+#if defined(USE_EDGEWEAR)
+// Added in OPM: the edges' wear (tr_edgewear.c). Its map says, at the
+// lightmap's coordinates, how near an outside corner (r) and a crease (g)
+// are, 1 at the edge to 0 the width from it. Outside corners are knocked and
+// rubbed paler, the band's edge broken into chips; creases gather dirt.
+uniform sampler2D u_EdgeWearMap;
+uniform vec4      u_EdgeWear; // on, how much wear, how much dirt, its width in units
+
+float EdgeWearHash(vec3 p)
+{
+	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+float EdgeWearNoise(vec3 x)
+{
+	vec3 i = floor(x);
+	vec3 f = fract(x);
+	vec3 u = f * f * (3.0 - 2.0 * f);
+
+	return mix(mix(mix(EdgeWearHash(i),                   EdgeWearHash(i + vec3(1.0, 0.0, 0.0)), u.x),
+	               mix(EdgeWearHash(i + vec3(0.0, 1.0, 0.0)), EdgeWearHash(i + vec3(1.0, 1.0, 0.0)), u.x), u.y),
+	           mix(mix(EdgeWearHash(i + vec3(0.0, 0.0, 1.0)), EdgeWearHash(i + vec3(1.0, 0.0, 1.0)), u.x),
+	               mix(EdgeWearHash(i + vec3(0.0, 1.0, 1.0)), EdgeWearHash(i + vec3(1.0, 1.0, 1.0)), u.x), u.y), u.z);
+}
+
+vec3 EdgeWear(vec3 color)
+{
+	if (u_EdgeWear.x <= 0.0)
+		return color;
+
+	vec2  e = texture2D(u_EdgeWearMap, var_TexCoords.zw).rg;
+
+	// r_edgeWear below 0: the map itself, outside corners red, creases green
+	if (u_EdgeWear.y < 0.0)
+		return vec3(e.r, e.g, 0.15);
+	// patches a few units across, and chips of a unit or so
+	float n = EdgeWearNoise(var_WetPos * 0.22) * 0.65 + EdgeWearNoise(var_WetPos * 0.9) * 0.35;
+
+	// worn: paler and a little greyer, the band's edge broken by the noise
+	float wear = clamp(smoothstep(0.5, 0.72, e.r + (n - 0.5) * 0.75) * u_EdgeWear.y, 0.0, 1.0);
+	vec3  grey = vec3(dot(color, vec3(0.299, 0.587, 0.114)));
+	vec3  worn = min(mix(color, grey, 0.35) * 1.35 + 0.035, vec3(1.0));
+
+	color = mix(color, worn, wear);
+
+	// dirt: deepest in the crease, a little patchy
+	float dirt = clamp(e.g * (0.8 + 0.6 * (n - 0.5)) * u_EdgeWear.z, 0.0, 1.0);
+
+	return color * mix(vec3(1.0), vec3(0.5, 0.45, 0.4), dirt * dirt * (3.0 - 2.0 * dirt));
+}
+#endif
+
 void main()
 {
 	vec3 viewDir, lightColor, ambientColor, reflectance;
@@ -495,6 +547,10 @@ void main()
 		if (alpha <= 0.0)
 			discard;
 	}
+
+#if defined(USE_EDGEWEAR)
+	diffuse.rgb = EdgeWear(diffuse.rgb);
+#endif
 
 	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
 	// how much sky it sees
