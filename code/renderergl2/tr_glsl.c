@@ -57,6 +57,8 @@ extern const char *fallbackShader_beach_vp;
 extern const char *fallbackShader_ripple_vp;
 extern const char *fallbackShader_lens_vp;
 extern const char *fallbackShader_lens_fp;
+extern const char *fallbackShader_bloom_vp;
+extern const char *fallbackShader_bloom_fp;
 extern const char *fallbackShader_ripple_fp;
 extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
@@ -248,6 +250,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_LensInfo",        GLSL_VEC4 },
 	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
 	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_BloomParams",     GLSL_VEC4 },
+	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },
 	{ "u_WetSky",          GLSL_VEC4 },
 	{ "u_WetSun",          GLSL_VEC4 }
@@ -2545,6 +2549,17 @@ void GLSL_InitGPUShaders(void)
 			numEtcShaders++;
 		}
 
+		// the bloom (RB_Bloom): its levels halved and widened
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		extradefines[0] = '\0';
+		if (GLSL_InitGPUShader(&tr.bloomShader, "bloom", attribs, qtrue, extradefines, qtrue, fallbackShader_bloom_vp, fallbackShader_bloom_fp))
+		{
+			GLSL_InitUniforms(&tr.bloomShader);
+			GLSL_SetUniformInt(&tr.bloomShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			GLSL_FinishGPUShader(&tr.bloomShader);
+			numEtcShaders++;
+		}
+
 		// its ripples, a step of them
 		if (r_waterRipples->integer)
 		{
@@ -2653,6 +2668,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.waterShader);
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
+	GLSL_DeleteGPUShader(&tr.bloomShader);
 	GLSL_DeleteGPUShader(&tr.beachShader[0]);
 	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 

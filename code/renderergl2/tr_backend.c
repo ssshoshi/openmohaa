@@ -2242,6 +2242,10 @@ const void *RB_PostProcess(const void *data)
 	srcBox[2] = backEnd.viewParms.viewportWidth;
 	srcBox[3] = backEnd.viewParms.viewportHeight;
 
+	// Added in OPM: what is brighter than white glows, before the tone map
+	if (srcFbo && r_hdr->integer)
+		RB_Bloom(srcFbo, srcBox);
+
 	if (srcFbo)
 	{
 		if (r_hdr->integer && (r_toneMap->integer || r_forceToneMap->integer))
@@ -2251,7 +2255,9 @@ const void *RB_PostProcess(const void *data)
 			// Use an intermediate FBO because it can't blit to the same FBO directly
 			// and can't read from an MSAA dstFbo later.
 			RB_ToneMap(srcFbo, srcBox, tr.screenScratchFbo, srcBox, autoExposure);
-			FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+			// (Added in OPM: sharpened on its way back, r_sharpen)
+			if (!RB_Sharpen(tr.screenScratchFbo, srcBox, srcFbo, srcBox))
+				FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		}
 		else if (r_cameraExposure->value != 0.0f)
 		{

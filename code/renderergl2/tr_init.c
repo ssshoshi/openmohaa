@@ -172,6 +172,7 @@ cvar_t  *r_skelCull;
 cvar_t  *r_prepassFarModels;
 cvar_t  *r_skinCache;
 cvar_t  *r_softParticles;
+cvar_t  *r_alphaToCoverage;
 cvar_t  *r_ignoreDstAlpha;
 
 cvar_t	*r_ignoreGLErrors;
@@ -1696,6 +1697,8 @@ void R_Register( void )
 	// a wall or the ceiling. Takes the depth prepass (r_depthPrepass), whose
 	// depth is copied for it; 0 at start up leaves the copy out.
 	r_softParticles = ri.Cvar_Get( "r_softParticles", "16", CVAR_ARCHIVE );
+	r_alphaToCoverage = ri.Cvar_Get( "r_alphaToCoverage", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_alphaToCoverage, "With MSAA (r_ext_framebuffer_multisample), the edges of leaves, grass and fences cut out by their alpha are smoothed by it as the rest are, not stair-stepped (0: cut as ever)" );
 	ri.Cvar_SetDescription( r_softParticles, "Dust and smoke fade out over this many units where they meet walls, floors and ceilings (0 off; needs r_depthPrepass)" );
 	r_ignoreDstAlpha = ri.Cvar_Get( "r_ignoreDstAlpha", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
@@ -1822,6 +1825,7 @@ void R_Register( void )
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
 	R_LensRegisterCvars();
+	R_BloomRegisterCvars();
 	R_SkelGpuRegisterCvars();
 	// Per-pass GPU timings, averaged over this many frames per report. Not
 	// CVAR_CHEAT: r_speeds is, and demo playback clears cheat cvars, which is

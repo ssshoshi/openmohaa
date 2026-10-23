@@ -4025,6 +4025,15 @@ static shader_t *FinishShader( void ) {
 	hasLightmapStage = qfalse;
 	vertexLightmap = qfalse;
 
+	// Added in OPM: what gives the light of a lamp (the lamp models' bulbs,
+	// flames and glass, tools/lamps): brighter than white, so that it blooms
+	{
+		const int len = strlen(shader.name);
+
+		shader.emissive = (!Q_stricmpn(shader.name, "opm_bulb", 8) || !Q_stricmpn(shader.name, "opm_flame", 9)
+			|| (!Q_stricmpn(shader.name, "opm_", 4) && len > 6 && !Q_stricmp(shader.name + len - 6, "_glass"))) ? qtrue : qfalse;
+	}
+
 	//
 	// OPENMOHAA-specific stuff
 	//=========================
