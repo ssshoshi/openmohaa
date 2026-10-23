@@ -45,12 +45,16 @@ build/deepbump/venv/bin/python tools/matgen/matgen.py --parallax --install
 - **Specular.** Reflectance and gloss come from a material preset (`PRESETS`), chosen from
   the shader's `surfaceparm` or, failing that, from keywords in the path. Crevices are made
   rougher and less reflective.
+  Metal's bare parts take the texture's own colour as their specular (a coloured `_s`), up to
+  the preset's `metalness`, and get glossier: per texel, as bare steel is grey where rust and a
+  rifle's wooden stock are warm and saturated (`metal_weight`). lightall darkens the diffuse by
+  the specular, so the metal gives some of its painted colour over to its shine.
 - **Output formats.** Normal maps are 4:4:4 JPEGs by default. `--parallax` writes `_nh` PNGs
   instead, with the height in alpha, but only for opaque textures with a preset that has a
   `depth` (stone, ground, wood, metal, snow, default). Everything else keeps a JPEG `_n`:
   skeletal models are never parallax mapped, and alpha-tested edges would swim. The height is
   anchored so the high points sit on the polygon and only the crevices recede. Specular maps
-  are half-size grey+alpha PNGs. `--max-size` (1024 by default) caps the resolution.
+  are half-size grey+alpha PNGs (RGBA for metal). `--max-size` (1024 by default) caps the resolution.
 - **Split pk3s.** The engine reads pk3s with 32-bit offsets and without ZIP64, so the output is
   split into parts under 2 GB (`zzzzzzzzzz-opm-materials.pk3`, `...-2.pk3`, ...). `--install`
   removes stale parts from the game directory.
