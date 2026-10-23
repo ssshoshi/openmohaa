@@ -50,16 +50,17 @@ void main()
 #if defined(USE_RTLIGHT)
 	// Added in OPM: the realtime lights (see RT_STAGE_* in tr_local.h)
 	vec3 rtLight = vec3(0.0);
-  #if defined(USE_RTLIGHT_PARTICLES)
-	// dust and smoke were lit at their corners
-	if (u_RtStage == RT_STAGE_PARTICLE || u_RtStage == RT_STAGE_PARTICLE_LIT)
-		rtLight = var_RtParticleLight;
-	else
-  #endif
 	// a lightmap stage's sky is read at its lightmap texel (the second
 	// texture's below); the second's lighting is worked out there alone.
 	// The side that faces the normal is GL's back face: Q3 culls GL_FRONT.
 	rt_skyLM = var_DiffuseTex;
+  #if defined(USE_RTLIGHT_PARTICLES)
+	// dust and smoke were lit at their corners: not the lights' loop again
+	// for every pixel of every layer (the else is the next if's)
+	if (u_RtStage == RT_STAGE_PARTICLE || u_RtStage == RT_STAGE_PARTICLE_LIT)
+		rtLight = var_RtParticleLight;
+	else
+  #endif
 	if (u_RtStage != RT_STAGE_NONE && u_RtStage != RT_STAGE_LIGHTING2)
 		rtLight = RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal),
 			u_RtStage != RT_STAGE_LIT && u_RtParams.y < 1.5);
