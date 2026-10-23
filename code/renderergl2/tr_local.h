@@ -2070,7 +2070,9 @@ void		R_Modellist_f (void);
 
 //====================================================
 
-#define	MAX_DRAWIMAGES			2048
+// OPM: was 2048; the old map's images go only once the new one is registered
+//  (R_FreeUnusedImages), and with the material maps one SP map holds ~1250
+#define	MAX_DRAWIMAGES			4096
 #define	MAX_SKINS				1024
 
 
@@ -2717,7 +2719,7 @@ typedef struct {
     vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction
     vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
     image_t *rtBounceImage;    // the light bounced onto each texel of the lightmaps' first page (R_RtBounce), NULL until worked out
-    vec4_t   rtBounce;         // its scale; w: how far it has come in, 0 none
+    vec4_t   rtBounce;         // its scale out under the sky (x), deep in a room (y), the probes' (z); w: how far it has come in, 0 none
     int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
     image_t *skelMorphImage;   // Added in OPM: each posed surface's vertexes' morphs: offset, which target (tr_skelgpu.c)
