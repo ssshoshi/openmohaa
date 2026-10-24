@@ -168,6 +168,7 @@ static struct {
 	rtLight_t *lights;
 	int        numLights;
 	int        numMapLights; // those before the entity lamps' (R_RtEntityLamps)
+	int        waiting, easing; // chosen lights this frame whose shadows are not whole, or not yet at full (r_rtDebug)
 	qboolean   dlightTaken[MAX_DLIGHTS]; // the game's lights an entity lamp's light stands in for, this frame
 	int       *fromSphere; // each sphere light's, -1 none (dark, for models only)
 	qboolean   leafLights; // the map lists the lights reaching each leaf
@@ -4321,6 +4322,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	rt.staticDrawn = 0;
 	rt.invalidated = 0;
 	rt.movingDrawn = 0;
+	rt.waiting     = 0;
+	rt.easing      = 0;
 
 	R_RtFollowFixtures();
 	R_RtEntityLamps();
@@ -4644,6 +4647,11 @@ void R_RtRenderShadows(const refdef_t *fd)
 		} else {
 			l->weight = Q_max(0.0f, l->weight - ease);
 		}
+		if (chosen && !ready) {
+			rt.waiting++;
+		} else if (chosen && l->weight < 1.0f) {
+			rt.easing++;
+		}
 		if (l->weight <= 0 || !ready) {
 			continue;
 		}
@@ -4740,8 +4748,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
 
 	if (r_rtDebug->integer) {
-		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
-			tr.rtNumActive, numChosen, numSorted, numInView, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
+		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
+			tr.rtNumActive, numChosen, numSorted, numInView, rt.waiting, rt.easing, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
 		rt.particleDraws = rt.particleVerts = 0;
 		for (i = 0; r_rtDebug->integer > 2 && i < numBodies; i += 1 + (int)bodies[i * 2 + 1][0]) {
