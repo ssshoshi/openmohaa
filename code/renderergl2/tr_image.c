@@ -2548,6 +2548,75 @@ void R_LoadImageUncompressed( const char *name, byte **pic, int *width, int *hei
 }
 
 
+// Added in OPM
+//  The size of the file the game made an image for (a TGA, JPG or PNG), read
+//  from its header, never a DDS standing in for it: the texture upscale's are
+//  four times as wide, and a sprite's size in the world is its image's.
+static qboolean R_ImageHeaderSize( const char *name, int *width, int *height )
+{
+	fileHandle_t f;
+	byte         buf[4096];
+	const char   *ext = COM_GetExtension( name );
+	size_t       len;
+	qboolean     found = qfalse;
+
+	if ( ri.FS_OpenFile( name, &f, qtrue, qtrue ) <= 0 || !f ) {
+		return qfalse;
+	}
+	len = ri.FS_Read( buf, sizeof( buf ), f );
+
+	if ( !Q_stricmp( ext, "tga" ) && len >= 18 ) {
+		*width  = buf[12] | ( buf[13] << 8 );
+		*height = buf[14] | ( buf[15] << 8 );
+		found   = qtrue;
+	} else if ( !Q_stricmp( ext, "png" ) && len >= 24 ) {
+		*width  = ( buf[16] << 24 ) | ( buf[17] << 16 ) | ( buf[18] << 8 ) | buf[19];
+		*height = ( buf[20] << 24 ) | ( buf[21] << 16 ) | ( buf[22] << 8 ) | buf[23];
+		found   = qtrue;
+	} else if ( !Q_stricmp( ext, "jpg" ) && len >= 4 && buf[0] == 0xFF && buf[1] == 0xD8 ) {
+		// the start-of-frame marker, past the segments before it
+		size_t pos = 2;
+
+		while ( pos + 9 < len && buf[pos] == 0xFF ) {
+			const int marker = buf[pos + 1];
+			const int seg    = ( buf[pos + 2] << 8 ) | buf[pos + 3];
+
+			if ( marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC ) {
+				*height = ( buf[pos + 5] << 8 ) | buf[pos + 6];
+				*width  = ( buf[pos + 7] << 8 ) | buf[pos + 8];
+				found   = qtrue;
+				break;
+			}
+			pos += 2 + seg;
+		}
+	}
+
+	ri.FS_CloseFile( f );
+	return found && *width > 0 && *height > 0;
+}
+
+// Added in OPM
+//  As R_LoadImageFile looks for it without a DDS: a TGA's JPG first, then the
+//  name, then the other formats.
+qboolean R_ImageFileSize( const char *name, int *width, int *height )
+{
+	char        base[MAX_QPATH];
+	const char *ext = COM_GetExtension( name );
+
+	COM_StripExtension( name, base, sizeof( base ) );
+
+	if ( !Q_stricmp( ext, "tga" ) && R_ImageHeaderSize( va( "%s.jpg", base ), width, height ) ) {
+		return qtrue;
+	}
+	if ( *ext && Q_stricmp( ext, "dds" ) && R_ImageHeaderSize( name, width, height ) ) {
+		return qtrue;
+	}
+	return R_ImageHeaderSize( va( "%s.tga", base ), width, height )
+		|| R_ImageHeaderSize( va( "%s.jpg", base ), width, height )
+		|| R_ImageHeaderSize( va( "%s.png", base ), width, height );
+}
+
+
 /*
 ===============
 R_FindImageFile

@@ -114,6 +114,8 @@ TIKI file, similar to ScriptMaster in the server game dll.
 #define T2_SPIN               (1 << 21)
 #define T2_RELATIVEANGLES     (1 << 22)
 #define T2_NOTAGAXIS          (1 << 23)
+// Added in OPM: a weapon's muzzle flash light (a brief tagdlight), shaped as one (CG_MuzzleLight)
+#define T2_MUZZLEFLASH        (1 << 24)
 
 class spawnthing_t;
 class specialeffect_t;

@@ -882,6 +882,39 @@ void CG_AddTempModels(void)
 //===============
 #define TOO_MUCH_TIME_PASSED 500
 
+/*
+===============
+CG_MuzzleLight
+
+Added in OPM: a muzzle flash's light (T2_MUZZLEFLASH). The game's models hold
+a dim one for all of its life (0.11 s, a colour of a quarter, so it hardly
+shows); this is brightest on the shot and gone by its end, reaches further,
+and is not quite the same from one shot to the next. cg_muzzleLight scales it
+(0 is the game's own).
+===============
+*/
+static void CG_MuzzleLight(const ctempmodel_t *p, float *intensity, vec3_t color)
+{
+    static cvar_t *cg_muzzleLight;
+    float          gain, age, shot, fade;
+
+    if (!cg_muzzleLight) {
+        cg_muzzleLight = cgi.Cvar_Get("cg_muzzleLight", "1", CVAR_ARCHIVE);
+    }
+    gain = cg_muzzleLight->value;
+    if (gain <= 0 || p->cgd.life <= 0) {
+        return;
+    }
+
+    age  = Q_clamp_float((float)(cg.time - p->cgd.createTime) / (float)p->cgd.life, 0, 1);
+    fade = (1.0f - age) * (1.0f - age);
+    // the same shot keeps its own strength from frame to frame
+    shot = 0.8f + 0.4f * (float)((unsigned)(p->cgd.createTime * 2654435761u) >> 16 & 0xFF) / 255.0f;
+
+    *intensity *= 1.0f + 0.6f * gain;
+    VectorScale(color, 3.0f * gain * shot * fade, color);
+}
+
 void ClientGameCommandManager::AddTempModels(void)
 {
     ctempmodel_t *p, *next;
@@ -1070,14 +1103,15 @@ void ClientGameCommandManager::AddTempModels(void)
         // Add to the ref
         if (p->cgd.flags & T_DLIGHT) {
             // Tempmodel is a Dynamic Light
-            cgi.R_AddLightToScene(
-                p->cgd.origin,
-                p->cgd.lightIntensity * scale,
-                p->cgd.color[0],
-                p->cgd.color[1],
-                p->cgd.color[2],
-                p->cgd.lightType
-            );
+            float  intensity = p->cgd.lightIntensity * scale;
+            vec3_t color;
+
+            VectorCopy(p->cgd.color, color);
+            // Added in OPM: a muzzle flash lights up as a flash does
+            if (p->cgd.flags2 & T2_MUZZLEFLASH) {
+                CG_MuzzleLight(p, &intensity, color);
+            }
+            cgi.R_AddLightToScene(p->cgd.origin, intensity, color[0], color[1], color[2], p->cgd.lightType);
         } else if (p->ent.reType == RT_SPRITE) {
             vec3_t vTestAngles;
             cgi.R_AddRefSpriteToScene(&newEnt); // Sprite

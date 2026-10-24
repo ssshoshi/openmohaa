@@ -47,6 +47,16 @@ sprite_t *SPR_RegisterSprite(const char *name)
 		spr = ri.Hunk_Alloc(sizeof(sprite_t), h_dontcare);
 		spr->height = spriteImage->height;
 		spr->width = spriteImage->width;
+		// Added in OPM: as big as the game's own image, not the upscaled
+		// DDS loaded in its place (four times as wide)
+		{
+			int w, h;
+
+			if (R_ImageFileSize(spriteImage->imgName, &w, &h)) {
+				spr->width = w;
+				spr->height = h;
+			}
+		}
 		spr->origin_x = spr->width * 0.5;
 		spr->origin_y = spr->height * 0.5;
 		spr->shader = shader;
