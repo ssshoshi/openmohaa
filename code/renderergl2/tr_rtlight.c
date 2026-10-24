@@ -154,6 +154,8 @@ typedef struct {
 	int      seenTested;   // the frame that was looked at, 0 never
 	int      entity;       // an entity lamp's (R_RtEntityLamps): its entity, -1 none
 	int      entityFrame;  // the frame it was last in the scene
+	int      inViewFrame;  // the frame its light was last in the view (R_RtInView)
+	int      enteredView;  // the frame it came into the view after being out of it
 	float    area;         // a lit surface's (a window's): how far across it is, its light
 	                       // going out the way spotDir points (R_RtAreaLights)
 	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
@@ -4111,6 +4113,8 @@ taps' spread.
 #define RT_SEEN_EVERY       4    // frames between looks at whether the view sees a light
 #define RT_VIEW_MARGIN      64.0f
 #define RT_DLIGHT_ROOM      8    // of the lights the shaders take, kept for the game's
+#define RT_FACES_BURST      3    // r_rtFacesPerFrame this many times more for lights come into the view
+#define RT_ENTER_FRAMES     30   // a light this many frames come into the view is lit at once
 
 static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frustum[5])
 {
@@ -4293,7 +4297,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	int       numBodies;
 	rtMover_t movers[RT_MAX_MOVERS];
 	int       numMovers;
-	int       i, budget, dynamicSlots = 0, dynamicLights = 0, movingLights = 0, selfLights = 0;
+	int       i, budget, burst, dynamicSlots = 0, dynamicLights = 0, movingLights = 0, selfLights = 0;
 	float     scale, bake, reach;
 	int       shift;
 	qboolean  seen;
@@ -4391,8 +4395,14 @@ void R_RtRenderShadows(const refdef_t *fd)
 		}
 		if (!R_RtInView(l, lightReach, fd->vieworg, frustum)) {
 			sorted[numSorted][1] += RT_OUT_OF_VIEW;
-		} else if (!R_RtViewSees(l, i, fd->vieworg)) {
-			sorted[numSorted][1] += RT_HIDDEN;
+		} else {
+			if (l->inViewFrame != rt.frame - 1) {
+				l->enteredView = rt.frame;
+			}
+			l->inViewFrame = rt.frame;
+			if (!R_RtViewSees(l, i, fd->vieworg)) {
+				sorted[numSorted][1] += RT_HIDDEN;
+			}
 		}
 		numSorted++;
 	}
@@ -4428,6 +4438,10 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	numMovers = r_rtShadows->integer ? R_RtTrackCasters(movers) : 0;
 	budget    = r_rtFacesPerFrame->integer;
+	// and as much again three times over for the lights come into the view
+	// whose shadows are not drawn: the view turned to a street of lamps
+	// found them dark a frame or two each, coming on one or two a frame
+	burst     = r_rtFacesPerFrame->integer * RT_FACES_BURST;
 	rt.moverPairs = rt.moverCulled = 0;
 
 	// which of the candidates reach each mover, by the map's light lists
@@ -4510,26 +4524,34 @@ void R_RtRenderShadows(const refdef_t *fd)
 					}
 				}
 			}
-			for (f = 0; f < 6 && budget > 0 && rt.frame - l->movedFrame > RT_LIGHT_SETTLE_FRAMES; f++) {
-				if (l->staticFaces & (1 << f)) {
-					continue;
-				}
-				R_RtRenderFace(l, 0, l->staticSlot, f);
-				rt.staticDrawn++;
-				l->staticFaces |= 1 << f;
-				budget--;
-			}
-			// the world as compiled, once
-			if (tr.rtShadowFbo[2]) {
-				for (f = 0; f < 6 && budget > 0; f++) {
-					if (l->bakedFaces & (1 << f)) {
+			{
+				const qboolean rushed = chosen && !l->staticReady && l->inViewFrame == rt.frame;
+
+#define RT_FACE_ALLOWED (budget > 0 || (rushed && burst > 0))
+#define RT_FACE_SPENT() (budget > 0 ? budget-- : burst--)
+				for (f = 0; f < 6 && RT_FACE_ALLOWED && rt.frame - l->movedFrame > RT_LIGHT_SETTLE_FRAMES; f++) {
+					if (l->staticFaces & (1 << f)) {
 						continue;
 					}
-					R_RtRenderFace(l, 2, l->staticSlot, f);
+					R_RtRenderFace(l, 0, l->staticSlot, f);
 					rt.staticDrawn++;
-					l->bakedFaces |= 1 << f;
-					budget--;
+					l->staticFaces |= 1 << f;
+					RT_FACE_SPENT();
 				}
+				// the world as compiled, once
+				if (tr.rtShadowFbo[2]) {
+					for (f = 0; f < 6 && RT_FACE_ALLOWED; f++) {
+						if (l->bakedFaces & (1 << f)) {
+							continue;
+						}
+						R_RtRenderFace(l, 2, l->staticSlot, f);
+						rt.staticDrawn++;
+						l->bakedFaces |= 1 << f;
+						RT_FACE_SPENT();
+					}
+				}
+#undef RT_FACE_ALLOWED
+#undef RT_FACE_SPENT
 			}
 			if (l->staticFaces == 63 && (!tr.rtShadowFbo[2] || l->bakedFaces == 63)) {
 				l->staticReady = qtrue;
@@ -4612,7 +4634,12 @@ void R_RtRenderShadows(const refdef_t *fd)
 			}
 		}
 
-		if (chosen && ready) {
+		if (chosen && ready && rt.frame - l->enteredView < RT_ENTER_FRAMES) {
+			// come into the view as it turned: on at once, its light was off
+			// the screen while it was dark (eased in, the lamps of a street
+			// the view turned to came up slowly one after another)
+			l->weight = 1.0f;
+		} else if (chosen && ready) {
 			l->weight = Q_min(1.0f, l->weight + ease);
 		} else {
 			l->weight = Q_max(0.0f, l->weight - ease);
