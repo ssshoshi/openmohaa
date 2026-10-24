@@ -210,6 +210,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtBounceMap",     GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
+	{ "u_RtDirectDir",     GLSL_INT },
 	{ "u_RtProbeR",        GLSL_VEC4 },
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
@@ -399,10 +400,15 @@ static const char *rt_glsl =
 	// w how far it is eased in (0: none, the lamps all live)
 	"uniform vec4 u_RtDirect;\n"
 	"uniform sampler2D u_RtDirectMap;\n"
+	// and the way it comes from, weighted by how bright (R_RtBakeLamps)
+	"uniform sampler2D u_RtDirectDir;\n"
 	"uniform vec4 u_RtProbeR;\n"
 	"uniform vec4 u_RtProbeG;\n"
 	"uniform vec4 u_RtProbeB;\n"
 	"vec2 rt_skyLM = vec2(0.0);\n"
+	// the surface's own normal, where N is its normal map's (lightall): the
+	// baked lamps' light was worked out for it (RtLight)
+	"vec3 rt_geomN = vec3(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
 	"#endif\n"
@@ -737,8 +743,27 @@ static const char *rt_glsl =
 	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
 	"#endif\n"
 	// the baked lamps' light on this lightmap (R_RtBakeLamps), rgb its scale
+	// the baked lamps' light on this lightmap (R_RtBakeLamps), rgb its scale,
+	// shaded again for the normal map the way most of it comes from, as
+	// much as it comes from one way, and shining that way
 	"	if (bakedHere > 0.0)\n"
-	"		sum += bakedHere * u_RtDirect.rgb * texture2D(u_RtDirectMap, rt_skyLM).rgb;\n"
+	"	{\n"
+	"		vec3  c   = texture2D(u_RtDirectMap, rt_skyLM).rgb;\n"
+	"		vec3  dl  = texture2D(u_RtDirectDir, rt_skyLM).xyz;\n"
+	"		float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+	"		float len = length(dl);\n"
+	"		vec3  b   = bakedHere * u_RtDirect.rgb * c;\n"
+	"		if (len > 1e-5 && lum > 1e-5)\n"
+	"		{\n"
+	"			vec3  L = dl / len;\n"
+	"			float k = clamp(len / lum, 0.0, 1.0);\n"
+	"			if (dot(rt_geomN, rt_geomN) > 0.5)\n"
+	"				b *= mix(1.0, clamp(max(dot(N, L), 0.0) / max(dot(rt_geomN, L), 0.25), 0.0, 2.0), k);\n"
+	"			if (rt_specOn && dot(N, L) > 0.0)\n"
+	"				rt_spec += b * k * RtSpecular(N, L);\n"
+	"		}\n"
+	"		sum += b;\n"
+	"	}\n"
 	// a lamp lit live carves its sharp shadows out of the baked light: never
 	// below none
 	"	sum = max(sum, vec3(0.0));\n"
@@ -867,7 +892,10 @@ static const char *rt_lampBake_fp =
 	"			att *= RtShadow(l3, RtShadowAt(u_RtLights[0], l3, var_P, N, toLight, d, RT_BAKED_TEXELS), true);\n"
 	"		c = u_RtLights[1].rgb * att;\n"
 	"	}\n"
-	// a: where a surface is (u_RtParams.w 1, before the lamps), the lamps adding none
+	// a: where a surface is (u_RtParams.w 1, before the lamps), the lamps adding none;
+	// u_RtParams.x 2: the way it comes from, as bright as it is, for the normal maps
+	"	if (u_RtParams.x > 1.5)\n"
+	"		c = (att > 0.0 ? toLight / max(d, 1e-4) : vec3(0.0)) * dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
 	"	gl_FragColor = vec4(c, u_RtParams.w);\n"
 	"}\n";
 
@@ -2102,6 +2130,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2226,6 +2255,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
+	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
 	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 	GLSL_FinishGPUShader(sp);

@@ -522,7 +522,8 @@ enum
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
 #define TMU_RTDIRECT         19 // Added in OPM: the baked lamps' light (R_RtBakeLamps)
-#define NUM_TEXTURE_UNITS    20
+#define TMU_RTDIRECTDIR      20 // and the way it comes from
+#define NUM_TEXTURE_UNITS    21
 
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -1020,6 +1021,7 @@ typedef enum
 	UNIFORM_RTBOUNCEMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
+	UNIFORM_RTDIRECTDIR,
 	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
