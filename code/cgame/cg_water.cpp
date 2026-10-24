@@ -347,6 +347,11 @@ qboolean CG_WaterSample(const vec3_t p, cgWaterSample_t *out)
     VectorSet(start, p[0], p[1], p[2] + WATER_REACH);
     VectorSet(end, p[0], p[1], p[2] - cg_water.height * 2.0f - 16.0f);
     CG_Trace(&tr, start, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, MASK_WATER, qfalse, qfalse, "water top");
+    // the engine's terrain stops every trace, whatever it is looking for:
+    // ground there is not water (every prop landing on it splashed)
+    if ((tr.fraction < 1.0f || tr.startsolid) && !(tr.contents & MASK_WATER)) {
+        return qfalse;
+    }
     if (tr.startsolid || tr.allsolid) {
         // deeper than the reach: under all of it
         out->surface = start[2];
