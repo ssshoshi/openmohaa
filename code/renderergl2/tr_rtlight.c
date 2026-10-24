@@ -2430,6 +2430,7 @@ round where it is, as m + v . N for each colour (u_RtProbe).
 #define RT_PROBE_SLOTS 65536 // a power of two
 #define RT_PROBE_RAYS  48
 #define RT_PROBE_QUEUE 4096
+#define RT_PROBE_FADE  48.0f // a probe's line to a model stopping this far past its reach short of it: none of its light
 
 enum {
 	RT_PROBE_EMPTY,
@@ -2501,6 +2502,26 @@ static void R_RtProbeCompute(rtProbe_t *p)
 	if (!leaf || leaf->cluster < 0) {
 		p->state = RT_PROBE_SOLID;
 		return;
+	}
+	// Under the ground: the terrain is no solid of the BSP's, and a probe a
+	// little under it saw nothing but its underside, black, and lit what
+	// stood over it so wherever the ground rose over the row of probes at its
+	// height. A floor facing up just over it, that is not the top of a slab
+	// whose underside it sees first, is the ground it is under.
+	{
+		trace_t below, over;
+		vec3_t  above;
+
+		VectorCopy(at, above);
+		above[2] += RT_PROBE_GRID;
+		ri.CM_BoxTrace(&below, above, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		if (!below.startsolid && below.fraction < 1.0f && below.plane.normal[2] > 0.5f) {
+			ri.CM_BoxTrace(&over, at, above, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			if (over.startsolid || over.fraction >= 1.0f || over.plane.normal[2] > -0.5f || over.endpos[2] > below.endpos[2] + 1.0f) {
+				p->state = RT_PROBE_SOLID;
+				return;
+			}
+		}
 	}
 	for (k = 0; k < 3; k++) {
 		VectorClear4(p->c[k]);
@@ -2635,6 +2656,7 @@ static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qbo
 			const int   dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
 			const float w  = (dx ? g[0] : 1 - g[0]) * (dy ? g[1] : 1 - g[1]) * (dz ? g[2] : 1 - g[2]);
 			rtProbe_t  *p  = R_RtProbe(base[0] + dx, base[1] + dy, base[2] + dz, qtrue);
+			float       vis;
 
 			if (!p || w <= 0) {
 				continue;
@@ -2646,20 +2668,31 @@ static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qbo
 			if (p->state != RT_PROBE_READY) {
 				continue;
 			}
+			// less as the line from it stops further short of it: a small move
+			// is no probe gone all at once
+			vis = 1.0f;
 			if (pass == 0) {
 				trace_t trace;
 				vec3_t  from;
 
 				VectorSet(from, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
 				ri.CM_BoxTrace(&trace, from, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
-				if (trace.startsolid || (trace.fraction < 1.0f && Distance(trace.endpos, at) > reach)) {
+				if (trace.startsolid) {
+					continue;
+				}
+				if (trace.fraction < 1.0f) {
+					const float x = Com_Clamp(0.0f, 1.0f, (Distance(trace.endpos, at) - reach) / RT_PROBE_FADE);
+
+					vis = 1.0f - x * x * (3.0f - 2.0f * x);
+				}
+				if (vis <= 0) {
 					continue;
 				}
 			}
 			for (k = 0; k < 3; k++) {
-				VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
+				VectorMA4(out[k], w * vis * R_RtBounceScale(p->indoor), p->c[k], out[k]);
 			}
-			total += w;
+			total += w * vis;
 		}
 	}
 	if (total <= 0) {
