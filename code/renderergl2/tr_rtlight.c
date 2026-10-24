@@ -2670,6 +2670,33 @@ static float R_RtStaticModelMiddle(const cStaticModelUnpacked_t *sm, vec3_t out)
 	return VectorLength(half) + 2.0f;
 }
 
+// How far in a room a point is (R_RtBounceIndoor), by how much of the sky
+// over it is seen, as a probe works it out for itself
+static float R_RtIndoorAt(const vec3_t at)
+{
+	vec3_t zero = {0, 0, 0};
+	float  up = 0, open = 0;
+	int    r;
+
+	for (r = 0; r < RT_PROBE_RAYS / 2; r++) {
+		// the upper half of the probes' spiral
+		const float z   = 1.0f - (2.0f * r + 1.0f) / RT_PROBE_RAYS;
+		const float rad = sqrt(Q_max(0.0f, 1.0f - z * z));
+		const float phi = r * 2.399963f;
+		vec3_t      dir, to;
+		trace_t     trace;
+
+		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
+		VectorMA(at, RT_BOUNCE_REACH, dir, to);
+		ri.CM_BoxTrace(&trace, at, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		up += z;
+		if (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) {
+			open += z;
+		}
+	}
+	return R_RtBounceIndoor(up > 0 ? open / up : 0.0f);
+}
+
 /*
 The bounce at a static model's middle: the eight probes round it, blended by
 how near, those alone that a line from reaches it, or stops no further than
@@ -2680,8 +2707,9 @@ worked out yet (*waiting) or none is in the world.
 static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qboolean *waiting)
 {
 	vec3_t g, zero = {0, 0, 0};
+	vec4_t lamps[3];
 	int    base[3], c, k, pass;
-	float  total = 0;
+	float  total = 0, dayScale;
 
 	*waiting = qfalse;
 	for (k = 0; k < 3; k++) {
@@ -2692,6 +2720,7 @@ static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qbo
 	for (pass = 0; pass < 2 && total <= 0; pass++) {
 		for (k = 0; k < 3; k++) {
 			VectorClear4(out[k]);
+			VectorClear4(lamps[k]);
 		}
 		for (c = 0; c < 8; c++) {
 			const int   dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
@@ -2731,8 +2760,8 @@ static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qbo
 				}
 			}
 			for (k = 0; k < 3; k++) {
-				VectorMA4(out[k], w * vis * R_RtBounceScale(p->indoor), p->c[k], out[k]);
-				VectorMA4(out[k], w * vis, p->cl[k], out[k]);
+				VectorMA4(out[k], w * vis, p->c[k], out[k]);
+				VectorMA4(lamps[k], w * vis, p->cl[k], lamps[k]);
 			}
 			total += w * vis;
 		}
@@ -2740,7 +2769,14 @@ static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qbo
 	if (total <= 0) {
 		return qfalse;
 	}
+	// the daylight's as far in a room as the model is, not as each probe
+	// round it: those by the ground see little sky past the bumps of it, and
+	// a prop on open ground took three times the bounce from them, and none
+	// from those over them, as it was nudged from one to the others
+	dayScale = R_RtBounceScale(R_RtIndoorAt(at));
 	for (k = 0; k < 3; k++) {
+		VectorScale4(out[k], dayScale, out[k]);
+		VectorAdd4(out[k], lamps[k], out[k]);
 		VectorScale4(out[k], 1.0f / total, out[k]);
 	}
 	return qtrue;
