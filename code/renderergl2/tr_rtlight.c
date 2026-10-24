@@ -2495,7 +2495,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 	vec3_t         at, zero = {0, 0, 0};
 	const mnode_t *leaf;
 	float          up, open; // the rays up the sky, as a lightmap's sky counts them
-	int            r, k;
+	int            r, k, inside = 0;
 
 	VectorSet(at, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
 	leaf = R_PointInLeaf(at);
@@ -2538,6 +2538,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
 		VectorMA(at, RT_BOUNCE_REACH, dir, to);
 		ri.CM_BoxTrace(&trace, at, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		inside += trace.startsolid;
 		if (z > 0) {
 			up += z;
 		}
@@ -2553,6 +2554,13 @@ static void R_RtProbeCompute(rtProbe_t *p)
 			p->c[k][3] += given[k] / RT_PROBE_RAYS;
 			VectorMA(p->c[k], 2.0f * given[k] / RT_PROBE_RAYS, dir, p->c[k]);
 		}
+	}
+	// In a wall: the BSP's leaves leave the detail brushes out, and a probe
+	// in one saw nothing, black, "indoors" for no sky, and darkened what
+	// stood by the wall all at once as it was nudged into its cell
+	if (inside > RT_PROBE_RAYS / 2) {
+		p->state = RT_PROBE_SOLID;
+		return;
 	}
 	p->indoor = R_RtBounceIndoor(up > 0 ? open / up : 0.0f);
 	p->state  = RT_PROBE_READY;
@@ -2753,6 +2761,39 @@ static void R_RtProbeInfo_f(void)
 		sm->origin[2], middle[0], middle[1], middle[2], reach, sm->rtProbeState);
 	ri.Printf(PRINT_ALL, "  mean %.2f %.2f %.2f, toward %.2f %.2f %.2f (red)\n", sm->rtProbe[0][3], sm->rtProbe[1][3], sm->rtProbe[2][3],
 		sm->rtProbe[0][0], sm->rtProbe[0][1], sm->rtProbe[0][2]);
+	// the eight probes round its middle, as R_RtProbesRound takes them now
+	{
+		vec3_t   g, zero = {0, 0, 0};
+		vec4_t   out[3];
+		int      base[3], c, k;
+		qboolean waiting, on;
+
+		for (k = 0; k < 3; k++) {
+			g[k]    = middle[k] / RT_PROBE_GRID;
+			base[k] = (int)floor(g[k]);
+			g[k] -= base[k];
+		}
+		for (c = 0; c < 8; c++) {
+			const int   dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
+			const float w  = (dx ? g[0] : 1 - g[0]) * (dy ? g[1] : 1 - g[1]) * (dz ? g[2] : 1 - g[2]);
+			rtProbe_t  *p  = R_RtProbe(base[0] + dx, base[1] + dy, base[2] + dz, qfalse);
+			trace_t     trace;
+			vec3_t      from;
+
+			if (!p) {
+				ri.Printf(PRINT_ALL, "  probe %d: none (weight %.2f)\n", c, w);
+				continue;
+			}
+			VectorSet(from, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
+			ri.CM_BoxTrace(&trace, from, middle, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			ri.Printf(PRINT_ALL, "  probe %d at (%.0f %.0f %.0f): state %d weight %.2f indoor %.2f mean %.2f %.2f %.2f; line %s %.2f, stops %.0f short\n", c,
+				from[0], from[1], from[2], p->state, w, p->indoor, p->c[0][3], p->c[1][3], p->c[2][3], trace.startsolid ? "startsolid" : "",
+				trace.fraction, Distance(trace.endpos, middle));
+		}
+		on = R_RtProbesRound(middle, reach, out, &waiting);
+		ri.Printf(PRINT_ALL, "  blended: %s%s mean %.2f %.2f %.2f, toward %.2f %.2f %.2f (red); moved %d\n", on ? "on" : "off", waiting ? " (waiting)" : "",
+			out[0][3], out[1][3], out[2][3], out[0][0], out[0][1], out[0][2], sm->moved);
+	}
 }
 
 // What the lights, the sun and the sky were, for the kept bounce
