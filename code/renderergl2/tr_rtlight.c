@@ -4331,18 +4331,26 @@ int R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean 
 	const int dstBlend = pStage->stateBits & GLS_DSTBLEND_BITS;
 	int       kind;
 
+	// added on top: a glow, not something lit. Before lightall's: a muzzle
+	// flash, fire or sparks (rgbGen identity) go to lightall without a light
+	// type, and lit there they ran every light for every pixel of them
+	if (dstBlend == GLS_DSTBLEND_ONE) {
+		return RT_STAGE_NONE;
+	}
+
 	if (lightall) {
+		// dust and smoke that went there the same way: unlit, as the generic
+		// program has them (the default below), not the lights' loop per pixel
+		if (shader && shader->rtParticle && !(pStage->stateBits & GLS_DEPTHMASK_TRUE)
+			&& !(pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK)) {
+			return RT_STAGE_NONE;
+		}
 		return RT_STAGE_LIT;
 	}
 
 	// with the direct light live alone, what is lit at run time is lit as ever
 	if (r_realtimeLighting->integer == 1 && (pStage->rgbGen == CGEN_LIGHTING_SPHERICAL || pStage->rgbGen == CGEN_LIGHTING_GRID
 		|| pStage->rgbGen == CGEN_LIGHTING_DIFFUSE)) {
-		return RT_STAGE_NONE;
-	}
-
-	// added on top: a glow, not something lit
-	if (dstBlend == GLS_DSTBLEND_ONE) {
 		return RT_STAGE_NONE;
 	}
 
