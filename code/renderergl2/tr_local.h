@@ -521,7 +521,9 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    19
+#define TMU_RTDIRECT         19 // Added in OPM: the baked lamps' light (R_RtBakeLamps)
+#define TMU_RTDIRECTDIR      20 // and the way it comes from
+#define NUM_TEXTURE_UNITS    21
 
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -531,6 +533,7 @@ enum
 #define RT_SLOTS_BIG    32 // lights with whole tiles for faces; the tiles past theirs are cut in four,
                           // a quarter tile a face for the lights further off (R_RtFaceRect)
 #define RT_SMALL_FIRST  (RT_SLOTS_BIG * 6) // the first tile cut in four: a row's first
+#define RT_BAKED_TILE   128 // r_realtimeLighting 2: the faces of the world alone, for the baked lamps (R_RtBakeLamps)
 #define RT_SMALL_CODE   4096 // a light's first tile, sent to the shaders, at or past this: quarter tiles
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
@@ -1016,6 +1019,9 @@ typedef enum
 	UNIFORM_RTSKYLIGHTMAP,
 	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
 	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
+	UNIFORM_RTDIRECTMAP,
+	UNIFORM_RTDIRECTDIR,
 	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
@@ -2610,6 +2616,7 @@ typedef struct {
 	shaderProgram_t genericSlimShader[GENERICDEF_COUNT]; // Added in OPM: without the realtime lights' per-pixel loop (GLSL_InitGenericShader)
 	shaderProgram_t textureColorShader;
 	shaderProgram_t rtSkyBakeShader; // Added in OPM: the sky a lightmap texel sees (tr_rtlight.c)
+	shaderProgram_t rtLampBakeShader; // Added in OPM: a lamp's light on the lightmaps (R_RtBakeLamps)
 	shaderProgram_t fogShader[FOGDEF_COUNT];
 	shaderProgram_t dlightShader[DLIGHTDEF_COUNT];
 	shaderProgram_t lightallShader[LIGHTDEF_COUNT];
@@ -3123,6 +3130,8 @@ enum {
 	RT_STAGE_PARTICLE_LIT // the same, as RT_STAGE_LIT
 };
 qboolean R_RtActive(void);
+int      R_RtBakedTile(void);
+void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
