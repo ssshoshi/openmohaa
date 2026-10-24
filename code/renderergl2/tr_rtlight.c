@@ -74,6 +74,8 @@ cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
 cvar_t *r_rtMovingLights;
+cvar_t *r_rtCasterMinRadius;
+cvar_t *r_rtSelfShadowLights;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 static cvar_t *r_rtBounce;
@@ -251,6 +253,10 @@ void R_RtRegister(void)
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
+	r_rtSelfShadowLights = ri.Cvar_Get("r_rtSelfShadowLights", "4", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtSelfShadowLights, "How many of the nearest realtime lights draw the player's own shadow as it moves (cg_firstPersonShadow)");
+	r_rtCasterMinRadius = ri.Cvar_Get("r_rtCasterMinRadius", "6", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtCasterMinRadius, "Models smaller than this (a radius in units) cast no realtime light shadows: spent cases, chips");
 	r_rtMovingLights = ri.Cvar_Get("r_rtMovingLights", "4", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtMovingLights, 0, RT_MAX_LIGHTS, qtrue);
 	ri.Cvar_SetDescription(r_rtMovingLights, "How many of the nearest lamps moving with their models (a lantern knocked over, a lamp swinging) draw their shadows again every frame as they move; the rest catch up once they stop");
@@ -3104,6 +3110,7 @@ typedef struct {
 	float    radius;
 	uint64_t lights; // the candidates (R_RtRenderShadows) that reach it, a bit each
 	uint64_t *casts; // its entity's or static model's rtLights
+	qboolean self;   // the player's own body or what it holds (RF_THIRD_PERSON), drawn for the shadow alone
 } rtMover_t;
 
 #define RT_MAX_MOVERS 1024
@@ -3255,7 +3262,10 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		} else {
 			continue;
 		}
-		if (radius <= 0) {
+		// spent cases and chips: too small for a shadow anyone sees, and
+		// being followed by none they were movers, every light near them
+		// drawing its faces again each frame they flew
+		if (radius <= 0 || radius < r_rtCasterMinRadius->value) {
 			continue;
 		}
 
@@ -3283,6 +3293,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 			VectorCopy(centre, movers[count].centre);
 			movers[count].radius = radius;
 			movers[count].casts  = &ent->rtLights;
+			movers[count].self   = (ent->e.renderfx & RF_THIRD_PERSON) != 0;
 			count++;
 		}
 	}
@@ -3316,6 +3327,7 @@ static int R_RtTrackCasters(rtMover_t *movers)
 			VectorCopy(sm->origin, movers[count].centre);
 			movers[count].radius = sm->cull_radius;
 			movers[count].casts  = &sm->rtLights;
+			movers[count].self   = qfalse;
 			count++;
 		}
 	}
@@ -3801,7 +3813,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	int       numBodies;
 	rtMover_t movers[RT_MAX_MOVERS];
 	int       numMovers;
-	int       i, budget, dynamicSlots = 0, dynamicLights = 0, movingLights = 0;
+	int       i, budget, dynamicSlots = 0, dynamicLights = 0, movingLights = 0, selfLights = 0;
 	float     scale, bake, reach;
 	int       shift;
 	qboolean  seen;
@@ -4018,11 +4030,20 @@ void R_RtRenderShadows(const refdef_t *fd)
 			}
 			if (ready && chosen && reach > 0 && dynamicLights < r_rtDynamicLights->integer && R_RtReachesView(l, reach, frustum))
 			{
-				int faces = 0, m;
+				int      faces = 0, m;
+				qboolean self  = qfalse;
 
 				for (m = 0; m < numMovers; m++) {
 					int touched;
 
+					// the player's own shadow, for the nearest few lights: as
+					// they fired or walked, every lamp in reach drew its faces
+					// again each frame for it, and took a second shadow lookup
+					// for every pixel it lit
+					if (movers[m].self && selfLights >= r_rtSelfShadowLights->integer) {
+						*movers[m].casts &= ~((uint64_t)1 << i);
+						continue;
+					}
 					if (!(movers[m].lights & ((uint64_t)1 << i))) {
 						if (r_rtDebug->integer && R_RtFacesTouched(l, l->range, movers[m].centre, movers[m].radius)) {
 							rt.moverPairs++;
@@ -4041,7 +4062,9 @@ void R_RtRenderShadows(const refdef_t *fd)
 						rt.moverCulled += !touched;
 					}
 					faces |= touched;
+					self |= movers[m].self && touched;
 				}
+				selfLights += self;
 				if (faces && dynamicSlots < RT_SLOTS) {
 					const int slot = dynamicSlots++;
 					// None of the view's pixels reads the faces out of it, so
