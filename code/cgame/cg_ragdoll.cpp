@@ -48,6 +48,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 cvar_t *cg_ragdoll;
 cvar_t *cg_ragdoll_maxcount;
+cvar_t *cg_ragdoll_mporphantime;
 cvar_t *cg_ragdoll_blendtime;
 cvar_t *cg_ragdoll_impulse;
 cvar_t *cg_ragdoll_duration;
@@ -8996,6 +8997,9 @@ void CG_InitRagdoll(void)
     // a corpse that had just come to rest snapped back to the pose its death
     // animation ended on. Settled bodies now stay until the pool is full.
     cg_ragdoll_maxcount  = cgi.Cvar_Get("cg_ragdoll_maxcount", "8", CVAR_ARCHIVE);
+    // Added in OPM: how long (ms) a multiplayer corpse the server no longer
+    // sends is kept (CG_RagdollExpire); 0 keeps it as single player does
+    cg_ragdoll_mporphantime = cgi.Cvar_Get("cg_ragdoll_mporphantime", "10000", CVAR_ARCHIVE);
     cg_ragdoll_blendtime = cgi.Cvar_Get("cg_ragdoll_blendtime", "200", CVAR_ARCHIVE);
     // Scale on the push the killing shot gives the body. 0 disables it and
     // restores the purely animation-driven fall.
@@ -9602,11 +9606,22 @@ static void CG_RagdollExpire(void)
             CG_RagdollLog(rd, "its entity left the snapshot");
         }
 
-        // An orphan is not timed out. Its entity is usually just out of view,
-        // and a corpse the player comes back to, however much later, should
-        // still be lying the way it settled rather than snapping back to its
-        // death animation. The allocator takes orphans first when it needs a
-        // slot, so ones whose corpse really has gone cost nothing but memory.
+        // In single player an orphan is not timed out. Its entity is usually
+        // just out of view, and a corpse the player comes back to, however
+        // much later, should still be lying the way it settled rather than
+        // snapping back to its death animation.
+        //
+        // In multiplayer the dead are players: one who died out of view
+        // respawns somewhere else and never comes back into the snapshot as
+        // that corpse, so its ragdoll was kept, simulated and drawn for the
+        // rest of the map. A busy server left 180 of them, 800 bodies awake
+        // in Jolt, and the frame went from 7 to 16 ms in six minutes
+        // (mohdm6). Gone longer than cg_ragdoll_mporphantime, it goes.
+        if (cgs.gametype != GT_SINGLE_PLAYER && cg_ragdoll_mporphantime->integer > 0
+            && cg.time - rd->orphanTime > cg_ragdoll_mporphantime->integer) {
+            CG_RagdollLog(rd, "released: its entity has been gone %d ms (multiplayer)", cg.time - rd->orphanTime);
+            CG_RagdollFree(rd);
+        }
     }
 }
 
