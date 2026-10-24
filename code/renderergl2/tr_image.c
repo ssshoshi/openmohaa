@@ -3129,9 +3129,13 @@ void R_CreateBuiltinImages( void ) {
 			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-			for ( x = 0; x < (r_realtimeLighting->integer == 1 ? 3 : 2); x++)
+			// the third (the world alone) in small tiles with all of it live:
+			// for the lamps baked on the lightmaps (R_RtBakeLamps)
+			for ( x = 0; x < 3; x++)
 			{
-				tr.rtShadowImage[x] = R_CreateImage(va("*rtshadow%i", x), NULL, size, size, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
+				const int atlasSize = x == 2 ? R_RtBakedTile() * RT_ATLAS_TILES : size;
+
+				tr.rtShadowImage[x] = R_CreateImage(va("*rtshadow%i", x), NULL, atlasSize, atlasSize, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
