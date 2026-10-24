@@ -2585,74 +2585,6 @@ static qboolean R_RtProbesAt(const vec3_t origin, vec4_t out[3])
 	return qtrue;
 }
 
-// The bounce at a point of a model that stands still, from the probes round
-// it that can see it: a probe through a wall (the next room, the street) is
-// not its light. The eight round it, else those of the cube of 64 round them,
-// nearer ones more. A probe stopped no further than reach short of it sees it:
-// furniture stands in a solid clip box of its own size. qfalse while one it
-// would take is not worked out yet.
-static qboolean R_RtProbesSeenAt(const vec3_t at, float reach, vec4_t out[3], qboolean *none)
-{
-	vec3_t zero = {0, 0, 0};
-	int    base[3], ring, k;
-	float  total = 0;
-
-	*none = qfalse;
-	for (k = 0; k < 3; k++) {
-		VectorClear4(out[k]);
-		base[k] = (int)floor(at[k] / RT_PROBE_GRID);
-	}
-	for (ring = 0; ring < 2 && total <= 0; ring++) {
-		const int lo = -ring, hi = 1 + ring;
-		int       x, y, z;
-		qboolean  waiting = qfalse;
-
-		for (x = lo; x <= hi; x++) {
-			for (y = lo; y <= hi; y++) {
-				for (z = lo; z <= hi; z++) {
-					rtProbe_t *p;
-					vec3_t     pos;
-					trace_t    trace;
-					float      w;
-
-					if (ring && x >= 0 && x <= 1 && y >= 0 && y <= 1 && z >= 0 && z <= 1) {
-						continue; // the first ring's
-					}
-					p = R_RtProbe(base[0] + x, base[1] + y, base[2] + z, qtrue);
-					if (!p || p->state == RT_PROBE_SOLID) {
-						continue;
-					}
-					if (p->state != RT_PROBE_READY) {
-						waiting = qtrue;
-						continue;
-					}
-					VectorSet(pos, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
-					ri.CM_BoxTrace(&trace, pos, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
-					if (trace.startsolid || Distance(trace.endpos, at) > reach) {
-						continue;
-					}
-					w = 1.0f / (Distance(pos, at) + 16.0f);
-					for (k = 0; k < 3; k++) {
-						VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
-					}
-					total += w;
-				}
-			}
-		}
-		if (waiting) {
-			return qfalse;
-		}
-	}
-	if (total <= 0) {
-		*none = qtrue;
-		return qtrue;
-	}
-	for (k = 0; k < 3; k++) {
-		VectorScale4(out[k], 1.0f / total, out[k]);
-	}
-	return qtrue;
-}
-
 // The middle of a static model, where its bounce is taken: not its origin,
 // which a model may have at a corner, or inside the wall it stands against;
 // and how far it reaches from it
@@ -2676,27 +2608,95 @@ static float R_RtStaticModelMiddle(const cStaticModelUnpacked_t *sm, vec3_t out)
 	return VectorLength(half) + 2.0f;
 }
 
+/*
+The bounce at a static model's middle: the eight probes round it, blended by
+how near, those alone that a line from reaches it, or stops no further than
+reach short of it (it stands in a clip box of its own size, or against a
+wall). None of them seeing it: all eight. qfalse while one of them is not
+worked out yet (*waiting) or none is in the world.
+*/
+static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qboolean *waiting)
+{
+	vec3_t g, zero = {0, 0, 0};
+	int    base[3], c, k, pass;
+	float  total = 0;
+
+	*waiting = qfalse;
+	for (k = 0; k < 3; k++) {
+		g[k]    = at[k] / RT_PROBE_GRID;
+		base[k] = (int)floor(g[k]);
+		g[k] -= base[k];
+	}
+	for (pass = 0; pass < 2 && total <= 0; pass++) {
+		for (k = 0; k < 3; k++) {
+			VectorClear4(out[k]);
+		}
+		for (c = 0; c < 8; c++) {
+			const int   dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
+			const float w  = (dx ? g[0] : 1 - g[0]) * (dy ? g[1] : 1 - g[1]) * (dz ? g[2] : 1 - g[2]);
+			rtProbe_t  *p  = R_RtProbe(base[0] + dx, base[1] + dy, base[2] + dz, qtrue);
+
+			if (!p || w <= 0) {
+				continue;
+			}
+			if (p->state == RT_PROBE_WANTED) {
+				*waiting = qtrue;
+				continue;
+			}
+			if (p->state != RT_PROBE_READY) {
+				continue;
+			}
+			if (pass == 0) {
+				trace_t trace;
+				vec3_t  from;
+
+				VectorSet(from, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
+				ri.CM_BoxTrace(&trace, from, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+				if (trace.startsolid || (trace.fraction < 1.0f && Distance(trace.endpos, at) > reach)) {
+					continue;
+				}
+			}
+			for (k = 0; k < 3; k++) {
+				VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
+			}
+			total += w;
+		}
+	}
+	if (total <= 0) {
+		return qfalse;
+	}
+	for (k = 0; k < 3; k++) {
+		VectorScale4(out[k], 1.0f / total, out[k]);
+	}
+	return qtrue;
+}
+
 // A static model's bounce, worked out once
 static qboolean R_RtStaticModelProbe(cStaticModelUnpacked_t *sm, vec4_t out[3])
 {
-	// one knocked about: the probes round its middle, blended, as a person's.
-	// Those that see it changed as it turned a little, and it went from lit
-	// to dark all at once
+	// The probes round its middle, blended (R_RtProbesRound), the same as it
+	// stands and knocked about: those it took that "saw it", farther out
+	// where a wall or its clip box hid the near ones, were out in the lit
+	// street from a dark corner, and as it turned it went from lit to dark
 	if (sm->moved) {
-		vec3_t middle;
+		vec3_t   middle;
+		qboolean waiting;
+		float    reach = R_RtStaticModelMiddle(sm, middle);
 
-		R_RtStaticModelMiddle(sm, middle);
-		return R_RtProbesAt(middle, out);
+		return R_RtProbesRound(middle, reach, out, &waiting);
 	}
 	if (sm->rtProbeState == 0) {
 		vec3_t   middle;
-		qboolean none;
+		qboolean waiting, on;
 		float    reach = R_RtStaticModelMiddle(sm, middle);
 
-		if (!R_RtProbesSeenAt(middle, reach, sm->rtProbe, &none)) {
-			return qfalse;
+		on = R_RtProbesRound(middle, reach, sm->rtProbe, &waiting);
+		if (waiting) {
+			// asked for; looked at again when they are worked out
+			Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
+			return on;
 		}
-		sm->rtProbeState = none ? 2 : 1;
+		sm->rtProbeState = on ? 1 : 2;
 	}
 	Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
 	return sm->rtProbeState == 1;
