@@ -1775,7 +1775,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 5
+#define RT_BOUNCE_VERSION 6
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
 
 enum {
@@ -2148,6 +2148,10 @@ static void R_RtBounceSamples(void)
 // normal, which sees sky of the sky, raw
 static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out)
 {
+	// r_rtBounce makes the daylight's bounce as bright as the compiler's
+	// rooms were; a lamp's light bounces as it would (as bright again lit a
+	// prop by a lamp at night all round, as the ground under the lamp)
+	const float lampShare = 1.0f / Q_max(1.0f, r_rtBounce ? r_rtBounce->value : 1.0f);
 	trace_t trace;
 	vec3_t  zero = {0, 0, 0}, from, to;
 	int     i;
@@ -2215,7 +2219,7 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 				continue;
 			}
 		}
-		VectorMA(out, att * r_rtScale->value, l->color, out);
+		VectorMA(out, att * r_rtScale->value * lampShare, l->color, out);
 	}
 }
 
@@ -2718,7 +2722,7 @@ static void R_RtProbeInfo_f(void)
 static unsigned R_RtBounceKey(void)
 {
 	unsigned h = 2166136261u;
-	float    v[16];
+	float    v[20];
 	int      i, k, n;
 
 #define RT_HASH(x, count) for (k = 0; k < (int)(count) * (int)sizeof(float); k++) { h = (h ^ ((const byte *)(x))[k]) * 16777619u; }
@@ -2730,6 +2734,7 @@ static unsigned R_RtBounceKey(void)
 	v[n++] = (float)rt_bounce.rays;
 	v[n++] = r_rtSky->value;
 	v[n++] = r_rtScale->value;
+	v[n++] = r_rtBounce ? r_rtBounce->value : 0.0f; // the lamps' share of what bounces
 	VectorCopy(rt.sunDir, &v[n]);
 	n += 3;
 	VectorCopy(rt.sunColor, &v[n]);
