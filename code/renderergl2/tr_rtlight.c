@@ -159,6 +159,10 @@ typedef struct {
 	int      inViewFrame;  // the frame its light was last in the view (R_RtInView)
 	int      enteredView;  // the frame it came into the view after being out of it
 	qboolean baked;        // its light on the lightmaps is baked (R_RtBakeLamps)
+	vec3_t   bakedOrigin;  // where it was baked from
+	int      bakedReady;   // the frame its faces of the world alone were all drawn by
+	qboolean live;         // its baked light is taken back out, all of it lit live (R_RtLiveIn)
+	qboolean liveShadowed; // with the shadow it was baked with
 	float    area;         // a lit surface's (a window's): how far across it is, its light
 	                       // going out the way spotDir points (R_RtAreaLights)
 	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
@@ -3553,6 +3557,9 @@ static void  R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face);
 typedef struct {
 	image_t     *image; // rgb what the lamps give, in raw lightmap units; a 1 where a surface is
 	image_t     *dir;   // the way it comes from, as long as it is bright, for the normal maps
+	image_t     *live, *liveDir; // the same of the lamps lit live, which the shaders take back out (R_RtLiveIn)
+	image_t     *fill[2];        // a lamp's, as R_RtBakeFinish leaves it (R_RtLivePass)
+	image_t     *covered;        // r how many surfaces were drawn over each texel
 	rtBakeList_t list;
 	GLuint       vao, vbo;
 	GLint       *firsts;
@@ -3570,6 +3577,10 @@ static struct {
 	GLuint        atlasTexnum;
 	float         weight, scale;           // eased in once done; the lights' scale (R_RtRenderShadows)
 	int           generation, lights, startTime;
+	GLuint        quadVao, quadVbo;        // a triangle over the whole of a page
+	int           liveAdded;               // lamps taken out this frame (R_RtLiveIn)
+	int           liveFrame;
+	int           livePasses, liveClears;  // since the last r_rtDebug report
 } rt_bake;
 
 // Whether a light draws its faces of the world alone into the third atlas
@@ -3599,6 +3610,21 @@ void R_RtFreeBakedLamps(void)
 		if (ours && page->dir) {
 			R_FreeImage(page->dir);
 		}
+		if (ours && page->live) {
+			R_FreeImage(page->live);
+		}
+		if (ours && page->liveDir) {
+			R_FreeImage(page->liveDir);
+		}
+		if (ours && page->fill[0]) {
+			R_FreeImage(page->fill[0]);
+		}
+		if (ours && page->fill[1]) {
+			R_FreeImage(page->fill[1]);
+		}
+		if (ours && page->covered) {
+			R_FreeImage(page->covered);
+		}
 		if (ours && page->vbo) {
 			qglDeleteBuffers(1, &page->vbo);
 		}
@@ -3621,10 +3647,17 @@ void R_RtFreeBakedLamps(void)
 	if (rt_bake.pages) {
 		ri.Free(rt_bake.pages);
 	}
+	if (ours && rt_bake.quadVbo) {
+		qglDeleteBuffers(1, &rt_bake.quadVbo);
+	}
+	if (ours && rt_bake.quadVao) {
+		qglDeleteVertexArrays(1, &rt_bake.quadVao);
+	}
 	Com_Memset(&rt_bake, 0, sizeof(rt_bake));
 	for (i = 0; rt.lights && i < rt.numLights; i++) {
 		rt.lights[i].baked      = qfalse;
 		rt.lights[i].bakedFaces = 0;
+		rt.lights[i].live       = qfalse;
 	}
 }
 
@@ -3753,14 +3786,27 @@ static void R_RtBakeStart(void)
 			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 		page->dir   = R_CreateImage(va("*rtlampdir%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
 			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
+		// the lamps lit live, added and taken out again and again: whole floats
+		page->live    = R_CreateImage(va("*rtlamplive%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->liveDir = R_CreateImage(va("*rtlamplivedir%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->fill[0] = R_CreateImage(va("*rtlampfill%da", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->fill[1] = R_CreateImage(va("*rtlampfill%db", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->covered = R_CreateImage(va("*rtlampcovered%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 		R_RtBakeUpload(page);
 		{
-			image_t *both[2];
+			image_t *both[4];
 			int      k;
 
 			both[0] = page->image;
 			both[1] = page->dir;
-			for (k = 0; k < 2; k++) {
+			both[2] = page->live;
+			both[3] = page->liveDir;
+			for (k = 0; k < 4; k++) {
 				if (!R_RtBakeTarget(page, both[k])) {
 					R_RtBakeEnd();
 					ri.Printf(PRINT_WARNING, "realtime lighting: the lamps are not baked (no target)\n");
@@ -3770,7 +3816,10 @@ static void R_RtBakeStart(void)
 				}
 				qglClearColor(0, 0, 0, 0);
 				qglClear(GL_COLOR_BUFFER_BIT);
-				qglDrawArrays(GL_TRIANGLES, 0, page->list.num);
+				// the lamps lit live start as none
+				if (k < 2) {
+					qglDrawArrays(GL_TRIANGLES, 0, page->list.num);
+				}
 			}
 		}
 	}
@@ -3784,13 +3833,79 @@ static void R_RtBakeStart(void)
 	}
 }
 
-// One lamp's light added onto the pages, its faces in slot of the third atlas
-static void R_RtBakePass(int index, int slot)
+// A triangle over the whole of a page, for R_RtLiveFill
+static qboolean R_RtBakeQuad(void)
 {
-	const rtLight_t *l = &rt.lights[index];
-	vec4_t           data[RT_LIGHT_VEC4S], scaled;
-	float            reach;
-	int              p, c;
+	rtBakeVert_t verts[3];
+
+	if (rt_bake.quadVao) {
+		return qtrue;
+	}
+	Com_Memset(verts, 0, sizeof(verts));
+	verts[1].lm[0] = 2.0f;
+	verts[2].lm[1] = 2.0f;
+	qglGenVertexArrays(1, &rt_bake.quadVao);
+	qglBindVertexArray(rt_bake.quadVao);
+	qglGenBuffers(1, &rt_bake.quadVbo);
+	qglBindBuffer(GL_ARRAY_BUFFER, rt_bake.quadVbo);
+	qglBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+	qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+	qglEnableVertexAttribArray(ATTR_INDEX_NORMAL);
+	qglEnableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+	qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
+	qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
+	qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
+	qglBindVertexArray(0);
+	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+	return qtrue;
+}
+
+// One pass of the fill program from src into dst (R_RtLivePass)
+static qboolean R_RtLiveFillPass(rtBakePage_t *page, image_t *src, image_t *dst, float mode, float sign, int state)
+{
+	vec4_t params = { 0, 0, 0, 0 };
+
+	if (!R_RtBakeTarget(page, dst)) {
+		return qfalse;
+	}
+	qglBindVertexArray(rt_bake.quadVao);
+	GL_State(state);
+	GL_Cull(CT_TWO_SIDED);
+	GLSL_BindProgram(&tr.rtBakeFillShader);
+	params[0] = mode;
+	params[1] = sign;
+	GLSL_SetUniformVec4(&tr.rtBakeFillShader, UNIFORM_RTPARAMS, params);
+	GL_BindToTMU(src, TMU_RTDIRECT);
+	GL_BindToTMU(page->covered, TMU_RTDIRECTDIR);
+	qglDrawArrays(GL_TRIANGLES, 0, 3);
+	return qtrue;
+}
+
+// A lamp's light drawn into fill[0] made what R_RtBakeFinish made of it (the
+// mean of the surfaces over a texel, the texels none covers filled from those
+// round them), then added onto dst, times sign
+static void R_RtLiveFill(rtBakePage_t *page, image_t *dst, float sign)
+{
+	const int state = GLS_DEPTHTEST_DISABLE;
+
+	if (!R_RtLiveFillPass(page, page->fill[0], page->fill[1], 0.0f, 0.0f, state)
+		|| !R_RtLiveFillPass(page, page->fill[1], page->fill[0], 1.0f, 0.0f, state)
+		|| !R_RtLiveFillPass(page, page->fill[0], page->fill[1], 1.0f, 0.0f, state)
+		|| !R_RtLiveFillPass(page, page->fill[1], page->fill[0], 1.0f, 0.0f, state)) {
+		return;
+	}
+	R_RtLiveFillPass(page, page->fill[0], dst, 2.0f, sign, GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+}
+
+// One lamp's light added onto the pages, its faces in slot of the third atlas
+// (shadowed), as the bake draws it (sign 0); or, as R_RtBakeFinish left it,
+// onto the pages of the lamps lit live, times sign (R_RtLiveIn)
+static void R_RtBakeDraw(int index, int slot, qboolean shadowed, float sign)
+{
+	rtLight_t *l = &rt.lights[index];
+	vec4_t     data[RT_LIGHT_VEC4S], scaled;
+	float      reach;
+	int        p, c;
 
 	VectorScale(l->color, rt_bake.scale, scaled);
 	scaled[3] = l->range;
@@ -3798,19 +3913,25 @@ static void R_RtBakePass(int index, int slot)
 	if (reach <= 0) {
 		return;
 	}
+	if (sign != 0 && (!tr.rtBakeFillShader.program || !R_RtBakeQuad())) {
+		return;
+	}
+	if (sign == 0) {
+		VectorCopy(l->origin, l->bakedOrigin);
+	}
 
 	VectorCopy(l->origin, data[0]);
 	data[0][3] = R_RtLightShape(l, data[2]);
 	VectorCopy(l->color, data[1]);
 	data[1][3] = l->range;
-	VectorSet4(data[3], (l->noShadow || !r_rtShadows->integer) ? -1.0f : R_RtSlotCode(slot), -1.0f, -1.0f, l->range);
+	VectorSet4(data[3], shadowed ? R_RtSlotCode(slot) : -1.0f, -1.0f, -1.0f, l->range);
 	GLSL_SetUniformRtLights(&tr.rtLampBakeShader, UNIFORM_RTLIGHTS, (const vec4_t *)data, 1, --rt_bake.generation);
 
 	for (p = 0; p < rt_bake.numPages; p++) {
 		rtBakePage_t *page = &rt_bake.pages[p];
-		int           n    = 0;
+		int           n    = 0, mode;
 
-		if (!page->image) {
+		if (!page->image || (sign != 0 && (!page->live || !page->liveDir || !page->fill[0] || !page->fill[1] || !page->covered))) {
 			continue;
 		}
 		// the surfaces in its reach
@@ -3830,20 +3951,144 @@ static void R_RtBakePass(int index, int slot)
 				n++;
 			}
 		}
+		if (!n) {
+			continue;
+		}
 		// its light, then the way it comes from
-		if (!n || !R_RtBakeTarget(page, page->image)) {
-			continue;
+		for (mode = 1; mode <= 2; mode++) {
+			image_t *target = sign == 0 ? (mode == 1 ? page->image : page->dir) : page->fill[0];
+
+			if (sign != 0) {
+				R_RtBakeBegin(0.0f, GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+			}
+			if (!R_RtBakeTarget(page, target)) {
+				break;
+			}
+			if (sign != 0) {
+				qglClearColor(0, 0, 0, 0);
+				qglClear(GL_COLOR_BUFFER_BIT);
+			}
+			R_RtBakeMode((float)mode, 0.0f);
+			for (c = 0; c < n; c++) {
+				qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+			}
+			if (sign != 0) {
+				R_RtLiveFill(page, mode == 1 ? page->live : page->liveDir, sign);
+			}
 		}
-		R_RtBakeMode(1.0f, 0.0f);
-		for (c = 0; c < n; c++) {
-			qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+	}
+}
+
+static void R_RtBakePass(int index, int slot)
+{
+	const rtLight_t *l = &rt.lights[index];
+
+	R_RtBakeDraw(index, slot, !l->noShadow && r_rtShadows->integer, 0.0f);
+}
+
+/*
+The baked lamps lit live are taken back out of their bake, each all of it,
+onto pages of their own (rtBakePage_t live) the shaders take away from the
+bake's: they give all of their light live, and what their bake lent the
+surface beside across a face's edge goes with it. Worked out at a pixel, as
+before, the lightmap's coarse texels, and that, were left over: faint edges
+round a lamp's pool (RtLight still does so for those not out yet). A lamp
+goes in when lit fully and its faces of the world alone, which it was baked
+with (whole tiles, slot < RT_SLOTS_BIG), are drawn; out the same way, before
+it loses those faces or its light eases out.
+*/
+#define RT_LIVE_ADDS  2 // lamps taken out a frame
+#define RT_LIVE_DROPS 6 // past this many put back a frame, all of them are at once
+
+static void R_RtLiveClear(void)
+{
+	int p, i;
+
+	for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
+		rtBakePage_t *page = &rt_bake.pages[p];
+		image_t      *both[2];
+		int           k;
+
+		both[0] = page->live;
+		both[1] = page->liveDir;
+		for (k = 0; k < 2; k++) {
+			if (both[k] && R_RtBakeTarget(page, both[k])) {
+				qglClearColor(0, 0, 0, 0);
+				qglClear(GL_COLOR_BUFFER_BIT);
+			}
 		}
-		if (!R_RtBakeTarget(page, page->dir)) {
-			continue;
+	}
+	R_RtBakeEnd();
+	for (i = 0; i < rt.numLights; i++) {
+		rt.lights[i].live = qfalse;
+	}
+	rt_bake.liveClears++;
+}
+
+// Whether light l's bake is to be taken out (it is lit, chosen and ready)
+static qboolean R_RtLiveWanted(const rtLight_t *l, qboolean lit)
+{
+	if (!lit || l->weight < 1.0f || !rt_bake.done || !r_rtBakedLamps->integer || !l->baked || !tr.rtBakeFillShader.program
+		|| Distance(l->origin, l->bakedOrigin) > RT_LIGHT_MOVE_EPSILON) {
+		return qfalse;
+	}
+	if (l->noShadow || !r_rtShadows->integer) {
+		return qtrue;
+	}
+	return l->staticSlot >= 0 && l->staticSlot < RT_SLOTS_BIG && l->bakedFaces == 63 && rt.frame > l->bakedReady;
+}
+
+// Light index's bake taken out (in) or put back
+static void R_RtLiveSet(int index, qboolean in)
+{
+	rtLight_t     *l = &rt.lights[index];
+	qboolean       shadowed;
+
+	if (l->live == in) {
+		return;
+	}
+	if (rt_bake.liveFrame != rt.frame) {
+		rt_bake.liveFrame = rt.frame;
+		rt_bake.liveAdded = 0;
+	}
+	if (in) {
+		if (rt_bake.liveAdded >= RT_LIVE_ADDS) {
+			return;
 		}
-		R_RtBakeMode(2.0f, 0.0f);
-		for (c = 0; c < n; c++) {
-			qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+		shadowed = !l->noShadow && r_rtShadows->integer;
+	} else {
+		shadowed = l->liveShadowed;
+		// put back with the faces it was taken out with: gone, all of it at once
+		if (shadowed && (l->staticSlot < 0 || l->staticSlot >= RT_SLOTS_BIG)) {
+			R_RtLiveClear();
+			return;
+		}
+	}
+	R_RtBakeDraw(index, l->staticSlot, shadowed, in ? 1.0f : -1.0f);
+	R_RtBakeEnd();
+	rt_bake.livePasses++;
+	l->live         = in;
+	l->liveShadowed = shadowed;
+	rt_bake.liveAdded += in ? 1 : 0;
+}
+
+// The lamps lit live last frame and not this one put back (a few; else all at once)
+static void R_RtLiveSweep(void)
+{
+	int i, drops = 0;
+
+	for (i = 0; i < rt.numLights; i++) {
+		if (rt.lights[i].live && rt.lights[i].lastUsed != rt.frame) {
+			drops++;
+		}
+	}
+	if (drops > RT_LIVE_DROPS) {
+		R_RtLiveClear();
+		return;
+	}
+	for (i = 0; drops && i < rt.numLights; i++) {
+		if (rt.lights[i].live && rt.lights[i].lastUsed != rt.frame) {
+			R_RtLiveSet(i, qfalse);
 		}
 	}
 }
@@ -3906,6 +4151,17 @@ static void R_RtBakeFinish(void)
 			}
 			texels = ri.Malloc(sizeof(float) * both[k]->width * both[k]->height * 4);
 			qglReadPixels(0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
+			// how many surfaces were drawn over each texel, for the lamps lit live (R_RtLiveFill)
+			if (k == 0 && page->covered) {
+				float *covered = ri.Malloc(sizeof(float) * both[k]->width * both[k]->height * 4);
+				int    n;
+
+				for (n = 0; n < both[k]->width * both[k]->height; n++) {
+					VectorSet4(&covered[n * 4], texels[n * 4 + 3], 0, 0, 1);
+				}
+				qglTextureSubImage2DEXT(page->covered->texnum, GL_TEXTURE_2D, 0, 0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, covered);
+				ri.Free(covered);
+			}
 			// the mean of the surfaces drawn over a texel, not their sum
 			{
 				int n, shared = 0;
@@ -4703,6 +4959,12 @@ static int R_RtStaticSlot(int light, qboolean big)
 	if (best < 0) {
 		return -1;
 	}
+	// a lamp whose bake is out goes back in with the faces it went out with,
+	// before they are lost
+	R_RtLiveSet(light, qfalse);
+	if (rt.staticOwner[best] >= 0) {
+		R_RtLiveSet(rt.staticOwner[best], qfalse);
+	}
 	if (rt.lights[light].staticSlot >= 0) {
 		rt.staticOwner[rt.lights[light].staticSlot] = -1;
 	}
@@ -5428,6 +5690,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 				rt.staticDrawn += R_RtWantsBakedFaces(l) ? 12 : 6;
 				l->staticFaces = 63;
 				l->bakedFaces  = R_RtWantsBakedFaces(l) ? 63 : 0;
+				l->bakedReady  = rt.frame;
 				l->staticReady = qtrue;
 			}
 			// a lamp that moved this frame: the faces the view reads, now,
@@ -5468,6 +5731,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 						R_RtRenderFace(l, 2, l->staticSlot, f);
 						rt.staticDrawn++;
 						l->bakedFaces |= 1 << f;
+						l->bakedReady = rt.frame;
 						RT_FACE_SPENT();
 					}
 				}
@@ -5573,6 +5837,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 		} else if (chosen && l->weight < 1.0f) {
 			rt.easing++;
 		}
+		// its bake taken out while it is lit fully (R_RtLiveIn)
+		R_RtLiveSet(index, R_RtLiveWanted(l, chosen && ready));
 		if (l->weight <= 0 || !ready) {
 			continue;
 		}
@@ -5583,7 +5849,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		// surface's (its shade and glow in data[2]); eight more when its
 		// light on a lightmap is baked, the world alone in its third atlas
 		data[0][3] = R_RtLightShape(l, data[2]);
-		if (l->baked && rt_bake.done && r_rtBakedLamps->integer && (l->noShadow || !r_rtShadows->integer || l->bakedFaces == 63)) {
+		if (l->baked && !l->live && rt_bake.done && r_rtBakedLamps->integer && (l->noShadow || !r_rtShadows->integer || l->bakedFaces == 63)) {
 			data[0][3] += 8.0f;
 		}
 		// eased as it is lit: smoothstep; a flame dips and comes back
@@ -5660,6 +5926,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtUpdateSky(bake, ease);
 	R_RtBounceStep(bake, ease);
 	rt_bake.scale = scale;
+	// the lamps lit live last frame and no longer: their bake put back
+	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
 	// the least a light may add to a pixel and be looked up there (RtLight)
 	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
@@ -5668,6 +5936,16 @@ void R_RtRenderShadows(const refdef_t *fd)
 		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
 			tr.rtNumActive, numChosen, numSorted, numInView, rt.waiting, rt.easing, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
+		{
+			int live = 0, k;
+
+			for (k = 0; k < rt.numLights; k++) {
+				live += rt.lights[k].live ? 1 : 0;
+			}
+			ri.Printf(PRINT_ALL, "realtime lighting: %d lamps lit live with their bake taken out (%d taken out or put back, %d times all put back)\n", live,
+				rt_bake.livePasses, rt_bake.liveClears);
+			rt_bake.livePasses = rt_bake.liveClears = 0;
+		}
 		rt.particleDraws = rt.particleVerts = 0;
 		for (i = 0; r_rtDebug->integer > 2 && i < numBodies; i += 1 + (int)bodies[i * 2 + 1][0]) {
 			int c;
@@ -5684,6 +5962,12 @@ void R_RtRenderShadows(const refdef_t *fd)
 			const vec4_t *d = &tr.rtLightData[i * RT_LIGHT_VEC4S];
 			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f) type %.0f range %.0f color (%.2f %.2f %.2f) bodies %.3f spot (%.2f %.2f %.2f) %.3f shadow %.0f\n",
 				i, d[0][0], d[0][1], d[0][2], d[0][3], d[1][3], d[1][0], d[1][1], d[1][2], d[3][2], d[2][0], d[2][1], d[2][2], d[2][3], d[3][0]);
+			{
+				const rtLight_t *l = &rt.lights[rt.active[i]];
+
+				ri.Printf(PRINT_ALL, "    bake out %d: weight %.2f baked %d slot %d faces %d ready %d moved %.2f shadowed %d\n", l->live, l->weight, l->baked,
+					l->staticSlot, l->bakedFaces, rt.frame - l->bakedReady, Distance(l->origin, l->bakedOrigin), !l->noShadow && r_rtShadows->integer);
+			}
 		}
 	}
 }
@@ -5993,9 +6277,12 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 					int page;
 
 					for (page = 0; page < rt_bake.numPages && page < tr.numLightmaps; page++) {
-						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image && rt_bake.pages[page].dir) {
+						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image && rt_bake.pages[page].dir && rt_bake.pages[page].live
+							&& rt_bake.pages[page].liveDir) {
 							GL_BindToTMU(rt_bake.pages[page].image, TMU_RTDIRECT);
 							GL_BindToTMU(rt_bake.pages[page].dir, TMU_RTDIRECTDIR);
+							GL_BindToTMU(rt_bake.pages[page].live, TMU_RTLIVE);
+							GL_BindToTMU(rt_bake.pages[page].liveDir, TMU_RTLIVEDIR);
 							VectorSet4(direct, rt_bake.scale, rt_bake.scale, rt_bake.scale,
 								r_rtBakedDebug->integer == 1 ? -rt_bake.weight : rt_bake.weight);
 							break;
