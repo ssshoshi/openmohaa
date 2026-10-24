@@ -8,7 +8,10 @@
 //     <model>
 //     {
 //         kind shaded        // bulb, shaded (in a shade or globe), candle, lantern
-//                            // (a flame: it flickers), or off (a lamp that is not lit)
+//                            // (a flame: it flickers), off (a lamp that is not lit), or
+//                            // searchlight (an entity the level's script aims: its
+//                            // light from its first bulb, the lens, the way spot points,
+//                            // standing in for the game's lights where its beam falls)
 //         color 1 0.86 0.68  // its light's colour, where the map gave it none
 //         intensity 120      // as a map light's "light" key, where the map gave it none
 //         bulb x y z         // one a bulb, in the model's frame as drawn
@@ -389,4 +392,23 @@ models/static/german_lantern.tik
 	glass 1 0.9 0.75
 	glassreach 6
 	bulb 0 0 9.5
+}
+
+// ---------------------------------------------------------------- searchlights
+
+// entities global/spotlight.scr turns: the light from the lens, down its beam
+// (the model's -x, its beam's long cone); the base is no lamp, but in the light
+models/miscobj/searchlight.tik
+{
+	kind searchlight
+	color 1 0.97 0.9
+	intensity 40000
+	bulb -18 0 0
+	spot -1 0 0 22
+}
+
+models/miscobj/searchlightbase.tik
+{
+	kind off
+	bulb 0 0 20
 }

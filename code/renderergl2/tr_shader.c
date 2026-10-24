@@ -2663,6 +2663,10 @@ static qboolean ParseShader( char **text )
 		}
 		// skip stuff that only the q3map needs
 		else if ( !Q_stricmpn( token, "q3map", 5 ) ) {
+			// Added in OPM: a surface that lights the map is lit up itself
+			if (!Q_stricmp(token, "q3map_surfacelight")) {
+				shader.rtEmissive = qtrue;
+			}
 			SkipRestOfLine( text );
 			continue;
 		}
@@ -2799,6 +2803,9 @@ static qboolean ParseShader( char **text )
 				|| !Q_stricmp( token, "surfaceColor" )
 				|| !Q_stricmp( token, "surfaceAngle" )
 				|| !Q_stricmp( token, "surfaceDensity" ) ) {
+			if (!Q_stricmp(token, "surfaceLight")) {
+				shader.rtEmissive = qtrue;
+			}
 			SkipRestOfLine(text);
 			continue;
 		}

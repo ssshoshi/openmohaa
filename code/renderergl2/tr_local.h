@@ -523,11 +523,15 @@ enum
 #define TMU_RTSHADOW_BAKED   10
 #define NUM_TEXTURE_UNITS    19
 
-#define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
+#define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
 #define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
 #define RT_CULL_MARGIN  8.0f // past a surface's bounds a light is still counted in, for vertexes they miss
-#define RT_ATLAS_TILES  16 // a side, so 256 faces: 42 lights
+#define RT_ATLAS_TILES  16 // a side, so 256 faces
+#define RT_SLOTS_BIG    32 // lights with whole tiles for faces; the tiles past theirs are cut in four,
+                          // a quarter tile a face for the lights further off (R_RtFaceRect)
+#define RT_SMALL_FIRST  (RT_SLOTS_BIG * 6) // the first tile cut in four: a row's first
+#define RT_SMALL_CODE   4096 // a light's first tile, sent to the shaders, at or past this: quarter tiles
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
 #define RT_MAX_RUN      1023 // of those, for one light
@@ -709,6 +713,9 @@ typedef struct shader_s {
     // Added in OPM: drawn as sprites (spriteGen, or a .spr model's), which the
     // realtime lights light at the corners (RT_STAGE_PARTICLE)
     qboolean rtParticle;
+    // Added in OPM: gives light of its own (q3map_surfacelight: a lit window),
+    // which the compiler put in its lightmap: kept there by the realtime lights
+    qboolean rtEmissive;
     // Set when any stage uses rgbGen lightinggrid or lightingspherical, so the
     // backend knows which of MOH:AA's two entity lighting models to set up.
     int needsLGrid;
