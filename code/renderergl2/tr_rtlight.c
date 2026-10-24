@@ -1775,7 +1775,9 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 6
+#define RT_BOUNCE_VERSION 7
+#define RT_BOUNCE_VALUES  6 // each sample's bounce, the daylight's then the lamps'
+#define RT_BOUNCE_FILE_SIZE(n) (20 + sizeof(float) * (RT_BOUNCE_VALUES + 6) * (n))
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
 
 enum {
@@ -1792,9 +1794,12 @@ typedef struct {
 	vec3_t albedo;
 	float  sky;
 	float  indoor; // R_RtBounceIndoor of it
-	vec3_t direct; // raw lightmap units, as the sun's and the lamps' colours are
+	vec3_t direct; // raw lightmap units, as the sun's and the sky's colours are
 	vec3_t first;  // what bounced onto it once
 	vec3_t given;  // what it gives back: its colour times all of that, for the probes
+	vec3_t directL; // and the same of the lamps' light, apart (RT_BOUNCE_LAMPS)
+	vec3_t firstL;
+	vec3_t givenL;
 	int    cell;
 } rtBounceSample_t;
 
@@ -1828,6 +1833,15 @@ So it comes in as less of the sky is seen, all of it deep in a room.
 */
 #define RT_BOUNCE_IN_FROM 0.05f // seeing this share of the sky it would out in the open, it is in a room: all of the bounce
 #define RT_BOUNCE_IN_TO   0.25f // and this share (a courtyard, the street): none
+
+/*
+The lamps' light bounces apart from the daylight's (RT_BOUNCE_LAMPS): what
+stands in for the daylight's out under the sky is the sky's fill, and lamp
+light off the ground beside a lamp at night is no sky's. Its bounce is as it
+would be, under a roof or in the street, and r_rtBounce's boost is the
+daylight's alone: kept together, a prop by a lamp at the edge of the eaves
+went from three times the bounce to none as it was nudged out from under.
+*/
 
 // How far in a point is (0 out under the sky, 1 deep in a room), by the share
 // of the sky it sees of what it would see facing the same way in the open
@@ -1897,6 +1911,10 @@ static void R_RtBounceFree(void)
 	R_RtProbesFree();
 	// the shaders are numbered again for the next map
 	Com_Memset(rt_albedoDone, 0, sizeof(rt_albedoDone));
+	if (tr.rtBounceLampImage) {
+		R_FreeImage(tr.rtBounceLampImage);
+		tr.rtBounceLampImage = NULL;
+	}
 	if (tr.rtBounceImage) {
 		R_FreeImage(tr.rtBounceImage);
 		tr.rtBounceImage = NULL;
@@ -2144,20 +2162,17 @@ static void R_RtBounceSamples(void)
 	}
 }
 
-// What the lights, the sun and the sky put straight on a point facing
-// normal, which sees sky of the sky, raw
-static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out)
+// What the sun and the sky (out) and the lamps (lamps) put straight on a
+// point facing normal, which sees sky of the sky, raw
+static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out, vec3_t lamps)
 {
-	// r_rtBounce makes the daylight's bounce as bright as the compiler's
-	// rooms were; a lamp's light bounces as it would (as bright again lit a
-	// prop by a lamp at night all round, as the ground under the lamp)
-	const float lampShare = 1.0f / Q_max(1.0f, r_rtBounce ? r_rtBounce->value : 1.0f);
 	trace_t trace;
 	vec3_t  zero = {0, 0, 0}, from, to;
 	int     i;
 
 	VectorMA(xyz, 2.0f, normal, from);
 	VectorClear(out);
+	VectorClear(lamps);
 	if (rt.sun) {
 		const float ndl = DotProduct(normal, rt.sunDir);
 
@@ -2219,13 +2234,13 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 				continue;
 			}
 		}
-		VectorMA(out, att * r_rtScale->value * lampShare, l->color, out);
+		VectorMA(lamps, att * r_rtScale->value, l->color, lamps);
 	}
 }
 
 static void R_RtBounceDirect(rtBounceSample_t *s)
 {
-	R_RtBounceDirectAt(s->xyz, s->normal, s->sky, s->direct);
+	R_RtBounceDirectAt(s->xyz, s->normal, s->sky, s->direct, s->directL);
 }
 
 // A point no sample is near (a model, a door): how much of the sky is over
@@ -2328,7 +2343,7 @@ sample there gives back; on a face never drawn, the sample seen behind it;
 on the clip brush round a model, the light there times the model's colour;
 else the light there times RT_BOUNCE_ALBEDO. Its sample, -1 none.
 */
-static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean withFirst, vec3_t out)
+static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean withFirst, vec3_t out, vec3_t outL)
 {
 	vec3_t albedo;
 	int    hit = -1;
@@ -2344,22 +2359,31 @@ static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean w
 
 		if (withFirst) {
 			VectorCopy(o->given, out);
+			VectorCopy(o->givenL, outL);
 		} else {
 			VectorCopy(o->direct, out);
+			VectorCopy(o->directL, outL);
 			out[0] *= o->albedo[0];
 			out[1] *= o->albedo[1];
 			out[2] *= o->albedo[2];
+			outL[0] *= o->albedo[0];
+			outL[1] *= o->albedo[1];
+			outL[2] *= o->albedo[2];
 		}
 		return hit;
 	}
-	R_RtBounceDirectAt(trace->endpos, trace->plane.normal, R_RtBounceSkyAt(trace->endpos, trace->plane.normal), out);
+	R_RtBounceDirectAt(trace->endpos, trace->plane.normal, R_RtBounceSkyAt(trace->endpos, trace->plane.normal), out, outL);
 	if ((trace->surfaceFlags & SURF_NODRAW) && R_RtModelAlbedoAt(trace->endpos, albedo)) {
 		out[0] *= albedo[0];
 		out[1] *= albedo[1];
 		out[2] *= albedo[2];
+		outL[0] *= albedo[0];
+		outL[1] *= albedo[1];
+		outL[2] *= albedo[2];
 		rt_bounce.models++;
 	} else {
 		VectorScale(out, RT_BOUNCE_ALBEDO, out);
+		VectorScale(outL, RT_BOUNCE_ALBEDO, outL);
 		rt_bounce.misses++;
 		if (trace->shaderNum >= 0 && trace->shaderNum < 4096) {
 			rt_missByShader[trace->shaderNum]++;
@@ -2381,9 +2405,7 @@ static void R_RtBounceGather(int index)
 		hits[r] = -1;
 	}
 	VectorClear(s->first);
-	if (s->sky >= RT_BOUNCE_OUTDOOR) {
-		return;
-	}
+	VectorClear(s->firstL);
 	VectorMA(s->xyz, 2.0f, s->normal, from);
 	PerpendicularVector(t1, s->normal);
 	CrossProduct(s->normal, t1, t2);
@@ -2407,14 +2429,20 @@ static void R_RtBounceGather(int index)
 			continue;
 		}
 		{
-			vec3_t given;
+			vec3_t given, givenL;
 
 			// a sample's is counted again for the second bounce; what had
 			// none (a model) once
-			hit     = R_RtBounceRadiance(&trace, dir, qfalse, given);
+			hit     = R_RtBounceRadiance(&trace, dir, qfalse, given, givenL);
 			hits[r] = hit;
 			VectorMA(s->first, 1.0f / rt_bounce.rays, given, s->first);
+			VectorMA(s->firstL, 1.0f / rt_bounce.rays, givenL, s->firstL);
 		}
+	}
+	// out under the sky its fill stands in for the daylight's bounce, not
+	// for the lamps' (which is why the rays are traced out there at all)
+	if (s->sky >= RT_BOUNCE_OUTDOOR) {
+		VectorClear(s->first);
 	}
 }
 
@@ -2443,6 +2471,7 @@ typedef struct {
 	int    x, y, z;
 	int    state;
 	vec4_t c[3]; // r, g, b: the way it is brightest (x y z), the mean (w)
+	vec4_t cl[3]; // the same of the lamps' light, which bounces as it would wherever it is
 	float  indoor; // R_RtBounceIndoor of the share of the sky it sees over it
 } rtProbe_t;
 
@@ -2525,6 +2554,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 	}
 	for (k = 0; k < 3; k++) {
 		VectorClear4(p->c[k]);
+		VectorClear4(p->cl[k]);
 	}
 	up = open = 0;
 	for (r = 0; r < RT_PROBE_RAYS; r++) {
@@ -2532,7 +2562,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		const float z   = 1.0f - (2.0f * r + 1.0f) / RT_PROBE_RAYS;
 		const float rad = sqrt(Q_max(0.0f, 1.0f - z * z));
 		const float phi = r * 2.399963f;
-		vec3_t      dir, to, given;
+		vec3_t      dir, to, given, givenL;
 		trace_t     trace;
 
 		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
@@ -2548,11 +2578,13 @@ static void R_RtProbeCompute(rtProbe_t *p)
 			}
 			continue;
 		}
-		R_RtBounceRadiance(&trace, dir, qtrue, given);
+		R_RtBounceRadiance(&trace, dir, qtrue, given, givenL);
 		// what comes from dir: m + v . N over the sphere (a cosine's two first terms)
 		for (k = 0; k < 3; k++) {
 			p->c[k][3] += given[k] / RT_PROBE_RAYS;
 			VectorMA(p->c[k], 2.0f * given[k] / RT_PROBE_RAYS, dir, p->c[k]);
+			p->cl[k][3] += givenL[k] / RT_PROBE_RAYS;
+			VectorMA(p->cl[k], 2.0f * givenL[k] / RT_PROBE_RAYS, dir, p->cl[k]);
 		}
 	}
 	// In a wall: the BSP's leaves leave the detail brushes out, and a probe
@@ -2602,6 +2634,7 @@ static qboolean R_RtProbesAt(const vec3_t origin, vec4_t out[3])
 		}
 		for (k = 0; k < 3; k++) {
 			VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
+			VectorMA4(out[k], w, p->cl[k], out[k]);
 		}
 		total += w;
 	}
@@ -2699,6 +2732,7 @@ static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qbo
 			}
 			for (k = 0; k < 3; k++) {
 				VectorMA4(out[k], w * vis * R_RtBounceScale(p->indoor), p->c[k], out[k]);
+				VectorMA4(out[k], w * vis, p->cl[k], out[k]);
 			}
 			total += w * vis;
 		}
@@ -2786,9 +2820,9 @@ static void R_RtProbeInfo_f(void)
 			}
 			VectorSet(from, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
 			ri.CM_BoxTrace(&trace, from, middle, zero, zero, 0, CONTENTS_SOLID, qfalse);
-			ri.Printf(PRINT_ALL, "  probe %d at (%.0f %.0f %.0f): state %d weight %.2f indoor %.2f mean %.2f %.2f %.2f; line %s %.2f, stops %.0f short\n", c,
-				from[0], from[1], from[2], p->state, w, p->indoor, p->c[0][3], p->c[1][3], p->c[2][3], trace.startsolid ? "startsolid" : "",
-				trace.fraction, Distance(trace.endpos, middle));
+			ri.Printf(PRINT_ALL, "  probe %d at (%.0f %.0f %.0f): state %d weight %.2f indoor %.2f mean %.2f %.2f %.2f lamps %.2f %.2f %.2f; line %s %.2f, stops %.0f short\n", c,
+				from[0], from[1], from[2], p->state, w, p->indoor, p->c[0][3], p->c[1][3], p->c[2][3], p->cl[0][3], p->cl[1][3], p->cl[2][3],
+				trace.startsolid ? "startsolid" : "", trace.fraction, Distance(trace.endpos, middle));
 		}
 		on = R_RtProbesRound(middle, reach, out, &waiting);
 		ri.Printf(PRINT_ALL, "  blended: %s%s mean %.2f %.2f %.2f, toward %.2f %.2f %.2f (red); moved %d\n", on ? "on" : "off", waiting ? " (waiting)" : "",
@@ -2832,7 +2866,6 @@ static unsigned R_RtBounceKey(void)
 	v[n++] = (float)rt_bounce.rays;
 	v[n++] = r_rtSky->value;
 	v[n++] = r_rtScale->value;
-	v[n++] = r_rtBounce ? r_rtBounce->value : 0.0f; // the lamps' share of what bounces
 	VectorCopy(rt.sunDir, &v[n]);
 	n += 3;
 	VectorCopy(rt.sunColor, &v[n]);
@@ -2861,7 +2894,9 @@ static const char *R_RtBounceFile(void)
 // the next chart of the page
 static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec4_t out);
 
-static void R_RtBounceUpload(const float *values)
+// One of the bounce's images: the daylight's (offset 0, with how far in each
+// texel is in its alpha) or the lamps' (offset 3)
+static image_t *R_RtBounceImageOf(const float *values, int offset, const char *name)
 {
 	const int    w = tr.lightmaps[0]->width, h = tr.lightmaps[0]->height;
 	float       *texels = ri.Malloc(sizeof(float) * 4 * w * h);
@@ -2909,7 +2944,7 @@ static void R_RtBounceUpload(const float *values)
 					VectorMA(normal, b[k], v[k]->normal, normal);
 				}
 				// its alpha 1 + how far in it is, while 0 says not yet filled
-				if (VectorNormalize(normal) > 0 && R_RtBounceAround(xyz, normal, values, &texels[(y * w + x) * 4])) {
+				if (VectorNormalize(normal) > 0 && R_RtBounceAround(xyz, normal, values + offset, &texels[(y * w + x) * 4])) {
 					texels[(y * w + x) * 4 + 3] += 1.0f;
 				}
 			}
@@ -2951,10 +2986,20 @@ static void R_RtBounceUpload(const float *values)
 	for (i = 0; i < w * h; i++) {
 		texels[i * 4 + 3] = Q_max(0.0f, texels[i * 4 + 3] - 1.0f);
 	}
-	tr.rtBounceImage = R_CreateImage("*rtbounce", NULL, w, h, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
-	qglTextureSubImage2DEXT(tr.rtBounceImage->texnum, GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, texels);
-	ri.Free(texels);
-	ri.Free(next);
+	{
+		image_t *image = R_CreateImage(name, NULL, w, h, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
+
+		qglTextureSubImage2DEXT(image->texnum, GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, texels);
+		ri.Free(texels);
+		ri.Free(next);
+		return image;
+	}
+}
+
+static void R_RtBounceUpload(const float *values)
+{
+	tr.rtBounceImage     = R_RtBounceImageOf(values, 0, "*rtbounce");
+	tr.rtBounceLampImage = R_RtBounceImageOf(values, 3, "*rtbouncelamps");
 }
 
 // The bounce at a point of a surface, from the samples round it on the same
@@ -3007,7 +3052,7 @@ static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const fl
 						}
 						w = 1.0f - d / RT_BOUNCE_SMOOTH;
 						w *= w;
-						VectorMA(sum, w, &values[j * 3], sum);
+						VectorMA(sum, w, &values[j * RT_BOUNCE_VALUES], sum);
 						indoor += w * o->indoor;
 						total += w;
 					}
@@ -3026,49 +3071,61 @@ static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const fl
 static void R_RtBounceFinish(void)
 {
 	const int w = rt_bounce.width, h = rt_bounce.height;
-	float    *values = ri.Malloc(sizeof(float) * 3 * Q_max(1, rt_bounce.numSamples));
+	float    *values = ri.Malloc(sizeof(float) * RT_BOUNCE_VALUES * Q_max(1, rt_bounce.numSamples));
 	int       i, r, indoor = 0;
 
 	// the second bounce: what the first gave each, given back once more
 	for (i = 0; i < rt_bounce.numSamples; i++) {
 		const rtBounceSample_t *s    = &rt_bounce.samples[i];
 		const int              *hits = &rt_bounce.hits[i * rt_bounce.rays];
-		vec3_t                  total;
+		vec3_t                  total, totalL;
+		int                     k;
 
 		VectorCopy(s->first, total);
+		VectorCopy(s->firstL, totalL);
 		for (r = 0; r < rt_bounce.rays; r++) {
 			if (hits[r] >= 0) {
 				const rtBounceSample_t *o = &rt_bounce.samples[hits[r]];
 
-				total[0] += o->first[0] * o->albedo[0] / rt_bounce.rays;
-				total[1] += o->first[1] * o->albedo[1] / rt_bounce.rays;
-				total[2] += o->first[2] * o->albedo[2] / rt_bounce.rays;
+				for (k = 0; k < 3; k++) {
+					total[k] += o->first[k] * o->albedo[k] / rt_bounce.rays;
+					totalL[k] += o->firstL[k] * o->albedo[k] / rt_bounce.rays;
+				}
 			}
 		}
 		if (s->sky < RT_BOUNCE_OUTDOOR) {
 			indoor++;
+		} else {
+			VectorClear(total); // the sky's fill there (R_RtBounceGather)
 		}
-		VectorCopy(total, &values[i * 3]);
+		VectorCopy(total, &values[i * RT_BOUNCE_VALUES]);
+		VectorCopy(totalL, &values[i * RT_BOUNCE_VALUES + 3]);
 	}
 	for (i = 0; i < rt_bounce.numSamples; i++) {
 		rtBounceSample_t *s = &rt_bounce.samples[i];
+		int               k;
 
 		VectorAdd(s->direct, s->first, s->given);
-		s->given[0] *= s->albedo[0];
-		s->given[1] *= s->albedo[1];
-		s->given[2] *= s->albedo[2];
+		VectorAdd(s->directL, s->firstL, s->givenL);
+		for (k = 0; k < 3; k++) {
+			s->given[k] *= s->albedo[k];
+			s->givenL[k] *= s->albedo[k];
+		}
 	}
 
 	// kept: the key, the size, each sample's bounce and what it gives back
 	{
-		const int size = 20 + sizeof(float) * 6 * rt_bounce.numSamples;
+		const int size = RT_BOUNCE_FILE_SIZE(rt_bounce.numSamples);
 		byte     *file = ri.Malloc(size);
+		byte     *at;
 		int       head[5] = { RT_BOUNCE_VERSION, (int)rt_bounce.key, w, h, rt_bounce.numSamples };
 
 		Com_Memcpy(file, head, 20);
-		Com_Memcpy(file + 20, values, sizeof(float) * 3 * rt_bounce.numSamples);
-		for (i = 0; i < rt_bounce.numSamples; i++) {
-			Com_Memcpy(file + 20 + sizeof(float) * 3 * rt_bounce.numSamples + i * 12, rt_bounce.samples[i].given, 12);
+		Com_Memcpy(file + 20, values, sizeof(float) * RT_BOUNCE_VALUES * rt_bounce.numSamples);
+		at = file + 20 + sizeof(float) * RT_BOUNCE_VALUES * rt_bounce.numSamples;
+		for (i = 0; i < rt_bounce.numSamples; i++, at += 24) {
+			Com_Memcpy(at, rt_bounce.samples[i].given, 12);
+			Com_Memcpy(at + 12, rt_bounce.samples[i].givenL, 12);
 		}
 		ri.FS_WriteFile(R_RtBounceFile(), file, size);
 		ri.Free(file);
@@ -3116,18 +3173,19 @@ static qboolean R_RtBounceLoad(void)
 	if (len <= 0) {
 		return qfalse;
 	}
-	if (len == 20 + (long)sizeof(float) * 6 * rt_bounce.numSamples) {
+	if (len == (long)RT_BOUNCE_FILE_SIZE(rt_bounce.numSamples)) {
 		int head[5];
 
 		Com_Memcpy(head, buffer.b, 20);
 		if (head[0] == RT_BOUNCE_VERSION && (unsigned)head[1] == rt_bounce.key && head[2] == w && head[3] == h
 			&& head[4] == rt_bounce.numSamples) {
-			const byte *given = buffer.b + 20 + sizeof(float) * 3 * rt_bounce.numSamples;
+			const byte *given = buffer.b + 20 + sizeof(float) * RT_BOUNCE_VALUES * rt_bounce.numSamples;
 			int         i;
 
 			R_RtBounceUpload((const float *)(buffer.b + 20));
 			for (i = 0; i < rt_bounce.numSamples; i++) {
-				Com_Memcpy(rt_bounce.samples[i].given, given + i * 12, 12);
+				Com_Memcpy(rt_bounce.samples[i].given, given + i * 24, 12);
+				Com_Memcpy(rt_bounce.samples[i].givenL, given + i * 24 + 12, 12);
 			}
 			rt_probes = ri.Malloc(sizeof(rtProbe_t) * RT_PROBE_SLOTS);
 			Com_Memset(rt_probes, 0, sizeof(rtProbe_t) * RT_PROBE_SLOTS);
@@ -5705,8 +5763,10 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 				vec4_t   none = { 0, 0, 0, 0 }, probe[3];
 				qboolean on   = qfalse;
 
-				if (sky > 1.5f && tr.rtBounceImage && tr.rtBounce[3] > 0 && lightmap == tr.lightmaps[0]) {
+				if (sky > 1.5f && tr.rtBounceImage && tr.rtBounceLampImage && tr.rtBounce[3] > 0 && lightmap == tr.lightmaps[0]) {
 					GL_BindToTMU(tr.rtBounceImage, TMU_RTBOUNCE);
+					// made with it (R_RtBounceUpload)
+					GL_BindToTMU(tr.rtBounceLampImage, TMU_RTBOUNCELAMP);
 					on = qtrue;
 				} else if (sky < 1.5f && tr.rtBounce[3] > 0 && (backEnd.currentStaticModel || (backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity))) {
 					vec3_t origin;
