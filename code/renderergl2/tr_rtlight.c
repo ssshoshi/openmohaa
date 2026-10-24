@@ -152,6 +152,8 @@ typedef struct {
 	vec3_t   pool;         // where it lights most: what its cone, or straight down, meets (R_RtFindPools)
 	qboolean seenByView;   // the view sees its bulbs or its pool, as last looked (R_RtViewSees)
 	int      seenTested;   // the frame that was looked at, 0 never
+	int      entity;       // an entity lamp's (R_RtEntityLamps): its entity, -1 none
+	int      entityFrame;  // the frame it was last in the scene
 	float    area;         // a lit surface's (a window's): how far across it is, its light
 	                       // going out the way spotDir points (R_RtAreaLights)
 	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
@@ -163,6 +165,8 @@ static struct {
 	qboolean   loaded;
 	rtLight_t *lights;
 	int        numLights;
+	int        numMapLights; // those before the entity lamps' (R_RtEntityLamps)
+	qboolean   dlightTaken[MAX_DLIGHTS]; // the game's lights an entity lamp's light stands in for, this frame
 	int       *fromSphere; // each sphere light's, -1 none (dark, for models only)
 	qboolean   leafLights; // the map lists the lights reaching each leaf
 	int        seenCluster;  // the view's cluster the list below is for, -1 none
@@ -412,7 +416,8 @@ enum {
 	RT_LAMP_SHADED,
 	RT_LAMP_CANDLE,
 	RT_LAMP_LANTERN,
-	RT_LAMP_OFF
+	RT_LAMP_OFF,
+	RT_LAMP_SEARCHLIGHT // an entity's, aimed by the game (R_RtEntityLamps)
 };
 
 typedef struct {
@@ -497,6 +502,7 @@ static void R_RtLoadLampDefs(void)
 					  : !Q_stricmp(token, "candle")  ? RT_LAMP_CANDLE
 					  : !Q_stricmp(token, "lantern") ? RT_LAMP_LANTERN
 					  : !Q_stricmp(token, "off")     ? RT_LAMP_OFF
+					  : !Q_stricmp(token, "searchlight") ? RT_LAMP_SEARCHLIGHT
 													 : RT_LAMP_SHADED;
 			if (def->kind == RT_LAMP_CANDLE || def->kind == RT_LAMP_LANTERN) {
 				VectorSet(def->color, 1.0f, 0.68f, 0.38f);
@@ -575,6 +581,160 @@ static float R_RtRangeOf(const vec3_t color)
 	return Q_min(4096.0f, sqrt(brightest / RT_CUTOFF));
 }
 
+/*
+=============================================================================
+
+THE LAMPS THE GAME MOVES
+
+A searchlight is an entity the level's script turns (global/spotlight.scr):
+its light was a pair of the game's lights (dlights) on the ground where its
+beam falls, moved there each frame, so that the light came up from the
+ground and not out of the lamp. With r_realtimeLighting 2 a model lamps.txt
+gives "kind searchlight" lights from its lens, the way its beam points, a
+spot light with its shadows; the game's lights in its beam are its own, and
+go. The lamp's models cast no shadow of anything (it is in its light).
+=============================================================================
+*/
+
+#define RT_ENTITY_LAMPS      8
+#define RT_SEARCHLIGHT_SLACK 48.0f // a game's light this far off its beam is in it
+
+static const rtLampDef_t *rt_modelDefs[MAX_MOD_KNOWN];
+static byte               rt_modelDefLooked[MAX_MOD_KNOWN];
+
+// The lamp a model is, by its handle, looked up once a map
+static const rtLampDef_t *R_RtModelLampDef(qhandle_t hModel)
+{
+	const model_t *model;
+
+	if (hModel <= 0 || hModel >= MAX_MOD_KNOWN || !rt_numLampDefs) {
+		return NULL;
+	}
+	if (!rt_modelDefLooked[hModel]) {
+		rt_modelDefLooked[hModel] = 1;
+		model                     = R_GetModelByHandle(hModel);
+		rt_modelDefs[hModel]      = model && model->type == MOD_TIKI ? R_RtLampDef(model->name) : NULL;
+	}
+	return rt_modelDefs[hModel];
+}
+
+static void R_RtEntityLamps(void)
+{
+	int i, j, k;
+
+	Com_Memset(rt.dlightTaken, 0, sizeof(rt.dlightTaken));
+	if (!rt_numLampDefs || r_realtimeLighting->integer != 2 || !r_rtLamps->integer) {
+		return;
+	}
+
+	for (i = 0; i < tr.refdef.num_entities; i++) {
+		const refEntity_t *e = &tr.refdef.entities[i].e;
+		const rtLampDef_t *def;
+		rtLight_t         *l = NULL;
+		vec3_t             lens, dir, axis[3];
+		float              cone, scale, nearest = 0;
+
+		if (e->reType != RT_MODEL || !(def = R_RtModelLampDef(e->hModel)) || def->kind != RT_LAMP_SEARCHLIGHT || !def->spot) {
+			continue;
+		}
+		if (e->entityNumber < 0 || e->entityNumber >= ENTITYNUM_WORLD) {
+			continue;
+		}
+
+		// its light: the one it had, else one no entity has had for a while
+		for (j = rt.numMapLights; j < rt.numLights; j++) {
+			if (rt.lights[j].entity == e->entityNumber) {
+				l = &rt.lights[j];
+				break;
+			}
+		}
+		for (j = rt.numMapLights; j < rt.numLights && !l; j++) {
+			if (rt.lights[j].entity < 0 || (rt.frame - rt.lights[j].entityFrame > 30 && rt.lights[j].weight <= 0)) {
+				l = &rt.lights[j];
+			}
+		}
+		if (!l) {
+			continue;
+		}
+
+		scale = e->scale > 0 ? e->scale : 1.0f;
+		for (k = 0; k < 3; k++) {
+			VectorCopy(e->axis[k], axis[k]);
+			VectorNormalize(axis[k]);
+		}
+		VectorCopy(e->origin, lens);
+		VectorClear(dir);
+		for (k = 0; k < 3; k++) {
+			VectorMA(lens, def->bulbs[0][k] * scale, axis[k], lens);
+			VectorMA(dir, def->spotDir[k], axis[k], dir);
+		}
+		VectorNormalize(dir);
+		cone = tan(DEG2RAD(def->spotAngle * 0.5f));
+
+		// the game's lights in its beam: where it falls, its own
+		for (j = 0; j < tr.refdef.num_dlights && j < MAX_DLIGHTS; j++) {
+			const dlight_t *dl = &tr.refdef.dlights[j];
+			vec3_t          v;
+			float           along, off;
+
+			VectorSubtract(dl->origin, lens, v);
+			along = DotProduct(v, dir);
+			if (along <= 0) {
+				continue;
+			}
+			off = sqrt(Q_max(0.0f, DotProduct(v, v) - Square(along)));
+			if (off > Q_max(dl->radius * 0.5f, along * cone) + RT_SEARCHLIGHT_SLACK) {
+				continue;
+			}
+			rt.dlightTaken[j] = qtrue;
+			// aimed at the nearest of them, where the game puts it
+			if (!nearest || along < nearest) {
+				nearest = along;
+				VectorNormalize2(v, dir);
+			}
+		}
+
+		if (l->entity != e->entityNumber) {
+			// a new one: its shadows from where it is
+			if (l->staticSlot >= 0) {
+				rt.staticOwner[l->staticSlot] = -1;
+			}
+			l->staticSlot  = -1;
+			l->staticFaces = 0;
+			l->staticReady = qfalse;
+			l->bakedFaces  = 0;
+			l->weight      = 0;
+			l->entity      = e->entityNumber;
+			l->cluster     = R_RtClusterAt(e->origin);
+			VectorCopy(e->origin, l->origin);
+		}
+		// the lens turns round its pivot: its shadows are drawn again only
+		// when it has gone a few units, from the pivot, which stands still
+		if (DistanceSquared(e->origin, l->origin) > Square(RT_LIGHT_MOVE_EPSILON)) {
+			VectorCopy(e->origin, l->origin);
+			l->movedFrame  = rt.frame;
+			l->staticFaces = 0;
+			l->cluster     = R_RtClusterAt(l->origin);
+		}
+		l->entityFrame  = rt.frame;
+		l->spot         = qtrue;
+		l->radiusByDist = cone;
+		VectorCopy(dir, l->spotDir);
+		VectorScale(def->color, def->intensity * 7500.0f, l->color);
+		l->range = R_RtRangeOf(l->color);
+		VectorMA(l->origin, Q_min(l->range, nearest > 0 ? nearest : 512.0f), dir, l->pool);
+	}
+
+	// those gone from the scene go dark (eased out as lights not chosen)
+	for (j = rt.numMapLights; j < rt.numLights; j++) {
+		rtLight_t *l = &rt.lights[j];
+
+		if (l->entity >= 0 && l->entityFrame != rt.frame && l->weight <= 0) {
+			l->range = 0;
+		}
+	}
+}
+
 // Whether a light at from sees a lamp's bulbs at to: no wall between them.
 // Traced from the lamp, which hangs in the room, out to the light, which the
 // designer put anywhere, often a hand from a ceiling or a wall: what stops
@@ -625,7 +785,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		const rtLampDef_t      *def;
 		lamp_t                 *lamp;
 
-		if (!sm->tiki || !(def = R_RtLampDef(sm->model)) || !def->numBulbs) {
+		if (!sm->tiki || !(def = R_RtLampDef(sm->model)) || !def->numBulbs || def->kind == RT_LAMP_SEARCHLIGHT) {
 			continue;
 		}
 		isLamp[i]       = 1;
@@ -658,6 +818,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		l->source     = -1;
 		l->mergedInto = -1;
 		l->staticSlot = -1;
+		l->entity     = -1;
 		l->fixture    = lamp->model;
 		l->lamp       = qtrue;
 		l->cluster    = R_RtClusterAt(lamp->centre);
@@ -834,10 +995,13 @@ A window cut in pieces is one light.
 
 #define RT_AREA_MERGE 1.1f // pieces of one surface whose radii together reach this far apart are one
 #define RT_AREA_OUT   8.0f // the light this far in front of its surface, at most
+#define RT_AREA_SCALE 0.35f // of its light: the compiler's lightmaps have a lit window light
+                            // little round it, its sphere light (for models) a lot
 
 // A lit surface's light, from its sphere light (still in the spot's terms)
 static void R_RtAreaLight(rtLight_t *l)
 {
+	VectorScale(l->color, RT_AREA_SCALE, l->color);
 	l->area         = Q_max(8.0f, -l->radiusByDist);
 	l->spot         = qfalse;
 	l->radiusByDist = 0;
@@ -1951,7 +2115,7 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 		vec3_t           toLight;
 		float            d2, d, ndl, fade, att;
 
-		if (l->range <= 0) {
+		if (l->range <= 0 || l->entity >= 0) {
 			continue;
 		}
 		VectorSubtract(l->origin, xyz, toLight);
@@ -1966,8 +2130,12 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 		}
 		fade = 1.0f - d2 / Square(l->range);
 		att  = ndl * fade * fade / Q_max(d2, l->lamp ? Square(RT_LAMP_NEAR) : l->area > 0 ? Square(l->area) : 256.0f);
-		if (l->area > 0 && DotProduct(toLight, l->spotDir) > 0) {
-			continue; // behind its surface
+		if (l->area > 0) {
+			// less the further from straight out of its surface
+			att *= Q_max(0.0f, -DotProduct(toLight, l->spotDir) / Q_max(d, 1e-3f));
+			if (att <= 0) {
+				continue;
+			}
 		}
 		if (l->spot) {
 			const float along = -DotProduct(toLight, l->spotDir);
@@ -2512,7 +2680,7 @@ static unsigned R_RtBounceKey(void)
 	VectorCopy(rt.skyColor, &v[n]);
 	n += 3;
 	RT_HASH(v, n);
-	for (i = 0; i < rt.numLights; i++) {
+	for (i = 0; i < rt.numMapLights; i++) {
 		RT_HASH(rt.lights[i].origin, 3);
 		RT_HASH(rt.lights[i].color, 3);
 		RT_HASH(&rt.lights[i].range, 1);
@@ -3084,7 +3252,7 @@ void R_RtLoadWorld(void)
 	}
 
 	// and a light for each static model, which may be a lamp (R_RtLightsAtLamps)
-	rt.lights     = ri.Malloc(sizeof(rtLight_t) * Q_max(1, tr.numSLights + tr.world->numStaticModels));
+	rt.lights     = ri.Malloc(sizeof(rtLight_t) * (tr.numSLights + tr.world->numStaticModels + RT_ENTITY_LAMPS));
 	rt.fromSphere = ri.Malloc(sizeof(int) * Q_max(1, tr.numSLights));
 	rt.numLights  = 0;
 	for (i = 0; i < tr.numSLights; i++) {
@@ -3109,6 +3277,7 @@ void R_RtLoadWorld(void)
 		l->source     = i;
 		l->mergedInto = -1;
 		l->fixture    = -1;
+		l->entity     = -1;
 		VectorCopy(sl->origin, l->origin);
 		VectorScale(sl->color, sl->intensity * 7500.0f, l->color);
 		l->spot         = sl->spot_light ? qtrue : qfalse;
@@ -3138,6 +3307,21 @@ void R_RtLoadWorld(void)
 
 	R_RtLightsAtFixtures();
 	R_RtFindPools();
+
+	// room for the lamps the game moves, which are entities (R_RtEntityLamps)
+	rt.numMapLights = rt.numLights;
+	for (i = 0; i < RT_ENTITY_LAMPS; i++) {
+		rtLight_t *l = &rt.lights[rt.numLights++];
+
+		Com_Memset(l, 0, sizeof(*l));
+		l->source     = -1;
+		l->mergedInto = -1;
+		l->fixture    = -1;
+		l->staticSlot = -1;
+		l->entity     = -1;
+		l->cluster    = -1;
+	}
+	Com_Memset(rt_modelDefLooked, 0, sizeof(rt_modelDefLooked));
 
 	// whether the map lists the lights reaching each leaf (R_RtMarkSeenLights)
 	for (i = tr.world->numDecisionNodes; i < tr.world->numnodes && !rt.leafLights; i++) {
@@ -3450,6 +3634,10 @@ static int R_RtTrackCasters(rtMover_t *movers)
 
 		model = R_GetModelByHandle(ent->e.hModel);
 		if (!model) {
+			continue;
+		}
+		// a lamp (lamps.txt): its light is in it
+		if (R_RtModelLampDef(ent->e.hModel)) {
 			continue;
 		}
 
@@ -4131,6 +4319,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	rt.movingDrawn = 0;
 
 	R_RtFollowFixtures();
+	R_RtEntityLamps();
 
 	// lightmap units: what R_ColorShiftLightingBytes does to them, over 255
 	shift = r_mapOverBrightBits->integer - tr.overbrightBits;
@@ -4177,7 +4366,11 @@ void R_RtRenderShadows(const refdef_t *fd)
 		vec4_t     colorRange;
 		float      lightReach;
 
-		if (l->range <= 0 || (seen && l->visFrame != rt.frame)) {
+		// an entity lamp is in no list of the map's: those that may be seen
+		// are where the view sees them (R_RtViewSees), and gone from the
+		// scene, they are not lit
+		if (l->range <= 0 || (seen && l->entity < 0 && l->visFrame != rt.frame)
+			|| (l->entity >= 0 && l->entityFrame != rt.frame)) {
 			continue;
 		}
 		// how far it gives a pixel enough to see (R_RtReach)
@@ -4444,7 +4637,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 			VectorCopy(l->spotDir, data[2]);
 		}
 		// a point light's: how near it its light stops growing (RtLight)
-		data[2][3] = l->spot ? l->radiusByDist : l->lamp ? RT_LAMP_NEAR : l->area > 0 ? l->area : 0.0f;
+		// (a lit surface's less than nothing: its light falls off from straight out of it)
+		data[2][3] = l->spot ? l->radiusByDist : l->lamp ? RT_LAMP_NEAR : l->area > 0 ? -l->area : 0.0f;
 		data[3][0] = r_rtShadows->integer && !l->noShadow ? R_RtSlotCode(l->staticSlot) : -1.0f;
 		data[3][1] = dynamicTile;
 		// the people are in its shadow faces as they are, or else capsules
@@ -4462,8 +4656,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 		vec4_t         *data;
 		float           intensity;
 
-		if (dl->radius <= 0) {
-			continue;
+		if (dl->radius <= 0 || (i < MAX_DLIGHTS && rt.dlightTaken[i])) {
+			continue; // a searchlight's pool, lit from its lamp (R_RtEntityLamps)
 		}
 		intensity = 96.0f * Square(dl->radius * 0.5f);
 

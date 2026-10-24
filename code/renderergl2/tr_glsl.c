@@ -622,7 +622,10 @@ static const char *rt_glsl =
 	"			vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"			float shut = length(l2.xyz);\n"
 	"			att = ndl * fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
-	"			if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) / (d * shut));\n"
+	// a lit surface's (its "near" less than nothing): what it gives
+	// falls off with the angle from straight out of it (l2.xyz into it)
+	"			if (l2.w < 0.0) att *= max(0.0, dot(toLight, l2.xyz)) / (d * shut);\n"
+	"			else if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) / (d * shut));\n"
 	"			else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
 	"		}\n"
 	"		else if (l0.w > 0.5 && !added)\n"
@@ -725,7 +728,8 @@ static const char *rt_glsl =
 	"			vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"			float shut = length(l2.xyz);\n"
 	"			att = fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
-	"			if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);\n"
+	"			if (l2.w < 0.0) att *= max(0.0, dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut;\n"
+	"			else if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);\n"
 	"			else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);\n"
 	"		}\n"
 	"		else if (l0.w > 0.5 && !added)\n"
