@@ -2679,18 +2679,22 @@ static float R_RtStaticModelMiddle(const cStaticModelUnpacked_t *sm, vec3_t out)
 // A static model's bounce, worked out once
 static qboolean R_RtStaticModelProbe(cStaticModelUnpacked_t *sm, vec4_t out[3])
 {
-	if (sm->rtProbeState == 0 || sm->moved) {
+	// one knocked about: the probes round its middle, blended, as a person's.
+	// Those that see it changed as it turned a little, and it went from lit
+	// to dark all at once
+	if (sm->moved) {
+		vec3_t middle;
+
+		R_RtStaticModelMiddle(sm, middle);
+		return R_RtProbesAt(middle, out);
+	}
+	if (sm->rtProbeState == 0) {
 		vec3_t   middle;
 		qboolean none;
 		float    reach = R_RtStaticModelMiddle(sm, middle);
 
 		if (!R_RtProbesSeenAt(middle, reach, sm->rtProbe, &none)) {
 			return qfalse;
-		}
-		if (sm->moved) {
-			sm->rtProbeState = 0;
-			Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
-			return !none;
 		}
 		sm->rtProbeState = none ? 2 : 1;
 	}
