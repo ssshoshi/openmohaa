@@ -320,7 +320,7 @@ void R_RtRegister(void)
 	r_rtBakedLamps = ri.Cvar_Get("r_rtBakedLamps", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtBakedLamps, "With r_realtimeLighting 2, every lamp's light on the lightmapped world is baked once a map, with its shadow of the world, so that all of them show however few are lit live (r_rtMaxLights): those add their sharp shadows and shine. 0: only the lamps lit live give light");
 	r_rtBakedDebug = ri.Cvar_Get("r_rtBakedDebug", "0", 0);
-	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone (on the next bake). Not archived: a test switch");
+	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake). Not archived: a test switch");
 	r_rtWindowLights = ri.Cvar_Get("r_rtWindowLights", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtWindowLights, "With r_realtimeLighting 2, keep the map's spot lights that stand in for daylight through its windows (0: the sun and the sky come in by themselves, and they go). Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
@@ -3941,6 +3941,114 @@ static void R_RtBakeAt_f(void)
 	const float x = atof(ri.Cmd_Argv(1)), y = atof(ri.Cmd_Argv(2));
 	int         p, i, found = 0;
 
+	// r_rtBakeAt x y z: the surfaces through that point, a wall's too, and
+	// the texels round it
+	if (ri.Cmd_Argc() > 3) {
+		vec3_t pt;
+
+		VectorSet(pt, x, y, atof(ri.Cmd_Argv(3)));
+		for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
+			rtBakePage_t *page = &rt_bake.pages[p];
+
+			if (!page->image) {
+				continue;
+			}
+			for (i = 0; i + 2 < page->list.num && found < 6; i += 3) {
+				const rtBakeVert_t *v[3] = { &page->list.verts[i], &page->list.verts[i + 1], &page->list.verts[i + 2] };
+				vec3_t              e1, e2, w, nrm;
+				float               d00, d01, d11, d20, d21, den, b1, b2, s, tc, texel[4 * 9];
+				int                 c, tx, ty, k;
+
+				VectorSubtract(v[1]->xyz, v[0]->xyz, e1);
+				VectorSubtract(v[2]->xyz, v[0]->xyz, e2);
+				VectorSubtract(pt, v[0]->xyz, w);
+				CrossProduct(e1, e2, nrm);
+				if (VectorNormalize(nrm) < 1e-3f || fabs(DotProduct(w, nrm)) > 4.0f) {
+					continue;
+				}
+				d00 = DotProduct(e1, e1);
+				d01 = DotProduct(e1, e2);
+				d11 = DotProduct(e2, e2);
+				d20 = DotProduct(w, e1);
+				d21 = DotProduct(w, e2);
+				den = d00 * d11 - d01 * d01;
+				b1  = (d11 * d20 - d01 * d21) / den;
+				b2  = (d00 * d21 - d01 * d20) / den;
+				if (b1 < 0 || b2 < 0 || b1 + b2 > 1) {
+					continue;
+				}
+				s  = (1 - b1 - b2) * v[0]->lm[0] + b1 * v[1]->lm[0] + b2 * v[2]->lm[0];
+				tc = (1 - b1 - b2) * v[0]->lm[1] + b1 * v[1]->lm[1] + b2 * v[2]->lm[1];
+				for (c = 0; c < page->list.numChunks; c++) {
+					if (i >= page->list.chunks[c].first && i < page->list.chunks[c].first + page->list.chunks[c].count) {
+						break;
+					}
+				}
+				tx = (int)(s * page->image->width);
+				ty = (int)(tc * page->image->height);
+				Com_Memset(texel, 0, sizeof(texel));
+				if (R_RtBakeTarget(page, page->image)) {
+					qglReadPixels(Q_max(tx - 1, 0), Q_max(ty - 1, 0), 3, 3, GL_RGBA, GL_FLOAT, texel);
+				}
+				// and the whole page, raw floats, to look at (a fourth argument)
+				if (ri.Cmd_Argc() > 4 && found == 0) {
+					float *all = ri.Malloc(sizeof(float) * page->image->width * page->image->height * 4);
+
+					if (R_RtBakeTarget(page, page->image)) {
+						qglReadPixels(0, 0, page->image->width, page->image->height, GL_RGBA, GL_FLOAT, all);
+						ri.FS_WriteFile(va("%s.raw", ri.Cmd_Argv(4)), all, sizeof(float) * page->image->width * page->image->height * 4);
+					}
+					ri.Free(all);
+				}
+				R_RtBakeEnd();
+				ri.Printf(PRINT_ALL, "  page %d (%dx%d) %s chunk %d (%d verts) normal %.2f %.2f %.2f (winding %.2f %.2f %.2f) lm %.4f %.4f texel %d %d\n", p,
+					page->image->width, page->image->height, v[0]->shader ? v[0]->shader->name : "?", c,
+					c < page->list.numChunks ? page->list.chunks[c].count : 0, v[0]->normal[0], v[0]->normal[1], v[0]->normal[2], nrm[0], nrm[1],
+					nrm[2], s, tc, tx, ty);
+				for (k = 0; k < 3; k++) {
+					ri.Printf(PRINT_ALL, "    %6.1f %6.1f %6.1f\n", texel[(k * 3) * 4], texel[(k * 3 + 1) * 4], texel[(k * 3 + 2) * 4]);
+				}
+				found++;
+				// its chunk's vertexes
+				if (c < page->list.numChunks) {
+					for (k = page->list.chunks[c].first; k < page->list.chunks[c].first + page->list.chunks[c].count; k++) {
+						ri.Printf(PRINT_ALL, "    vert %.1f %.1f %.1f lm %.5f %.5f\n", page->list.verts[k].xyz[0], page->list.verts[k].xyz[1],
+							page->list.verts[k].xyz[2], page->list.verts[k].lm[0], page->list.verts[k].lm[1]);
+					}
+				}
+				// the baked lamps reaching it, unshadowed and unshaded
+				if (found == 1 && ri.Cmd_Argc() > 5) {
+					for (k = 0; k < rt.numMapLights; k++) {
+						const rtLight_t *l = &rt.lights[k];
+						vec3_t           to;
+						vec4_t           shape;
+						float            dd, ndl, fade, kind;
+
+						if (!l->baked) {
+							continue;
+						}
+						VectorSubtract(l->origin, pt, to);
+						dd = VectorLength(to);
+						if (dd >= l->range) {
+							continue;
+						}
+						ndl  = DotProduct(to, nrm) / Q_max(dd, 1e-4f);
+						fade = 1.0f - dd * dd / (l->range * l->range);
+						kind = R_RtLightShape(l, shape);
+						ri.Printf(PRINT_ALL, "    lamp %d at %.0f %.0f %.0f kind %.0f dist %.0f ndl %.2f shape %.2f %.2f %.2f %.1f point att %.1f%s\n", k,
+							l->origin[0], l->origin[1], l->origin[2], kind, dd, ndl, shape[0], shape[1], shape[2], shape[3],
+							Q_max(ndl, 0) * fade * fade / Q_max(dd * dd, 256.0f) * Q_max(l->color[0], Q_max(l->color[1], l->color[2])),
+							l->noShadow ? " no shadow" : "");
+					}
+				}
+			}
+		}
+		if (!found) {
+			ri.Printf(PRINT_ALL, "  no baked surface through %.0f %.0f %.0f\n", pt[0], pt[1], pt[2]);
+		}
+		return;
+	}
+
 	for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
 		rtBakePage_t *page = &rt_bake.pages[p];
 
@@ -4040,7 +4148,8 @@ static void R_RtBakeLamps(float ease)
 		rtLight_t *l = &rt.lights[rt_bake.next];
 		int        f;
 
-		if (!l->baked) {
+		// r_rtBakedDebug 100 + n: light n alone (a test)
+		if (!l->baked || (r_rtBakedDebug->integer >= 100 && rt_bake.next != r_rtBakedDebug->integer - 100)) {
 			continue;
 		}
 		if (!l->noShadow && r_rtShadows->integer) {
