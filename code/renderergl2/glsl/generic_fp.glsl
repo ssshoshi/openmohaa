@@ -59,11 +59,17 @@ void main()
 	// for every pixel of every layer (the else is the next if's)
 	if (u_RtStage == RT_STAGE_PARTICLE || u_RtStage == RT_STAGE_PARTICLE_LIT)
 		rtLight = var_RtParticleLight;
+    #if !defined(RT_NO_PIXEL_LOOP)
 	else
+    #endif
   #endif
+  // the slim program (GLSL_InitGenericShader) is for what does not run the
+  // loop: it is not in it at all, as its registers alone slowed every pixel
+  #if !defined(RT_NO_PIXEL_LOOP)
 	if (u_RtStage != RT_STAGE_NONE && u_RtStage != RT_STAGE_LIGHTING2)
 		rtLight = RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal),
 			u_RtStage != RT_STAGE_LIT && u_RtParams.y < 1.5);
+  #endif
 
 	if (u_RtStage == RT_STAGE_LIGHTING)
 	{
@@ -103,7 +109,7 @@ void main()
 	{
 		vec4 color2 = texture2D(u_LightMap, var_Tex2);
 
-  #if defined(USE_RTLIGHT)
+  #if defined(USE_RTLIGHT) && !defined(RT_NO_PIXEL_LOOP)
 		// the second texture is the lighting
 		if (u_RtStage == RT_STAGE_LIGHTING2)
 		{

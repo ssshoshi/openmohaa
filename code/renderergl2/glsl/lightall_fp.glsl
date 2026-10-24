@@ -764,7 +764,10 @@ void main()
 
 
 #if defined(USE_RTLIGHT)
-	// Added in OPM: the realtime lights, on the surface's own colour
+	// Added in OPM: the realtime lights, on the surface's own colour; not on
+	// a glow added on top, nor on dust and smoke without a light of their own
+	// (R_RtStageKind), every pixel of a muzzle flash through every light
+	if (u_RtStage != RT_STAGE_NONE)
 	{
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 		vec3 rtNormal = N;

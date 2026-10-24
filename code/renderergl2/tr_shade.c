@@ -1565,6 +1565,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		shaderStage_t *pStage = input->xstages[stage];
 		shaderProgram_t *sp;
 		vec4_t texMatrix[8];
+		qboolean rtLit;
+		int rtKind;
 
 		if ( !pStage )
 		{
@@ -1690,17 +1692,29 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			backEnd.pc.c_genericDraws++;
 		}
 
-		GLSL_BindProgram(sp);
-
 		// Added in OPM: the realtime lights, in views of the world, and not
 		// in the depth prepass: it writes no colour, and every pixel of it
 		// went through all of the lights for nothing
+		rtLit  = R_RtActive() && !backEnd.projection2D && !backEnd.screenOverlay && !backEnd.depthFill
+			&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL);
+		rtKind = rtLit ? R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader) : -1;
+
+		// what does not run the lights' loop per pixel (dust and smoke, lit
+		// at their corners, and what the lights leave alone: muzzle flashes,
+		// fire, sparks) has a program without it, whose registers alone
+		// slowed every pixel of every layer of them
+		if (rtKind == RT_STAGE_NONE || rtKind == RT_STAGE_PARTICLE || rtKind == RT_STAGE_PARTICLE_LIT)
+		{
+			sp = GLSL_GetGenericSlimShader(sp);
+		}
+
+		GLSL_BindProgram(sp);
+
 		if (R_RtActive())
 		{
-			if (!backEnd.projection2D && !backEnd.screenOverlay && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
-				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+			if (rtLit)
 			{
-				const int kind = R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader);
+				const int kind = rtKind;
 
 				const qboolean lightallLightmap = pStage->glslShaderGroup == tr.lightallShader
 					&& (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP;

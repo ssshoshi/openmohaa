@@ -2050,6 +2050,120 @@ shaderProgram_t *GLSL_GetLightallShader(int index)
 	return &tr.lightallShader[index];
 }
 
+/*
+============
+GLSL_InitGenericShader
+
+Added in OPM: one generic permutation. Slim, its twin for the stages that do
+not run the realtime lights' loop per pixel (dust and smoke, lit at their
+corners, and what the lights leave alone): the loop is left out of its
+fragment shader, whose registers alone (never run) took the pixels of a smoke
+layer twice as long.
+============
+*/
+static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim)
+{
+	char extradefines[1024];
+	int  attribs;
+
+	if ((i & GENERICDEF_USE_VERTEX_ANIMATION) && (i & GENERICDEF_USE_BONE_ANIMATION))
+		return qfalse;
+
+	if ((i & GENERICDEF_USE_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
+		return qfalse;
+
+	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_LIGHTCOORD | ATTR_NORMAL | ATTR_COLOR;
+	extradefines[0] = '\0';
+
+	if (i & GENERICDEF_USE_DEFORM_VERTEXES)
+		Q_strcat(extradefines, 1024, "#define USE_DEFORM_VERTEXES\n");
+
+	if (i & GENERICDEF_USE_TCGEN_AND_TCMOD)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_TCGEN\n");
+		Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
+	}
+
+	if (i & GENERICDEF_USE_VERTEX_ANIMATION)
+	{
+		if (!glRefConfig.gpuVertexAnimation)
+			return qfalse;
+
+		Q_strcat(extradefines, 1024, "#define USE_VERTEX_ANIMATION\n");
+		attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
+	}
+	else if (i & GENERICDEF_USE_BONE_ANIMATION)
+	{
+		Q_strcat(extradefines, 1024, va("#define USE_BONE_ANIMATION\n#define MAX_GLSL_BONES %d\n", glRefConfig.glslMaxAnimatedBones));
+		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
+	}
+
+	if (i & GENERICDEF_USE_FOG)
+		Q_strcat(extradefines, 1024, "#define USE_FOG\n");
+
+	if (i & GENERICDEF_USE_RGBAGEN)
+		Q_strcat(extradefines, 1024, "#define USE_RGBAGEN\n");
+
+	// Added in OPM
+	if (r_realtimeLighting->integer)
+		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
+	if (R_RtVertexParticles())
+		Q_strcat(extradefines, 1024, "#define USE_RTLIGHT_PARTICLES\n");
+	if (R_RtVertexSky())
+		Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
+	if (r_softParticles->value > 0)
+		Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
+	if (slim)
+		Q_strcat(extradefines, 1024, "#define RT_NO_PIXEL_LOOP\n");
+
+	if (!GLSL_InitGPUShader(sp, "generic", attribs, qtrue, extradefines, qtrue, fallbackShader_generic_vp, fallbackShader_generic_fp))
+	{
+		ri.Error(ERR_FATAL, "Could not load generic shader!");
+	}
+
+	GLSL_InitUniforms(sp);
+
+	GLSL_SetUniformInt(sp, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+	GLSL_SetUniformInt(sp, UNIFORM_LIGHTMAP,   TB_LIGHTMAP);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
+	GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
+	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
+
+	GLSL_FinishGPUShader(sp);
+
+	return qtrue;
+}
+
+/*
+============
+GLSL_GetGenericSlimShader
+
+The slim twin of a generic permutation (GLSL_InitGenericShader), built the
+first time it is asked for.
+============
+*/
+shaderProgram_t *GLSL_GetGenericSlimShader(const shaderProgram_t *generic)
+{
+	const int i = (int)(generic - tr.genericShader);
+	shaderProgram_t *sp;
+
+	if (i < 0 || i >= GENERICDEF_COUNT)
+		return (shaderProgram_t *)generic;
+
+	sp = &tr.genericSlimShader[i];
+	if (!sp->program && !GLSL_InitGenericShader(sp, i, qtrue))
+		return (shaderProgram_t *)generic;
+
+	return sp;
+}
+
 void GLSL_InitGPUShaders(void)
 {
 	int             startTime, endTime;
@@ -2074,82 +2188,21 @@ void GLSL_InitGPUShaders(void)
 	}
 
 	for (i = 0; i < GENERICDEF_COUNT; i++)
-	{	
-		if ((i & GENERICDEF_USE_VERTEX_ANIMATION) && (i & GENERICDEF_USE_BONE_ANIMATION))
-			continue;
+	{
+		if (GLSL_InitGenericShader(&tr.genericShader[i], i, qfalse))
+			numGenShaders++;
 
-		if ((i & GENERICDEF_USE_BONE_ANIMATION) && !glRefConfig.glslMaxAnimatedBones)
-			continue;
-
-		attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_LIGHTCOORD | ATTR_NORMAL | ATTR_COLOR;
-		extradefines[0] = '\0';
-
-		if (i & GENERICDEF_USE_DEFORM_VERTEXES)
-			Q_strcat(extradefines, 1024, "#define USE_DEFORM_VERTEXES\n");
-
-		if (i & GENERICDEF_USE_TCGEN_AND_TCMOD)
-		{
-			Q_strcat(extradefines, 1024, "#define USE_TCGEN\n");
-			Q_strcat(extradefines, 1024, "#define USE_TCMOD\n");
-		}
-
-		if (i & GENERICDEF_USE_VERTEX_ANIMATION)
-		{
-			if (!glRefConfig.gpuVertexAnimation)
-				continue;
-
-			Q_strcat(extradefines, 1024, "#define USE_VERTEX_ANIMATION\n");
-			attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
-		}
-		else if (i & GENERICDEF_USE_BONE_ANIMATION)
-		{
-			Q_strcat(extradefines, 1024, va("#define USE_BONE_ANIMATION\n#define MAX_GLSL_BONES %d\n", glRefConfig.glslMaxAnimatedBones));
-			attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
-		}
-
-		if (i & GENERICDEF_USE_FOG)
-			Q_strcat(extradefines, 1024, "#define USE_FOG\n");
-
-		if (i & GENERICDEF_USE_RGBAGEN)
-			Q_strcat(extradefines, 1024, "#define USE_RGBAGEN\n");
-
-		// Added in OPM
-		if (r_realtimeLighting->integer)
-			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT\n");
-		if (R_RtVertexParticles())
-			Q_strcat(extradefines, 1024, "#define USE_RTLIGHT_PARTICLES\n");
-		if (R_RtVertexSky())
-			Q_strcat(extradefines, 1024, "#define USE_RTSKY_VERTEX\n");
-		if (r_softParticles->value > 0)
-			Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
-
-		if (!GLSL_InitGPUShader(&tr.genericShader[i], "generic", attribs, qtrue, extradefines, qtrue, fallbackShader_generic_vp, fallbackShader_generic_fp))
-		{
-			ri.Error(ERR_FATAL, "Could not load generic shader!");
-		}
-
-		GLSL_InitUniforms(&tr.genericShader[i]);
-
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_LIGHTMAP,   TB_LIGHTMAP);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
-
-		GLSL_FinishGPUShader(&tr.genericShader[i]);
-
-		numGenShaders++;
+		// the slim twins now, not as the first muzzle flash is drawn (a
+		// compile mid-game is a hitch); those for animated models, which
+		// would double the time this takes, are built if ever drawn
+		if (r_realtimeLighting->integer && !(i & (GENERICDEF_USE_VERTEX_ANIMATION | GENERICDEF_USE_BONE_ANIMATION))
+			&& GLSL_InitGenericShader(&tr.genericSlimShader[i], i, qtrue))
+			numGenShaders++;
 	}
 
 
 	attribs = ATTR_POSITION | ATTR_TEXCOORD;
+	extradefines[0] = '\0';
 
 	if (!GLSL_InitGPUShader(&tr.textureColorShader, "texturecolor", attribs, qtrue, extradefines, qtrue, fallbackShader_texturecolor_vp, fallbackShader_texturecolor_fp))
 	{
@@ -2639,7 +2692,10 @@ void GLSL_ShutdownGPUShaders(void)
 	GL_BindNullProgram();
 
 	for ( i = 0; i < GENERICDEF_COUNT; i++)
+	{
 		GLSL_DeleteGPUShader(&tr.genericShader[i]);
+		GLSL_DeleteGPUShader(&tr.genericSlimShader[i]);
+	}
 
 	GLSL_DeleteGPUShader(&tr.textureColorShader);
 	GLSL_DeleteGPUShader(&tr.rtSkyBakeShader);

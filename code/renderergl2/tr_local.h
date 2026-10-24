@@ -2600,6 +2600,7 @@ typedef struct {
 	// GPU shader programs
 	//
 	shaderProgram_t genericShader[GENERICDEF_COUNT];
+	shaderProgram_t genericSlimShader[GENERICDEF_COUNT]; // Added in OPM: without the realtime lights' per-pixel loop (GLSL_InitGenericShader)
 	shaderProgram_t textureColorShader;
 	shaderProgram_t rtSkyBakeShader; // Added in OPM: the sky a lightmap texel sees (tr_rtlight.c)
 	shaderProgram_t fogShader[FOGDEF_COUNT];
@@ -3670,6 +3671,7 @@ void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const v
 void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
+shaderProgram_t *GLSL_GetGenericSlimShader(const shaderProgram_t *generic);
 
 /*
 ============================================================
