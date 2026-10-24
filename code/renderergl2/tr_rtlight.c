@@ -3336,6 +3336,7 @@ static void  R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face);
 
 typedef struct {
 	image_t     *image; // rgb what the lamps give, in raw lightmap units; a 1 where a surface is
+	image_t     *dir;   // the way it comes from, as long as it is bright, for the normal maps
 	rtBakeList_t list;
 	GLuint       vao, vbo;
 	GLint       *firsts;
@@ -3378,6 +3379,9 @@ void R_RtFreeBakedLamps(void)
 
 		if (ours && page->image) {
 			R_FreeImage(page->image);
+		}
+		if (ours && page->dir) {
+			R_FreeImage(page->dir);
 		}
 		if (ours && page->vbo) {
 			qglDeleteBuffers(1, &page->vbo);
@@ -3445,17 +3449,17 @@ static qboolean R_RtBakeUpload(rtBakePage_t *page)
 	return qtrue;
 }
 
-// Bound to draw into a page, with the program
-static qboolean R_RtBakeTarget(rtBakePage_t *page)
+// Bound to draw into a page's image (its light, or the way it comes from)
+static qboolean R_RtBakeTarget(rtBakePage_t *page, image_t *image)
 {
 	FBO_Bind(tr.rtSkyBakeFbo);
-	FBO_AttachImage(tr.rtSkyBakeFbo, page->image, GL_COLOR_ATTACHMENT0_EXT, 0);
+	FBO_AttachImage(tr.rtSkyBakeFbo, image, GL_COLOR_ATTACHMENT0_EXT, 0);
 	qglDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
 	if (!R_CheckFBO(tr.rtSkyBakeFbo)) {
 		return qfalse;
 	}
-	qglViewport(0, 0, page->image->width, page->image->height);
-	qglScissor(0, 0, page->image->width, page->image->height);
+	qglViewport(0, 0, image->width, image->height);
+	qglScissor(0, 0, image->width, image->height);
 	qglBindVertexArray(page->vao);
 	return qtrue;
 }
@@ -3472,6 +3476,16 @@ static void R_RtBakeBegin(float alpha, int state)
 	GLSL_SetUniformVec4(&tr.rtLampBakeShader, UNIFORM_RTPARAMS, params);
 	GL_BindToTMU(tr.rtShadowImage[2], TMU_RTSHADOW_BAKED);
 	R_BindNullVao();
+}
+
+// What the lamps are drawn as: 1 their light, 2 the way it comes from
+static void R_RtBakeMode(float mode, float alpha)
+{
+	vec4_t params = { 1, 2, 1, 0 };
+
+	params[0] = mode;
+	params[3] = alpha;
+	GLSL_SetUniformVec4(&tr.rtLampBakeShader, UNIFORM_RTPARAMS, params);
 }
 
 static void R_RtBakeEnd(void)
@@ -3517,17 +3531,28 @@ static void R_RtBakeStart(void)
 		}
 		page->image = R_CreateImage(va("*rtlamplm%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
 			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
+		page->dir   = R_CreateImage(va("*rtlampdir%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 		R_RtBakeUpload(page);
-		if (!R_RtBakeTarget(page)) {
-			R_RtBakeEnd();
-			ri.Printf(PRINT_WARNING, "realtime lighting: the lamps are not baked (no target)\n");
-			R_RtFreeBakedLamps();
-			rt_bake.started = qtrue;
-			return;
+		{
+			image_t *both[2];
+			int      k;
+
+			both[0] = page->image;
+			both[1] = page->dir;
+			for (k = 0; k < 2; k++) {
+				if (!R_RtBakeTarget(page, both[k])) {
+					R_RtBakeEnd();
+					ri.Printf(PRINT_WARNING, "realtime lighting: the lamps are not baked (no target)\n");
+					R_RtFreeBakedLamps();
+					rt_bake.started = qtrue;
+					return;
+				}
+				qglClearColor(0, 0, 0, 0);
+				qglClear(GL_COLOR_BUFFER_BIT);
+				qglDrawArrays(GL_TRIANGLES, 0, page->list.num);
+			}
 		}
-		qglClearColor(0, 0, 0, 0);
-		qglClear(GL_COLOR_BUFFER_BIT);
-		qglDrawArrays(GL_TRIANGLES, 0, page->list.num);
 	}
 	R_RtBakeEnd();
 
@@ -3585,9 +3610,18 @@ static void R_RtBakePass(int index, int slot)
 				n++;
 			}
 		}
-		if (!n || !R_RtBakeTarget(page)) {
+		// its light, then the way it comes from
+		if (!n || !R_RtBakeTarget(page, page->image)) {
 			continue;
 		}
+		R_RtBakeMode(1.0f, 0.0f);
+		for (c = 0; c < n; c++) {
+			qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+		}
+		if (!R_RtBakeTarget(page, page->dir)) {
+			continue;
+		}
+		R_RtBakeMode(2.0f, 0.0f);
 		for (c = 0; c < n; c++) {
 			qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
 		}
@@ -3641,14 +3675,21 @@ static void R_RtBakeFinish(void)
 		rtBakePage_t *page = &rt_bake.pages[p];
 		float        *texels;
 
-		if (!page->image || !R_RtBakeTarget(page)) {
-			continue;
+		image_t      *both[2];
+		int           k;
+
+		both[0] = page->image;
+		both[1] = page->dir;
+		for (k = 0; k < 2; k++) {
+			if (!both[k] || !R_RtBakeTarget(page, both[k])) {
+				continue;
+			}
+			texels = ri.Malloc(sizeof(float) * both[k]->width * both[k]->height * 4);
+			qglReadPixels(0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
+			R_RtBakeDilateFloat(texels, both[k]->width, both[k]->height, 3);
+			qglTextureSubImage2DEXT(both[k]->texnum, GL_TEXTURE_2D, 0, 0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
+			ri.Free(texels);
 		}
-		texels = ri.Malloc(sizeof(float) * page->image->width * page->image->height * 4);
-		qglReadPixels(0, 0, page->image->width, page->image->height, GL_RGBA, GL_FLOAT, texels);
-		R_RtBakeDilateFloat(texels, page->image->width, page->image->height, 3);
-		qglTextureSubImage2DEXT(page->image->texnum, GL_TEXTURE_2D, 0, 0, 0, page->image->width, page->image->height, GL_RGBA, GL_FLOAT, texels);
-		ri.Free(texels);
 	}
 	R_RtBakeEnd();
 	rt_bake.done = qtrue;
@@ -5545,8 +5586,9 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 					int page;
 
 					for (page = 0; page < rt_bake.numPages && page < tr.numLightmaps; page++) {
-						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image) {
+						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image && rt_bake.pages[page].dir) {
 							GL_BindToTMU(rt_bake.pages[page].image, TMU_RTDIRECT);
+							GL_BindToTMU(rt_bake.pages[page].dir, TMU_RTDIRECTDIR);
 							VectorSet4(direct, rt_bake.scale, rt_bake.scale, rt_bake.scale, rt_bake.weight);
 							break;
 						}
