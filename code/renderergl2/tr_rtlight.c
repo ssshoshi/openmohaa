@@ -262,7 +262,7 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
 	r_rtDynamicFull = ri.Cvar_Get("r_rtDynamicFull", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtDynamicFull, "How many of the nearest realtime lights draw the shadows of what moves every frame; the rest of r_rtDynamicLights every r_rtDynamicEvery frames");
-	r_rtDynamicEvery = ri.Cvar_Get("r_rtDynamicEvery", "1", CVAR_ARCHIVE);
+	r_rtDynamicEvery = ri.Cvar_Get("r_rtDynamicEvery", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtDynamicEvery, "Past r_rtDynamicFull, a realtime light draws the shadows of what moves every this many frames (1: every frame)");
 	r_rtSelfShadowLights = ri.Cvar_Get("r_rtSelfShadowLights", "4", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtSelfShadowLights, "How many of the nearest realtime lights draw the player's own shadow as it moves (cg_firstPersonShadow)");
