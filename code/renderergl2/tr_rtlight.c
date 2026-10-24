@@ -80,6 +80,7 @@ cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 static cvar_t *r_rtBounce;
 static cvar_t *r_rtBakedLamps;
+static cvar_t *r_rtBakedDebug;
 static qboolean rt_bounceCompiled; // r_rtBounce was on when the shaders were built
 
 qboolean R_RtBounceCompiled(void)
@@ -318,6 +319,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtBounceMsec, "The milliseconds a frame spent working out the bounce, until it is done");
 	r_rtBakedLamps = ri.Cvar_Get("r_rtBakedLamps", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtBakedLamps, "With r_realtimeLighting 2, every lamp's light on the lightmapped world is baked once a map, with its shadow of the world, so that all of them show however few are lit live (r_rtMaxLights): those add their sharp shadows and shine. 0: only the lamps lit live give light");
+	r_rtBakedDebug = ri.Cvar_Get("r_rtBakedDebug", "0", 0);
+	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone (on the next bake). Not archived: a test switch");
 	r_rtWindowLights = ri.Cvar_Get("r_rtWindowLights", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtWindowLights, "With r_realtimeLighting 2, keep the map's spot lights that stand in for daylight through its windows (0: the sun and the sky come in by themselves, and they go). Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
@@ -1672,12 +1675,20 @@ static void R_RtBakeGather(int page, rtBakeList_t *list)
 	}
 
 	// the terrain, a 9 by 9 grid a patch, its lightmap spread over it as
-	// R_PreTessellateTerrain spreads it
+	// R_PreTessellateTerrain spreads it: from the middle of its first texel
+	// to the middle of its last, so that a patch's edge runs through the
+	// middles of the texels along it, which the GPU leaves out of two of the
+	// four edges of what it fills. Those texels took the mean of those round
+	// them, the next chart's in the page among them, and half as bright as
+	// they should be they drew a line along every patch's edge near a lamp
+	// (the lamps' bake): its outer edges go half a texel further out.
 	for (i = 0; i < tr.world->numTerraPatches; i++) {
 		cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
 		const float            size  = (float)(patch->drawinfo.lmapSize - 1) / 128.0f;
 		const float            sizeS = tr.fatLightmapCols > 0 ? size / tr.fatLightmapCols : size;
 		const float            sizeT = tr.fatLightmapRows > 0 ? size / tr.fatLightmapRows : size;
+		const float            halfS = tr.lightmaps && tr.lightmaps[page] ? 0.5f / tr.lightmaps[page]->width : 0.0f;
+		const float            halfT = tr.lightmaps && tr.lightmaps[page] ? 0.5f / tr.lightmaps[page]->height : 0.0f;
 
 		if (!patch->shader || patch->shader->lightmapIndex != page) {
 			continue;
@@ -1688,12 +1699,20 @@ static void R_RtBakeGather(int page, rtBakeList_t *list)
 				static const int corner[6][2] = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 1, 0 } };
 
 				for (j = 0; j < 6; j++) {
-					const int rr = r + corner[j][0], cc = c + corner[j][1];
-					vec3_t    xyz, normal;
+					const int   rr = r + corner[j][0], cc = c + corner[j][1];
+					const float outS = cc == 0 ? -1.0f : cc == 8 ? 1.0f : 0.0f;
+					const float outT = rr == 0 ? -1.0f : rr == 8 ? 1.0f : 0.0f;
+					vec3_t      xyz, normal;
 
 					VectorSet(xyz, patch->x0 + cc * 64.0f, patch->y0 + rr * 64.0f, patch->heightmap[rr * 9 + cc] * 2.0f + patch->z0);
+					// half a texel out, as far in the world as that is
+					if (sizeS > 0 && sizeT > 0) {
+						xyz[0] += outS * halfS * 512.0f / sizeS;
+						xyz[1] += outT * halfT * 512.0f / sizeT;
+					}
 					R_VaoUnpackNormal(normal, patch->normals[rr * 9 + cc]);
-					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f, patch->t + sizeT * rr / 8.0f, patch->shader);
+					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f + outS * halfS, patch->t + sizeT * rr / 8.0f + outT * halfT,
+						patch->shader);
 				}
 			}
 		}
@@ -3713,7 +3732,11 @@ static void R_RtBakeStart(void)
 	// them that none covers to take their neighbours' (R_RtBakeFinish)
 	Com_Memset(none, 0, sizeof(none));
 	none[3][0] = -1.0f;
-	R_RtBakeBegin(1.0f, GLS_DEPTHTEST_DISABLE);
+	// a of each texel: how many surfaces were drawn over it. The compiler
+	// gave faces in one plane the same texels at times, and each lamp's
+	// light was added there once for each: a line along the face's edge,
+	// bright on the one side (R_RtBakeFinish takes the mean)
+	R_RtBakeBegin(1.0f, GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
 	GLSL_SetUniformRtLights(&tr.rtLampBakeShader, UNIFORM_RTLIGHTS, (const vec4_t *)none, 1, --rt_bake.generation);
 	for (p = 0; p < rt_bake.numPages; p++) {
 		rtBakePage_t *page = &rt_bake.pages[p];
@@ -3801,7 +3824,7 @@ static void R_RtBakePass(int index, int slot)
 							  : l->origin[k] > chunk->maxs[k] ? l->origin[k] - chunk->maxs[k] : 0;
 				d2 += v * v;
 			}
-			if (d2 < reach * reach) {
+			if (d2 < reach * reach || r_rtBakedDebug->integer == 2) {
 				page->firsts[n] = chunk->first;
 				page->counts[n] = chunk->count;
 				n++;
@@ -3883,6 +3906,23 @@ static void R_RtBakeFinish(void)
 			}
 			texels = ri.Malloc(sizeof(float) * both[k]->width * both[k]->height * 4);
 			qglReadPixels(0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
+			// the mean of the surfaces drawn over a texel, not their sum
+			{
+				int n, shared = 0;
+
+				for (n = 0; n < both[k]->width * both[k]->height; n++) {
+					float *texel = &texels[n * 4];
+
+					if (texel[3] > 1.5f) {
+						VectorScale(texel, 1.0f / texel[3], texel);
+						shared++;
+					}
+					texel[3] = texel[3] > 0.5f ? 1.0f : 0.0f;
+				}
+				if (k == 0 && shared) {
+					ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lightmap texels of page %d under more than one surface\n", shared, p);
+				}
+			}
 			R_RtBakeDilateFloat(texels, both[k]->width, both[k]->height, 3);
 			qglTextureSubImage2DEXT(both[k]->texnum, GL_TEXTURE_2D, 0, 0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
 			ri.Free(texels);
@@ -3892,6 +3932,67 @@ static void R_RtBakeFinish(void)
 	rt_bake.done = qtrue;
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps baked onto %d lightmap pages in %d ms\n", rt_bake.lights, rt_bake.numPages,
 		ri.Milliseconds() - rt_bake.startTime);
+}
+
+// r_rtBakeAt x y: the bake's surfaces over (x, y), top down, their normal, the
+// lightmap texel there and what is baked in it (a test command)
+static void R_RtBakeAt_f(void)
+{
+	const float x = atof(ri.Cmd_Argv(1)), y = atof(ri.Cmd_Argv(2));
+	int         p, i, found = 0;
+
+	for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
+		rtBakePage_t *page = &rt_bake.pages[p];
+
+		if (!page->image) {
+			continue;
+		}
+		for (i = 0; i + 2 < page->list.num && found < 6; i += 3) {
+			const rtBakeVert_t *v[3] = { &page->list.verts[i], &page->list.verts[i + 1], &page->list.verts[i + 2] };
+			float               area, b[3], z = 0, s = 0, tc = 0;
+			vec3_t              n = { 0, 0, 0 };
+			int                 k, c;
+
+			area = (v[1]->xyz[0] - v[0]->xyz[0]) * (v[2]->xyz[1] - v[0]->xyz[1]) - (v[2]->xyz[0] - v[0]->xyz[0]) * (v[1]->xyz[1] - v[0]->xyz[1]);
+			if (fabs(area) < 1e-3f) {
+				continue;
+			}
+			b[0] = ((v[1]->xyz[0] - x) * (v[2]->xyz[1] - y) - (v[2]->xyz[0] - x) * (v[1]->xyz[1] - y)) / area;
+			b[1] = ((v[2]->xyz[0] - x) * (v[0]->xyz[1] - y) - (v[0]->xyz[0] - x) * (v[2]->xyz[1] - y)) / area;
+			b[2] = 1.0f - b[0] - b[1];
+			if (b[0] < 0 || b[1] < 0 || b[2] < 0) {
+				continue;
+			}
+			for (k = 0; k < 3; k++) {
+				z += b[k] * v[k]->xyz[2];
+				s += b[k] * v[k]->lm[0];
+				tc += b[k] * v[k]->lm[1];
+				VectorMA(n, b[k], v[k]->normal, n);
+			}
+			// its chunk: terrain or a face
+			for (c = 0; c < page->list.numChunks; c++) {
+				if (i >= page->list.chunks[c].first && i < page->list.chunks[c].first + page->list.chunks[c].count) {
+					break;
+				}
+			}
+			{
+				float texel[4] = { 0, 0, 0, 0 };
+				const int tx = (int)(s * page->image->width), ty = (int)(tc * page->image->height);
+
+				if (R_RtBakeTarget(page, page->image)) {
+					qglReadPixels(tx, ty, 1, 1, GL_RGBA, GL_FLOAT, texel);
+				}
+				R_RtBakeEnd();
+				ri.Printf(PRINT_ALL, "  z %.1f %s chunk %d (%d verts) normal %.2f %.2f %.2f (len %.2f) lm %.4f %.4f texel %d %d baked %.1f %.1f %.1f\n", z,
+					v[0]->shader ? v[0]->shader->name : "?", c, c < page->list.numChunks ? page->list.chunks[c].count : 0, n[0], n[1], n[2],
+					VectorLength(n), s, tc, tx, ty, texel[0], texel[1], texel[2]);
+			}
+			found++;
+		}
+	}
+	if (!found) {
+		ri.Printf(PRINT_ALL, "  no baked surface over %.0f %.0f\n", x, y);
+	}
 }
 
 // A frame of the bake: the lamps drawn last frame onto the pages, the next
@@ -5786,7 +5887,8 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image && rt_bake.pages[page].dir) {
 							GL_BindToTMU(rt_bake.pages[page].image, TMU_RTDIRECT);
 							GL_BindToTMU(rt_bake.pages[page].dir, TMU_RTDIRECTDIR);
-							VectorSet4(direct, rt_bake.scale, rt_bake.scale, rt_bake.scale, rt_bake.weight);
+							VectorSet4(direct, rt_bake.scale, rt_bake.scale, rt_bake.scale,
+								r_rtBakedDebug->integer == 1 ? -rt_bake.weight : rt_bake.weight);
 							break;
 						}
 					}
@@ -6052,11 +6154,13 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtTestBody", R_RtTestBody_f);
 		ri.Cmd_AddCommand("r_rtProbeInfo", R_RtProbeInfo_f);
 		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
+		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
 		ri.Cmd_RemoveCommand("r_rtProbeInfo");
 		ri.Cmd_RemoveCommand("r_rtProbeTest");
+		ri.Cmd_RemoveCommand("r_rtBakeAt");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}

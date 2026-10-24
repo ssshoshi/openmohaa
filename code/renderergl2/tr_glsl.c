@@ -667,7 +667,8 @@ static const char *rt_glsl =
 	// the baked lamps (u_RtDirect.w, eased in): their light on a lightmap
 	// is read from it, all of them, and the few lit live add what they
 	// change of it (the sharp shadows, of what moves too, and their shine)
-	"	float bakedHere = (!delta && u_RtDirect.w > 0.0) ? u_RtDirect.w : 0.0;\n"
+	// (u_RtDirect.w less than nothing: without the normal map's shading, r_rtBakedDebug 1)
+	"	float bakedHere = (!delta && u_RtDirect.w != 0.0) ? abs(u_RtDirect.w) : 0.0;\n"
 	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
 	"		if (k >= count) break;\n"
@@ -756,7 +757,7 @@ static const char *rt_glsl =
 	"		float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
 	"		float len = length(dl);\n"
 	"		vec3  b   = bakedHere * u_RtDirect.rgb * c;\n"
-	"		if (len > 1e-5 && lum > 1e-5)\n"
+	"		if (len > 1e-5 && lum > 1e-5 && u_RtDirect.w > 0.0)\n"
 	"		{\n"
 	"			vec3  L = dl / len;\n"
 	"			float k = clamp(len / lum, 0.0, 1.0);\n"
