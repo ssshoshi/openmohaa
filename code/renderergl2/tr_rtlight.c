@@ -2796,6 +2796,26 @@ static void R_RtProbeInfo_f(void)
 	}
 }
 
+// r_rtProbeTest x y z: whether a probe there is buried or in a wall, step by step
+static void R_RtProbeTest_f(void)
+{
+	vec3_t         at, above, zero = {0, 0, 0};
+	trace_t        below, over;
+	const mnode_t *leaf;
+
+	VectorSet(at, atof(ri.Cmd_Argv(1)), atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)));
+	leaf = R_PointInLeaf(at);
+	ri.Printf(PRINT_ALL, "probe at %.0f %.0f %.0f: leaf cluster %d\n", at[0], at[1], at[2], leaf ? leaf->cluster : -9);
+	VectorCopy(at, above);
+	above[2] += RT_PROBE_GRID;
+	ri.CM_BoxTrace(&below, above, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	ri.Printf(PRINT_ALL, "  down from +%.0f: startsolid %d fraction %.3f end z %.1f normal %.2f %.2f %.2f contents %d\n", RT_PROBE_GRID, below.startsolid,
+		below.fraction, below.endpos[2], below.plane.normal[0], below.plane.normal[1], below.plane.normal[2], below.contents);
+	ri.CM_BoxTrace(&over, at, above, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	ri.Printf(PRINT_ALL, "  up: startsolid %d fraction %.3f end z %.1f normal %.2f %.2f %.2f contents %d\n", over.startsolid, over.fraction, over.endpos[2],
+		over.plane.normal[0], over.plane.normal[1], over.plane.normal[2], over.contents);
+}
+
 // What the lights, the sun and the sky were, for the kept bounce
 static unsigned R_RtBounceKey(void)
 {
@@ -5935,10 +5955,12 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtTestMove", R_RtTestMove_f);
 		ri.Cmd_AddCommand("r_rtTestBody", R_RtTestBody_f);
 		ri.Cmd_AddCommand("r_rtProbeInfo", R_RtProbeInfo_f);
+		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
 		ri.Cmd_RemoveCommand("r_rtProbeInfo");
+		ri.Cmd_RemoveCommand("r_rtProbeTest");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}
