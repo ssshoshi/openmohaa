@@ -76,6 +76,8 @@ cvar_t *r_rtShadowCull;
 cvar_t *r_rtMovingLights;
 cvar_t *r_rtCasterMinRadius;
 cvar_t *r_rtSelfShadowLights;
+cvar_t *r_rtDynamicFull;
+cvar_t *r_rtDynamicEvery;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 static cvar_t *r_rtBounce;
@@ -143,6 +145,9 @@ typedef struct {
 	qboolean lamp;         // at a lamp's bulbs (R_RtLightsAtLamps): seen by its cluster, not the map's light lists
 	qboolean noShadow;     // the map's fill light no lamp could take: soft, and casting no shadow
 	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
+	int      dynamicSlot;  // its slot in the atlas of what moves, plus one (0 none)
+	int      dynamicDrawn; // the faces drawn into it when last drawn, a bit each
+	int      dynamicFrame; // the frame they were drawn
 	float    flicker;      // a flame's: how much it dips
 	float    seed;
 } rtLight_t;
@@ -158,6 +163,8 @@ static struct {
 	int       *candidateOf;  // each light's place among this frame's candidates, -1 none
 	int        numSeen;
 	int        staticOwner[RT_SLOTS]; // the light in each slot, -1 none
+	int        dynamicOwner[RT_SLOTS];     // the light holding each slot of what moves, plus one (0 none)
+	int        dynamicOwnerFrame[RT_SLOTS]; // the frame it last used it
 
 	vec3_t     ambient;  // raw
 	qboolean   sun;
@@ -253,6 +260,10 @@ void R_RtRegister(void)
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
+	r_rtDynamicFull = ri.Cvar_Get("r_rtDynamicFull", "2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtDynamicFull, "How many of the nearest realtime lights draw the shadows of what moves every frame; the rest of r_rtDynamicLights every r_rtDynamicEvery frames");
+	r_rtDynamicEvery = ri.Cvar_Get("r_rtDynamicEvery", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtDynamicEvery, "Past r_rtDynamicFull, a realtime light draws the shadows of what moves every this many frames (1: every frame)");
 	r_rtSelfShadowLights = ri.Cvar_Get("r_rtSelfShadowLights", "4", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtSelfShadowLights, "How many of the nearest realtime lights draw the player's own shadow as it moves (cg_firstPersonShadow)");
 	r_rtCasterMinRadius = ri.Cvar_Get("r_rtCasterMinRadius", "6", CVAR_ARCHIVE);
@@ -2953,6 +2964,8 @@ void R_RtLoadWorld(void)
 
 	for (i = 0; i < RT_SLOTS; i++) {
 		rt.staticOwner[i] = -1;
+		rt.dynamicOwner[i] = 0;
+		rt.dynamicOwnerFrame[i] = 0;
 	}
 
 	rt.seenLights  = ri.Malloc(sizeof(int) * Q_max(1, rt.numLights));
@@ -3336,6 +3349,32 @@ static int R_RtTrackCasters(rtMover_t *movers)
 	R_RtForget(rt_clientModels, MAX_MOD_KNOWN);
 
 	return count;
+}
+
+// Added in OPM
+//  A light's slot in the atlas of what moves: the one it held last frame, so
+//  that the faces it drew then can be read again (r_rtDynamicEvery), or one no
+//  light used last frame or this one. -1 when all are taken.
+static int R_RtDynamicSlot(rtLight_t *l, int index)
+{
+	int s;
+
+	if (l->dynamicSlot > 0 && rt.dynamicOwner[l->dynamicSlot - 1] == index + 1
+		&& rt.dynamicOwnerFrame[l->dynamicSlot - 1] >= rt.frame - 1) {
+		s = l->dynamicSlot - 1;
+		rt.dynamicOwnerFrame[s] = rt.frame;
+		return s;
+	}
+	for (s = 0; s < RT_SLOTS; s++) {
+		if (!rt.dynamicOwner[s] || rt.dynamicOwnerFrame[s] < rt.frame - 1) {
+			rt.dynamicOwner[s]      = index + 1;
+			rt.dynamicOwnerFrame[s] = rt.frame;
+			l->dynamicSlot          = s + 1;
+			l->dynamicFrame         = 0; // nothing of its own in it yet
+			return s;
+		}
+	}
+	return -1;
 }
 
 // A slot in the atlas of what stands still, taking the one used longest ago
@@ -4065,22 +4104,39 @@ void R_RtRenderShadows(const refdef_t *fd)
 					self |= movers[m].self && touched;
 				}
 				selfLights += self;
-				if (faces && dynamicSlots < RT_SLOTS) {
-					const int slot = dynamicSlots++;
+				const int slot = faces ? R_RtDynamicSlot(l, index) : -1;
+
+				if (slot >= 0) {
 					// None of the view's pixels reads the faces out of it, so
 					// they are not drawn. The light keeps its place among the
 					// few all the same: had the faces out of view not counted,
 					// the places went round the lights as the view turned, and
 					// what moves lost and found its shadows in patches.
-					const int drawn = faces & R_RtFacesInView(l, reach, frustum);
+					int drawn = faces & R_RtFacesInView(l, reach, frustum);
 
-					dynamicLights++;
+					dynamicSlots++;
 					tr.rtCandidate = i;
-					for (f = 0; f < 6; f++) {
-						if (drawn & (1 << f)) {
-							R_RtRenderFace(l, 1, slot * 6 + f, f);
+					// Past the nearest few (r_rtDynamicFull), a light's faces of
+					// what moves are drawn every r_rtDynamicEvery frames, and
+					// between them it reads the ones it drew: a man's shadow a
+					// frame behind him, from a lamp that is not the nearest, for
+					// half of what every moving face of eight lights cost each
+					// frame in a busy multiplayer fight. A face it did not draw
+					// last time, or a slot it did not hold, is drawn now.
+					if (dynamicLights >= r_rtDynamicFull->integer && r_rtDynamicEvery->integer > 1
+						&& l->dynamicFrame && rt.frame - l->dynamicFrame < r_rtDynamicEvery->integer
+						&& !(drawn & ~l->dynamicDrawn)) {
+						drawn = l->dynamicDrawn;
+					} else {
+						for (f = 0; f < 6; f++) {
+							if (drawn & (1 << f)) {
+								R_RtRenderFace(l, 1, slot * 6 + f, f);
+							}
 						}
+						l->dynamicDrawn = drawn;
+						l->dynamicFrame = rt.frame;
 					}
+					dynamicLights++;
 					// the faces go in the fraction, a bit each; with none drawn
 					// the people still take no capsules for this light, as
 					// when they were drawn into faces of it
