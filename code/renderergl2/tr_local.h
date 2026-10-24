@@ -3916,6 +3916,7 @@ GROUND COVER (tr_groundcover.c)
 void R_GroundCoverRegisterCvars(void);
 // tr_image.c: an image file's pixels, without making a texture of it
 void R_LoadImage(const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips);
+qboolean R_ImageFileSize( const char *name, int *width, int *height );
 void R_LoadImageUncompressed(const char *name, byte **pic, int *width, int *height, GLenum *picFormat);
 void R_LightScaleTexture(byte *in, int inwidth, int inheight, qboolean only_gamma);
 void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header);

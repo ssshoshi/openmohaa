@@ -4583,6 +4583,11 @@ void ClientGameCommandManager::TagDynamicLight(Event *ev)
     } else {
         m_spawnthing->cgd.lightType = 0;
     }
+    // Added in OPM: every brief light on a tag in the game's models is a
+    // muzzle flash (weapons, mounted guns, vehicles' guns: 0.11 s)
+    if (m_spawnthing->cgd.life > 0 && m_spawnthing->cgd.life <= 200) {
+        m_spawnthing->cgd.flags2 |= T2_MUZZLEFLASH;
+    }
     SpawnEffect(1, m_spawnthing);
 }
 
