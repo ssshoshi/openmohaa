@@ -665,30 +665,6 @@ static const char *rt_glsl =
 	"	float texelWorld = (l3.x >= RT_SMALL_CODE ? 4.0 : 2.0) * d / tileTexels;\n"
 	"	return P + N * sign(dot(N, toLight)) * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
 	"}\n"
-	// what light i put on the lightmap round P when the lamps were baked
-	// (R_RtBakeLamps): its light at the four texels round it, the
-	// surface's own face, blended as the lightmap is. A lamp lit live takes
-	// back this, not its light at P: the lightmap's coarse texels have the
-	// edge of a spot light's cone, and of its shadows, where they have it
-	"float RtBakedShare(int i, vec4 l0, vec4 l3, vec3 P, vec3 geomN, vec3 du, vec3 dv, vec2 f, bool shadowed)\n"
-	"{\n"
-	"	float share = 0.0;\n"
-	"	for (int t = 0; t < 4; t++)\n"
-	"	{\n"
-	"		vec2  o  = vec2(float(t - (t / 2) * 2), float(t / 2));\n"
-	"		vec2  w2 = mix(1.0 - f, f, o);\n"
-	"		vec3  Pc = P + du * (o.x - f.x) + dv * (o.y - f.y);\n"
-	"		vec3  tl;\n"
-	"		float dc, kc;\n"
-	"		bool  bc;\n"
-	"		float a = RtAtten(i, Pc, geomN, tl, dc, kc, bc);\n"
-	"		if (a <= 0.0) continue;\n"
-	"		if (shadowed)\n"
-	"			a *= RtShadow(l3, RtShadowAt(l0, l3, Pc, geomN, tl, dc, RT_BAKED_TEXELS), true);\n"
-	"		share += w2.x * w2.y * a;\n"
-	"	}\n"
-	"	return share;\n"
-	"}\n"
 	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
@@ -701,29 +677,6 @@ static const char *rt_glsl =
 	// a shadow looked up off the surface's own face, not the normal map's:
 	// its edge followed the bumps
 	"	vec3  shadowN = dot(rt_geomN, rt_geomN) > 0.5 ? rt_geomN : N;\n"
-	// the baked shadow a live lamp takes back out: what the bake has, the
-	// shadow at the four lightmap texels round P, blended as the lightmap
-	// is (worked out for one point, its sharper edge was left as a light
-	// and a dark rim, as if the wall were bumped there)
-	"	vec3  lmDu = vec3(0.0), lmDv = vec3(0.0);\n"
-	"	vec2  lmF  = vec2(0.0);\n"
-	"	bool  lmTaps = false;\n"
-	"#if __VERSION__ >= 130\n"
-	"	if (bakedHere > 0.0)\n"
-	"	{\n"
-	"		vec2  size = vec2(textureSize(u_RtDirectMap, 0));\n"
-	"		vec2  dx = dFdx(rt_skyLM) * size, dy = dFdy(rt_skyLM) * size;\n"
-	"		vec3  px = dFdx(P), py = dFdy(P);\n"
-	"		float det = dx.x * dy.y - dx.y * dy.x;\n"
-	"		if (abs(det) > 1e-8)\n"
-	"		{\n"
-	"			lmDu = (px * dy.y - py * dx.y) / det;\n"
-	"			lmDv = (py * dx.x - px * dy.x) / det;\n"
-	"			lmF  = fract(rt_skyLM * size - 0.5);\n"
-	"			lmTaps = max(dot(lmDu, lmDu), dot(lmDv, lmDv)) < 64.0 * 64.0;\n"
-	"		}\n"
-	"	}\n"
-	"#endif\n"
 	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
 	"		if (k >= count) break;\n"
@@ -739,9 +692,6 @@ static const char *rt_glsl =
 	// and on top of the map's lighting always
 	"		bool added = kind > 1.5 && kind < 2.5;\n"
 	"		float less = baked ? bakedHere : 0.0;\n"
-	// the baked light is shaded again for the normal map (below): so is
-	// what is taken back of it
-	"		float bakedShade = u_RtDirect.w > 0.0 ? clamp(max(dot(N, toLight), 0.0) / max(dot(shadowN, toLight), 0.25 * d), 0.0, 2.0) : 1.0;\n"
 	// what it would give unshadowed is too little to see: passed over, its
 	// shadow not looked up (u_RtAmbient.w, r_rtCutoff; R_RtReach)
 	"		vec3 most = l1.rgb * att;\n"
@@ -754,18 +704,16 @@ static const char *rt_glsl =
 	"			float now = RtShadow(l3, v, false);\n"
 	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
 	"			shine = att * now;\n"
-	"			if (less > 0.0 && lmTaps)\n"
-	"				att = att * now - less * bakedShade * RtBakedShare(i, l0, l3, P, shadowN, lmDu, lmDv, lmF, true);\n"
-	"			else\n"
-	"			{\n"
-	"				if (delta || less > 0.0)\n"
-	"					now -= (delta ? 1.0 : less) * RtShadow(l3, RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_BAKED_TEXELS), true);\n"
-	"				att *= now;\n"
-	"			}\n"
+	// a baked lamp not taken out of its bake (R_RtLiveIn) takes back its
+	// baked light worked out here: the lightmap's coarse texels have it
+	// otherwise at an edge, but only lamps further off are left to it.
+	// Worked out at the lightmap's four texels it cost the main pass 1.4 ms
+	// on the card in a busy hall (its registers), baked lamps on or off
+	"			if (delta || less > 0.0)\n"
+	"				now -= (delta ? 1.0 : less) * RtShadow(l3, RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_BAKED_TEXELS), true);\n"
+	"			att *= now;\n"
 	"		}\n"
 	"		else if (delta && !added) continue;\n"
-	"		else if (less > 0.0 && lmTaps)\n"
-	"			att -= less * bakedShade * RtBakedShare(i, l0, l3, P, shadowN, lmDu, lmDv, lmF, false);\n"
 	"		else att *= 1.0 - less;\n"
 	"		sum += l1.rgb * att;\n"
 	// the shine of what faces it (a leaf's far side takes none)
