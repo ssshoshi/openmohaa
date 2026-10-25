@@ -1798,7 +1798,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 8
+#define RT_BOUNCE_VERSION 9
 #define RT_BOUNCE_VALUES  6 // each sample's bounce, the daylight's then the lamps'
 #define RT_BOUNCE_FILE_SIZE(n) (20 + sizeof(float) * (RT_BOUNCE_VALUES + 6) * (n))
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
@@ -2028,10 +2028,70 @@ static int R_RtBounceCompareKeys(const void *a, const void *b)
 }
 
 // The sample nearest p facing about the way normal does, -1 none near
+// Whether a sample is seen from p, off the surface it is on by off: the
+// nearest by distance alone was across a wall at times (the bounce's texels
+// are coarse), and a shut room took the moonlit ground outside (m3l2)
+#define RT_BOUNCE_CANDIDATES 16
+
+static qboolean R_RtBounceSees(const vec3_t p, const vec3_t off, const rtBounceSample_t *s)
+{
+	trace_t trace;
+	vec3_t  zero = {0, 0, 0}, from, to;
+
+	VectorMA(p, 1.5f, off, from);
+	VectorMA(s->xyz, 1.5f, s->normal, to);
+	ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	return !trace.startsolid && trace.fraction >= 0.999f;
+}
+
+// Kept among the nearest RT_BOUNCE_CANDIDATES: the furthest kept goes for a nearer
+static void R_RtBounceKeep(int *found, float *dist, int *n, int *worst, int index, float d)
+{
+	int i;
+
+	if (*n < RT_BOUNCE_CANDIDATES) {
+		found[*n] = index;
+		dist[*n]  = d;
+		(*n)++;
+	} else if (d < dist[*worst]) {
+		found[*worst] = index;
+		dist[*worst]  = d;
+	} else {
+		return;
+	}
+	for (i = 0, *worst = 0; i < *n; i++) {
+		if (dist[i] > dist[*worst]) {
+			*worst = i;
+		}
+	}
+}
+
+// The nearest of those passed in (by distance) that p sees, -1 none
+static int R_RtBounceNearestVisible(const vec3_t p, const vec3_t off, const int *found, const float *dist, int n)
+{
+	int order[RT_BOUNCE_CANDIDATES], i, j;
+
+	for (i = 0; i < n; i++) {
+		order[i] = i;
+		for (j = i; j > 0 && dist[order[j]] < dist[order[j - 1]]; j--) {
+			const int t = order[j];
+
+			order[j]     = order[j - 1];
+			order[j - 1] = t;
+		}
+	}
+	for (i = 0; i < n; i++) {
+		if (R_RtBounceSees(p, off, &rt_bounce.samples[found[order[i]]])) {
+			return found[order[i]];
+		}
+	}
+	return -1;
+}
+
 static int R_RtBounceNearest(const vec3_t p, const vec3_t normal)
 {
-	float best = Square(72.0f);
-	int   found = -1, dx, dy, dz;
+	float best = Square(72.0f), dist[RT_BOUNCE_CANDIDATES];
+	int   found[RT_BOUNCE_CANDIDATES], n = 0, worst = 0, dx, dy, dz;
 
 	for (dz = -1; dz <= 1; dz++) {
 		for (dy = -1; dy <= 1; dy++) {
@@ -2053,14 +2113,13 @@ static int R_RtBounceNearest(const vec3_t p, const vec3_t normal)
 					const float             d = DistanceSquared(s->xyz, p);
 
 					if (d < best && DotProduct(s->normal, normal) > 0.5f) {
-						best  = d;
-						found = rt_bounce.hashOrder[k];
+						R_RtBounceKeep(found, dist, &n, &worst, rt_bounce.hashOrder[k], d);
 					}
 				}
 			}
 		}
 	}
-	return found;
+	return R_RtBounceNearestVisible(p, normal, found, dist, n);
 }
 
 // The samples: each texel of the bounce its surfaces cover, from the
@@ -2291,8 +2350,9 @@ static float R_RtBounceSkyAt(const vec3_t xyz, const vec3_t normal)
 // behind a curve, the edge of the terrain), -1 none near
 static int R_RtBounceNearestSeen(const vec3_t p, const vec3_t dir)
 {
-	float best = Square(96.0f);
-	int   found = -1, dx, dy, dz;
+	float  best = Square(96.0f), dist[RT_BOUNCE_CANDIDATES];
+	int    found[RT_BOUNCE_CANDIDATES], n = 0, worst = 0, dx, dy, dz;
+	vec3_t back;
 
 	for (dz = -1; dz <= 1; dz++) {
 		for (dy = -1; dy <= 1; dy++) {
@@ -2314,14 +2374,14 @@ static int R_RtBounceNearestSeen(const vec3_t p, const vec3_t dir)
 					const float             d = DistanceSquared(s->xyz, p);
 
 					if (d < best && DotProduct(s->normal, dir) < -0.2f) {
-						best  = d;
-						found = rt_bounce.hashOrder[k];
+						R_RtBounceKeep(found, dist, &n, &worst, rt_bounce.hashOrder[k], d);
 					}
 				}
 			}
 		}
 	}
-	return found;
+	VectorNegate(dir, back);
+	return R_RtBounceNearestVisible(p, back, found, dist, n);
 }
 
 // The colour of the static model a point is in (a ray stopped on the clip
