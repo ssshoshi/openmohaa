@@ -2663,6 +2663,10 @@ static qboolean ParseShader( char **text )
 		}
 		// skip stuff that only the q3map needs
 		else if ( !Q_stricmpn( token, "q3map", 5 ) ) {
+			// Added in OPM: a surface that lights the map is lit up itself
+			if (!Q_stricmp(token, "q3map_surfacelight")) {
+				shader.rtEmissive = qtrue;
+			}
 			SkipRestOfLine( text );
 			continue;
 		}
@@ -2799,6 +2803,9 @@ static qboolean ParseShader( char **text )
 				|| !Q_stricmp( token, "surfaceColor" )
 				|| !Q_stricmp( token, "surfaceAngle" )
 				|| !Q_stricmp( token, "surfaceDensity" ) ) {
+			if (!Q_stricmp(token, "surfaceLight")) {
+				shader.rtEmissive = qtrue;
+			}
 			SkipRestOfLine(text);
 			continue;
 		}
@@ -3461,6 +3468,15 @@ static int CollapseStagesToGLSL(void)
 			else if (diffuse->rgbGen == CGEN_STATIC
 				|| diffuse->rgbGen == CGEN_LIGHTING_SPHERICAL
 				|| diffuse->rgbGen == CGEN_LIGHTING_GRID)
+			{
+				vertexlit = qtrue;
+			}
+			// With all of the light live, a static model's "rgbGen vertex"
+			// (the colours the map baked for it) is its lighting too, which
+			// gives way to the ambient: kept, it lit the model as where the
+			// map put it, wherever it was knocked to, and the lights on top
+			else if (r_realtimeLighting->integer == 2
+				&& (diffuse->rgbGen == CGEN_VERTEX || diffuse->rgbGen == CGEN_EXACT_VERTEX))
 			{
 				vertexlit = qtrue;
 			}

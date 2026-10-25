@@ -208,6 +208,12 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyLightmap",   GLSL_INT },
 	{ "u_RtBounce",        GLSL_VEC4 },
 	{ "u_RtBounceMap",     GLSL_INT },
+	{ "u_RtBounceLampMap", GLSL_INT },
+	{ "u_RtDirect",        GLSL_VEC4 },
+	{ "u_RtDirectMap",     GLSL_INT },
+	{ "u_RtDirectDir",     GLSL_INT },
+	{ "u_RtLiveMap",       GLSL_INT },
+	{ "u_RtLiveDir",       GLSL_INT },
 	{ "u_RtProbeR",        GLSL_VEC4 },
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
@@ -392,11 +398,25 @@ static const char *rt_glsl =
 	// the light bounced onto each texel of the lightmap (R_RtBounce), at rt_skyLM; its scale, w 1 on
 	"uniform vec4 u_RtBounce;\n"
 	"uniform sampler2D u_RtBounceMap;\n"
+	// the lamps' light bounced, apart: as it would be, under a roof or not (z its scale)
+	"uniform sampler2D u_RtBounceLampMap;\n"
 	// on what has no lightmap, from the probes round it: for each colour m + v . N (xyz v, w m)
+	// the baked lamps' light on the draw's lightmap (R_RtBakeLamps): rgb its scale,
+	// w how far it is eased in (0: none, the lamps all live)
+	"uniform vec4 u_RtDirect;\n"
+	"uniform sampler2D u_RtDirectMap;\n"
+	// and the way it comes from, weighted by how bright (R_RtBakeLamps)
+	"uniform sampler2D u_RtDirectDir;\n"
+	// the baked light of the lamps lit live, which they give all of (R_RtLiveIn)
+	"uniform sampler2D u_RtLiveMap;\n"
+	"uniform sampler2D u_RtLiveDir;\n"
 	"uniform vec4 u_RtProbeR;\n"
 	"uniform vec4 u_RtProbeG;\n"
 	"uniform vec4 u_RtProbeB;\n"
 	"vec2 rt_skyLM = vec2(0.0);\n"
+	// the surface's own normal, where N is its normal map's (lightall): the
+	// baked lamps' light was worked out for it (RtLight)
+	"vec3 rt_geomN = vec3(0.0);\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"varying vec3 var_RtSky;\n"
 	"#endif\n"
@@ -411,16 +431,26 @@ static const char *rt_glsl =
 	"	return int(c == 0 ? q.x : c == 1 ? q.y : c == 2 ? q.z : q.w);\n"
 	"}\n"
 	"\n"
-	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth)\n"
+	"float RtShadowAtlas(sampler2DShadow atlas, float tile, vec2 faceUV, float depth, float tileTexels)\n"
 	"{\n"
-	"	vec2  origin = vec2(mod(tile, RT_TILES), floor(tile / RT_TILES));\n"
+	// a light further off: quarter tiles, two a side of a tile, in the
+	// rows from RT_SMALL_ROW (R_RtFaceRect)
+	"	float tiles  = RT_TILES;\n"
+	"	float texels = tileTexels;\n"
+	"	if (tile >= RT_SMALL_CODE)\n"
+	"	{\n"
+	"		tiles  = 2.0 * RT_TILES;\n"
+	"		texels = 0.5 * tileTexels;\n"
+	"		tile   = tile - RT_SMALL_CODE + 2.0 * RT_SMALL_ROW * tiles;\n"
+	"	}\n"
+	"	vec2  origin = vec2(mod(tile, tiles), floor(tile / tiles));\n"
 	// the four taps (each four texels, filtered) half a texel apart, or as
 	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps
 	"	float spread = max(u_RtSurface.w, 1.0);\n"
-	"	float texel  = 1.0 / RT_TILE_TEXELS;\n"
+	"	float texel  = 1.0 / texels;\n"
 	"	vec2  st     = clamp(faceUV, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
-	"	vec2  uv     = (origin + st) / RT_TILES;\n"
-	"	float d      = 0.5 * spread / (RT_TILES * RT_TILE_TEXELS);\n"
+	"	vec2  uv     = (origin + st) / tiles;\n"
+	"	float d      = 0.5 * spread / (RT_TILES * tileTexels);\n"
 	"	return 0.25 * (shadow2D(atlas, vec3(uv + vec2(-d, -d), depth))\n"
 	"	             + shadow2D(atlas, vec3(uv + vec2( d, -d), depth))\n"
 	"	             + shadow2D(atlas, vec3(uv + vec2(-d,  d), depth))\n"
@@ -449,14 +479,14 @@ static const char *rt_glsl =
 	"	float vis = 1.0;\n"
 	// the world as the map was compiled, in the same tiles as what stands still
 	"	if (baked)\n"
-	"		return info.x >= 0.0 ? RtShadowAtlas(u_RtShadowBaked, info.x + face, faceUV, depth) : 1.0;\n"
-	"	if (info.x >= 0.0) vis *= RtShadowAtlas(u_RtShadowStatic, info.x + face, faceUV, depth);\n"
+	"		return info.x >= 0.0 ? RtShadowAtlas(u_RtShadowBaked, info.x + face, faceUV, depth, RT_BAKED_TEXELS) : 1.0;\n"
+	"	if (info.x >= 0.0) vis *= RtShadowAtlas(u_RtShadowStatic, info.x + face, faceUV, depth, RT_TILE_TEXELS);\n"
 	// the moving things' tiles, with the faces drawn in the fraction, a bit each
 	"	if (info.y >= 0.0)\n"
 	"	{\n"
 	"		float mask = floor(fract(info.y) * 64.0 + 0.5);\n"
 	"		if (mod(floor(mask / exp2(face)), 2.0) > 0.5)\n"
-	"			vis *= RtShadowAtlas(u_RtShadowDynamic, floor(info.y) + face, faceUV, depth);\n"
+	"			vis *= RtShadowAtlas(u_RtShadowDynamic, floor(info.y) + face, faceUV, depth, RT_TILE_TEXELS);\n"
 	"	}\n"
 	"	return vis;\n"
 	"}\n"
@@ -576,75 +606,119 @@ static const char *rt_glsl =
 	"	float v  = EH * EH * (rt_specRough + 0.5) + 0.0001;\n"
 	"	return u_RtSurface.z * rrrr / (4.0 * dd * dd * v);\n"
 	"}\n"
-	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
+	// What light i gives P facing N, before its shadow (0: none), with which
+	// kind it is (0 point, 1 spot, 2 the game's, 3 a lamp's or a lit
+	// surface's) and whether it is in the baked lamps (R_RtBakeLamps): its
+	// kind sent eight more. Shared with the bake, which works it out the same.
+	"float RtAtten(int i, vec3 P, vec3 N, out vec3 toLight, out float d, out float kind, out bool baked)\n"
 	"{\n"
-	"	vec3 sum   = vec3(0.0);\n"
-	"	int  count = int(u_RtParams.x);\n"
-	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
-	"	{\n"
-	"		if (k >= count) break;\n"
-	"		int   i  = RtListed(k);\n"
-	"		vec4  l0 = u_RtLights[i * 4];\n"
-	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
-	"		vec3  toLight = l0.xyz - P;\n"
-	"		float d2 = dot(toLight, toLight);\n"
-	"		float r2 = l1.w * l1.w;\n"
-	"		if (d2 >= r2) continue;\n"
-	"		float d   = sqrt(d2);\n"
-	"		float ndl = dot(N, toLight) / d;\n"
-	"		if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
-	"		if (ndl <= 0.0) continue;\n"
-	"		float fade = 1.0 - d2 / r2;\n"
+	"	vec4  l0 = u_RtLights[i * 4];\n"
+	"	vec4  l1 = u_RtLights[i * 4 + 1];\n"
+	"	kind  = l0.w;\n"
+	"	baked = kind > 7.5;\n"
+	"	if (baked) kind -= 8.0;\n"
+	"	toLight = l0.xyz - P;\n"
+	"	float d2 = dot(toLight, toLight);\n"
+	"	float r2 = l1.w * l1.w;\n"
+	"	d = sqrt(d2);\n"
+	"	if (d2 >= r2) return 0.0;\n"
+	"	float ndl = dot(N, toLight) / max(d, 1e-4);\n"
+	"	if (ndl < 0.0) ndl *= -u_RtSurface.x;\n"
+	"	if (ndl <= 0.0) return 0.0;\n"
+	"	float fade = 1.0 - d2 / r2;\n"
 	// the compiler's point light: intensity * 7500 / distance squared, never nearer than 16
-	"		float att  = ndl * fade * fade / max(d2, 256.0);\n"
-	// l0.w: 0 a point light, 1 a spot light, 2 a light the game adds (a muzzle
-	// flash, a blast): never shadowed, and on top of the map's lighting
-	// always; 3 a lamp's (R_RtLightsAtLamps)
-	"		bool added = l0.w > 1.5 && l0.w < 2.5;\n"
-	"		if (l0.w > 2.5)\n"
-	"		{\n"
+	"	float att  = ndl * fade * fade / max(d2, 256.0);\n"
+	"	if (kind > 2.5)\n"
+	"	{\n"
 	// a lamp's: never nearer than the glow of its shade (l2.w), and less the
 	// way its shade closes it off (l2.xyz, as long as the part it stops
 	// there): a shade stops what leaves past its rim, so a little over square
 	// to it all of it is stopped (a bell shade's ceiling, near and far).
 	// Longer than a whole, the shade is a ring round the lamp (a lampshade
 	// open at both ends): what leaves near square to its axis is held back
-	"			vec4  l2   = u_RtLights[i * 4 + 2];\n"
-	"			float shut = length(l2.xyz);\n"
-	"			att = ndl * fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
-	"			if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) / (d * shut));\n"
-	"			else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
-	"		}\n"
-	"		else if (l0.w > 0.5 && !added)\n"
-	"		{\n"
+	"		vec4  l2   = u_RtLights[i * 4 + 2];\n"
+	"		float shut = length(l2.xyz);\n"
+	"		att = ndl * fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
+	// a lit surface's (its "near" less than nothing): what it gives
+	// falls off with the angle from straight out of it (l2.xyz into it)
+	"		if (l2.w < 0.0) att *= max(0.0, dot(toLight, l2.xyz)) / (d * shut);\n"
+	"		else if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) / (d * shut));\n"
+	"		else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) / (d * shut));\n"
+	"	}\n"
+	"	else if (kind > 0.5 && kind < 1.5)\n"
+	"	{\n"
 	// the compiler's spot light: a cone, with a 32 unit soft edge
-	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
-	"			float along = -dot(toLight, l2.xyz);\n"
-	"			if (along <= 0.001) continue;\n"
-	"			float radiusAtDist = l2.w * along;\n"
-	"			float sampleRadius = length(-toLight - l2.xyz * along);\n"
-	"			if (sampleRadius >= radiusAtDist) continue;\n"
-	"			att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
-	"		}\n"
+	"		vec4  l2 = u_RtLights[i * 4 + 2];\n"
+	"		float along = -dot(toLight, l2.xyz);\n"
+	"		if (along <= 0.001) return 0.0;\n"
+	"		float radiusAtDist = l2.w * along;\n"
+	"		float sampleRadius = length(-toLight - l2.xyz * along);\n"
+	"		if (sampleRadius >= radiusAtDist) return 0.0;\n"
+	"		att *= clamp((radiusAtDist - sampleRadius) / 32.0, 0.0, 1.0);\n"
+	"	}\n"
+	"	return att;\n"
+	"}\n"
+	// off the surface P facing N by a texel and a half of light i's shadow at
+	// that distance: from the light to there
+	"vec3 RtShadowAt(vec4 l0, vec4 l3, vec3 P, vec3 N, vec3 toLight, float d, float tileTexels)\n"
+	"{\n"
+	"	float texelWorld = (l3.x >= RT_SMALL_CODE ? 4.0 : 2.0) * d / tileTexels;\n"
+	"	return P + N * sign(dot(N, toLight)) * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
+	"}\n"
+	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
+	"{\n"
+	"	vec3 sum   = vec3(0.0);\n"
+	"	int  count = int(u_RtParams.x);\n"
+	// the baked lamps (u_RtDirect.w, eased in): their light on a lightmap
+	// is read from it, all of them, and the few lit live add what they
+	// change of it (the sharp shadows, of what moves too, and their shine)
+	// (u_RtDirect.w less than nothing: without the normal map's shading, r_rtBakedDebug 1)
+	"	float bakedHere = (!delta && u_RtDirect.w != 0.0) ? abs(u_RtDirect.w) : 0.0;\n"
+	// a shadow looked up off the surface's own face, not the normal map's:
+	// its edge followed the bumps
+	"	vec3  shadowN = dot(rt_geomN, rt_geomN) > 0.5 ? rt_geomN : N;\n"
+	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
+	"	{\n"
+	"		if (k >= count) break;\n"
+	"		int   i  = RtListed(k);\n"
+	"		vec3  toLight;\n"
+	"		float d, kind;\n"
+	"		bool  baked;\n"
+	"		float att = RtAtten(i, P, N, toLight, d, kind, baked);\n"
+	"		if (att <= 0.0) continue;\n"
+	"		vec4  l0 = u_RtLights[i * 4];\n"
+	"		vec4  l1 = u_RtLights[i * 4 + 1];\n"
+	// 2: a light the game adds (a muzzle flash, a blast): never shadowed,
+	// and on top of the map's lighting always
+	"		bool added = kind > 1.5 && kind < 2.5;\n"
+	"		float less = baked ? bakedHere : 0.0;\n"
 	// what it would give unshadowed is too little to see: passed over, its
 	// shadow not looked up (u_RtAmbient.w, r_rtCutoff; R_RtReach)
 	"		vec3 most = l1.rgb * att;\n"
 	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
+	"		float shine = att;\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
-	// off the surface by a texel and a half of the shadow at that distance
-	"			float texelWorld = 2.0 * d / RT_TILE_TEXELS;\n"
-	"			vec3  v = P + N * sign(dot(N, toLight)) * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
+	"			vec3  v = RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_TILE_TEXELS);\n"
 	"			float now = RtShadow(l3, v, false);\n"
 	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
-	"			att *= delta ? now - RtShadow(l3, v, true) : now;\n"
+	"			shine = att * now;\n"
+	// a baked lamp not taken out of its bake (R_RtLiveIn) takes back its
+	// baked light worked out here: the lightmap's coarse texels have it
+	// otherwise at an edge, but only lamps further off are left to it.
+	// Worked out at the lightmap's four texels it cost the main pass 1.4 ms
+	// on the card in a busy hall (its registers), baked lamps on or off
+	"			if (delta || less > 0.0)\n"
+	"				now -= (delta ? 1.0 : less) * RtShadow(l3, RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_BAKED_TEXELS), true);\n"
+	"			att *= now;\n"
 	"		}\n"
 	"		else if (delta && !added) continue;\n"
+	"		else att *= 1.0 - less;\n"
 	"		sum += l1.rgb * att;\n"
 	// the shine of what faces it (a leaf's far side takes none)
 	"		if (rt_specOn && !delta && dot(N, toLight) > 0.0)\n"
-	"			rt_spec += l1.rgb * att * RtSpecular(N, toLight / d);\n"
+	"			rt_spec += l1.rgb * shine * RtSpecular(N, toLight / d);\n"
 	"	}\n"
 	"	if (u_RtSunDir.w > 0.5 && !delta)\n"
 	"	{\n"
@@ -680,11 +754,39 @@ static const char *rt_glsl =
 	// x out under the sky, y deep in a room, by how far in its texel is (alpha)
 	"	{\n"
 	"		vec4 b = texture2D(u_RtBounceMap, rt_skyLM);\n"
-	"		sum += mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb;\n"
+	"		sum += mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb + u_RtBounce.z * texture2D(u_RtBounceLampMap, rt_skyLM).rgb;\n"
 	"	}\n"
 	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
 	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
 	"#endif\n"
+	// the baked lamps' light on this lightmap (R_RtBakeLamps), rgb its scale
+	// the baked lamps' light on this lightmap (R_RtBakeLamps), rgb its scale,
+	// shaded again for the normal map the way most of it comes from, as
+	// much as it comes from one way, and shining that way
+	"	if (bakedHere > 0.0)\n"
+	"	{\n"
+	"		vec3  c   = max(texture2D(u_RtDirectMap, rt_skyLM).rgb - texture2D(u_RtLiveMap, rt_skyLM).rgb, vec3(0.0));\n"
+	"		vec3  dl  = texture2D(u_RtDirectDir, rt_skyLM).xyz - texture2D(u_RtLiveDir, rt_skyLM).xyz;\n"
+	"		float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+	"		float len = length(dl);\n"
+	"		vec3  b   = bakedHere * u_RtDirect.rgb * c;\n"
+	"		if (len > 1e-5 && lum > 1e-5 && u_RtDirect.w > 0.0)\n"
+	"		{\n"
+	"			vec3  L = dl / len;\n"
+	"			float k = clamp(len / lum, 0.0, 1.0);\n"
+	"			if (dot(rt_geomN, rt_geomN) > 0.5)\n"
+	"				b *= mix(1.0, clamp(max(dot(N, L), 0.0) / max(dot(rt_geomN, L), 0.25), 0.0, 2.0), k);\n"
+	"			if (rt_specOn && dot(N, L) > 0.0)\n"
+	"				rt_spec += b * k * RtSpecular(N, L);\n"
+	"		}\n"
+	"		sum += b;\n"
+	"	}\n"
+	// a lamp lit live carves its sharp shadows out of the baked light: never
+	// below none
+	
+
+
+	"	sum = max(sum, vec3(0.0));\n"
 	"	return sum;\n"
 	"}\n"
 	"#else\n"
@@ -709,16 +811,18 @@ static const char *rt_glsl =
 	"		if (d2 >= r2) continue;\n"
 	"		float fade = 1.0 - d2 / r2;\n"
 	"		float att  = fade * fade / max(d2, 256.0);\n"
-	"		bool added = l0.w > 1.5 && l0.w < 2.5;\n"
-	"		if (l0.w > 2.5)\n"
+	"		float kind = l0.w > 7.5 ? l0.w - 8.0 : l0.w;\n"
+	"		bool added = kind > 1.5 && kind < 2.5;\n"
+	"		if (kind > 2.5)\n"
 	"		{\n"
 	"			vec4  l2   = u_RtLights[i * 4 + 2];\n"
 	"			float shut = length(l2.xyz);\n"
 	"			att = fade * fade / max(d2, max(l2.w * l2.w, 256.0));\n"
-	"			if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);\n"
+	"			if (l2.w < 0.0) att *= max(0.0, dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut;\n"
+	"			else if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);\n"
 	"			else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);\n"
 	"		}\n"
-	"		else if (l0.w > 0.5 && !added)\n"
+	"		else if (kind > 0.5 && kind < 1.5)\n"
 	"		{\n"
 	"			vec4  l2 = u_RtLights[i * 4 + 2];\n"
 	"			float along = -dot(toLight, l2.xyz);\n"
@@ -781,6 +885,78 @@ static const char *rt_skyBake_fp =
 	"void main()\n"
 	"{\n"
 	"	gl_FragColor = vec4(RtSky(var_P, normalize(var_N)).r, 0.0, 0.0, 1.0);\n"
+	"}\n";
+
+/*
+Added in OPM
+A lamp's light on the lightmaps, once a map (R_RtBakeLamps): drawn at the
+lightmap coordinates of the surfaces it reaches, added up, light 0 of
+u_RtLights with its shadow of the world from the baked atlas, as RtLight
+works it out for a pixel.
+*/
+static const char *rt_lampBake_fp =
+	"varying vec3 var_P;\n"
+	"varying vec3 var_N;\n"
+	"void main()\n"
+	"{\n"
+	"	vec3  N = normalize(var_N);\n"
+	"	vec3  toLight;\n"
+	"	float d, kind;\n"
+	"	bool  baked;\n"
+	"	float att = RtAtten(0, var_P, N, toLight, d, kind, baked);\n"
+	"	vec3  c = vec3(0.0);\n"
+	"	if (att > 0.0)\n"
+	"	{\n"
+	"		vec4 l3 = u_RtLights[3];\n"
+	"		if (l3.x >= 0.0)\n"
+	"			att *= RtShadow(l3, RtShadowAt(u_RtLights[0], l3, var_P, N, toLight, d, RT_BAKED_TEXELS), true);\n"
+	"		c = u_RtLights[1].rgb * att;\n"
+	"	}\n"
+	// a: where a surface is (u_RtParams.w 1, before the lamps), the lamps adding none;
+	// u_RtParams.x 2: the way it comes from, as bright as it is, for the normal maps
+	"	if (u_RtParams.x > 1.5)\n"
+	"		c = (att > 0.0 ? toLight / max(d, 1e-4) : vec3(0.0)) * dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+	"	gl_FragColor = vec4(c, u_RtParams.w);\n"
+	"}\n";
+
+/*
+Added in OPM
+A lamp's light on a page, as the bake leaves it (R_RtBakeFinish), for those
+lit live (R_RtLivePass): u_RtParams.x 0, each texel the mean of the surfaces
+drawn over it (u_RtDirectDir's r how many), a 1 where any is; 1, a ring of
+the texels none covers taking the mean of those round them that are; 2,
+added on, times u_RtParams.y.
+*/
+static const char *rt_bakeFill_fp =
+	"void main()\n"
+	"{\n"
+	"	ivec2 p = ivec2(gl_FragCoord.xy);\n"
+	"	vec4  s = texelFetch(u_RtDirectMap, p, 0);\n"
+	"	if (u_RtParams.x < 0.5)\n"
+	"	{\n"
+	"		float n = texelFetch(u_RtDirectDir, p, 0).r;\n"
+	"		gl_FragColor = vec4(n > 1.5 ? s.rgb / n : s.rgb, n > 0.5 ? 1.0 : 0.0);\n"
+	"	}\n"
+	"	else if (u_RtParams.x < 1.5)\n"
+	"	{\n"
+	"		ivec2 size  = textureSize(u_RtDirectMap, 0);\n"
+	"		vec3  sum   = vec3(0.0);\n"
+	"		float count = 0.0;\n"
+	"		if (s.a >= 0.5) { gl_FragColor = s; return; }\n"
+	"		for (int dy = -1; dy <= 1; dy++)\n"
+	"		for (int dx = -1; dx <= 1; dx++)\n"
+	"		{\n"
+	"			ivec2 q = p + ivec2(dx, dy);\n"
+	"			if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) continue;\n"
+	"			vec4 t = texelFetch(u_RtDirectMap, q, 0);\n"
+	"			if (t.a < 0.5) continue;\n"
+	"			sum += t.rgb;\n"
+	"			count += 1.0;\n"
+	"		}\n"
+	"		gl_FragColor = count > 0.0 ? vec4(sum / count, 1.0) : s;\n"
+	"	}\n"
+	"	else\n"
+	"		gl_FragColor = vec4(s.rgb * u_RtParams.y, 0.0);\n"
 	"}\n";
 
 static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *dest, int size )
@@ -950,6 +1126,8 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 			Q_strcat(dest, size, "#define RT_VERTEX\n#define texture2D texture\n#define shadow2D texture\n");
 		Q_strcat(dest, size, va("#define RT_MAX_LIGHTS %d\n#define RT_TILES %d.0\n#define RT_TILE_TEXELS %d.0\n#define RT_ZNEAR %f\n",
 			RT_MAX_LIGHTS, RT_ATLAS_TILES, r_rtShadowTile->integer, RT_ZNEAR));
+		Q_strcat(dest, size, va("#define RT_SMALL_CODE %d.0\n#define RT_SMALL_ROW %d.0\n#define RT_BAKED_TEXELS %d.0\n", RT_SMALL_CODE,
+			RT_SMALL_FIRST / RT_ATLAS_TILES, R_RtBakedTile()));
 		Q_strcat(dest, size, va("#define RT_SKY_DIRS %d\n#define RT_SKY_TILES %d.0\n#define RT_SKY_TEXELS %d.0\n",
 			RT_SKY_DIRS, RT_SKY_TILES, r_rtSkyTile->integer));
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
@@ -2011,6 +2189,11 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2134,6 +2317,11 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
+	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
+	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
+	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
+	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 	GLSL_FinishGPUShader(sp);
@@ -2228,6 +2416,35 @@ void GLSL_InitGPUShaders(void)
 			GLSL_InitUniforms(&tr.rtSkyBakeShader);
 			GLSL_SetUniformInt(&tr.rtSkyBakeShader, UNIFORM_RTSKYMAP, TMU_RTSKY);
 			GLSL_FinishGPUShader(&tr.rtSkyBakeShader);
+			numEtcShaders++;
+		}
+
+		// and the lamps' light on them (R_RtBakeLamps)
+		if (!GLSL_InitGPUShader(&tr.rtLampBakeShader, "rtlampbake", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD,
+			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBake_vp, rt_lampBake_fp))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no program for the baked lamps\n");
+		}
+		else
+		{
+			GLSL_InitUniforms(&tr.rtLampBakeShader);
+			GLSL_SetUniformInt(&tr.rtLampBakeShader, UNIFORM_RTSHADOWBAKED, TMU_RTSHADOW_BAKED);
+			GLSL_FinishGPUShader(&tr.rtLampBakeShader);
+			numEtcShaders++;
+		}
+
+		// and that of those lit live, the texels no surface covers filled (R_RtLivePass)
+		if (!GLSL_InitGPUShader(&tr.rtBakeFillShader, "rtbakefill", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD,
+			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBake_vp, rt_bakeFill_fp))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no program for the baked lamps lit live\n");
+		}
+		else
+		{
+			GLSL_InitUniforms(&tr.rtBakeFillShader);
+			GLSL_SetUniformInt(&tr.rtBakeFillShader, UNIFORM_RTDIRECTMAP, TMU_RTDIRECT);
+			GLSL_SetUniformInt(&tr.rtBakeFillShader, UNIFORM_RTDIRECTDIR, TMU_RTDIRECTDIR);
+			GLSL_FinishGPUShader(&tr.rtBakeFillShader);
 			numEtcShaders++;
 		}
 	}
@@ -2699,6 +2916,8 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.textureColorShader);
 	GLSL_DeleteGPUShader(&tr.rtSkyBakeShader);
+	GLSL_DeleteGPUShader(&tr.rtLampBakeShader);
+	GLSL_DeleteGPUShader(&tr.rtBakeFillShader);
 
 	for ( i = 0; i < FOGDEF_COUNT; i++)
 		GLSL_DeleteGPUShader(&tr.fogShader[i]);

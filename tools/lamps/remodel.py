@@ -119,7 +119,7 @@ def cmd_shaders(args):
            "// from lights/lamps.txt. The remodelled lamps (remodel.py) name a surface",
            "// opm_<lamp>_glass, which takes the shader of its name.", ""]
     for model, entry in table.items():
-        if (entry.get("kind") or [""])[0] == "off":
+        if (entry.get("kind") or [""])[0] in ("off", "searchlight"):
             continue
         s = glass_shader(model, entry)
         if s:
@@ -197,7 +197,8 @@ def cmd_build(args):
     for model in models:
         if model not in table:
             raise SystemExit("%s is not in lamps.txt" % model)
-        if (table[model].get("kind") or [""])[0] == "off":
+        # not lit, or lit by the game (a searchlight's beam is its own model)
+        if (table[model].get("kind") or [""])[0] in ("off", "searchlight"):
             continue
         remodel(model, table[model], args.work, args)
     if args.pk3:

@@ -771,6 +771,10 @@ void main()
 	{
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 		vec3 rtNormal = N;
+		// the surface's own, which the baked lamps were worked out for, on
+		// the side the normal map's is
+		rt_geomN = normalize(var_RtNormal);
+		if (dot(rt_geomN, N) < 0.0) rt_geomN = -rt_geomN;
 
 		// the lights' and the sun's shine, with all of the light live
 		rt_specOn    = u_RtParams.y > 1.5 && u_RtSurface.z > 0.0;
