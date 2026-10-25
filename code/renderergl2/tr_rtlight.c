@@ -324,7 +324,7 @@ void R_RtRegister(void)
 	r_rtBakedLamps = ri.Cvar_Get("r_rtBakedLamps", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtBakedLamps, "With r_realtimeLighting 2, every lamp's light on the lightmapped world is baked once a map, with its shadow of the world, so that all of them show however few are lit live (r_rtMaxLights): those add their sharp shadows and shine. 0: only the lamps lit live give light");
 	r_rtBakedDebug = ri.Cvar_Get("r_rtBakedDebug", "0", 0);
-	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake). Not archived: a test switch");
+	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake); 3: of the bounce, the lamps' alone; 4: the daylight's alone. Not archived: a test switch");
 	r_rtWindowLights = ri.Cvar_Get("r_rtWindowLights", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtWindowLights, "With r_realtimeLighting 2, keep the map's spot lights that stand in for daylight through its windows (0: the sun and the sky come in by themselves, and they go). Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
@@ -1798,7 +1798,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 7
+#define RT_BOUNCE_VERSION 8
 #define RT_BOUNCE_VALUES  6 // each sample's bounce, the daylight's then the lamps'
 #define RT_BOUNCE_FILE_SIZE(n) (20 + sizeof(float) * (RT_BOUNCE_VALUES + 6) * (n))
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
@@ -2190,10 +2190,13 @@ static void R_RtBounceSamples(void)
 static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out, vec3_t lamps)
 {
 	trace_t trace;
-	vec3_t  zero = {0, 0, 0}, from, to;
+	// a little box, not a line: a line slipped through the seam where two
+	// walls meet in a corner, and the floor there was lit by the moon in a
+	// shut room, and lit the walls round it (m3l2)
+	vec3_t  zero = {-1, -1, -1}, one = {1, 1, 1}, from, to;
 	int     i;
 
-	VectorMA(xyz, 2.0f, normal, from);
+	VectorMA(xyz, 3.0f, normal, from);
 	VectorClear(out);
 	VectorClear(lamps);
 	if (rt.sun) {
@@ -2201,7 +2204,7 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 
 		if (ndl > 0) {
 			VectorMA(from, 16384.0f, rt.sunDir, to);
-			ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			ri.CM_BoxTrace(&trace, from, to, zero, one, 0, CONTENTS_SOLID, qfalse);
 			if (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) {
 				VectorMA(out, ndl, rt.sunColor, out);
 			}
@@ -2252,7 +2255,7 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 			continue;
 		}
 		if (!l->noShadow) {
-			ri.CM_BoxTrace(&trace, from, l->origin, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			ri.CM_BoxTrace(&trace, from, l->origin, zero, one, 0, CONTENTS_SOLID, qfalse);
 			if (trace.startsolid || trace.fraction < 0.98f) {
 				continue;
 			}
@@ -3341,6 +3344,12 @@ static void R_RtBounceStep(float bake, float ease)
 	rt_bounce.weight = Q_min(1.0f, rt_bounce.weight + ease);
 	VectorSet4(tr.rtBounce, bake * rt_bounce.weight * R_RtBounceScale(0), bake * rt_bounce.weight * R_RtBounceScale(1),
 		bake * rt_bounce.weight, tr.rtBounceImage ? 1.0f : 0.0f);
+	// r_rtBakedDebug 3: the lamps' bounce alone; 4: the daylight's alone
+	if (r_rtBakedDebug->integer == 3) {
+		tr.rtBounce[0] = tr.rtBounce[1] = 0;
+	} else if (r_rtBakedDebug->integer == 4) {
+		tr.rtBounce[2] = 0;
+	}
 }
 
 static void R_RtBakeSkyLightmaps(void)
@@ -4190,6 +4199,69 @@ static void R_RtBakeFinish(void)
 		ri.Milliseconds() - rt_bake.startTime);
 }
 
+// r_rtShadowProbe n x y z: light n's faces of the world alone drawn into the
+// third atlas (slot RT_SLOTS_BIG - 1, its owner's redrawn after), and the
+// frame after, the depth there towards (x y z) against that point's (a test)
+static int    rt_probeLight = -1, rt_probeStage;
+static vec3_t rt_probePoint;
+
+static void R_RtShadowProbe_f(void)
+{
+	rt_probeLight = atoi(ri.Cmd_Argv(1));
+	VectorSet(rt_probePoint, atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)), atof(ri.Cmd_Argv(4)));
+	rt_probeStage = (rt_probeLight >= 0 && rt_probeLight < rt.numLights && tr.rtShadowFbo[2]) ? 1 : 0;
+}
+
+static void R_RtShadowProbeStep(void)
+{
+	const int  slot = RT_SLOTS_BIG - 1, tile = R_RtBakedTile();
+	rtLight_t *l;
+	vec3_t     v, a;
+	float      fwd, left, up, n = RT_ZNEAR, f, want, got[25];
+	int        face, f2, x0, y0, px, py, k;
+
+	if (!rt_probeStage) {
+		return;
+	}
+	l = &rt.lights[rt_probeLight];
+	if (rt_probeStage == 1) {
+		for (f2 = 0; f2 < 6; f2++) {
+			R_RtRenderFace(l, 2, slot, f2);
+		}
+		if (rt.staticOwner[slot] >= 0) {
+			rt.lights[rt.staticOwner[slot]].bakedFaces = 0;
+		}
+		rt_probeStage = 2;
+		return;
+	}
+	rt_probeStage = 0;
+	VectorSubtract(rt_probePoint, l->origin, v);
+	VectorSet(a, fabs(v[0]), fabs(v[1]), fabs(v[2]));
+	if (a[0] >= a[1] && a[0] >= a[2]) {
+		face = v[0] > 0 ? 0 : 1; fwd = a[0]; left = v[0] > 0 ? v[1] : -v[1]; up = v[2];
+	} else if (a[1] >= a[2]) {
+		face = v[1] > 0 ? 2 : 3; fwd = a[1]; left = v[1] > 0 ? -v[0] : v[0]; up = v[2];
+	} else {
+		face = v[2] > 0 ? 4 : 5; fwd = a[2]; left = v[2] > 0 ? -v[1] : v[1]; up = v[0];
+	}
+	f    = l->range;
+	want = ((f + n) / (f - n) - 2.0f * f * n / ((f - n) * fwd)) * 0.5f + 0.5f;
+	x0   = ((slot * 6 + face) % RT_ATLAS_TILES) * tile;
+	y0   = ((slot * 6 + face) / RT_ATLAS_TILES) * tile;
+	px   = x0 + (int)((-left / fwd * 0.5f + 0.5f) * tile);
+	py   = y0 + (int)((up / fwd * 0.5f + 0.5f) * tile);
+	Com_Memset(got, 0, sizeof(got));
+	FBO_Bind(tr.rtShadowFbo[2]);
+	qglReadPixels(Q_max(px - 2, x0), Q_max(py - 2, y0), 5, 5, GL_DEPTH_COMPONENT, GL_FLOAT, got);
+	FBO_Bind(NULL);
+	ri.Printf(PRINT_ALL, "light %d at %.0f %.0f %.0f to %.0f %.0f %.0f: face %d uv %.3f %.3f, fwd %.1f, depth %.6f\n", rt_probeLight, l->origin[0], l->origin[1],
+		l->origin[2], rt_probePoint[0], rt_probePoint[1], rt_probePoint[2], face, -left / fwd * 0.5f + 0.5f, up / fwd * 0.5f + 0.5f, fwd, want);
+	for (k = 0; k < 25; k++) {
+		const float d = got[k] * 2.0f - 1.0f;
+		ri.Printf(PRINT_ALL, "%7.1f%s", 2.0f * f * n / ((f + n) - d * (f - n)), k % 5 == 4 ? "\n" : " ");
+	}
+}
+
 // r_rtBakeAt x y: the bake's surfaces over (x, y), top down, their normal, the
 // lightmap texel there and what is baked in it (a test command)
 static void R_RtBakeAt_f(void)
@@ -4201,6 +4273,9 @@ static void R_RtBakeAt_f(void)
 	// the texels round it
 	if (ri.Cmd_Argc() > 3) {
 		vec3_t pt;
+
+		ri.Printf(PRINT_ALL, "  sun %d towards %.2f %.2f %.2f colour %.1f %.1f %.1f; live sun %.2f %.2f %.2f %.2f\n", rt.sun, rt.sunDir[0], rt.sunDir[1], rt.sunDir[2],
+			rt.sunColor[0], rt.sunColor[1], rt.sunColor[2], tr.rtSunColor[0], tr.rtSunColor[1], tr.rtSunColor[2], tr.rtSunDir[3]);
 
 		VectorSet(pt, x, y, atof(ri.Cmd_Argv(3)));
 		for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
@@ -4295,6 +4370,9 @@ static void R_RtBakeAt_f(void)
 							l->origin[0], l->origin[1], l->origin[2], kind, dd, ndl, shape[0], shape[1], shape[2], shape[3],
 							Q_max(ndl, 0) * fade * fade / Q_max(dd * dd, 256.0f) * Q_max(l->color[0], Q_max(l->color[1], l->color[2])),
 							l->noShadow ? " no shadow" : "");
+						if (l->fixture >= 0 && l->fixture < tr.world->numStaticModels) {
+							ri.Printf(PRINT_ALL, "      at %s\n", tr.world->staticModels[l->fixture].model);
+						}
 					}
 				}
 			}
@@ -5926,6 +6004,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtUpdateSky(bake, ease);
 	R_RtBounceStep(bake, ease);
 	rt_bake.scale = scale;
+	R_RtShadowProbeStep();
 	// the lamps lit live last frame and no longer: their bake put back
 	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
@@ -5962,7 +6041,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 			const vec4_t *d = &tr.rtLightData[i * RT_LIGHT_VEC4S];
 			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f) type %.0f range %.0f color (%.2f %.2f %.2f) bodies %.3f spot (%.2f %.2f %.2f) %.3f shadow %.0f\n",
 				i, d[0][0], d[0][1], d[0][2], d[0][3], d[1][3], d[1][0], d[1][1], d[1][2], d[3][2], d[2][0], d[2][1], d[2][2], d[2][3], d[3][0]);
-			{
+			if (d[0][3] < 1.5f || d[0][3] > 2.5f) { // not one the game added
 				const rtLight_t *l = &rt.lights[rt.active[i]];
 
 				ri.Printf(PRINT_ALL, "    bake out %d: weight %.2f baked %d slot %d faces %d ready %d moved %.2f shadowed %d\n", l->live, l->weight, l->baked,
@@ -6551,12 +6630,14 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtProbeInfo", R_RtProbeInfo_f);
 		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
 		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
+		ri.Cmd_AddCommand("r_rtShadowProbe", R_RtShadowProbe_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
 		ri.Cmd_RemoveCommand("r_rtProbeInfo");
 		ri.Cmd_RemoveCommand("r_rtProbeTest");
 		ri.Cmd_RemoveCommand("r_rtBakeAt");
+		ri.Cmd_RemoveCommand("r_rtShadowProbe");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}
