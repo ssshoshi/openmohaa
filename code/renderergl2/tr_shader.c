@@ -3471,6 +3471,15 @@ static int CollapseStagesToGLSL(void)
 			{
 				vertexlit = qtrue;
 			}
+			// With all of the light live, a static model's "rgbGen vertex"
+			// (the colours the map baked for it) is its lighting too, which
+			// gives way to the ambient: kept, it lit the model as where the
+			// map put it, wherever it was knocked to, and the lights on top
+			else if (r_realtimeLighting->integer == 2
+				&& (diffuse->rgbGen == CGEN_VERTEX || diffuse->rgbGen == CGEN_EXACT_VERTEX))
+			{
+				vertexlit = qtrue;
+			}
 			//=========================
 
 			CollapseStagesToLightall(diffuse, normal, specular, lightmap, diffuselit, vertexlit, parallax, tcgen);

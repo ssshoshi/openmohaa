@@ -8214,12 +8214,23 @@ extern "C" void CG_RagdollGrabFarther_f(void)
 // whole body is sent along the view, the part hit hardest.
 extern "C" void CG_RagdollPunt_f(void)
 {
-    cg_ragdoll_t *rd = CG_RagdollHeld();
-    vec3_t        start, dir, point;
-    float         entry = 0.0f;
-    int           i;
+    static cvar_t *orch_active;
+    cg_ragdoll_t  *rd = CG_RagdollHeld();
+    vec3_t         start, dir, point;
+    float          entry = 0.0f;
+    int            i;
 
     if (!cg_ragdoll_grab->integer) {
+        return;
+    }
+
+    // MOUSE3 is the orchestrator's screenshot too: while it is on, the
+    // screenshot wins, whichever of the two bound the key last
+    if (!orch_active) {
+        orch_active = cgi.Cvar_Get("orch_active", "0", 0);
+    }
+    if (orch_active->integer) {
+        cgi.Cmd_Execute(EXEC_APPEND, "orch_shot\n");
         return;
     }
 

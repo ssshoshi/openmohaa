@@ -523,7 +523,10 @@ enum
 #define TMU_RTSHADOW_BAKED   10
 #define TMU_RTDIRECT         19 // Added in OPM: the baked lamps' light (R_RtBakeLamps)
 #define TMU_RTDIRECTDIR      20 // and the way it comes from
-#define NUM_TEXTURE_UNITS    21
+#define TMU_RTBOUNCELAMP     21 // the lamps' light bounced (R_RtBounce)
+#define TMU_RTLIVE           22 // the baked lamps lit live, taken out of their bake (R_RtLiveIn)
+#define TMU_RTLIVEDIR        23 // and the way it came from
+#define NUM_TEXTURE_UNITS    24
 
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -1019,9 +1022,12 @@ typedef enum
 	UNIFORM_RTSKYLIGHTMAP,
 	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
 	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
 	UNIFORM_RTDIRECTDIR,
+	UNIFORM_RTLIVEMAP,    // Added in OPM: the baked light of the lamps lit live, taken back out of it (R_RtLiveIn)
+	UNIFORM_RTLIVEDIR,
 	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
@@ -2617,6 +2623,7 @@ typedef struct {
 	shaderProgram_t textureColorShader;
 	shaderProgram_t rtSkyBakeShader; // Added in OPM: the sky a lightmap texel sees (tr_rtlight.c)
 	shaderProgram_t rtLampBakeShader; // Added in OPM: a lamp's light on the lightmaps (R_RtBakeLamps)
+	shaderProgram_t rtBakeFillShader; // Added in OPM: and its texels no surface covers filled (R_RtLivePass)
 	shaderProgram_t fogShader[FOGDEF_COUNT];
 	shaderProgram_t dlightShader[DLIGHTDEF_COUNT];
 	shaderProgram_t lightallShader[LIGHTDEF_COUNT];
@@ -2752,6 +2759,7 @@ typedef struct {
     vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction
     vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
     image_t *rtBounceImage;    // the light bounced onto each texel of the lightmaps' first page (R_RtBounce), NULL until worked out
+    image_t *rtBounceLampImage; // and the lamps' light bounced, apart from the daylight's (RT_BOUNCE_LAMPS)
     vec4_t   rtBounce;         // its scale out under the sky (x), deep in a room (y), the probes' (z); w: how far it has come in, 0 none
     int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)

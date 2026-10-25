@@ -80,6 +80,7 @@ cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 static cvar_t *r_rtBounce;
 static cvar_t *r_rtBakedLamps;
+static cvar_t *r_rtBakedDebug;
 static qboolean rt_bounceCompiled; // r_rtBounce was on when the shaders were built
 
 qboolean R_RtBounceCompiled(void)
@@ -158,6 +159,10 @@ typedef struct {
 	int      inViewFrame;  // the frame its light was last in the view (R_RtInView)
 	int      enteredView;  // the frame it came into the view after being out of it
 	qboolean baked;        // its light on the lightmaps is baked (R_RtBakeLamps)
+	vec3_t   bakedOrigin;  // where it was baked from
+	int      bakedReady;   // the frame its faces of the world alone were all drawn by
+	qboolean live;         // its baked light is taken back out, all of it lit live (R_RtLiveIn)
+	qboolean liveShadowed; // with the shadow it was baked with
 	float    area;         // a lit surface's (a window's): how far across it is, its light
 	                       // going out the way spotDir points (R_RtAreaLights)
 	int      cluster;      // where it is, for a lamp's; -1 seen from anywhere
@@ -318,6 +323,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtBounceMsec, "The milliseconds a frame spent working out the bounce, until it is done");
 	r_rtBakedLamps = ri.Cvar_Get("r_rtBakedLamps", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtBakedLamps, "With r_realtimeLighting 2, every lamp's light on the lightmapped world is baked once a map, with its shadow of the world, so that all of them show however few are lit live (r_rtMaxLights): those add their sharp shadows and shine. 0: only the lamps lit live give light");
+	r_rtBakedDebug = ri.Cvar_Get("r_rtBakedDebug", "0", 0);
+	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake); 3: of the bounce, the lamps' alone; 4: the daylight's alone. Not archived: a test switch");
 	r_rtWindowLights = ri.Cvar_Get("r_rtWindowLights", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtWindowLights, "With r_realtimeLighting 2, keep the map's spot lights that stand in for daylight through its windows (0: the sun and the sky come in by themselves, and they go). Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
@@ -1672,12 +1679,20 @@ static void R_RtBakeGather(int page, rtBakeList_t *list)
 	}
 
 	// the terrain, a 9 by 9 grid a patch, its lightmap spread over it as
-	// R_PreTessellateTerrain spreads it
+	// R_PreTessellateTerrain spreads it: from the middle of its first texel
+	// to the middle of its last, so that a patch's edge runs through the
+	// middles of the texels along it, which the GPU leaves out of two of the
+	// four edges of what it fills. Those texels took the mean of those round
+	// them, the next chart's in the page among them, and half as bright as
+	// they should be they drew a line along every patch's edge near a lamp
+	// (the lamps' bake): its outer edges go half a texel further out.
 	for (i = 0; i < tr.world->numTerraPatches; i++) {
 		cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
 		const float            size  = (float)(patch->drawinfo.lmapSize - 1) / 128.0f;
 		const float            sizeS = tr.fatLightmapCols > 0 ? size / tr.fatLightmapCols : size;
 		const float            sizeT = tr.fatLightmapRows > 0 ? size / tr.fatLightmapRows : size;
+		const float            halfS = tr.lightmaps && tr.lightmaps[page] ? 0.5f / tr.lightmaps[page]->width : 0.0f;
+		const float            halfT = tr.lightmaps && tr.lightmaps[page] ? 0.5f / tr.lightmaps[page]->height : 0.0f;
 
 		if (!patch->shader || patch->shader->lightmapIndex != page) {
 			continue;
@@ -1688,12 +1703,20 @@ static void R_RtBakeGather(int page, rtBakeList_t *list)
 				static const int corner[6][2] = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 1, 0 } };
 
 				for (j = 0; j < 6; j++) {
-					const int rr = r + corner[j][0], cc = c + corner[j][1];
-					vec3_t    xyz, normal;
+					const int   rr = r + corner[j][0], cc = c + corner[j][1];
+					const float outS = cc == 0 ? -1.0f : cc == 8 ? 1.0f : 0.0f;
+					const float outT = rr == 0 ? -1.0f : rr == 8 ? 1.0f : 0.0f;
+					vec3_t      xyz, normal;
 
 					VectorSet(xyz, patch->x0 + cc * 64.0f, patch->y0 + rr * 64.0f, patch->heightmap[rr * 9 + cc] * 2.0f + patch->z0);
+					// half a texel out, as far in the world as that is
+					if (sizeS > 0 && sizeT > 0) {
+						xyz[0] += outS * halfS * 512.0f / sizeS;
+						xyz[1] += outT * halfT * 512.0f / sizeT;
+					}
 					R_VaoUnpackNormal(normal, patch->normals[rr * 9 + cc]);
-					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f, patch->t + sizeT * rr / 8.0f, patch->shader);
+					R_RtBakeAdd(list, xyz, normal, patch->s + sizeS * cc / 8.0f + outS * halfS, patch->t + sizeT * rr / 8.0f + outT * halfT,
+						patch->shader);
 				}
 			}
 		}
@@ -1775,7 +1798,9 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 5
+#define RT_BOUNCE_VERSION 9
+#define RT_BOUNCE_VALUES  6 // each sample's bounce, the daylight's then the lamps'
+#define RT_BOUNCE_FILE_SIZE(n) (20 + sizeof(float) * (RT_BOUNCE_VALUES + 6) * (n))
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
 
 enum {
@@ -1792,9 +1817,12 @@ typedef struct {
 	vec3_t albedo;
 	float  sky;
 	float  indoor; // R_RtBounceIndoor of it
-	vec3_t direct; // raw lightmap units, as the sun's and the lamps' colours are
+	vec3_t direct; // raw lightmap units, as the sun's and the sky's colours are
 	vec3_t first;  // what bounced onto it once
 	vec3_t given;  // what it gives back: its colour times all of that, for the probes
+	vec3_t directL; // and the same of the lamps' light, apart (RT_BOUNCE_LAMPS)
+	vec3_t firstL;
+	vec3_t givenL;
 	int    cell;
 } rtBounceSample_t;
 
@@ -1828,6 +1856,15 @@ So it comes in as less of the sky is seen, all of it deep in a room.
 */
 #define RT_BOUNCE_IN_FROM 0.05f // seeing this share of the sky it would out in the open, it is in a room: all of the bounce
 #define RT_BOUNCE_IN_TO   0.25f // and this share (a courtyard, the street): none
+
+/*
+The lamps' light bounces apart from the daylight's (RT_BOUNCE_LAMPS): what
+stands in for the daylight's out under the sky is the sky's fill, and lamp
+light off the ground beside a lamp at night is no sky's. Its bounce is as it
+would be, under a roof or in the street, and r_rtBounce's boost is the
+daylight's alone: kept together, a prop by a lamp at the edge of the eaves
+went from three times the bounce to none as it was nudged out from under.
+*/
 
 // How far in a point is (0 out under the sky, 1 deep in a room), by the share
 // of the sky it sees of what it would see facing the same way in the open
@@ -1897,6 +1934,10 @@ static void R_RtBounceFree(void)
 	R_RtProbesFree();
 	// the shaders are numbered again for the next map
 	Com_Memset(rt_albedoDone, 0, sizeof(rt_albedoDone));
+	if (tr.rtBounceLampImage) {
+		R_FreeImage(tr.rtBounceLampImage);
+		tr.rtBounceLampImage = NULL;
+	}
 	if (tr.rtBounceImage) {
 		R_FreeImage(tr.rtBounceImage);
 		tr.rtBounceImage = NULL;
@@ -1987,10 +2028,70 @@ static int R_RtBounceCompareKeys(const void *a, const void *b)
 }
 
 // The sample nearest p facing about the way normal does, -1 none near
+// Whether a sample is seen from p, off the surface it is on by off: the
+// nearest by distance alone was across a wall at times (the bounce's texels
+// are coarse), and a shut room took the moonlit ground outside (m3l2)
+#define RT_BOUNCE_CANDIDATES 16
+
+static qboolean R_RtBounceSees(const vec3_t p, const vec3_t off, const rtBounceSample_t *s)
+{
+	trace_t trace;
+	vec3_t  zero = {0, 0, 0}, from, to;
+
+	VectorMA(p, 1.5f, off, from);
+	VectorMA(s->xyz, 1.5f, s->normal, to);
+	ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	return !trace.startsolid && trace.fraction >= 0.999f;
+}
+
+// Kept among the nearest RT_BOUNCE_CANDIDATES: the furthest kept goes for a nearer
+static void R_RtBounceKeep(int *found, float *dist, int *n, int *worst, int index, float d)
+{
+	int i;
+
+	if (*n < RT_BOUNCE_CANDIDATES) {
+		found[*n] = index;
+		dist[*n]  = d;
+		(*n)++;
+	} else if (d < dist[*worst]) {
+		found[*worst] = index;
+		dist[*worst]  = d;
+	} else {
+		return;
+	}
+	for (i = 0, *worst = 0; i < *n; i++) {
+		if (dist[i] > dist[*worst]) {
+			*worst = i;
+		}
+	}
+}
+
+// The nearest of those passed in (by distance) that p sees, -1 none
+static int R_RtBounceNearestVisible(const vec3_t p, const vec3_t off, const int *found, const float *dist, int n)
+{
+	int order[RT_BOUNCE_CANDIDATES], i, j;
+
+	for (i = 0; i < n; i++) {
+		order[i] = i;
+		for (j = i; j > 0 && dist[order[j]] < dist[order[j - 1]]; j--) {
+			const int t = order[j];
+
+			order[j]     = order[j - 1];
+			order[j - 1] = t;
+		}
+	}
+	for (i = 0; i < n; i++) {
+		if (R_RtBounceSees(p, off, &rt_bounce.samples[found[order[i]]])) {
+			return found[order[i]];
+		}
+	}
+	return -1;
+}
+
 static int R_RtBounceNearest(const vec3_t p, const vec3_t normal)
 {
-	float best = Square(72.0f);
-	int   found = -1, dx, dy, dz;
+	float best = Square(72.0f), dist[RT_BOUNCE_CANDIDATES];
+	int   found[RT_BOUNCE_CANDIDATES], n = 0, worst = 0, dx, dy, dz;
 
 	for (dz = -1; dz <= 1; dz++) {
 		for (dy = -1; dy <= 1; dy++) {
@@ -2012,14 +2113,13 @@ static int R_RtBounceNearest(const vec3_t p, const vec3_t normal)
 					const float             d = DistanceSquared(s->xyz, p);
 
 					if (d < best && DotProduct(s->normal, normal) > 0.5f) {
-						best  = d;
-						found = rt_bounce.hashOrder[k];
+						R_RtBounceKeep(found, dist, &n, &worst, rt_bounce.hashOrder[k], d);
 					}
 				}
 			}
 		}
 	}
-	return found;
+	return R_RtBounceNearestVisible(p, normal, found, dist, n);
 }
 
 // The samples: each texel of the bounce its surfaces cover, from the
@@ -2144,22 +2244,26 @@ static void R_RtBounceSamples(void)
 	}
 }
 
-// What the lights, the sun and the sky put straight on a point facing
-// normal, which sees sky of the sky, raw
-static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out)
+// What the sun and the sky (out) and the lamps (lamps) put straight on a
+// point facing normal, which sees sky of the sky, raw
+static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out, vec3_t lamps)
 {
 	trace_t trace;
-	vec3_t  zero = {0, 0, 0}, from, to;
+	// a little box, not a line: a line slipped through the seam where two
+	// walls meet in a corner, and the floor there was lit by the moon in a
+	// shut room, and lit the walls round it (m3l2)
+	vec3_t  zero = {-1, -1, -1}, one = {1, 1, 1}, from, to;
 	int     i;
 
-	VectorMA(xyz, 2.0f, normal, from);
+	VectorMA(xyz, 3.0f, normal, from);
 	VectorClear(out);
+	VectorClear(lamps);
 	if (rt.sun) {
 		const float ndl = DotProduct(normal, rt.sunDir);
 
 		if (ndl > 0) {
 			VectorMA(from, 16384.0f, rt.sunDir, to);
-			ri.CM_BoxTrace(&trace, from, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			ri.CM_BoxTrace(&trace, from, to, zero, one, 0, CONTENTS_SOLID, qfalse);
 			if (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) {
 				VectorMA(out, ndl, rt.sunColor, out);
 			}
@@ -2210,18 +2314,18 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 			continue;
 		}
 		if (!l->noShadow) {
-			ri.CM_BoxTrace(&trace, from, l->origin, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			ri.CM_BoxTrace(&trace, from, l->origin, zero, one, 0, CONTENTS_SOLID, qfalse);
 			if (trace.startsolid || trace.fraction < 0.98f) {
 				continue;
 			}
 		}
-		VectorMA(out, att * r_rtScale->value, l->color, out);
+		VectorMA(lamps, att * r_rtScale->value, l->color, lamps);
 	}
 }
 
 static void R_RtBounceDirect(rtBounceSample_t *s)
 {
-	R_RtBounceDirectAt(s->xyz, s->normal, s->sky, s->direct);
+	R_RtBounceDirectAt(s->xyz, s->normal, s->sky, s->direct, s->directL);
 }
 
 // A point no sample is near (a model, a door): how much of the sky is over
@@ -2246,8 +2350,9 @@ static float R_RtBounceSkyAt(const vec3_t xyz, const vec3_t normal)
 // behind a curve, the edge of the terrain), -1 none near
 static int R_RtBounceNearestSeen(const vec3_t p, const vec3_t dir)
 {
-	float best = Square(96.0f);
-	int   found = -1, dx, dy, dz;
+	float  best = Square(96.0f), dist[RT_BOUNCE_CANDIDATES];
+	int    found[RT_BOUNCE_CANDIDATES], n = 0, worst = 0, dx, dy, dz;
+	vec3_t back;
 
 	for (dz = -1; dz <= 1; dz++) {
 		for (dy = -1; dy <= 1; dy++) {
@@ -2269,14 +2374,14 @@ static int R_RtBounceNearestSeen(const vec3_t p, const vec3_t dir)
 					const float             d = DistanceSquared(s->xyz, p);
 
 					if (d < best && DotProduct(s->normal, dir) < -0.2f) {
-						best  = d;
-						found = rt_bounce.hashOrder[k];
+						R_RtBounceKeep(found, dist, &n, &worst, rt_bounce.hashOrder[k], d);
 					}
 				}
 			}
 		}
 	}
-	return found;
+	VectorNegate(dir, back);
+	return R_RtBounceNearestVisible(p, back, found, dist, n);
 }
 
 // The colour of the static model a point is in (a ray stopped on the clip
@@ -2324,7 +2429,7 @@ sample there gives back; on a face never drawn, the sample seen behind it;
 on the clip brush round a model, the light there times the model's colour;
 else the light there times RT_BOUNCE_ALBEDO. Its sample, -1 none.
 */
-static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean withFirst, vec3_t out)
+static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean withFirst, vec3_t out, vec3_t outL)
 {
 	vec3_t albedo;
 	int    hit = -1;
@@ -2340,22 +2445,31 @@ static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean w
 
 		if (withFirst) {
 			VectorCopy(o->given, out);
+			VectorCopy(o->givenL, outL);
 		} else {
 			VectorCopy(o->direct, out);
+			VectorCopy(o->directL, outL);
 			out[0] *= o->albedo[0];
 			out[1] *= o->albedo[1];
 			out[2] *= o->albedo[2];
+			outL[0] *= o->albedo[0];
+			outL[1] *= o->albedo[1];
+			outL[2] *= o->albedo[2];
 		}
 		return hit;
 	}
-	R_RtBounceDirectAt(trace->endpos, trace->plane.normal, R_RtBounceSkyAt(trace->endpos, trace->plane.normal), out);
+	R_RtBounceDirectAt(trace->endpos, trace->plane.normal, R_RtBounceSkyAt(trace->endpos, trace->plane.normal), out, outL);
 	if ((trace->surfaceFlags & SURF_NODRAW) && R_RtModelAlbedoAt(trace->endpos, albedo)) {
 		out[0] *= albedo[0];
 		out[1] *= albedo[1];
 		out[2] *= albedo[2];
+		outL[0] *= albedo[0];
+		outL[1] *= albedo[1];
+		outL[2] *= albedo[2];
 		rt_bounce.models++;
 	} else {
 		VectorScale(out, RT_BOUNCE_ALBEDO, out);
+		VectorScale(outL, RT_BOUNCE_ALBEDO, outL);
 		rt_bounce.misses++;
 		if (trace->shaderNum >= 0 && trace->shaderNum < 4096) {
 			rt_missByShader[trace->shaderNum]++;
@@ -2377,9 +2491,7 @@ static void R_RtBounceGather(int index)
 		hits[r] = -1;
 	}
 	VectorClear(s->first);
-	if (s->sky >= RT_BOUNCE_OUTDOOR) {
-		return;
-	}
+	VectorClear(s->firstL);
 	VectorMA(s->xyz, 2.0f, s->normal, from);
 	PerpendicularVector(t1, s->normal);
 	CrossProduct(s->normal, t1, t2);
@@ -2403,14 +2515,20 @@ static void R_RtBounceGather(int index)
 			continue;
 		}
 		{
-			vec3_t given;
+			vec3_t given, givenL;
 
 			// a sample's is counted again for the second bounce; what had
 			// none (a model) once
-			hit     = R_RtBounceRadiance(&trace, dir, qfalse, given);
+			hit     = R_RtBounceRadiance(&trace, dir, qfalse, given, givenL);
 			hits[r] = hit;
 			VectorMA(s->first, 1.0f / rt_bounce.rays, given, s->first);
+			VectorMA(s->firstL, 1.0f / rt_bounce.rays, givenL, s->firstL);
 		}
+	}
+	// out under the sky its fill stands in for the daylight's bounce, not
+	// for the lamps' (which is why the rays are traced out there at all)
+	if (s->sky >= RT_BOUNCE_OUTDOOR) {
+		VectorClear(s->first);
 	}
 }
 
@@ -2426,6 +2544,7 @@ round where it is, as m + v . N for each colour (u_RtProbe).
 #define RT_PROBE_SLOTS 65536 // a power of two
 #define RT_PROBE_RAYS  48
 #define RT_PROBE_QUEUE 4096
+#define RT_PROBE_FADE  48.0f // a probe's line to a model stopping this far past its reach short of it: none of its light
 
 enum {
 	RT_PROBE_EMPTY,
@@ -2438,6 +2557,7 @@ typedef struct {
 	int    x, y, z;
 	int    state;
 	vec4_t c[3]; // r, g, b: the way it is brightest (x y z), the mean (w)
+	vec4_t cl[3]; // the same of the lamps' light, which bounces as it would wherever it is
 	float  indoor; // R_RtBounceIndoor of the share of the sky it sees over it
 } rtProbe_t;
 
@@ -2490,7 +2610,7 @@ static void R_RtProbeCompute(rtProbe_t *p)
 	vec3_t         at, zero = {0, 0, 0};
 	const mnode_t *leaf;
 	float          up, open; // the rays up the sky, as a lightmap's sky counts them
-	int            r, k;
+	int            r, k, inside = 0;
 
 	VectorSet(at, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
 	leaf = R_PointInLeaf(at);
@@ -2498,8 +2618,29 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		p->state = RT_PROBE_SOLID;
 		return;
 	}
+	// Under the ground: the terrain is no solid of the BSP's, and a probe a
+	// little under it saw nothing but its underside, black, and lit what
+	// stood over it so wherever the ground rose over the row of probes at its
+	// height. A floor facing up just over it, that is not the top of a slab
+	// whose underside it sees first, is the ground it is under.
+	{
+		trace_t below, over;
+		vec3_t  above;
+
+		VectorCopy(at, above);
+		above[2] += RT_PROBE_GRID;
+		ri.CM_BoxTrace(&below, above, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		if (!below.startsolid && below.fraction < 1.0f && below.plane.normal[2] > 0.5f) {
+			ri.CM_BoxTrace(&over, at, above, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			if (over.startsolid || over.fraction >= 1.0f || over.plane.normal[2] > -0.5f || over.endpos[2] > below.endpos[2] + 1.0f) {
+				p->state = RT_PROBE_SOLID;
+				return;
+			}
+		}
+	}
 	for (k = 0; k < 3; k++) {
 		VectorClear4(p->c[k]);
+		VectorClear4(p->cl[k]);
 	}
 	up = open = 0;
 	for (r = 0; r < RT_PROBE_RAYS; r++) {
@@ -2507,12 +2648,13 @@ static void R_RtProbeCompute(rtProbe_t *p)
 		const float z   = 1.0f - (2.0f * r + 1.0f) / RT_PROBE_RAYS;
 		const float rad = sqrt(Q_max(0.0f, 1.0f - z * z));
 		const float phi = r * 2.399963f;
-		vec3_t      dir, to, given;
+		vec3_t      dir, to, given, givenL;
 		trace_t     trace;
 
 		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
 		VectorMA(at, RT_BOUNCE_REACH, dir, to);
 		ri.CM_BoxTrace(&trace, at, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		inside += trace.startsolid;
 		if (z > 0) {
 			up += z;
 		}
@@ -2522,12 +2664,21 @@ static void R_RtProbeCompute(rtProbe_t *p)
 			}
 			continue;
 		}
-		R_RtBounceRadiance(&trace, dir, qtrue, given);
+		R_RtBounceRadiance(&trace, dir, qtrue, given, givenL);
 		// what comes from dir: m + v . N over the sphere (a cosine's two first terms)
 		for (k = 0; k < 3; k++) {
 			p->c[k][3] += given[k] / RT_PROBE_RAYS;
 			VectorMA(p->c[k], 2.0f * given[k] / RT_PROBE_RAYS, dir, p->c[k]);
+			p->cl[k][3] += givenL[k] / RT_PROBE_RAYS;
+			VectorMA(p->cl[k], 2.0f * givenL[k] / RT_PROBE_RAYS, dir, p->cl[k]);
 		}
+	}
+	// In a wall: the BSP's leaves leave the detail brushes out, and a probe
+	// in one saw nothing, black, "indoors" for no sky, and darkened what
+	// stood by the wall all at once as it was nudged into its cell
+	if (inside > RT_PROBE_RAYS / 2) {
+		p->state = RT_PROBE_SOLID;
+		return;
 	}
 	p->indoor = R_RtBounceIndoor(up > 0 ? open / up : 0.0f);
 	p->state  = RT_PROBE_READY;
@@ -2569,79 +2720,12 @@ static qboolean R_RtProbesAt(const vec3_t origin, vec4_t out[3])
 		}
 		for (k = 0; k < 3; k++) {
 			VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
+			VectorMA4(out[k], w, p->cl[k], out[k]);
 		}
 		total += w;
 	}
 	if (total <= 0) {
 		return qfalse;
-	}
-	for (k = 0; k < 3; k++) {
-		VectorScale4(out[k], 1.0f / total, out[k]);
-	}
-	return qtrue;
-}
-
-// The bounce at a point of a model that stands still, from the probes round
-// it that can see it: a probe through a wall (the next room, the street) is
-// not its light. The eight round it, else those of the cube of 64 round them,
-// nearer ones more. A probe stopped no further than reach short of it sees it:
-// furniture stands in a solid clip box of its own size. qfalse while one it
-// would take is not worked out yet.
-static qboolean R_RtProbesSeenAt(const vec3_t at, float reach, vec4_t out[3], qboolean *none)
-{
-	vec3_t zero = {0, 0, 0};
-	int    base[3], ring, k;
-	float  total = 0;
-
-	*none = qfalse;
-	for (k = 0; k < 3; k++) {
-		VectorClear4(out[k]);
-		base[k] = (int)floor(at[k] / RT_PROBE_GRID);
-	}
-	for (ring = 0; ring < 2 && total <= 0; ring++) {
-		const int lo = -ring, hi = 1 + ring;
-		int       x, y, z;
-		qboolean  waiting = qfalse;
-
-		for (x = lo; x <= hi; x++) {
-			for (y = lo; y <= hi; y++) {
-				for (z = lo; z <= hi; z++) {
-					rtProbe_t *p;
-					vec3_t     pos;
-					trace_t    trace;
-					float      w;
-
-					if (ring && x >= 0 && x <= 1 && y >= 0 && y <= 1 && z >= 0 && z <= 1) {
-						continue; // the first ring's
-					}
-					p = R_RtProbe(base[0] + x, base[1] + y, base[2] + z, qtrue);
-					if (!p || p->state == RT_PROBE_SOLID) {
-						continue;
-					}
-					if (p->state != RT_PROBE_READY) {
-						waiting = qtrue;
-						continue;
-					}
-					VectorSet(pos, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
-					ri.CM_BoxTrace(&trace, pos, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
-					if (trace.startsolid || Distance(trace.endpos, at) > reach) {
-						continue;
-					}
-					w = 1.0f / (Distance(pos, at) + 16.0f);
-					for (k = 0; k < 3; k++) {
-						VectorMA4(out[k], w * R_RtBounceScale(p->indoor), p->c[k], out[k]);
-					}
-					total += w;
-				}
-			}
-		}
-		if (waiting) {
-			return qfalse;
-		}
-	}
-	if (total <= 0) {
-		*none = qtrue;
-		return qtrue;
 	}
 	for (k = 0; k < 3; k++) {
 		VectorScale4(out[k], 1.0f / total, out[k]);
@@ -2672,23 +2756,144 @@ static float R_RtStaticModelMiddle(const cStaticModelUnpacked_t *sm, vec3_t out)
 	return VectorLength(half) + 2.0f;
 }
 
+// How far in a room a point is (R_RtBounceIndoor), by how much of the sky
+// over it is seen, as a probe works it out for itself
+static float R_RtIndoorAt(const vec3_t at)
+{
+	vec3_t zero = {0, 0, 0};
+	float  up = 0, open = 0;
+	int    r;
+
+	for (r = 0; r < RT_PROBE_RAYS / 2; r++) {
+		// the upper half of the probes' spiral
+		const float z   = 1.0f - (2.0f * r + 1.0f) / RT_PROBE_RAYS;
+		const float rad = sqrt(Q_max(0.0f, 1.0f - z * z));
+		const float phi = r * 2.399963f;
+		vec3_t      dir, to;
+		trace_t     trace;
+
+		VectorSet(dir, rad * cos(phi), rad * sin(phi), z);
+		VectorMA(at, RT_BOUNCE_REACH, dir, to);
+		ri.CM_BoxTrace(&trace, at, to, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		up += z;
+		if (!trace.startsolid && (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY))) {
+			open += z;
+		}
+	}
+	return R_RtBounceIndoor(up > 0 ? open / up : 0.0f);
+}
+
+/*
+The bounce at a static model's middle: the eight probes round it, blended by
+how near, those alone that a line from reaches it, or stops no further than
+reach short of it (it stands in a clip box of its own size, or against a
+wall). None of them seeing it: all eight. qfalse while one of them is not
+worked out yet (*waiting) or none is in the world.
+*/
+static qboolean R_RtProbesRound(const vec3_t at, float reach, vec4_t out[3], qboolean *waiting)
+{
+	vec3_t g, zero = {0, 0, 0};
+	vec4_t lamps[3];
+	int    base[3], c, k, pass;
+	float  total = 0, dayScale;
+
+	*waiting = qfalse;
+	for (k = 0; k < 3; k++) {
+		g[k]    = at[k] / RT_PROBE_GRID;
+		base[k] = (int)floor(g[k]);
+		g[k] -= base[k];
+	}
+	for (pass = 0; pass < 2 && total <= 0; pass++) {
+		for (k = 0; k < 3; k++) {
+			VectorClear4(out[k]);
+			VectorClear4(lamps[k]);
+		}
+		for (c = 0; c < 8; c++) {
+			const int   dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
+			const float w  = (dx ? g[0] : 1 - g[0]) * (dy ? g[1] : 1 - g[1]) * (dz ? g[2] : 1 - g[2]);
+			rtProbe_t  *p  = R_RtProbe(base[0] + dx, base[1] + dy, base[2] + dz, qtrue);
+			float       vis;
+
+			if (!p || w <= 0) {
+				continue;
+			}
+			if (p->state == RT_PROBE_WANTED) {
+				*waiting = qtrue;
+				continue;
+			}
+			if (p->state != RT_PROBE_READY) {
+				continue;
+			}
+			// less as the line from it stops further short of it: a small move
+			// is no probe gone all at once
+			vis = 1.0f;
+			if (pass == 0) {
+				trace_t trace;
+				vec3_t  from;
+
+				VectorSet(from, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
+				ri.CM_BoxTrace(&trace, from, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+				if (trace.startsolid) {
+					continue;
+				}
+				if (trace.fraction < 1.0f) {
+					const float x = Com_Clamp(0.0f, 1.0f, (Distance(trace.endpos, at) - reach) / RT_PROBE_FADE);
+
+					vis = 1.0f - x * x * (3.0f - 2.0f * x);
+				}
+				if (vis <= 0) {
+					continue;
+				}
+			}
+			for (k = 0; k < 3; k++) {
+				VectorMA4(out[k], w * vis, p->c[k], out[k]);
+				VectorMA4(lamps[k], w * vis, p->cl[k], lamps[k]);
+			}
+			total += w * vis;
+		}
+	}
+	if (total <= 0) {
+		return qfalse;
+	}
+	// the daylight's as far in a room as the model is, not as each probe
+	// round it: those by the ground see little sky past the bumps of it, and
+	// a prop on open ground took three times the bounce from them, and none
+	// from those over them, as it was nudged from one to the others
+	dayScale = R_RtBounceScale(R_RtIndoorAt(at));
+	for (k = 0; k < 3; k++) {
+		VectorScale4(out[k], dayScale, out[k]);
+		VectorAdd4(out[k], lamps[k], out[k]);
+		VectorScale4(out[k], 1.0f / total, out[k]);
+	}
+	return qtrue;
+}
+
 // A static model's bounce, worked out once
 static qboolean R_RtStaticModelProbe(cStaticModelUnpacked_t *sm, vec4_t out[3])
 {
-	if (sm->rtProbeState == 0 || sm->moved) {
+	// The probes round its middle, blended (R_RtProbesRound), the same as it
+	// stands and knocked about: those it took that "saw it", farther out
+	// where a wall or its clip box hid the near ones, were out in the lit
+	// street from a dark corner, and as it turned it went from lit to dark
+	if (sm->moved) {
 		vec3_t   middle;
-		qboolean none;
+		qboolean waiting;
 		float    reach = R_RtStaticModelMiddle(sm, middle);
 
-		if (!R_RtProbesSeenAt(middle, reach, sm->rtProbe, &none)) {
-			return qfalse;
-		}
-		if (sm->moved) {
-			sm->rtProbeState = 0;
+		return R_RtProbesRound(middle, reach, out, &waiting);
+	}
+	if (sm->rtProbeState == 0) {
+		vec3_t   middle;
+		qboolean waiting, on;
+		float    reach = R_RtStaticModelMiddle(sm, middle);
+
+		on = R_RtProbesRound(middle, reach, sm->rtProbe, &waiting);
+		if (waiting) {
+			// asked for; looked at again when they are worked out
 			Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
-			return !none;
+			return on;
 		}
-		sm->rtProbeState = none ? 2 : 1;
+		sm->rtProbeState = on ? 1 : 2;
 	}
 	Com_Memcpy(out, sm->rtProbe, sizeof(sm->rtProbe));
 	return sm->rtProbeState == 1;
@@ -2712,13 +2917,66 @@ static void R_RtProbeInfo_f(void)
 		sm->origin[2], middle[0], middle[1], middle[2], reach, sm->rtProbeState);
 	ri.Printf(PRINT_ALL, "  mean %.2f %.2f %.2f, toward %.2f %.2f %.2f (red)\n", sm->rtProbe[0][3], sm->rtProbe[1][3], sm->rtProbe[2][3],
 		sm->rtProbe[0][0], sm->rtProbe[0][1], sm->rtProbe[0][2]);
+	// the eight probes round its middle, as R_RtProbesRound takes them now
+	{
+		vec3_t   g, zero = {0, 0, 0};
+		vec4_t   out[3];
+		int      base[3], c, k;
+		qboolean waiting, on;
+
+		for (k = 0; k < 3; k++) {
+			g[k]    = middle[k] / RT_PROBE_GRID;
+			base[k] = (int)floor(g[k]);
+			g[k] -= base[k];
+		}
+		for (c = 0; c < 8; c++) {
+			const int   dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
+			const float w  = (dx ? g[0] : 1 - g[0]) * (dy ? g[1] : 1 - g[1]) * (dz ? g[2] : 1 - g[2]);
+			rtProbe_t  *p  = R_RtProbe(base[0] + dx, base[1] + dy, base[2] + dz, qfalse);
+			trace_t     trace;
+			vec3_t      from;
+
+			if (!p) {
+				ri.Printf(PRINT_ALL, "  probe %d: none (weight %.2f)\n", c, w);
+				continue;
+			}
+			VectorSet(from, p->x * RT_PROBE_GRID, p->y * RT_PROBE_GRID, p->z * RT_PROBE_GRID);
+			ri.CM_BoxTrace(&trace, from, middle, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			ri.Printf(PRINT_ALL, "  probe %d at (%.0f %.0f %.0f): state %d weight %.2f indoor %.2f mean %.2f %.2f %.2f lamps %.2f %.2f %.2f; line %s %.2f, stops %.0f short\n", c,
+				from[0], from[1], from[2], p->state, w, p->indoor, p->c[0][3], p->c[1][3], p->c[2][3], p->cl[0][3], p->cl[1][3], p->cl[2][3],
+				trace.startsolid ? "startsolid" : "", trace.fraction, Distance(trace.endpos, middle));
+		}
+		on = R_RtProbesRound(middle, reach, out, &waiting);
+		ri.Printf(PRINT_ALL, "  blended: %s%s mean %.2f %.2f %.2f, toward %.2f %.2f %.2f (red); moved %d\n", on ? "on" : "off", waiting ? " (waiting)" : "",
+			out[0][3], out[1][3], out[2][3], out[0][0], out[0][1], out[0][2], sm->moved);
+	}
+}
+
+// r_rtProbeTest x y z: whether a probe there is buried or in a wall, step by step
+static void R_RtProbeTest_f(void)
+{
+	vec3_t         at, above, zero = {0, 0, 0};
+	trace_t        below, over;
+	const mnode_t *leaf;
+
+	VectorSet(at, atof(ri.Cmd_Argv(1)), atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)));
+	leaf = R_PointInLeaf(at);
+	ri.Printf(PRINT_ALL, "probe at %.0f %.0f %.0f: leaf cluster %d\n", at[0], at[1], at[2], leaf ? leaf->cluster : -9);
+	VectorCopy(at, above);
+	above[2] += RT_PROBE_GRID;
+	ri.CM_BoxTrace(&below, above, at, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	ri.Printf(PRINT_ALL, "  down from +%.0f: startsolid %d fraction %.3f end z %.1f normal %.2f %.2f %.2f contents %d\n", RT_PROBE_GRID, below.startsolid,
+		below.fraction, below.endpos[2], below.plane.normal[0], below.plane.normal[1], below.plane.normal[2], below.contents);
+	ri.CM_BoxTrace(&over, at, above, zero, zero, 0, CONTENTS_SOLID, qfalse);
+	ri.Printf(PRINT_ALL, "  up: startsolid %d fraction %.3f end z %.1f normal %.2f %.2f %.2f contents %d\n", over.startsolid, over.fraction, over.endpos[2],
+		over.plane.normal[0], over.plane.normal[1], over.plane.normal[2], over.contents);
 }
 
 // What the lights, the sun and the sky were, for the kept bounce
 static unsigned R_RtBounceKey(void)
 {
 	unsigned h = 2166136261u;
-	float    v[16];
+	float    v[20];
 	int      i, k, n;
 
 #define RT_HASH(x, count) for (k = 0; k < (int)(count) * (int)sizeof(float); k++) { h = (h ^ ((const byte *)(x))[k]) * 16777619u; }
@@ -2758,7 +3016,9 @@ static const char *R_RtBounceFile(void)
 // the next chart of the page
 static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const float *values, vec4_t out);
 
-static void R_RtBounceUpload(const float *values)
+// One of the bounce's images: the daylight's (offset 0, with how far in each
+// texel is in its alpha) or the lamps' (offset 3)
+static image_t *R_RtBounceImageOf(const float *values, int offset, const char *name)
 {
 	const int    w = tr.lightmaps[0]->width, h = tr.lightmaps[0]->height;
 	float       *texels = ri.Malloc(sizeof(float) * 4 * w * h);
@@ -2806,7 +3066,7 @@ static void R_RtBounceUpload(const float *values)
 					VectorMA(normal, b[k], v[k]->normal, normal);
 				}
 				// its alpha 1 + how far in it is, while 0 says not yet filled
-				if (VectorNormalize(normal) > 0 && R_RtBounceAround(xyz, normal, values, &texels[(y * w + x) * 4])) {
+				if (VectorNormalize(normal) > 0 && R_RtBounceAround(xyz, normal, values + offset, &texels[(y * w + x) * 4])) {
 					texels[(y * w + x) * 4 + 3] += 1.0f;
 				}
 			}
@@ -2848,10 +3108,20 @@ static void R_RtBounceUpload(const float *values)
 	for (i = 0; i < w * h; i++) {
 		texels[i * 4 + 3] = Q_max(0.0f, texels[i * 4 + 3] - 1.0f);
 	}
-	tr.rtBounceImage = R_CreateImage("*rtbounce", NULL, w, h, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
-	qglTextureSubImage2DEXT(tr.rtBounceImage->texnum, GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, texels);
-	ri.Free(texels);
-	ri.Free(next);
+	{
+		image_t *image = R_CreateImage(name, NULL, w, h, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
+
+		qglTextureSubImage2DEXT(image->texnum, GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, texels);
+		ri.Free(texels);
+		ri.Free(next);
+		return image;
+	}
+}
+
+static void R_RtBounceUpload(const float *values)
+{
+	tr.rtBounceImage     = R_RtBounceImageOf(values, 0, "*rtbounce");
+	tr.rtBounceLampImage = R_RtBounceImageOf(values, 3, "*rtbouncelamps");
 }
 
 // The bounce at a point of a surface, from the samples round it on the same
@@ -2904,7 +3174,7 @@ static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const fl
 						}
 						w = 1.0f - d / RT_BOUNCE_SMOOTH;
 						w *= w;
-						VectorMA(sum, w, &values[j * 3], sum);
+						VectorMA(sum, w, &values[j * RT_BOUNCE_VALUES], sum);
 						indoor += w * o->indoor;
 						total += w;
 					}
@@ -2923,49 +3193,61 @@ static qboolean R_RtBounceAround(const vec3_t xyz, const vec3_t normal, const fl
 static void R_RtBounceFinish(void)
 {
 	const int w = rt_bounce.width, h = rt_bounce.height;
-	float    *values = ri.Malloc(sizeof(float) * 3 * Q_max(1, rt_bounce.numSamples));
+	float    *values = ri.Malloc(sizeof(float) * RT_BOUNCE_VALUES * Q_max(1, rt_bounce.numSamples));
 	int       i, r, indoor = 0;
 
 	// the second bounce: what the first gave each, given back once more
 	for (i = 0; i < rt_bounce.numSamples; i++) {
 		const rtBounceSample_t *s    = &rt_bounce.samples[i];
 		const int              *hits = &rt_bounce.hits[i * rt_bounce.rays];
-		vec3_t                  total;
+		vec3_t                  total, totalL;
+		int                     k;
 
 		VectorCopy(s->first, total);
+		VectorCopy(s->firstL, totalL);
 		for (r = 0; r < rt_bounce.rays; r++) {
 			if (hits[r] >= 0) {
 				const rtBounceSample_t *o = &rt_bounce.samples[hits[r]];
 
-				total[0] += o->first[0] * o->albedo[0] / rt_bounce.rays;
-				total[1] += o->first[1] * o->albedo[1] / rt_bounce.rays;
-				total[2] += o->first[2] * o->albedo[2] / rt_bounce.rays;
+				for (k = 0; k < 3; k++) {
+					total[k] += o->first[k] * o->albedo[k] / rt_bounce.rays;
+					totalL[k] += o->firstL[k] * o->albedo[k] / rt_bounce.rays;
+				}
 			}
 		}
 		if (s->sky < RT_BOUNCE_OUTDOOR) {
 			indoor++;
+		} else {
+			VectorClear(total); // the sky's fill there (R_RtBounceGather)
 		}
-		VectorCopy(total, &values[i * 3]);
+		VectorCopy(total, &values[i * RT_BOUNCE_VALUES]);
+		VectorCopy(totalL, &values[i * RT_BOUNCE_VALUES + 3]);
 	}
 	for (i = 0; i < rt_bounce.numSamples; i++) {
 		rtBounceSample_t *s = &rt_bounce.samples[i];
+		int               k;
 
 		VectorAdd(s->direct, s->first, s->given);
-		s->given[0] *= s->albedo[0];
-		s->given[1] *= s->albedo[1];
-		s->given[2] *= s->albedo[2];
+		VectorAdd(s->directL, s->firstL, s->givenL);
+		for (k = 0; k < 3; k++) {
+			s->given[k] *= s->albedo[k];
+			s->givenL[k] *= s->albedo[k];
+		}
 	}
 
 	// kept: the key, the size, each sample's bounce and what it gives back
 	{
-		const int size = 20 + sizeof(float) * 6 * rt_bounce.numSamples;
+		const int size = RT_BOUNCE_FILE_SIZE(rt_bounce.numSamples);
 		byte     *file = ri.Malloc(size);
+		byte     *at;
 		int       head[5] = { RT_BOUNCE_VERSION, (int)rt_bounce.key, w, h, rt_bounce.numSamples };
 
 		Com_Memcpy(file, head, 20);
-		Com_Memcpy(file + 20, values, sizeof(float) * 3 * rt_bounce.numSamples);
-		for (i = 0; i < rt_bounce.numSamples; i++) {
-			Com_Memcpy(file + 20 + sizeof(float) * 3 * rt_bounce.numSamples + i * 12, rt_bounce.samples[i].given, 12);
+		Com_Memcpy(file + 20, values, sizeof(float) * RT_BOUNCE_VALUES * rt_bounce.numSamples);
+		at = file + 20 + sizeof(float) * RT_BOUNCE_VALUES * rt_bounce.numSamples;
+		for (i = 0; i < rt_bounce.numSamples; i++, at += 24) {
+			Com_Memcpy(at, rt_bounce.samples[i].given, 12);
+			Com_Memcpy(at + 12, rt_bounce.samples[i].givenL, 12);
 		}
 		ri.FS_WriteFile(R_RtBounceFile(), file, size);
 		ri.Free(file);
@@ -3013,18 +3295,19 @@ static qboolean R_RtBounceLoad(void)
 	if (len <= 0) {
 		return qfalse;
 	}
-	if (len == 20 + (long)sizeof(float) * 6 * rt_bounce.numSamples) {
+	if (len == (long)RT_BOUNCE_FILE_SIZE(rt_bounce.numSamples)) {
 		int head[5];
 
 		Com_Memcpy(head, buffer.b, 20);
 		if (head[0] == RT_BOUNCE_VERSION && (unsigned)head[1] == rt_bounce.key && head[2] == w && head[3] == h
 			&& head[4] == rt_bounce.numSamples) {
-			const byte *given = buffer.b + 20 + sizeof(float) * 3 * rt_bounce.numSamples;
+			const byte *given = buffer.b + 20 + sizeof(float) * RT_BOUNCE_VALUES * rt_bounce.numSamples;
 			int         i;
 
 			R_RtBounceUpload((const float *)(buffer.b + 20));
 			for (i = 0; i < rt_bounce.numSamples; i++) {
-				Com_Memcpy(rt_bounce.samples[i].given, given + i * 12, 12);
+				Com_Memcpy(rt_bounce.samples[i].given, given + i * 24, 12);
+				Com_Memcpy(rt_bounce.samples[i].givenL, given + i * 24 + 12, 12);
 			}
 			rt_probes = ri.Malloc(sizeof(rtProbe_t) * RT_PROBE_SLOTS);
 			Com_Memset(rt_probes, 0, sizeof(rtProbe_t) * RT_PROBE_SLOTS);
@@ -3121,6 +3404,12 @@ static void R_RtBounceStep(float bake, float ease)
 	rt_bounce.weight = Q_min(1.0f, rt_bounce.weight + ease);
 	VectorSet4(tr.rtBounce, bake * rt_bounce.weight * R_RtBounceScale(0), bake * rt_bounce.weight * R_RtBounceScale(1),
 		bake * rt_bounce.weight, tr.rtBounceImage ? 1.0f : 0.0f);
+	// r_rtBakedDebug 3: the lamps' bounce alone; 4: the daylight's alone
+	if (r_rtBakedDebug->integer == 3) {
+		tr.rtBounce[0] = tr.rtBounce[1] = 0;
+	} else if (r_rtBakedDebug->integer == 4) {
+		tr.rtBounce[2] = 0;
+	}
 }
 
 static void R_RtBakeSkyLightmaps(void)
@@ -3337,6 +3626,9 @@ static void  R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face);
 typedef struct {
 	image_t     *image; // rgb what the lamps give, in raw lightmap units; a 1 where a surface is
 	image_t     *dir;   // the way it comes from, as long as it is bright, for the normal maps
+	image_t     *live, *liveDir; // the same of the lamps lit live, which the shaders take back out (R_RtLiveIn)
+	image_t     *fill[2];        // a lamp's, as R_RtBakeFinish leaves it (R_RtLivePass)
+	image_t     *covered;        // r how many surfaces were drawn over each texel
 	rtBakeList_t list;
 	GLuint       vao, vbo;
 	GLint       *firsts;
@@ -3354,6 +3646,10 @@ static struct {
 	GLuint        atlasTexnum;
 	float         weight, scale;           // eased in once done; the lights' scale (R_RtRenderShadows)
 	int           generation, lights, startTime;
+	GLuint        quadVao, quadVbo;        // a triangle over the whole of a page
+	int           liveAdded;               // lamps taken out this frame (R_RtLiveIn)
+	int           liveFrame;
+	int           livePasses, liveClears;  // since the last r_rtDebug report
 } rt_bake;
 
 // Whether a light draws its faces of the world alone into the third atlas
@@ -3383,6 +3679,21 @@ void R_RtFreeBakedLamps(void)
 		if (ours && page->dir) {
 			R_FreeImage(page->dir);
 		}
+		if (ours && page->live) {
+			R_FreeImage(page->live);
+		}
+		if (ours && page->liveDir) {
+			R_FreeImage(page->liveDir);
+		}
+		if (ours && page->fill[0]) {
+			R_FreeImage(page->fill[0]);
+		}
+		if (ours && page->fill[1]) {
+			R_FreeImage(page->fill[1]);
+		}
+		if (ours && page->covered) {
+			R_FreeImage(page->covered);
+		}
 		if (ours && page->vbo) {
 			qglDeleteBuffers(1, &page->vbo);
 		}
@@ -3405,10 +3716,17 @@ void R_RtFreeBakedLamps(void)
 	if (rt_bake.pages) {
 		ri.Free(rt_bake.pages);
 	}
+	if (ours && rt_bake.quadVbo) {
+		qglDeleteBuffers(1, &rt_bake.quadVbo);
+	}
+	if (ours && rt_bake.quadVao) {
+		qglDeleteVertexArrays(1, &rt_bake.quadVao);
+	}
 	Com_Memset(&rt_bake, 0, sizeof(rt_bake));
 	for (i = 0; rt.lights && i < rt.numLights; i++) {
 		rt.lights[i].baked      = qfalse;
 		rt.lights[i].bakedFaces = 0;
+		rt.lights[i].live       = qfalse;
 	}
 }
 
@@ -3516,7 +3834,11 @@ static void R_RtBakeStart(void)
 	// them that none covers to take their neighbours' (R_RtBakeFinish)
 	Com_Memset(none, 0, sizeof(none));
 	none[3][0] = -1.0f;
-	R_RtBakeBegin(1.0f, GLS_DEPTHTEST_DISABLE);
+	// a of each texel: how many surfaces were drawn over it. The compiler
+	// gave faces in one plane the same texels at times, and each lamp's
+	// light was added there once for each: a line along the face's edge,
+	// bright on the one side (R_RtBakeFinish takes the mean)
+	R_RtBakeBegin(1.0f, GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
 	GLSL_SetUniformRtLights(&tr.rtLampBakeShader, UNIFORM_RTLIGHTS, (const vec4_t *)none, 1, --rt_bake.generation);
 	for (p = 0; p < rt_bake.numPages; p++) {
 		rtBakePage_t *page = &rt_bake.pages[p];
@@ -3533,14 +3855,27 @@ static void R_RtBakeStart(void)
 			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 		page->dir   = R_CreateImage(va("*rtlampdir%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
 			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
+		// the lamps lit live, added and taken out again and again: whole floats
+		page->live    = R_CreateImage(va("*rtlamplive%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->liveDir = R_CreateImage(va("*rtlamplivedir%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->fill[0] = R_CreateImage(va("*rtlampfill%da", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->fill[1] = R_CreateImage(va("*rtlampfill%db", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA32F);
+		page->covered = R_CreateImage(va("*rtlampcovered%d", p), NULL, tr.lightmaps[p]->width, tr.lightmaps[p]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 		R_RtBakeUpload(page);
 		{
-			image_t *both[2];
+			image_t *both[4];
 			int      k;
 
 			both[0] = page->image;
 			both[1] = page->dir;
-			for (k = 0; k < 2; k++) {
+			both[2] = page->live;
+			both[3] = page->liveDir;
+			for (k = 0; k < 4; k++) {
 				if (!R_RtBakeTarget(page, both[k])) {
 					R_RtBakeEnd();
 					ri.Printf(PRINT_WARNING, "realtime lighting: the lamps are not baked (no target)\n");
@@ -3550,7 +3885,10 @@ static void R_RtBakeStart(void)
 				}
 				qglClearColor(0, 0, 0, 0);
 				qglClear(GL_COLOR_BUFFER_BIT);
-				qglDrawArrays(GL_TRIANGLES, 0, page->list.num);
+				// the lamps lit live start as none
+				if (k < 2) {
+					qglDrawArrays(GL_TRIANGLES, 0, page->list.num);
+				}
 			}
 		}
 	}
@@ -3564,13 +3902,79 @@ static void R_RtBakeStart(void)
 	}
 }
 
-// One lamp's light added onto the pages, its faces in slot of the third atlas
-static void R_RtBakePass(int index, int slot)
+// A triangle over the whole of a page, for R_RtLiveFill
+static qboolean R_RtBakeQuad(void)
 {
-	const rtLight_t *l = &rt.lights[index];
-	vec4_t           data[RT_LIGHT_VEC4S], scaled;
-	float            reach;
-	int              p, c;
+	rtBakeVert_t verts[3];
+
+	if (rt_bake.quadVao) {
+		return qtrue;
+	}
+	Com_Memset(verts, 0, sizeof(verts));
+	verts[1].lm[0] = 2.0f;
+	verts[2].lm[1] = 2.0f;
+	qglGenVertexArrays(1, &rt_bake.quadVao);
+	qglBindVertexArray(rt_bake.quadVao);
+	qglGenBuffers(1, &rt_bake.quadVbo);
+	qglBindBuffer(GL_ARRAY_BUFFER, rt_bake.quadVbo);
+	qglBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+	qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+	qglEnableVertexAttribArray(ATTR_INDEX_NORMAL);
+	qglEnableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+	qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
+	qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
+	qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
+	qglBindVertexArray(0);
+	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+	return qtrue;
+}
+
+// One pass of the fill program from src into dst (R_RtLivePass)
+static qboolean R_RtLiveFillPass(rtBakePage_t *page, image_t *src, image_t *dst, float mode, float sign, int state)
+{
+	vec4_t params = { 0, 0, 0, 0 };
+
+	if (!R_RtBakeTarget(page, dst)) {
+		return qfalse;
+	}
+	qglBindVertexArray(rt_bake.quadVao);
+	GL_State(state);
+	GL_Cull(CT_TWO_SIDED);
+	GLSL_BindProgram(&tr.rtBakeFillShader);
+	params[0] = mode;
+	params[1] = sign;
+	GLSL_SetUniformVec4(&tr.rtBakeFillShader, UNIFORM_RTPARAMS, params);
+	GL_BindToTMU(src, TMU_RTDIRECT);
+	GL_BindToTMU(page->covered, TMU_RTDIRECTDIR);
+	qglDrawArrays(GL_TRIANGLES, 0, 3);
+	return qtrue;
+}
+
+// A lamp's light drawn into fill[0] made what R_RtBakeFinish made of it (the
+// mean of the surfaces over a texel, the texels none covers filled from those
+// round them), then added onto dst, times sign
+static void R_RtLiveFill(rtBakePage_t *page, image_t *dst, float sign)
+{
+	const int state = GLS_DEPTHTEST_DISABLE;
+
+	if (!R_RtLiveFillPass(page, page->fill[0], page->fill[1], 0.0f, 0.0f, state)
+		|| !R_RtLiveFillPass(page, page->fill[1], page->fill[0], 1.0f, 0.0f, state)
+		|| !R_RtLiveFillPass(page, page->fill[0], page->fill[1], 1.0f, 0.0f, state)
+		|| !R_RtLiveFillPass(page, page->fill[1], page->fill[0], 1.0f, 0.0f, state)) {
+		return;
+	}
+	R_RtLiveFillPass(page, page->fill[0], dst, 2.0f, sign, GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+}
+
+// One lamp's light added onto the pages, its faces in slot of the third atlas
+// (shadowed), as the bake draws it (sign 0); or, as R_RtBakeFinish left it,
+// onto the pages of the lamps lit live, times sign (R_RtLiveIn)
+static void R_RtBakeDraw(int index, int slot, qboolean shadowed, float sign)
+{
+	rtLight_t *l = &rt.lights[index];
+	vec4_t     data[RT_LIGHT_VEC4S], scaled;
+	float      reach;
+	int        p, c;
 
 	VectorScale(l->color, rt_bake.scale, scaled);
 	scaled[3] = l->range;
@@ -3578,19 +3982,25 @@ static void R_RtBakePass(int index, int slot)
 	if (reach <= 0) {
 		return;
 	}
+	if (sign != 0 && (!tr.rtBakeFillShader.program || !R_RtBakeQuad())) {
+		return;
+	}
+	if (sign == 0) {
+		VectorCopy(l->origin, l->bakedOrigin);
+	}
 
 	VectorCopy(l->origin, data[0]);
 	data[0][3] = R_RtLightShape(l, data[2]);
 	VectorCopy(l->color, data[1]);
 	data[1][3] = l->range;
-	VectorSet4(data[3], (l->noShadow || !r_rtShadows->integer) ? -1.0f : R_RtSlotCode(slot), -1.0f, -1.0f, l->range);
+	VectorSet4(data[3], shadowed ? R_RtSlotCode(slot) : -1.0f, -1.0f, -1.0f, l->range);
 	GLSL_SetUniformRtLights(&tr.rtLampBakeShader, UNIFORM_RTLIGHTS, (const vec4_t *)data, 1, --rt_bake.generation);
 
 	for (p = 0; p < rt_bake.numPages; p++) {
 		rtBakePage_t *page = &rt_bake.pages[p];
-		int           n    = 0;
+		int           n    = 0, mode;
 
-		if (!page->image) {
+		if (!page->image || (sign != 0 && (!page->live || !page->liveDir || !page->fill[0] || !page->fill[1] || !page->covered))) {
 			continue;
 		}
 		// the surfaces in its reach
@@ -3604,26 +4014,150 @@ static void R_RtBakePass(int index, int slot)
 							  : l->origin[k] > chunk->maxs[k] ? l->origin[k] - chunk->maxs[k] : 0;
 				d2 += v * v;
 			}
-			if (d2 < reach * reach) {
+			if (d2 < reach * reach || r_rtBakedDebug->integer == 2) {
 				page->firsts[n] = chunk->first;
 				page->counts[n] = chunk->count;
 				n++;
 			}
 		}
+		if (!n) {
+			continue;
+		}
 		// its light, then the way it comes from
-		if (!n || !R_RtBakeTarget(page, page->image)) {
-			continue;
+		for (mode = 1; mode <= 2; mode++) {
+			image_t *target = sign == 0 ? (mode == 1 ? page->image : page->dir) : page->fill[0];
+
+			if (sign != 0) {
+				R_RtBakeBegin(0.0f, GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+			}
+			if (!R_RtBakeTarget(page, target)) {
+				break;
+			}
+			if (sign != 0) {
+				qglClearColor(0, 0, 0, 0);
+				qglClear(GL_COLOR_BUFFER_BIT);
+			}
+			R_RtBakeMode((float)mode, 0.0f);
+			for (c = 0; c < n; c++) {
+				qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+			}
+			if (sign != 0) {
+				R_RtLiveFill(page, mode == 1 ? page->live : page->liveDir, sign);
+			}
 		}
-		R_RtBakeMode(1.0f, 0.0f);
-		for (c = 0; c < n; c++) {
-			qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+	}
+}
+
+static void R_RtBakePass(int index, int slot)
+{
+	const rtLight_t *l = &rt.lights[index];
+
+	R_RtBakeDraw(index, slot, !l->noShadow && r_rtShadows->integer, 0.0f);
+}
+
+/*
+The baked lamps lit live are taken back out of their bake, each all of it,
+onto pages of their own (rtBakePage_t live) the shaders take away from the
+bake's: they give all of their light live, and what their bake lent the
+surface beside across a face's edge goes with it. Worked out at a pixel, as
+before, the lightmap's coarse texels, and that, were left over: faint edges
+round a lamp's pool (RtLight still does so for those not out yet). A lamp
+goes in when lit fully and its faces of the world alone, which it was baked
+with (whole tiles, slot < RT_SLOTS_BIG), are drawn; out the same way, before
+it loses those faces or its light eases out.
+*/
+#define RT_LIVE_ADDS  2 // lamps taken out a frame
+#define RT_LIVE_DROPS 6 // past this many put back a frame, all of them are at once
+
+static void R_RtLiveClear(void)
+{
+	int p, i;
+
+	for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
+		rtBakePage_t *page = &rt_bake.pages[p];
+		image_t      *both[2];
+		int           k;
+
+		both[0] = page->live;
+		both[1] = page->liveDir;
+		for (k = 0; k < 2; k++) {
+			if (both[k] && R_RtBakeTarget(page, both[k])) {
+				qglClearColor(0, 0, 0, 0);
+				qglClear(GL_COLOR_BUFFER_BIT);
+			}
 		}
-		if (!R_RtBakeTarget(page, page->dir)) {
-			continue;
+	}
+	R_RtBakeEnd();
+	for (i = 0; i < rt.numLights; i++) {
+		rt.lights[i].live = qfalse;
+	}
+	rt_bake.liveClears++;
+}
+
+// Whether light l's bake is to be taken out (it is lit, chosen and ready)
+static qboolean R_RtLiveWanted(const rtLight_t *l, qboolean lit)
+{
+	if (!lit || l->weight < 1.0f || !rt_bake.done || !r_rtBakedLamps->integer || !l->baked || !tr.rtBakeFillShader.program
+		|| Distance(l->origin, l->bakedOrigin) > RT_LIGHT_MOVE_EPSILON) {
+		return qfalse;
+	}
+	if (l->noShadow || !r_rtShadows->integer) {
+		return qtrue;
+	}
+	return l->staticSlot >= 0 && l->staticSlot < RT_SLOTS_BIG && l->bakedFaces == 63 && rt.frame > l->bakedReady;
+}
+
+// Light index's bake taken out (in) or put back
+static void R_RtLiveSet(int index, qboolean in)
+{
+	rtLight_t     *l = &rt.lights[index];
+	qboolean       shadowed;
+
+	if (l->live == in) {
+		return;
+	}
+	if (rt_bake.liveFrame != rt.frame) {
+		rt_bake.liveFrame = rt.frame;
+		rt_bake.liveAdded = 0;
+	}
+	if (in) {
+		if (rt_bake.liveAdded >= RT_LIVE_ADDS) {
+			return;
 		}
-		R_RtBakeMode(2.0f, 0.0f);
-		for (c = 0; c < n; c++) {
-			qglDrawArrays(GL_TRIANGLES, page->firsts[c], page->counts[c]);
+		shadowed = !l->noShadow && r_rtShadows->integer;
+	} else {
+		shadowed = l->liveShadowed;
+		// put back with the faces it was taken out with: gone, all of it at once
+		if (shadowed && (l->staticSlot < 0 || l->staticSlot >= RT_SLOTS_BIG)) {
+			R_RtLiveClear();
+			return;
+		}
+	}
+	R_RtBakeDraw(index, l->staticSlot, shadowed, in ? 1.0f : -1.0f);
+	R_RtBakeEnd();
+	rt_bake.livePasses++;
+	l->live         = in;
+	l->liveShadowed = shadowed;
+	rt_bake.liveAdded += in ? 1 : 0;
+}
+
+// The lamps lit live last frame and not this one put back (a few; else all at once)
+static void R_RtLiveSweep(void)
+{
+	int i, drops = 0;
+
+	for (i = 0; i < rt.numLights; i++) {
+		if (rt.lights[i].live && rt.lights[i].lastUsed != rt.frame) {
+			drops++;
+		}
+	}
+	if (drops > RT_LIVE_DROPS) {
+		R_RtLiveClear();
+		return;
+	}
+	for (i = 0; drops && i < rt.numLights; i++) {
+		if (rt.lights[i].live && rt.lights[i].lastUsed != rt.frame) {
+			R_RtLiveSet(i, qfalse);
 		}
 	}
 }
@@ -3686,6 +4220,34 @@ static void R_RtBakeFinish(void)
 			}
 			texels = ri.Malloc(sizeof(float) * both[k]->width * both[k]->height * 4);
 			qglReadPixels(0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
+			// how many surfaces were drawn over each texel, for the lamps lit live (R_RtLiveFill)
+			if (k == 0 && page->covered) {
+				float *covered = ri.Malloc(sizeof(float) * both[k]->width * both[k]->height * 4);
+				int    n;
+
+				for (n = 0; n < both[k]->width * both[k]->height; n++) {
+					VectorSet4(&covered[n * 4], texels[n * 4 + 3], 0, 0, 1);
+				}
+				qglTextureSubImage2DEXT(page->covered->texnum, GL_TEXTURE_2D, 0, 0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, covered);
+				ri.Free(covered);
+			}
+			// the mean of the surfaces drawn over a texel, not their sum
+			{
+				int n, shared = 0;
+
+				for (n = 0; n < both[k]->width * both[k]->height; n++) {
+					float *texel = &texels[n * 4];
+
+					if (texel[3] > 1.5f) {
+						VectorScale(texel, 1.0f / texel[3], texel);
+						shared++;
+					}
+					texel[3] = texel[3] > 0.5f ? 1.0f : 0.0f;
+				}
+				if (k == 0 && shared) {
+					ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lightmap texels of page %d under more than one surface\n", shared, p);
+				}
+			}
 			R_RtBakeDilateFloat(texels, both[k]->width, both[k]->height, 3);
 			qglTextureSubImage2DEXT(both[k]->texnum, GL_TEXTURE_2D, 0, 0, 0, both[k]->width, both[k]->height, GL_RGBA, GL_FLOAT, texels);
 			ri.Free(texels);
@@ -3695,6 +4257,244 @@ static void R_RtBakeFinish(void)
 	rt_bake.done = qtrue;
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps baked onto %d lightmap pages in %d ms\n", rt_bake.lights, rt_bake.numPages,
 		ri.Milliseconds() - rt_bake.startTime);
+}
+
+// r_rtShadowProbe n x y z: light n's faces of the world alone drawn into the
+// third atlas (slot RT_SLOTS_BIG - 1, its owner's redrawn after), and the
+// frame after, the depth there towards (x y z) against that point's (a test)
+static int    rt_probeLight = -1, rt_probeStage;
+static vec3_t rt_probePoint;
+
+static void R_RtShadowProbe_f(void)
+{
+	rt_probeLight = atoi(ri.Cmd_Argv(1));
+	VectorSet(rt_probePoint, atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)), atof(ri.Cmd_Argv(4)));
+	rt_probeStage = (rt_probeLight >= 0 && rt_probeLight < rt.numLights && tr.rtShadowFbo[2]) ? 1 : 0;
+}
+
+static void R_RtShadowProbeStep(void)
+{
+	const int  slot = RT_SLOTS_BIG - 1, tile = R_RtBakedTile();
+	rtLight_t *l;
+	vec3_t     v, a;
+	float      fwd, left, up, n = RT_ZNEAR, f, want, got[25];
+	int        face, f2, x0, y0, px, py, k;
+
+	if (!rt_probeStage) {
+		return;
+	}
+	l = &rt.lights[rt_probeLight];
+	if (rt_probeStage == 1) {
+		for (f2 = 0; f2 < 6; f2++) {
+			R_RtRenderFace(l, 2, slot, f2);
+		}
+		if (rt.staticOwner[slot] >= 0) {
+			rt.lights[rt.staticOwner[slot]].bakedFaces = 0;
+		}
+		rt_probeStage = 2;
+		return;
+	}
+	rt_probeStage = 0;
+	VectorSubtract(rt_probePoint, l->origin, v);
+	VectorSet(a, fabs(v[0]), fabs(v[1]), fabs(v[2]));
+	if (a[0] >= a[1] && a[0] >= a[2]) {
+		face = v[0] > 0 ? 0 : 1; fwd = a[0]; left = v[0] > 0 ? v[1] : -v[1]; up = v[2];
+	} else if (a[1] >= a[2]) {
+		face = v[1] > 0 ? 2 : 3; fwd = a[1]; left = v[1] > 0 ? -v[0] : v[0]; up = v[2];
+	} else {
+		face = v[2] > 0 ? 4 : 5; fwd = a[2]; left = v[2] > 0 ? -v[1] : v[1]; up = v[0];
+	}
+	f    = l->range;
+	want = ((f + n) / (f - n) - 2.0f * f * n / ((f - n) * fwd)) * 0.5f + 0.5f;
+	x0   = ((slot * 6 + face) % RT_ATLAS_TILES) * tile;
+	y0   = ((slot * 6 + face) / RT_ATLAS_TILES) * tile;
+	px   = x0 + (int)((-left / fwd * 0.5f + 0.5f) * tile);
+	py   = y0 + (int)((up / fwd * 0.5f + 0.5f) * tile);
+	Com_Memset(got, 0, sizeof(got));
+	FBO_Bind(tr.rtShadowFbo[2]);
+	qglReadPixels(Q_max(px - 2, x0), Q_max(py - 2, y0), 5, 5, GL_DEPTH_COMPONENT, GL_FLOAT, got);
+	FBO_Bind(NULL);
+	ri.Printf(PRINT_ALL, "light %d at %.0f %.0f %.0f to %.0f %.0f %.0f: face %d uv %.3f %.3f, fwd %.1f, depth %.6f\n", rt_probeLight, l->origin[0], l->origin[1],
+		l->origin[2], rt_probePoint[0], rt_probePoint[1], rt_probePoint[2], face, -left / fwd * 0.5f + 0.5f, up / fwd * 0.5f + 0.5f, fwd, want);
+	for (k = 0; k < 25; k++) {
+		const float d = got[k] * 2.0f - 1.0f;
+		ri.Printf(PRINT_ALL, "%7.1f%s", 2.0f * f * n / ((f + n) - d * (f - n)), k % 5 == 4 ? "\n" : " ");
+	}
+}
+
+// r_rtBakeAt x y: the bake's surfaces over (x, y), top down, their normal, the
+// lightmap texel there and what is baked in it (a test command)
+static void R_RtBakeAt_f(void)
+{
+	const float x = atof(ri.Cmd_Argv(1)), y = atof(ri.Cmd_Argv(2));
+	int         p, i, found = 0;
+
+	// r_rtBakeAt x y z: the surfaces through that point, a wall's too, and
+	// the texels round it
+	if (ri.Cmd_Argc() > 3) {
+		vec3_t pt;
+
+		ri.Printf(PRINT_ALL, "  sun %d towards %.2f %.2f %.2f colour %.1f %.1f %.1f; live sun %.2f %.2f %.2f %.2f\n", rt.sun, rt.sunDir[0], rt.sunDir[1], rt.sunDir[2],
+			rt.sunColor[0], rt.sunColor[1], rt.sunColor[2], tr.rtSunColor[0], tr.rtSunColor[1], tr.rtSunColor[2], tr.rtSunDir[3]);
+
+		VectorSet(pt, x, y, atof(ri.Cmd_Argv(3)));
+		for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
+			rtBakePage_t *page = &rt_bake.pages[p];
+
+			if (!page->image) {
+				continue;
+			}
+			for (i = 0; i + 2 < page->list.num && found < 6; i += 3) {
+				const rtBakeVert_t *v[3] = { &page->list.verts[i], &page->list.verts[i + 1], &page->list.verts[i + 2] };
+				vec3_t              e1, e2, w, nrm;
+				float               d00, d01, d11, d20, d21, den, b1, b2, s, tc, texel[4 * 9];
+				int                 c, tx, ty, k;
+
+				VectorSubtract(v[1]->xyz, v[0]->xyz, e1);
+				VectorSubtract(v[2]->xyz, v[0]->xyz, e2);
+				VectorSubtract(pt, v[0]->xyz, w);
+				CrossProduct(e1, e2, nrm);
+				if (VectorNormalize(nrm) < 1e-3f || fabs(DotProduct(w, nrm)) > 4.0f) {
+					continue;
+				}
+				d00 = DotProduct(e1, e1);
+				d01 = DotProduct(e1, e2);
+				d11 = DotProduct(e2, e2);
+				d20 = DotProduct(w, e1);
+				d21 = DotProduct(w, e2);
+				den = d00 * d11 - d01 * d01;
+				b1  = (d11 * d20 - d01 * d21) / den;
+				b2  = (d00 * d21 - d01 * d20) / den;
+				if (b1 < 0 || b2 < 0 || b1 + b2 > 1) {
+					continue;
+				}
+				s  = (1 - b1 - b2) * v[0]->lm[0] + b1 * v[1]->lm[0] + b2 * v[2]->lm[0];
+				tc = (1 - b1 - b2) * v[0]->lm[1] + b1 * v[1]->lm[1] + b2 * v[2]->lm[1];
+				for (c = 0; c < page->list.numChunks; c++) {
+					if (i >= page->list.chunks[c].first && i < page->list.chunks[c].first + page->list.chunks[c].count) {
+						break;
+					}
+				}
+				tx = (int)(s * page->image->width);
+				ty = (int)(tc * page->image->height);
+				Com_Memset(texel, 0, sizeof(texel));
+				if (R_RtBakeTarget(page, page->image)) {
+					qglReadPixels(Q_max(tx - 1, 0), Q_max(ty - 1, 0), 3, 3, GL_RGBA, GL_FLOAT, texel);
+				}
+				// and the whole page, raw floats, to look at (a fourth argument)
+				if (ri.Cmd_Argc() > 4 && found == 0) {
+					float *all = ri.Malloc(sizeof(float) * page->image->width * page->image->height * 4);
+
+					if (R_RtBakeTarget(page, page->image)) {
+						qglReadPixels(0, 0, page->image->width, page->image->height, GL_RGBA, GL_FLOAT, all);
+						ri.FS_WriteFile(va("%s.raw", ri.Cmd_Argv(4)), all, sizeof(float) * page->image->width * page->image->height * 4);
+					}
+					ri.Free(all);
+				}
+				R_RtBakeEnd();
+				ri.Printf(PRINT_ALL, "  page %d (%dx%d) %s chunk %d (%d verts) normal %.2f %.2f %.2f (winding %.2f %.2f %.2f) lm %.4f %.4f texel %d %d\n", p,
+					page->image->width, page->image->height, v[0]->shader ? v[0]->shader->name : "?", c,
+					c < page->list.numChunks ? page->list.chunks[c].count : 0, v[0]->normal[0], v[0]->normal[1], v[0]->normal[2], nrm[0], nrm[1],
+					nrm[2], s, tc, tx, ty);
+				for (k = 0; k < 3; k++) {
+					ri.Printf(PRINT_ALL, "    %6.1f %6.1f %6.1f\n", texel[(k * 3) * 4], texel[(k * 3 + 1) * 4], texel[(k * 3 + 2) * 4]);
+				}
+				found++;
+				// its chunk's vertexes
+				if (c < page->list.numChunks) {
+					for (k = page->list.chunks[c].first; k < page->list.chunks[c].first + page->list.chunks[c].count; k++) {
+						ri.Printf(PRINT_ALL, "    vert %.1f %.1f %.1f lm %.5f %.5f\n", page->list.verts[k].xyz[0], page->list.verts[k].xyz[1],
+							page->list.verts[k].xyz[2], page->list.verts[k].lm[0], page->list.verts[k].lm[1]);
+					}
+				}
+				// the baked lamps reaching it, unshadowed and unshaded
+				if (found == 1 && ri.Cmd_Argc() > 5) {
+					for (k = 0; k < rt.numMapLights; k++) {
+						const rtLight_t *l = &rt.lights[k];
+						vec3_t           to;
+						vec4_t           shape;
+						float            dd, ndl, fade, kind;
+
+						if (!l->baked) {
+							continue;
+						}
+						VectorSubtract(l->origin, pt, to);
+						dd = VectorLength(to);
+						if (dd >= l->range) {
+							continue;
+						}
+						ndl  = DotProduct(to, nrm) / Q_max(dd, 1e-4f);
+						fade = 1.0f - dd * dd / (l->range * l->range);
+						kind = R_RtLightShape(l, shape);
+						ri.Printf(PRINT_ALL, "    lamp %d at %.0f %.0f %.0f kind %.0f dist %.0f ndl %.2f shape %.2f %.2f %.2f %.1f point att %.1f%s\n", k,
+							l->origin[0], l->origin[1], l->origin[2], kind, dd, ndl, shape[0], shape[1], shape[2], shape[3],
+							Q_max(ndl, 0) * fade * fade / Q_max(dd * dd, 256.0f) * Q_max(l->color[0], Q_max(l->color[1], l->color[2])),
+							l->noShadow ? " no shadow" : "");
+						if (l->fixture >= 0 && l->fixture < tr.world->numStaticModels) {
+							ri.Printf(PRINT_ALL, "      at %s\n", tr.world->staticModels[l->fixture].model);
+						}
+					}
+				}
+			}
+		}
+		if (!found) {
+			ri.Printf(PRINT_ALL, "  no baked surface through %.0f %.0f %.0f\n", pt[0], pt[1], pt[2]);
+		}
+		return;
+	}
+
+	for (p = 0; p < rt_bake.numPages && rt_bake.pages; p++) {
+		rtBakePage_t *page = &rt_bake.pages[p];
+
+		if (!page->image) {
+			continue;
+		}
+		for (i = 0; i + 2 < page->list.num && found < 6; i += 3) {
+			const rtBakeVert_t *v[3] = { &page->list.verts[i], &page->list.verts[i + 1], &page->list.verts[i + 2] };
+			float               area, b[3], z = 0, s = 0, tc = 0;
+			vec3_t              n = { 0, 0, 0 };
+			int                 k, c;
+
+			area = (v[1]->xyz[0] - v[0]->xyz[0]) * (v[2]->xyz[1] - v[0]->xyz[1]) - (v[2]->xyz[0] - v[0]->xyz[0]) * (v[1]->xyz[1] - v[0]->xyz[1]);
+			if (fabs(area) < 1e-3f) {
+				continue;
+			}
+			b[0] = ((v[1]->xyz[0] - x) * (v[2]->xyz[1] - y) - (v[2]->xyz[0] - x) * (v[1]->xyz[1] - y)) / area;
+			b[1] = ((v[2]->xyz[0] - x) * (v[0]->xyz[1] - y) - (v[0]->xyz[0] - x) * (v[2]->xyz[1] - y)) / area;
+			b[2] = 1.0f - b[0] - b[1];
+			if (b[0] < 0 || b[1] < 0 || b[2] < 0) {
+				continue;
+			}
+			for (k = 0; k < 3; k++) {
+				z += b[k] * v[k]->xyz[2];
+				s += b[k] * v[k]->lm[0];
+				tc += b[k] * v[k]->lm[1];
+				VectorMA(n, b[k], v[k]->normal, n);
+			}
+			// its chunk: terrain or a face
+			for (c = 0; c < page->list.numChunks; c++) {
+				if (i >= page->list.chunks[c].first && i < page->list.chunks[c].first + page->list.chunks[c].count) {
+					break;
+				}
+			}
+			{
+				float texel[4] = { 0, 0, 0, 0 };
+				const int tx = (int)(s * page->image->width), ty = (int)(tc * page->image->height);
+
+				if (R_RtBakeTarget(page, page->image)) {
+					qglReadPixels(tx, ty, 1, 1, GL_RGBA, GL_FLOAT, texel);
+				}
+				R_RtBakeEnd();
+				ri.Printf(PRINT_ALL, "  z %.1f %s chunk %d (%d verts) normal %.2f %.2f %.2f (len %.2f) lm %.4f %.4f texel %d %d baked %.1f %.1f %.1f\n", z,
+					v[0]->shader ? v[0]->shader->name : "?", c, c < page->list.numChunks ? page->list.chunks[c].count : 0, n[0], n[1], n[2],
+					VectorLength(n), s, tc, tx, ty, texel[0], texel[1], texel[2]);
+			}
+			found++;
+		}
+	}
+	if (!found) {
+		ri.Printf(PRINT_ALL, "  no baked surface over %.0f %.0f\n", x, y);
+	}
 }
 
 // A frame of the bake: the lamps drawn last frame onto the pages, the next
@@ -3742,7 +4542,8 @@ static void R_RtBakeLamps(float ease)
 		rtLight_t *l = &rt.lights[rt_bake.next];
 		int        f;
 
-		if (!l->baked) {
+		// r_rtBakedDebug 100 + n: light n alone (a test)
+		if (!l->baked || (r_rtBakedDebug->integer >= 100 && rt_bake.next != r_rtBakedDebug->integer - 100)) {
 			continue;
 		}
 		if (!l->noShadow && r_rtShadows->integer) {
@@ -4295,6 +5096,12 @@ static int R_RtStaticSlot(int light, qboolean big)
 	}
 	if (best < 0) {
 		return -1;
+	}
+	// a lamp whose bake is out goes back in with the faces it went out with,
+	// before they are lost
+	R_RtLiveSet(light, qfalse);
+	if (rt.staticOwner[best] >= 0) {
+		R_RtLiveSet(rt.staticOwner[best], qfalse);
 	}
 	if (rt.lights[light].staticSlot >= 0) {
 		rt.staticOwner[rt.lights[light].staticSlot] = -1;
@@ -5021,6 +5828,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 				rt.staticDrawn += R_RtWantsBakedFaces(l) ? 12 : 6;
 				l->staticFaces = 63;
 				l->bakedFaces  = R_RtWantsBakedFaces(l) ? 63 : 0;
+				l->bakedReady  = rt.frame;
 				l->staticReady = qtrue;
 			}
 			// a lamp that moved this frame: the faces the view reads, now,
@@ -5061,6 +5869,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 						R_RtRenderFace(l, 2, l->staticSlot, f);
 						rt.staticDrawn++;
 						l->bakedFaces |= 1 << f;
+						l->bakedReady = rt.frame;
 						RT_FACE_SPENT();
 					}
 				}
@@ -5166,6 +5975,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 		} else if (chosen && l->weight < 1.0f) {
 			rt.easing++;
 		}
+		// its bake taken out while it is lit fully (R_RtLiveIn)
+		R_RtLiveSet(index, R_RtLiveWanted(l, chosen && ready));
 		if (l->weight <= 0 || !ready) {
 			continue;
 		}
@@ -5176,7 +5987,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		// surface's (its shade and glow in data[2]); eight more when its
 		// light on a lightmap is baked, the world alone in its third atlas
 		data[0][3] = R_RtLightShape(l, data[2]);
-		if (l->baked && rt_bake.done && r_rtBakedLamps->integer && (l->noShadow || !r_rtShadows->integer || l->bakedFaces == 63)) {
+		if (l->baked && !l->live && rt_bake.done && r_rtBakedLamps->integer && (l->noShadow || !r_rtShadows->integer || l->bakedFaces == 63)) {
 			data[0][3] += 8.0f;
 		}
 		// eased as it is lit: smoothstep; a flame dips and comes back
@@ -5253,6 +6064,9 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtUpdateSky(bake, ease);
 	R_RtBounceStep(bake, ease);
 	rt_bake.scale = scale;
+	R_RtShadowProbeStep();
+	// the lamps lit live last frame and no longer: their bake put back
+	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
 	// the least a light may add to a pixel and be looked up there (RtLight)
 	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
@@ -5261,6 +6075,16 @@ void R_RtRenderShadows(const refdef_t *fd)
 		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
 			tr.rtNumActive, numChosen, numSorted, numInView, rt.waiting, rt.easing, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
+		{
+			int live = 0, k;
+
+			for (k = 0; k < rt.numLights; k++) {
+				live += rt.lights[k].live ? 1 : 0;
+			}
+			ri.Printf(PRINT_ALL, "realtime lighting: %d lamps lit live with their bake taken out (%d taken out or put back, %d times all put back)\n", live,
+				rt_bake.livePasses, rt_bake.liveClears);
+			rt_bake.livePasses = rt_bake.liveClears = 0;
+		}
 		rt.particleDraws = rt.particleVerts = 0;
 		for (i = 0; r_rtDebug->integer > 2 && i < numBodies; i += 1 + (int)bodies[i * 2 + 1][0]) {
 			int c;
@@ -5277,6 +6101,12 @@ void R_RtRenderShadows(const refdef_t *fd)
 			const vec4_t *d = &tr.rtLightData[i * RT_LIGHT_VEC4S];
 			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f) type %.0f range %.0f color (%.2f %.2f %.2f) bodies %.3f spot (%.2f %.2f %.2f) %.3f shadow %.0f\n",
 				i, d[0][0], d[0][1], d[0][2], d[0][3], d[1][3], d[1][0], d[1][1], d[1][2], d[3][2], d[2][0], d[2][1], d[2][2], d[2][3], d[3][0]);
+			if (d[0][3] < 1.5f || d[0][3] > 2.5f) { // not one the game added
+				const rtLight_t *l = &rt.lights[rt.active[i]];
+
+				ri.Printf(PRINT_ALL, "    bake out %d: weight %.2f baked %d slot %d faces %d ready %d moved %.2f shadowed %d\n", l->live, l->weight, l->baked,
+					l->staticSlot, l->bakedFaces, rt.frame - l->bakedReady, Distance(l->origin, l->bakedOrigin), !l->noShadow && r_rtShadows->integer);
+			}
 		}
 	}
 }
@@ -5586,10 +6416,14 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 					int page;
 
 					for (page = 0; page < rt_bake.numPages && page < tr.numLightmaps; page++) {
-						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image && rt_bake.pages[page].dir) {
+						if (tr.lightmaps[page] == lightmap && rt_bake.pages[page].image && rt_bake.pages[page].dir && rt_bake.pages[page].live
+							&& rt_bake.pages[page].liveDir) {
 							GL_BindToTMU(rt_bake.pages[page].image, TMU_RTDIRECT);
 							GL_BindToTMU(rt_bake.pages[page].dir, TMU_RTDIRECTDIR);
-							VectorSet4(direct, rt_bake.scale, rt_bake.scale, rt_bake.scale, rt_bake.weight);
+							GL_BindToTMU(rt_bake.pages[page].live, TMU_RTLIVE);
+							GL_BindToTMU(rt_bake.pages[page].liveDir, TMU_RTLIVEDIR);
+							VectorSet4(direct, rt_bake.scale, rt_bake.scale, rt_bake.scale,
+								r_rtBakedDebug->integer == 1 ? -rt_bake.weight : rt_bake.weight);
 							break;
 						}
 					}
@@ -5602,8 +6436,10 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 				vec4_t   none = { 0, 0, 0, 0 }, probe[3];
 				qboolean on   = qfalse;
 
-				if (sky > 1.5f && tr.rtBounceImage && tr.rtBounce[3] > 0 && lightmap == tr.lightmaps[0]) {
+				if (sky > 1.5f && tr.rtBounceImage && tr.rtBounceLampImage && tr.rtBounce[3] > 0 && lightmap == tr.lightmaps[0]) {
 					GL_BindToTMU(tr.rtBounceImage, TMU_RTBOUNCE);
+					// made with it (R_RtBounceUpload)
+					GL_BindToTMU(tr.rtBounceLampImage, TMU_RTBOUNCELAMP);
 					on = qtrue;
 				} else if (sky < 1.5f && tr.rtBounce[3] > 0 && (backEnd.currentStaticModel || (backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity))) {
 					vec3_t origin;
@@ -5852,10 +6688,16 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtTestMove", R_RtTestMove_f);
 		ri.Cmd_AddCommand("r_rtTestBody", R_RtTestBody_f);
 		ri.Cmd_AddCommand("r_rtProbeInfo", R_RtProbeInfo_f);
+		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
+		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
+		ri.Cmd_AddCommand("r_rtShadowProbe", R_RtShadowProbe_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
 		ri.Cmd_RemoveCommand("r_rtProbeInfo");
+		ri.Cmd_RemoveCommand("r_rtProbeTest");
+		ri.Cmd_RemoveCommand("r_rtBakeAt");
+		ri.Cmd_RemoveCommand("r_rtShadowProbe");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}

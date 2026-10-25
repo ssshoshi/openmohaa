@@ -208,9 +208,12 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyLightmap",   GLSL_INT },
 	{ "u_RtBounce",        GLSL_VEC4 },
 	{ "u_RtBounceMap",     GLSL_INT },
+	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
 	{ "u_RtDirectDir",     GLSL_INT },
+	{ "u_RtLiveMap",       GLSL_INT },
+	{ "u_RtLiveDir",       GLSL_INT },
 	{ "u_RtProbeR",        GLSL_VEC4 },
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
@@ -395,6 +398,8 @@ static const char *rt_glsl =
 	// the light bounced onto each texel of the lightmap (R_RtBounce), at rt_skyLM; its scale, w 1 on
 	"uniform vec4 u_RtBounce;\n"
 	"uniform sampler2D u_RtBounceMap;\n"
+	// the lamps' light bounced, apart: as it would be, under a roof or not (z its scale)
+	"uniform sampler2D u_RtBounceLampMap;\n"
 	// on what has no lightmap, from the probes round it: for each colour m + v . N (xyz v, w m)
 	// the baked lamps' light on the draw's lightmap (R_RtBakeLamps): rgb its scale,
 	// w how far it is eased in (0: none, the lamps all live)
@@ -402,6 +407,9 @@ static const char *rt_glsl =
 	"uniform sampler2D u_RtDirectMap;\n"
 	// and the way it comes from, weighted by how bright (R_RtBakeLamps)
 	"uniform sampler2D u_RtDirectDir;\n"
+	// the baked light of the lamps lit live, which they give all of (R_RtLiveIn)
+	"uniform sampler2D u_RtLiveMap;\n"
+	"uniform sampler2D u_RtLiveDir;\n"
 	"uniform vec4 u_RtProbeR;\n"
 	"uniform vec4 u_RtProbeG;\n"
 	"uniform vec4 u_RtProbeB;\n"
@@ -657,6 +665,30 @@ static const char *rt_glsl =
 	"	float texelWorld = (l3.x >= RT_SMALL_CODE ? 4.0 : 2.0) * d / tileTexels;\n"
 	"	return P + N * sign(dot(N, toLight)) * (1.5 * texelWorld + 0.5) - l0.xyz;\n"
 	"}\n"
+	// what light i put on the lightmap round P when the lamps were baked
+	// (R_RtBakeLamps): its light at the four texels round it, the
+	// surface's own face, blended as the lightmap is. A lamp lit live takes
+	// back this, not its light at P: the lightmap's coarse texels have the
+	// edge of a spot light's cone, and of its shadows, where they have it
+	"float RtBakedShare(int i, vec4 l0, vec4 l3, vec3 P, vec3 geomN, vec3 du, vec3 dv, vec2 f, bool shadowed)\n"
+	"{\n"
+	"	float share = 0.0;\n"
+	"	for (int t = 0; t < 4; t++)\n"
+	"	{\n"
+	"		vec2  o  = vec2(float(t - (t / 2) * 2), float(t / 2));\n"
+	"		vec2  w2 = mix(1.0 - f, f, o);\n"
+	"		vec3  Pc = P + du * (o.x - f.x) + dv * (o.y - f.y);\n"
+	"		vec3  tl;\n"
+	"		float dc, kc;\n"
+	"		bool  bc;\n"
+	"		float a = RtAtten(i, Pc, geomN, tl, dc, kc, bc);\n"
+	"		if (a <= 0.0) continue;\n"
+	"		if (shadowed)\n"
+	"			a *= RtShadow(l3, RtShadowAt(l0, l3, Pc, geomN, tl, dc, RT_BAKED_TEXELS), true);\n"
+	"		share += w2.x * w2.y * a;\n"
+	"	}\n"
+	"	return share;\n"
+	"}\n"
 	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
@@ -664,7 +696,34 @@ static const char *rt_glsl =
 	// the baked lamps (u_RtDirect.w, eased in): their light on a lightmap
 	// is read from it, all of them, and the few lit live add what they
 	// change of it (the sharp shadows, of what moves too, and their shine)
-	"	float bakedHere = (!delta && u_RtDirect.w > 0.0) ? u_RtDirect.w : 0.0;\n"
+	// (u_RtDirect.w less than nothing: without the normal map's shading, r_rtBakedDebug 1)
+	"	float bakedHere = (!delta && u_RtDirect.w != 0.0) ? abs(u_RtDirect.w) : 0.0;\n"
+	// a shadow looked up off the surface's own face, not the normal map's:
+	// its edge followed the bumps
+	"	vec3  shadowN = dot(rt_geomN, rt_geomN) > 0.5 ? rt_geomN : N;\n"
+	// the baked shadow a live lamp takes back out: what the bake has, the
+	// shadow at the four lightmap texels round P, blended as the lightmap
+	// is (worked out for one point, its sharper edge was left as a light
+	// and a dark rim, as if the wall were bumped there)
+	"	vec3  lmDu = vec3(0.0), lmDv = vec3(0.0);\n"
+	"	vec2  lmF  = vec2(0.0);\n"
+	"	bool  lmTaps = false;\n"
+	"#if __VERSION__ >= 130\n"
+	"	if (bakedHere > 0.0)\n"
+	"	{\n"
+	"		vec2  size = vec2(textureSize(u_RtDirectMap, 0));\n"
+	"		vec2  dx = dFdx(rt_skyLM) * size, dy = dFdy(rt_skyLM) * size;\n"
+	"		vec3  px = dFdx(P), py = dFdy(P);\n"
+	"		float det = dx.x * dy.y - dx.y * dy.x;\n"
+	"		if (abs(det) > 1e-8)\n"
+	"		{\n"
+	"			lmDu = (px * dy.y - py * dx.y) / det;\n"
+	"			lmDv = (py * dx.x - px * dy.x) / det;\n"
+	"			lmF  = fract(rt_skyLM * size - 0.5);\n"
+	"			lmTaps = max(dot(lmDu, lmDu), dot(lmDv, lmDv)) < 64.0 * 64.0;\n"
+	"		}\n"
+	"	}\n"
+	"#endif\n"
 	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
 	"		if (k >= count) break;\n"
@@ -680,6 +739,9 @@ static const char *rt_glsl =
 	// and on top of the map's lighting always
 	"		bool added = kind > 1.5 && kind < 2.5;\n"
 	"		float less = baked ? bakedHere : 0.0;\n"
+	// the baked light is shaded again for the normal map (below): so is
+	// what is taken back of it
+	"		float bakedShade = u_RtDirect.w > 0.0 ? clamp(max(dot(N, toLight), 0.0) / max(dot(shadowN, toLight), 0.25 * d), 0.0, 2.0) : 1.0;\n"
 	// what it would give unshadowed is too little to see: passed over, its
 	// shadow not looked up (u_RtAmbient.w, r_rtCutoff; R_RtReach)
 	"		vec3 most = l1.rgb * att;\n"
@@ -688,15 +750,22 @@ static const char *rt_glsl =
 	"		float shine = att;\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
-	"			vec3  v = RtShadowAt(l0, l3, P, N, toLight, d, RT_TILE_TEXELS);\n"
+	"			vec3  v = RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_TILE_TEXELS);\n"
 	"			float now = RtShadow(l3, v, false);\n"
 	"			if (l3.z >= 0.0 && now > 0.0) now *= RtCapsules(P, l0.xyz, l3.z);\n"
 	"			shine = att * now;\n"
-	"			if (delta || less > 0.0)\n"
-	"				now -= (delta ? 1.0 : less) * RtShadow(l3, RtShadowAt(l0, l3, P, N, toLight, d, RT_BAKED_TEXELS), true);\n"
-	"			att *= now;\n"
+	"			if (less > 0.0 && lmTaps)\n"
+	"				att = att * now - less * bakedShade * RtBakedShare(i, l0, l3, P, shadowN, lmDu, lmDv, lmF, true);\n"
+	"			else\n"
+	"			{\n"
+	"				if (delta || less > 0.0)\n"
+	"					now -= (delta ? 1.0 : less) * RtShadow(l3, RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_BAKED_TEXELS), true);\n"
+	"				att *= now;\n"
+	"			}\n"
 	"		}\n"
 	"		else if (delta && !added) continue;\n"
+	"		else if (less > 0.0 && lmTaps)\n"
+	"			att -= less * bakedShade * RtBakedShare(i, l0, l3, P, shadowN, lmDu, lmDv, lmF, false);\n"
 	"		else att *= 1.0 - less;\n"
 	"		sum += l1.rgb * att;\n"
 	// the shine of what faces it (a leaf's far side takes none)
@@ -737,7 +806,7 @@ static const char *rt_glsl =
 	// x out under the sky, y deep in a room, by how far in its texel is (alpha)
 	"	{\n"
 	"		vec4 b = texture2D(u_RtBounceMap, rt_skyLM);\n"
-	"		sum += mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb;\n"
+	"		sum += mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb + u_RtBounce.z * texture2D(u_RtBounceLampMap, rt_skyLM).rgb;\n"
 	"	}\n"
 	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
 	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
@@ -748,12 +817,12 @@ static const char *rt_glsl =
 	// much as it comes from one way, and shining that way
 	"	if (bakedHere > 0.0)\n"
 	"	{\n"
-	"		vec3  c   = texture2D(u_RtDirectMap, rt_skyLM).rgb;\n"
-	"		vec3  dl  = texture2D(u_RtDirectDir, rt_skyLM).xyz;\n"
+	"		vec3  c   = max(texture2D(u_RtDirectMap, rt_skyLM).rgb - texture2D(u_RtLiveMap, rt_skyLM).rgb, vec3(0.0));\n"
+	"		vec3  dl  = texture2D(u_RtDirectDir, rt_skyLM).xyz - texture2D(u_RtLiveDir, rt_skyLM).xyz;\n"
 	"		float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
 	"		float len = length(dl);\n"
 	"		vec3  b   = bakedHere * u_RtDirect.rgb * c;\n"
-	"		if (len > 1e-5 && lum > 1e-5)\n"
+	"		if (len > 1e-5 && lum > 1e-5 && u_RtDirect.w > 0.0)\n"
 	"		{\n"
 	"			vec3  L = dl / len;\n"
 	"			float k = clamp(len / lum, 0.0, 1.0);\n"
@@ -766,6 +835,9 @@ static const char *rt_glsl =
 	"	}\n"
 	// a lamp lit live carves its sharp shadows out of the baked light: never
 	// below none
+	
+
+
 	"	sum = max(sum, vec3(0.0));\n"
 	"	return sum;\n"
 	"}\n"
@@ -897,6 +969,46 @@ static const char *rt_lampBake_fp =
 	"	if (u_RtParams.x > 1.5)\n"
 	"		c = (att > 0.0 ? toLight / max(d, 1e-4) : vec3(0.0)) * dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
 	"	gl_FragColor = vec4(c, u_RtParams.w);\n"
+	"}\n";
+
+/*
+Added in OPM
+A lamp's light on a page, as the bake leaves it (R_RtBakeFinish), for those
+lit live (R_RtLivePass): u_RtParams.x 0, each texel the mean of the surfaces
+drawn over it (u_RtDirectDir's r how many), a 1 where any is; 1, a ring of
+the texels none covers taking the mean of those round them that are; 2,
+added on, times u_RtParams.y.
+*/
+static const char *rt_bakeFill_fp =
+	"void main()\n"
+	"{\n"
+	"	ivec2 p = ivec2(gl_FragCoord.xy);\n"
+	"	vec4  s = texelFetch(u_RtDirectMap, p, 0);\n"
+	"	if (u_RtParams.x < 0.5)\n"
+	"	{\n"
+	"		float n = texelFetch(u_RtDirectDir, p, 0).r;\n"
+	"		gl_FragColor = vec4(n > 1.5 ? s.rgb / n : s.rgb, n > 0.5 ? 1.0 : 0.0);\n"
+	"	}\n"
+	"	else if (u_RtParams.x < 1.5)\n"
+	"	{\n"
+	"		ivec2 size  = textureSize(u_RtDirectMap, 0);\n"
+	"		vec3  sum   = vec3(0.0);\n"
+	"		float count = 0.0;\n"
+	"		if (s.a >= 0.5) { gl_FragColor = s; return; }\n"
+	"		for (int dy = -1; dy <= 1; dy++)\n"
+	"		for (int dx = -1; dx <= 1; dx++)\n"
+	"		{\n"
+	"			ivec2 q = p + ivec2(dx, dy);\n"
+	"			if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) continue;\n"
+	"			vec4 t = texelFetch(u_RtDirectMap, q, 0);\n"
+	"			if (t.a < 0.5) continue;\n"
+	"			sum += t.rgb;\n"
+	"			count += 1.0;\n"
+	"		}\n"
+	"		gl_FragColor = count > 0.0 ? vec4(sum / count, 1.0) : s;\n"
+	"	}\n"
+	"	else\n"
+	"		gl_FragColor = vec4(s.rgb * u_RtParams.y, 0.0);\n"
 	"}\n";
 
 static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *dest, int size )
@@ -2129,8 +2241,11 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 
@@ -2254,8 +2369,11 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
 	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
 	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
+	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
+	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
 
 	GLSL_FinishGPUShader(sp);
@@ -2364,6 +2482,21 @@ void GLSL_InitGPUShaders(void)
 			GLSL_InitUniforms(&tr.rtLampBakeShader);
 			GLSL_SetUniformInt(&tr.rtLampBakeShader, UNIFORM_RTSHADOWBAKED, TMU_RTSHADOW_BAKED);
 			GLSL_FinishGPUShader(&tr.rtLampBakeShader);
+			numEtcShaders++;
+		}
+
+		// and that of those lit live, the texels no surface covers filled (R_RtLivePass)
+		if (!GLSL_InitGPUShader(&tr.rtBakeFillShader, "rtbakefill", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD,
+			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBake_vp, rt_bakeFill_fp))
+		{
+			ri.Printf(PRINT_WARNING, "realtime lighting: no program for the baked lamps lit live\n");
+		}
+		else
+		{
+			GLSL_InitUniforms(&tr.rtBakeFillShader);
+			GLSL_SetUniformInt(&tr.rtBakeFillShader, UNIFORM_RTDIRECTMAP, TMU_RTDIRECT);
+			GLSL_SetUniformInt(&tr.rtBakeFillShader, UNIFORM_RTDIRECTDIR, TMU_RTDIRECTDIR);
+			GLSL_FinishGPUShader(&tr.rtBakeFillShader);
 			numEtcShaders++;
 		}
 	}
@@ -2836,6 +2969,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.textureColorShader);
 	GLSL_DeleteGPUShader(&tr.rtSkyBakeShader);
 	GLSL_DeleteGPUShader(&tr.rtLampBakeShader);
+	GLSL_DeleteGPUShader(&tr.rtBakeFillShader);
 
 	for ( i = 0; i < FOGDEF_COUNT; i++)
 		GLSL_DeleteGPUShader(&tr.fogShader[i]);
