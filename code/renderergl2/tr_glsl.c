@@ -2015,7 +2015,9 @@ static qboolean GLSL_InitLightallShader(int i)
 		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
 		return qfalse;
 
-	if ((i & LIGHTDEF_GROUNDCOVER) && (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX))
+	// (lit by its vertexes it may be: the tufts bring no light direction, and
+	// their colour, all of the light live, gives way to the ambient)
+	if ((i & LIGHTDEF_GROUNDCOVER) && lightType == LIGHTDEF_USE_LIGHTMAP)
 		return qfalse;
 
 	// Added in OPM: a skeletal model posed from the frame's bones, which

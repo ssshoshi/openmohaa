@@ -188,6 +188,7 @@ static struct {
     qboolean    gpu;
 
     qboolean    gpuShader; // the shader is one the vertex program can sway (GC_CheckGpuShader)
+    const char *gpuWhyNot; // and why not, when it isn't
     GLuint      indexBuffer; // the tufts' indexes, the same in every cell
     gcChunk_t  *chunks[GC_MAX_CHUNKS];
     int         numChunks;
@@ -207,6 +208,17 @@ static struct {
     int              drawsFrame;
 } gc;
 
+// the grass's material maps, while the card draws it without them (GC_UseCard)
+static struct {
+    qboolean        saved;
+    textureBundle_t normal, specular, deluxe;
+    int             index;
+    vec4_t          normalScale, specularScale;
+} gcMaterial;
+
+static void GC_StripMaterialMaps(void);
+static void GC_RestoreMaterialMaps(void);
+static void GC_UseCard(qboolean card);
 static void GC_CheckGpuShader(void);
 
 // why the samples of the cells made so far were dropped (groundcoverinfo)
@@ -584,7 +596,12 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     }
 
     GC_MeasureGrassAlbedo();
+    // whether the card could draw it without its material maps; it keeps them
+    // until it does (GC_UseCard)
+    Com_Memset(&gcMaterial, 0, sizeof(gcMaterial));
+    GC_StripMaterialMaps();
     GC_CheckGpuShader();
+    GC_RestoreMaterialMaps();
 
     dshaders       = (const dshader_t *)(fileBase + shaderLump->fileofs);
     gc.numShaders  = shaderLump->filelen / sizeof(dshader_t);
@@ -774,30 +791,105 @@ On the card
 =============================================================================
 */
 
+// The tufts drawn from the card take no material maps: their tangent and
+// lightmap arrays carry where each stands and how it sways (GC_SetAttrib).
+// matgen's pak gives every texture GL2 loads a normal and a specular map
+// (zzzzzzzzzz-opm-materials-2.pk3), this one's too, and with them the card
+// couldn't draw the tufts (GC_CheckGpuShader): every tuft was swayed on the
+// CPU and copied, each frame, 5 ms of a frame in the tech demo's field. So
+// the grass's are let go while the card draws it, and given back to the CPU's
+// tufts (r_groundCoverGPU 0), whose turned over faces they keep lit.
+static void GC_StripMaterialMaps(void)
+{
+    shaderStage_t *stage = gc.shader->stages[0];
+
+    if (!stage || stage->glslShaderGroup != tr.lightallShader) {
+        return;
+    }
+    if (!gcMaterial.saved) {
+        gcMaterial.saved    = qtrue;
+        gcMaterial.normal   = stage->bundle[TB_NORMALMAP];
+        gcMaterial.specular = stage->bundle[TB_SPECULARMAP];
+        gcMaterial.deluxe   = stage->bundle[TB_DELUXEMAP];
+        gcMaterial.index    = stage->glslShaderIndex;
+        VectorCopy4(stage->normalScale, gcMaterial.normalScale);
+        VectorCopy4(stage->specularScale, gcMaterial.specularScale);
+    }
+    stage->bundle[TB_NORMALMAP].image[0]   = NULL;
+    stage->bundle[TB_SPECULARMAP].image[0] = NULL;
+    stage->bundle[TB_DELUXEMAP].image[0]   = NULL;
+    stage->glslShaderIndex &= ~(LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP);
+    // and the scales as they are without them (ParseStage): the specular map's
+    // left white specular, all of the diffuse given to it, and black grass
+    VectorSet4(stage->normalScale, 0.0f, 0.0f, 0.0f, 0.0f);
+    if (r_pbr->integer) {
+        stage->specularScale[0] = r_baseGloss->value;
+    } else {
+        stage->specularScale[0] = stage->specularScale[1] = stage->specularScale[2] = r_baseSpecular->value;
+        stage->specularScale[3] = r_baseGloss->value;
+    }
+}
+
+// The grass's own material maps, for the CPU's tufts
+static void GC_RestoreMaterialMaps(void)
+{
+    shaderStage_t *stage = gc.shader->stages[0];
+
+    if (!stage || !gcMaterial.saved) {
+        return;
+    }
+    stage->bundle[TB_NORMALMAP]   = gcMaterial.normal;
+    stage->bundle[TB_SPECULARMAP] = gcMaterial.specular;
+    stage->bundle[TB_DELUXEMAP]   = gcMaterial.deluxe;
+    stage->glslShaderIndex        = gcMaterial.index;
+    VectorCopy4(gcMaterial.normalScale, stage->normalScale);
+    VectorCopy4(gcMaterial.specularScale, stage->specularScale);
+}
+
+// Drawn from the card or not: the grass's material maps let go or given back
+static void GC_UseCard(qboolean card)
+{
+    if (card) {
+        GC_StripMaterialMaps();
+    } else {
+        GC_RestoreMaterialMaps();
+    }
+}
+
 // Whether the vertex program that sways the tufts can draw the shader: one
 // lightall stage with nothing worked out per vertex on the CPU, and none of
 // the arrays the tufts use for where they stand (tangents, lightmap
-// coordinates, light directions).
+// coordinates). r_realtimeLighting 2 makes the grass's "rgbGen exactVertex"
+// lit by its vertexes, and that kept the card from drawing it, every tuft
+// swayed on the CPU with all of the light live.
 static void GC_CheckGpuShader(void)
 {
     const shaderStage_t *stage = gc.shader->stages[0];
     int                  index, lightType;
 
     gc.gpuShader = qfalse;
+    gc.gpuWhyNot = "not one lightall stage";
     if (!stage || gc.shader->stages[1] || stage->glslShaderGroup != tr.lightallShader) {
         return;
     }
+    gc.gpuWhyNot = "deforms or colours worked out on the CPU";
     if (gc.shader->numDeforms || gc.shader->needsCPUVertexAlpha || gc.shader->needsLGrid || gc.shader->needsLSpherical) {
         return;
     }
     index     = stage->glslShaderIndex;
     lightType = index & LIGHTDEF_LIGHTTYPE_MASK;
-    if (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX) {
+    // (lit by its vertexes it may be: with all of the light live its colour
+    // gives way to the ambient, and the tufts bring no light direction, as on
+    // the CPU, where theirs is none; lightall_vp.glsl)
+    gc.gpuWhyNot = "lit by a lightmap";
+    if (lightType == LIGHTDEF_USE_LIGHTMAP) {
         return;
     }
+    gc.gpuWhyNot = "material maps";
     if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)) {
         return;
     }
+    gc.gpuWhyNot  = NULL;
     gc.gpuShader = qtrue;
 }
 
@@ -1644,6 +1736,7 @@ void R_AddGroundCoverSurfaces(void)
         gc.brightness = r_groundCoverBrightness->value;
         gc.mask    = r_groundCoverMask->integer;
         gc.gpu     = GC_GpuAvailable();
+        GC_UseCard(gc.gpu);
     }
 
     // world space; the static models added before this leave theirs set
@@ -1889,7 +1982,8 @@ void R_GroundCoverInfo_f(void)
     ri.Printf(PRINT_ALL, "  %d of %d cells made, %d tufts, %d KB; %d cells added last frame\n",
         built, gc.cellsX * gc.cellsY, tufts, bytes / 1024, gc.numDraws);
     ri.Printf(PRINT_ALL, "  on the card: %s, %d cells; %d buffers of %d MB, %d%% used\n",
-        gc.gpu ? "yes" : (r_groundCoverGPU->integer ? "no (needs buffer storage and a shader it can sway)" : "no (r_groundCoverGPU 0)"),
+        gc.gpu ? "yes" : !r_groundCoverGPU->integer ? "no (r_groundCoverGPU 0)"
+            : !gc.gpuShader ? va("no (the grass shader: %s)", gc.gpuWhyNot ? gc.gpuWhyNot : "-") : "no (needs buffer storage and vertex arrays)",
         onCard, gc.numChunks, (int)(GC_CHUNK_PAGES * GC_PAGE_VERTS * sizeof(gcGpuVert_t) / (1024 * 1024)),
         gc.numChunks ? pages * 100 / (gc.numChunks * GC_CHUNK_PAGES) : 0);
     ri.Printf(PRINT_ALL, "  samples: %d kept; dropped %d outside, %d steep, %d bare texture, %d covered\n",

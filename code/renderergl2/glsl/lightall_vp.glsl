@@ -478,6 +478,11 @@ void main()
 
 #if defined(USE_LIGHT_VECTOR)
 	vec3 L = u_LightOrigin.xyz - (position * u_LightOrigin.w);
+#elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT) && defined(USE_GROUNDCOVER)
+	// Added in OPM: a tuft brings no light direction (its arrays hold where it
+	// stands, tr_groundcover.c), as on the CPU, where its is none: its light is
+	// the ambient and the realtime lights
+	vec3 L = vec3(0.0);
 #elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT) && defined(USE_SKEL_GPU)
 	// a model lit per vertex keeps no direction its light came from, as the
 	// CPU's skinning leaves it none: its light is the vertex colour as it is,
