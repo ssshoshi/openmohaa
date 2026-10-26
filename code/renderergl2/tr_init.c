@@ -1819,11 +1819,11 @@ void R_Register( void )
 	// a pixel or two, and it shifts towards *more* tessellation. So the delta
 	// is refinement, not degradation.
 	//
-	// It stays opt-in only because that characterisation rests on one map;
-	// dm/mohdm1 and dm/mohdm6, which the original 1.6%/2.6% figures came from,
-	// could not be re-checked because DM spawn points are picked at random and
-	// two runs do not share a camera.
-	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
+	// That rested on one map until dm/mohdm6, where the original 1.6%/2.6%
+	// figures came from, was re-checked with the camera pinned and the world
+	// frozen (orch_campos): three views, cache off and on, the same pixels but
+	// for 0.018% of one view; off against off, the same. So it is on.
+	r_vaoCache = ri.Cvar_Get("r_vaoCache", "1", CVAR_ARCHIVE);
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
