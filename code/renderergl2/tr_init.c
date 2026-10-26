@@ -161,6 +161,9 @@ cvar_t  *r_sunShadows;
 cvar_t  *r_sunShadowScale;
 cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
+cvar_t  *r_contactShadows;
+cvar_t  *r_contactShadowLength;
+cvar_t  *r_contactShadowThickness;
 cvar_t  *r_shadowMapSize;
 cvar_t  *r_sunShadowFarSize;
 cvar_t  *r_shadowCascadeZNear;
@@ -1658,6 +1661,13 @@ void R_Register( void )
 	r_sunShadowScale = ri.Cvar_Get( "r_sunShadowScale", "0.85", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowBlur = ri.Cvar_Get("r_shadowBlur", "0", CVAR_ARCHIVE | CVAR_LATCH);
+	// Added in OPM: contact shadows (shadowmask_fp.glsl)
+	r_contactShadows = ri.Cvar_Get("r_contactShadows", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_contactShadows, "Contact shadows: what stands close to a point and the sun, too small for the sun's shadow maps (a boot, a crate's corner, a step), still shadows it: the view's depth is searched a short way towards the sun (0: off)");
+	r_contactShadowLength = ri.Cvar_Get("r_contactShadowLength", "24", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_contactShadowLength, "Contact shadows: how far towards the sun the depth is searched, in units (longer further off)");
+	r_contactShadowThickness = ri.Cvar_Get("r_contactShadowThickness", "16", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_contactShadowThickness, "Contact shadows: how thick something seen in front is taken to be, in units: thicker shadows more, thinner lets light round what only seems close");
 	r_shadowMapSize = ri.Cvar_Get("r_shadowMapSize", "1024", CVAR_ARCHIVE | CVAR_LATCH);
 	r_sunShadowFarSize = ri.Cvar_Get("r_sunShadowFarSize", "4096", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_sunShadowFarSize, "Texels across the sun's last shadow cascade, the whole level's, which gives every shadow past r_shadowCascadeZFar. Drawn once (again only when the sun moves), so unlike r_shadowMapSize it costs memory, not frame time: 4096 is 64 MB (0: as r_shadowMapSize)");
