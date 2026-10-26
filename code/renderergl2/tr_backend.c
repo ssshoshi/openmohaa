@@ -1622,6 +1622,15 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 					GLSL_SetUniformVec4(&tr.shadowmaskShader, UNIFORM_VIEWINFO, viewInfo);
 				}
+				// Added in OPM: contact shadows, a short search towards the sun
+				{
+					vec4_t contact;
+
+					VectorNormalize2(backEnd.refdef.sunDir, contact);
+					contact[3] = r_contactShadows->integer ? Q_max(0.0f, r_contactShadowLength->value) : 0.0f;
+					GLSL_SetUniformVec4(&tr.shadowmaskShader, UNIFORM_PRIMARYLIGHTORIGIN, contact);
+					GLSL_SetUniformFloat(&tr.shadowmaskShader, UNIFORM_PRIMARYLIGHTRADIUS, Q_max(1.0f, r_contactShadowThickness->value));
+				}
 
 				RB_InstantQuad2(quadVerts, texCoords); //, color, shaderProgram, invTexRes);
 
