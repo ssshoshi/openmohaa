@@ -75,7 +75,7 @@ void main()
 	{
 		// the texture is the lighting: all of it live, the ambient stands in
 		if (u_RtParams.y > 1.5)
-			color.rgb = u_RtAmbient.rgb;
+			color.rgb = u_RtAmbient.rgb * RtAmbientOcclusion();
 		rgb = RtDelta(color.rgb, rtLight) * var_Color.rgb;
 	}
 	else if (u_RtStage == RT_STAGE_LIT || u_RtStage == RT_STAGE_PARTICLE_LIT)
@@ -96,7 +96,7 @@ void main()
 	else if (u_RtStage == RT_STAGE_LIT_BAKED)
 	{
 		// lit by a colour the map baked: all of it live, the ambient stands in
-		vec3 base = u_RtParams.y > 1.5 ? u_RtAmbient.rgb : var_Color.rgb;
+		vec3 base = u_RtParams.y > 1.5 ? u_RtAmbient.rgb * RtAmbientOcclusion() : var_Color.rgb;
 		rgb = color.rgb * RtDelta(base, rtLight);
 	}
 #endif
@@ -114,7 +114,7 @@ void main()
 		if (u_RtStage == RT_STAGE_LIGHTING2)
 		{
 			if (u_RtParams.y > 1.5)
-				color2.rgb = u_RtAmbient.rgb;
+				color2.rgb = u_RtAmbient.rgb * RtAmbientOcclusion();
 			rt_skyLM   = var_Tex2;
 			color2.rgb = RtDelta(color2.rgb, RtLight(var_RtPos, normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal), u_RtParams.y < 1.5));
 		}

@@ -526,7 +526,9 @@ enum
 #define TMU_RTBOUNCELAMP     21 // the lamps' light bounced (R_RtBounce)
 #define TMU_RTLIVE           22 // the baked lamps lit live, taken out of their bake (R_RtLiveIn)
 #define TMU_RTLIVEDIR        23 // and the way it came from
-#define NUM_TEXTURE_UNITS    24
+#define TMU_RTAO             24 // Added in OPM: the view's ambient occlusion (r_gtao)
+#define GTAO_DEPTH_MIPS      4  // and the smaller copies of the depth it reads (gtao_fp.glsl's)
+#define NUM_TEXTURE_UNITS    25
 
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -1022,6 +1024,9 @@ typedef enum
 	UNIFORM_RTSKYLIGHTMAP,
 	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
 	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTAO,     // Added in OPM: r_gtao: x on, the view's ambient occlusion in u_RtAOMap
+	UNIFORM_RTAOMAP,
+	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -2253,6 +2258,7 @@ typedef enum {
 	GPUTIMER_PRESENT,
 	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
 	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
+	GPUTIMER_AO,       // Added in OPM: r_gtao
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2472,6 +2478,7 @@ typedef struct {
 	qboolean    colorMask[4];
 	qboolean    depthFill;
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
+	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
 	float       greyscale;
@@ -2560,6 +2567,9 @@ typedef struct {
 	image_t					*sunShadowDepthImage[4];
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
+	image_t                 *gtaoImage;     // Added in OPM: r_gtao, the view's ambient occlusion
+	image_t                 *gtaoBlurImage; // and half of its blur
+	image_t                 *gtaoDepthImage; // the depth at that size, read by both
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2584,6 +2594,9 @@ typedef struct {
 	FBO_t					*sunShadowFbo[4];
 	FBO_t					*screenShadowFbo;
 	FBO_t					*screenSsaoFbo;
+	FBO_t					*gtaoFbo;
+	FBO_t					*gtaoBlurFbo;
+	FBO_t					*gtaoDepthFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2635,6 +2648,7 @@ typedef struct {
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
 	shaderProgram_t ssaoShader;
+	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
@@ -2891,6 +2905,9 @@ extern  cvar_t  *r_cameraExposure;
 extern  cvar_t  *r_depthPrepass;
 extern  cvar_t  *r_earlyZ;
 extern  cvar_t  *r_ssao;
+extern  cvar_t  *r_gtao;
+extern  cvar_t  *r_gtaoRadius;
+extern  cvar_t  *r_gtaoStrength;
 
 extern  cvar_t  *r_normalMapping;
 extern  cvar_t  *r_specularMapping;
