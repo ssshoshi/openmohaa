@@ -122,6 +122,13 @@ cvar_t  *r_forceToneMapMax;
 
 cvar_t  *r_autoExposure;
 cvar_t  *r_forceAutoExposure;
+cvar_t  *r_autoExposureKey;
+cvar_t  *r_autoExposureStrength;
+cvar_t  *r_autoExposureMinEV;
+cvar_t  *r_autoExposureMaxEV;
+cvar_t  *r_autoExposureDarkSpeed;
+cvar_t  *r_autoExposureBrightSpeed;
+cvar_t  *r_autoExposureDebug;
 cvar_t  *r_forceAutoExposureMin;
 cvar_t  *r_forceAutoExposureMax;
 
@@ -1588,7 +1595,25 @@ void R_Register( void )
 	// Off for MOH:AA: eye adaptation rescales the frame by its own average
 	// luminance, so brightness drifts as you turn and looking at anything bright
 	// darkens everything else. Only has an effect when r_hdr is on.
+	// (OPM: now an eye's: a part of the way, slower into the dark than out of
+	// it, and no more than a few stops off the fixed exposure; RB_EyeAdapt)
 	r_autoExposure = ri.Cvar_Get( "r_autoExposure", "0", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposure, "Eye adaptation (with r_hdr 1): the exposure follows how bright the view is, a part of the way (r_autoExposureStrength), slowly into the dark and quicker out of it, a few stops off the fixed exposure at most");
+	r_autoExposureKey = ri.Cvar_Get( "r_autoExposureKey", "-4.2", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureKey, "Eye adaptation: how bright a view is (its average light, in stops: r_autoExposureDebug 1 shows it) that the fixed exposure is right for; darker views are brightened, brighter ones darkened");
+	r_autoExposureStrength = ri.Cvar_Get( "r_autoExposureStrength", "0.4", CVAR_ARCHIVE );
+	ri.Cvar_CheckRange(r_autoExposureStrength, 0, 1, qfalse);
+	ri.Cvar_SetDescription(r_autoExposureStrength, "Eye adaptation: how much of the way it goes (1: a dark room ends up as bright as a sunny street; 0.4: less than half way, a room stays darker)");
+	r_autoExposureMinEV = ri.Cvar_Get( "r_autoExposureMinEV", "-1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureMinEV, "Eye adaptation: the most it darkens a bright view, in stops");
+	r_autoExposureMaxEV = ri.Cvar_Get( "r_autoExposureMaxEV", "1.5", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureMaxEV, "Eye adaptation: the most it brightens a dark view, in stops");
+	r_autoExposureDarkSpeed = ri.Cvar_Get( "r_autoExposureDarkSpeed", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureDarkSpeed, "Eye adaptation: how quickly it gets used to the dark (per second: 1 is most of the way in about 2 seconds)");
+	r_autoExposureBrightSpeed = ri.Cvar_Get( "r_autoExposureBrightSpeed", "3", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureBrightSpeed, "Eye adaptation: how quickly it gets used to the light (per second)");
+	r_autoExposureDebug = ri.Cvar_Get( "r_autoExposureDebug", "0", 0 );
+	ri.Cvar_SetDescription(r_autoExposureDebug, "1: prints the view's average light and the exposure eye adaptation gives it, once a second");
 	r_forceAutoExposure = ri.Cvar_Get( "r_forceAutoExposure", "0", CVAR_CHEAT );
 	r_forceAutoExposureMin = ri.Cvar_Get( "r_forceAutoExposureMin", "-2.0", CVAR_CHEAT );
 	r_forceAutoExposureMax = ri.Cvar_Get( "r_forceAutoExposureMax", "2.0", CVAR_CHEAT );
@@ -2192,6 +2217,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 		R_ShutDownQueries();
 		if (glRefConfig.framebufferObject)
 			FBO_Shutdown();
+			RB_EyeAdaptShutdown();
 		R_DeleteTextures();
 		R_ShutdownVaos();
 		GLSL_ShutdownGPUShaders();

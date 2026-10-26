@@ -22,6 +22,119 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "tr_local.h"
 
+/*
+=============
+RB_EyeAdapt
+
+Added in OPM: eye adaptation (r_autoExposure). The view's average light is
+worked out on the card every few frames as ioq3 did (calclevels4x, down to a
+texel), read back a frame or two later without waiting for it (a pixel buffer
+and a fence), and the exposure eased toward what it asks for here, by the
+clock and not by the frame: an eye gets used to the dark slowly and to the
+light quicker, a part of the way, and so many stops at most. ioq3 blended 3% a
+frame toward it, both ways alike, twice as fast at 144 fps as at 72. The tone
+map reads the result as the level it always read (tr.calcLevelsImage), whose
+white does not move with it (tonemap_fp.glsl).
+=============
+*/
+static struct {
+	GLuint   pbo;
+	GLsync   fence;
+	qboolean pending, haveAvg;
+	float    logAvg; // the view's average light, log2, as light
+	float    ev;     // the exposure, stops off the fixed one
+	int      lastMs, printMs;
+} eye;
+
+static void RB_EyeAdapt(qboolean measured)
+{
+	const int now = ri.Milliseconds();
+	float     dt, target, rate, shift, level;
+	vec4_t    texel;
+
+	if (!eye.pbo)
+	{
+		qglGenBuffers(1, &eye.pbo);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, eye.pbo);
+		qglBufferData(GL_PIXEL_PACK_BUFFER, sizeof(vec4_t), NULL, GL_STREAM_READ);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+		eye.lastMs = now;
+	}
+
+	// a reading the card has done
+	if (eye.pending && qglClientWaitSync(eye.fence, 0, 0) != GL_TIMEOUT_EXPIRED)
+	{
+		const float *v;
+
+		qglDeleteSync(eye.fence);
+		eye.pending = qfalse;
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, eye.pbo);
+		v = qglMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sizeof(vec4_t), GL_MAP_READ_BIT);
+		if (v)
+		{
+			// calclevels4x_fp: log2 of the luminance, kept as 0.05 x + 0.5;
+			// a gamma frame's numbers are its light ^ 1 / 2.2
+			eye.logAvg = (v[1] - 0.5f) * 20.0f * (R_RtLinear() ? 1.0f : 2.2f);
+			qglUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+			if (!eye.haveAvg)
+			{
+				// the first look: as used to it already
+				eye.ev = Com_Clamp(r_autoExposureMinEV->value, r_autoExposureMaxEV->value,
+					r_autoExposureStrength->value * (r_autoExposureKey->value - eye.logAvg));
+			}
+			eye.haveAvg = qtrue;
+		}
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	}
+
+	// a new one, not waited for
+	if (measured && !eye.pending)
+	{
+		FBO_Bind(tr.targetLevelsFbo);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, eye.pbo);
+		qglReadPixels(0, 0, 1, 1, GL_RGBA, GL_FLOAT, NULL);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+		eye.fence   = qglFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		eye.pending = qtrue;
+	}
+
+	dt         = Com_Clamp(0.0f, 0.25f, (now - eye.lastMs) * 0.001f);
+	eye.lastMs = now;
+	if (eye.haveAvg)
+	{
+		target = Com_Clamp(r_autoExposureMinEV->value, r_autoExposureMaxEV->value,
+			r_autoExposureStrength->value * (r_autoExposureKey->value - eye.logAvg));
+		// brighter: into the dark, slowly
+		rate   = target > eye.ev ? r_autoExposureDarkSpeed->value : r_autoExposureBrightSpeed->value;
+		eye.ev += (target - eye.ev) * (1.0f - exp(-Q_max(rate, 0.0f) * dt));
+	}
+
+	// the level the tone map reads: it multiplies by 2 ^ -level, and the fixed
+	// one is -1. A gamma frame's numbers move by the stops over 2.2.
+	shift = R_RtLinear() ? eye.ev : eye.ev / 2.2f;
+	level = (-1.0f - shift) * 0.05f + 0.5f;
+	VectorSet4(texel, level, level, level, 1.0f);
+	qglTextureSubImage2DEXT(tr.calcLevelsImage->texnum, GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_FLOAT, texel);
+
+	if (r_autoExposureDebug->integer && now - eye.printMs > 1000)
+	{
+		eye.printMs = now;
+		ri.Printf(PRINT_ALL, "eye adaptation: view %.2f stops (key %.2f), exposure %+.2f stops toward %+.2f\n",
+			eye.logAvg, r_autoExposureKey->value, eye.ev,
+			Com_Clamp(r_autoExposureMinEV->value, r_autoExposureMaxEV->value, r_autoExposureStrength->value * (r_autoExposureKey->value - eye.logAvg)));
+	}
+}
+
+// Its buffer goes with the context (RE_Shutdown)
+void RB_EyeAdaptShutdown(void)
+{
+	if (eye.pending)
+		qglDeleteSync(eye.fence);
+	if (eye.pbo)
+		qglDeleteBuffers(1, &eye.pbo);
+	Com_Memset(&eye, 0, sizeof(eye));
+}
+
 void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, int autoExposure)
 {
 	ivec4_t srcBox, dstBox;
@@ -30,6 +143,8 @@ void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, in
 
 	if (autoExposure)
 	{
+		qboolean measured = qfalse;
+
 		if (lastFrameCount == 0 || tr.frameCount < lastFrameCount || tr.frameCount - lastFrameCount > 5)
 		{
 			// determine average log luminance
@@ -63,26 +178,18 @@ void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, in
 				srcFbo = dstFbo;
 				dstFbo = tmp;
 			}
+			measured = qtrue;
 		}
 
-		// blend with old log luminance for gradual change
-		VectorSet4(srcBox, 0, 0, 0, 0);
-
-		color[0] = 
-		color[1] =
-		color[2] = 1.0f;
-		if (glRefConfig.textureFloat)
-			color[3] = 0.03f;
-		else
-			color[3] = 0.1f;
-
-		FBO_Blit(tr.targetLevelsFbo, srcBox, NULL, tr.calcLevelsFbo, NULL,  NULL, color, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
+		// (OPM: ioq3 blended 3% a frame toward it here)
+		RB_EyeAdapt(measured);
 	}
 
-	// tonemap
+	// tonemap (OPM: ioq3 took a stop off with its eye adaptation; ours
+	// starts from the fixed exposure, RB_EyeAdapt)
 	color[0] =
 	color[1] =
-	color[2] = pow(2, r_cameraExposure->value - autoExposure); //exp2(r_cameraExposure->value);
+	color[2] = pow(2, r_cameraExposure->value); //exp2(r_cameraExposure->value);
 	color[3] = 1.0f;
 	// Added in OPM: r_linearLighting's own exposure (tonemap_fp.glsl)
 	if (R_RtLinear())

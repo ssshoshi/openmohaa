@@ -2884,6 +2884,14 @@ extern  cvar_t  *r_forceToneMapMax;
 
 extern  cvar_t  *r_autoExposure;
 extern  cvar_t  *r_forceAutoExposure;
+extern  cvar_t  *r_autoExposureKey;
+extern  cvar_t  *r_autoExposureStrength;
+extern  cvar_t  *r_autoExposureMinEV;
+extern  cvar_t  *r_autoExposureMaxEV;
+extern  cvar_t  *r_autoExposureDarkSpeed;
+extern  cvar_t  *r_autoExposureBrightSpeed;
+extern  cvar_t  *r_autoExposureDebug;
+void RB_EyeAdaptShutdown(void); // Added in OPM: eye adaptation's read back buffer (tr_postprocess.c)
 extern  cvar_t  *r_forceAutoExposureMin;
 extern  cvar_t  *r_forceAutoExposureMax;
 
