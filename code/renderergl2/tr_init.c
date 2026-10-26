@@ -128,6 +128,12 @@ cvar_t  *r_forceAutoExposureMax;
 cvar_t  *r_depthPrepass;
 cvar_t  *r_earlyZ;
 cvar_t  *r_ssao;
+cvar_t  *r_volumetric;
+cvar_t  *r_volumetricDensity;
+cvar_t  *r_volumetricAnisotropy;
+cvar_t  *r_volumetricSun;
+cvar_t  *r_volumetricLamps;
+cvar_t  *r_volumetricRange;
 
 cvar_t  *r_normalMapping;
 cvar_t  *r_specularMapping;
@@ -1612,6 +1618,19 @@ void R_Register( void )
 	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "0", 0 );
 	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Can make layers flicker where the prepass's depth differs by a bit. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
+	// Added in OPM: the light in the air (volumetric_fp.glsl)
+	r_volumetric = ri.Cvar_Get( "r_volumetric", "1", CVAR_LATCH | CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_volumetric, "With r_realtimeLighting 2: the light in the air, the sun's shafts through windows and trees and the glow round lamps, in their shadows. Needs vid_restart");
+	r_volumetricDensity = ri.Cvar_Get( "r_volumetricDensity", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_volumetricDensity, "How thick the air is: how much of the light it shows (0 none)");
+	r_volumetricAnisotropy = ri.Cvar_Get( "r_volumetricAnisotropy", "0.5", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_volumetricAnisotropy, "How much brighter the air is looking towards a light than across it (0 the same, 0.9 a lot)");
+	r_volumetricSun = ri.Cvar_Get( "r_volumetricSun", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_volumetricSun, "The sun's light in the air (0 none)");
+	r_volumetricLamps = ri.Cvar_Get( "r_volumetricLamps", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_volumetricLamps, "The lamps' light in the air (0 none)");
+	r_volumetricRange = ri.Cvar_Get( "r_volumetricRange", "3000", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_volumetricRange, "How far off the sun's light in the air is seen, in units");
 
 	r_normalMapping = ri.Cvar_Get( "r_normalMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_specularMapping = ri.Cvar_Get( "r_specularMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );

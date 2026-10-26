@@ -2183,6 +2183,116 @@ RB_PostProcess
 
 =============
 */
+/*
+=============
+RB_Volumetric
+
+Added in OPM: the light in the air (r_volumetric, volumetric_fp.glsl), worked
+out at a quarter of the view's size across, smoothed by the depth, added to the view
+before its glow and tone map.
+=============
+*/
+static void RB_Volumetric(FBO_t *dstFbo, ivec4_t dstBox)
+{
+	vec4_t quadVerts[4], viewInfo, volParams, volRange;
+	vec2_t texCoords[4];
+	vec3_t viewVector;
+	vec4_t box;
+	const float zmin = r_znear->value;
+	const float zmax = backEnd.viewParms.zFar;
+	const float ymax = zmax * tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+	const float xmax = zmax * tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+	const qboolean cascades = r_sunlightMode->integer && (backEnd.viewParms.flags & VPF_USESUNLIGHT) && tr.sunShadowDepthImage[3];
+	shaderProgram_t *sp = &tr.volumetricShader;
+
+	R_GpuTimerBegin(GPUTIMER_VOLUME);
+
+	box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+	box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
+	texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
+	texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
+	texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
+	VectorSet4(quadVerts[0], -1,  1, 0, 1);
+	VectorSet4(quadVerts[1],  1,  1, 0, 1);
+	VectorSet4(quadVerts[2],  1, -1, 0, 1);
+	VectorSet4(quadVerts[3], -1, -1, 0, 1);
+
+	FBO_Bind(tr.volumeFbo);
+	qglViewport(0, 0, tr.volumeFbo->width, tr.volumeFbo->height);
+	qglScissor(0, 0, tr.volumeFbo->width, tr.volumeFbo->height);
+	GL_State(GLS_DEPTHTEST_DISABLE);
+	GL_Cull(CT_TWO_SIDED);
+
+	GLSL_BindProgram(sp);
+	GL_BindToTMU(tr.renderDepthImage, TB_COLORMAP);
+	if (cascades)
+	{
+		GL_BindToTMU(tr.sunShadowDepthImage[0], TB_SHADOWMAP);
+		GL_BindToTMU(tr.sunShadowDepthImage[1], TB_SHADOWMAP2);
+		GL_BindToTMU(tr.sunShadowDepthImage[2], TB_SHADOWMAP3);
+		GL_BindToTMU(tr.sunShadowDepthImage[3], TB_SHADOWMAP4);
+		GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP,  backEnd.refdef.sunShadowMvp[0]);
+		GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP2, backEnd.refdef.sunShadowMvp[1]);
+		GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP3, backEnd.refdef.sunShadowMvp[2]);
+		GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP4, backEnd.refdef.sunShadowMvp[3]);
+	}
+	else
+	{
+		// a depth image either way: a shadow sampler on a colour one reads nothing defined
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP);
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP2);
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP3);
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP4);
+	}
+	R_RtSetVolumeUniforms(sp);
+
+	GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);
+	VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+	GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, viewVector);
+	VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+	GLSL_SetUniformVec3(sp, UNIFORM_VIEWLEFT, viewVector);
+	VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+	GLSL_SetUniformVec3(sp, UNIFORM_VIEWUP, viewVector);
+	VectorSet4(viewInfo, zmax / zmin, zmax, 0.0f, 0.0f);
+	GLSL_SetUniformVec4(sp, UNIFORM_VIEWINFO, viewInfo);
+	// the density in units: r_volumetricDensity 1 is a light haze
+	VectorSet4(volParams, Q_max(0.0f, r_volumetricDensity->value) * 0.001f, Q_max(-0.95f, Q_min(r_volumetricAnisotropy->value, 0.95f)),
+		Q_max(0.0f, r_volumetricSun->value), Q_max(0.0f, r_volumetricLamps->value));
+	GLSL_SetUniformVec4(sp, UNIFORM_VOLPARAMS, volParams);
+	VectorSet4(volRange, Q_max(64.0f, r_volumetricRange->value), cascades ? 1.0f : 0.0f, 0.0f, 0.0f);
+	GLSL_SetUniformVec4(sp, UNIFORM_VOLRANGE, volRange);
+	RB_InstantQuad2(quadVerts, texCoords);
+
+	// smoothed by the depth, across and then up
+	texCoords[0][0] = 0; texCoords[0][1] = 1;
+	texCoords[1][0] = 1; texCoords[1][1] = 1;
+	texCoords[2][0] = 1; texCoords[2][1] = 0;
+	texCoords[3][0] = 0; texCoords[3][1] = 0;
+	VectorSet4(viewInfo, zmax / zmin, zmax, 1.0f / tr.volumeImage->width, 1.0f / tr.volumeImage->height);
+
+	FBO_Bind(tr.volumeBlurFbo);
+	GLSL_BindProgram(&tr.depthBlurShader[0]);
+	GL_BindToTMU(tr.volumeImage, TB_COLORMAP);
+	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
+	GLSL_SetUniformVec4(&tr.depthBlurShader[0], UNIFORM_VIEWINFO, viewInfo);
+	RB_InstantQuad2(quadVerts, texCoords);
+
+	FBO_Bind(tr.volumeFbo);
+	GLSL_BindProgram(&tr.depthBlurShader[1]);
+	GL_BindToTMU(tr.volumeBlurImage, TB_COLORMAP);
+	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
+	GLSL_SetUniformVec4(&tr.depthBlurShader[1], UNIFORM_VIEWINFO, viewInfo);
+	RB_InstantQuad2(quadVerts, texCoords);
+
+	// added to the view
+	FBO_Blit(tr.volumeFbo, NULL, NULL, dstFbo, dstBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+
+	R_GpuTimerEnd(GPUTIMER_VOLUME);
+}
+
 const void *RB_PostProcess(const void *data)
 {
 	const postProcessCommand_t *cmd = data;
@@ -2241,6 +2351,11 @@ const void *RB_PostProcess(const void *data)
 	srcBox[1] = backEnd.viewParms.viewportY;
 	srcBox[2] = backEnd.viewParms.viewportWidth;
 	srcBox[3] = backEnd.viewParms.viewportHeight;
+
+	// Added in OPM: the light in the air, before what glows of it
+	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
+		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
+		RB_Volumetric(srcFbo, srcBox);
 
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)

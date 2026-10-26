@@ -1022,6 +1022,8 @@ typedef enum
 	UNIFORM_RTSKYLIGHTMAP,
 	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
 	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
+	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -2253,6 +2255,7 @@ typedef enum {
 	GPUTIMER_PRESENT,
 	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
 	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
+	GPUTIMER_VOLUME,   // Added in OPM: r_volumetric
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2560,6 +2563,8 @@ typedef struct {
 	image_t					*sunShadowDepthImage[4];
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
+	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
+	image_t                 *volumeBlurImage; // and half of its blur
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2584,6 +2589,8 @@ typedef struct {
 	FBO_t					*sunShadowFbo[4];
 	FBO_t					*screenShadowFbo;
 	FBO_t					*screenSsaoFbo;
+	FBO_t					*volumeFbo;
+	FBO_t					*volumeBlurFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2634,6 +2641,7 @@ typedef struct {
 	shaderProgram_t tonemapShader;
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
+	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
 	shaderProgram_t ssaoShader;
 	shaderProgram_t depthBlurShader[4];
 	shaderProgram_t testcubeShader;
@@ -2891,6 +2899,12 @@ extern  cvar_t  *r_cameraExposure;
 extern  cvar_t  *r_depthPrepass;
 extern  cvar_t  *r_earlyZ;
 extern  cvar_t  *r_ssao;
+extern  cvar_t  *r_volumetric;
+extern  cvar_t  *r_volumetricDensity;
+extern  cvar_t  *r_volumetricAnisotropy;
+extern  cvar_t  *r_volumetricSun;
+extern  cvar_t  *r_volumetricLamps;
+extern  cvar_t  *r_volumetricRange;
 
 extern  cvar_t  *r_normalMapping;
 extern  cvar_t  *r_specularMapping;
@@ -3163,6 +3177,7 @@ int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
 void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
+void R_RtSetVolumeUniforms(shaderProgram_t *sp);
 void R_RtFreeSkyLightmaps(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);

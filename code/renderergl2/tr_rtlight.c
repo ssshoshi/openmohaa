@@ -6569,6 +6569,40 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 	}
 }
 
+/*
+=============
+R_RtSetVolumeUniforms
+
+Added in OPM: for the light in the air (r_volumetric): every light lit this
+frame, the sun, and their shadows.
+=============
+*/
+void R_RtSetVolumeUniforms(shaderProgram_t *sp)
+{
+	vec4_t list[RT_MAX_LIGHTS / 4];
+	vec4_t params, surface;
+	float *index = &list[0][0];
+	int    i, count = Q_min(tr.rtNumActive, RT_MAX_LIGHTS);
+
+	for (i = 0; i < RT_MAX_LIGHTS; i++) {
+		index[i] = (float)(i < count ? i : 0);
+	}
+	VectorCopy4(tr.rtParams, params);
+	params[0] = (float)count;
+	GLSL_SetUniformVec4(sp, UNIFORM_RTPARAMS, params);
+	if (count) {
+		GLSL_SetUniformRtLights(sp, UNIFORM_RTLIGHTS, (const vec4_t *)tr.rtLightData, tr.rtNumActive, tr.rtLightGeneration);
+		GLSL_SetUniformRtList(sp, UNIFORM_RTLIST, list, count);
+	}
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
+	GLSL_SetUniformVec4(sp, UNIFORM_RTAMBIENT, tr.rtAmbient);
+	// one tap of each shadow's four, unspread
+	VectorSet4(surface, 0.0f, 0.0f, 0.0f, 1.0f);
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
+	R_RtBindTextures();
+}
+
 void R_RtBindTextures(void)
 {
 	GL_BindToTMU(tr.rtShadowImage[0], TMU_RTSHADOW_STATIC);
