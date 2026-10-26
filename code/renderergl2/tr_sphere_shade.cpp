@@ -1165,7 +1165,11 @@ void RB_Sphere_SetupEntity()
             RB_Sphere_Light_Sun();
             RB_Sphere_BuildStaticLights();
         }
-        RB_Sphere_BuildDLights();
+        //  Nor the dynamic lights, when the realtime lights have them: the
+        //  model had a muzzle flash's light twice, per vertex and per pixel.
+        if (!R_RtLitLive() || !R_RtTakesDlights()) {
+            RB_Sphere_BuildDLights();
+        }
         backEnd.pc.c_characterlights += backEnd.currentSphere->numRealLights;
         RB_OptimizeLights();
     }

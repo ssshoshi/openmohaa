@@ -532,7 +532,10 @@ void RB_Static_BuildDLights()
 {
     int i;
 
-    backEnd.currentStaticModel->useSpecialLighting = backEnd.refdef.num_dlights > 0;
+    // Added in OPM: not when the realtime lights have the dynamic lights: a
+    // static model's baked colours are lit by them on top, both ways
+    // (RT_STAGE_LIT_BAKED), and a muzzle flash lit it twice
+    backEnd.currentStaticModel->useSpecialLighting = backEnd.refdef.num_dlights > 0 && !R_RtTakesDlights();
     backEnd.currentStaticModel->numdlights         = 0;
 
     if (!backEnd.currentStaticModel->useSpecialLighting) {
