@@ -692,6 +692,9 @@ void main()
 
     #if defined(USE_PBR)
 	cubeLightColor *= cubeLightColor;
+    #else
+	// Added in OPM: a cubemap holds what was shown, not light (r_linearLighting)
+	cubeLightColor = Lin(cubeLightColor);
     #endif
 
 	// multiply cubemap values by lighting
