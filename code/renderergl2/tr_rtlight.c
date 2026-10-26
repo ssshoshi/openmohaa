@@ -6753,6 +6753,16 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 		VectorCopy4(tr.rtParams, params);
 		params[0] = (float)count;
 		GLSL_SetUniformVec4(sp, UNIFORM_RTPARAMS, params);
+		{
+			// r_gtao: the main view's solid surfaces only (what is seen
+			// through glass would take the occlusion of what is behind it)
+			vec4_t ao = { 0, 0, 0, 0 };
+
+			if (backEnd.gtaoOn && tess.shader->sort <= SS_OPAQUE && !backEnd.depthFill) {
+				ao[0] = 1.0f;
+			}
+			GLSL_SetUniformVec4(sp, UNIFORM_RTAO, ao);
+		}
 		if (!count && !tr.rtSunDir[3] && tr.rtParams[1] < 1.5f) {
 			return;
 		}
