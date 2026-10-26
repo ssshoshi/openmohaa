@@ -2773,7 +2773,9 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 	float splitZNear, splitZFar, splitBias;
 	float viewZNear, viewZFar;
 	vec3_t lightviewBounds[2];
-	qboolean lightViewIndependentOfCameraView = qfalse;
+	// Added in OPM: r_sunShadowStable fits the view cascades to a sphere, turned
+	// with the world and snapped to texels (below), as the original code meant to
+	qboolean lightViewIndependentOfCameraView = level != 3 && r_sunShadowStable->integer;
 
 	if (r_forceSun->integer == 2)
 	{
@@ -2906,7 +2908,43 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 		ClearBounds(lightviewBounds[0], lightviewBounds[1]);
 
-		if (level != 3)
+		if (level != 3 && lightViewIndependentOfCameraView)
+		{
+			// Added in OPM: the slice's corners lie on two circles round the
+			// view axis, a at the near plane and b at the far. The smallest
+			// sphere through all of them has its centre on that axis, where it
+			// is as far from the one circle as from the other. Its size is the
+			// same however the view turns, so the cascade's texels keep their
+			// size, and a texel-snapped centre keeps them in place.
+			const float tx = tan(fd->fov_x * M_PI / 360.0f), ty = tan(fd->fov_y * M_PI / 360.0f);
+			const float a2 = splitZNear * splitZNear * (tx * tx + ty * ty);
+			const float b2 = splitZFar * splitZFar * (tx * tx + ty * ty);
+			float       z, radius, texel;
+			vec3_t      centre;
+			int         i;
+
+			z = ((splitZFar * splitZFar - splitZNear * splitZNear) + (b2 - a2)) / (2.0f * (splitZFar - splitZNear));
+			z = CLAMP(z, splitZNear, splitZFar);
+			radius = sqrt(MAX((z - splitZNear) * (z - splitZNear) + a2, (splitZFar - z) * (splitZFar - z) + b2));
+			// a texel over each side, so the snap never leaves a corner
+			// outside: the square is then exactly width texels of this size
+			texel = 2.0f * radius / (tr.sunShadowFbo[level]->width - 2);
+			radius += texel;
+			VectorMA(fd->vieworg, z, fd->viewaxis[0], centre);
+
+			// Snapped where the light's axes meet the world, not the eye: the
+			// eye is the light view's origin and moves every frame.
+			for (i = 0; i < 3; i++)
+			{
+				const float abs = DotProduct(centre, lightViewAxis[i]);
+				const float org = DotProduct(lightOrigin, lightViewAxis[i]);
+				const float c = (i == 0 ? abs : floor(abs / texel) * texel) - org;
+
+				lightviewBounds[0][i] = c - radius;
+				lightviewBounds[1][i] = c + radius;
+			}
+		}
+		else if (level != 3)
 		{
 			// add view near plane
 			lx = splitZNear * tan(fd->fov_x * M_PI / 360.0f);
@@ -3021,30 +3059,10 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 		if (!glRefConfig.depthClamp)
 			lightviewBounds[0][0] = lightviewBounds[1][0] - 8192;
 
-		// Moving the Light in Texel-Sized Increments
-		// from http://msdn.microsoft.com/en-us/library/windows/desktop/ee416324%28v=vs.85%29.aspx
-		//
-		if (lightViewIndependentOfCameraView)
-		{
-			float cascadeBound, worldUnitsPerTexel, invWorldUnitsPerTexel;
-
-			cascadeBound = MAX(lightviewBounds[1][0] - lightviewBounds[0][0], lightviewBounds[1][1] - lightviewBounds[0][1]);
-			cascadeBound = MAX(cascadeBound, lightviewBounds[1][2] - lightviewBounds[0][2]);
-			worldUnitsPerTexel = cascadeBound / tr.sunShadowFbo[level]->width;
-			invWorldUnitsPerTexel = 1.0f / worldUnitsPerTexel;
-
-			VectorScale(lightviewBounds[0], invWorldUnitsPerTexel, lightviewBounds[0]);
-			lightviewBounds[0][0] = floor(lightviewBounds[0][0]);
-			lightviewBounds[0][1] = floor(lightviewBounds[0][1]);
-			lightviewBounds[0][2] = floor(lightviewBounds[0][2]);
-			VectorScale(lightviewBounds[0], worldUnitsPerTexel, lightviewBounds[0]);
-
-			VectorScale(lightviewBounds[1], invWorldUnitsPerTexel, lightviewBounds[1]);
-			lightviewBounds[1][0] = floor(lightviewBounds[1][0]);
-			lightviewBounds[1][1] = floor(lightviewBounds[1][1]);
-			lightviewBounds[1][2] = floor(lightviewBounds[1][2]);
-			VectorScale(lightviewBounds[1], worldUnitsPerTexel, lightviewBounds[1]);
-		}
+		// (OPM: ioq3's texel snapping of these bounds was here, never run:
+		// they are relative to the eye, which moves, so snapping them did
+		// not hold the texels still. The view cascades snap their sphere's
+		// centre above, where the light's axes meet the world.)
 
 		//ri.Printf(PRINT_ALL, "level %d znear %f zfar %f\n", level, lightviewBounds[0][0], lightviewBounds[1][0]);		
 		//ri.Printf(PRINT_ALL, "xmin %f xmax %f ymin %f ymax %f\n", lightviewBounds[0][1], lightviewBounds[1][1], -lightviewBounds[1][2], -lightviewBounds[0][2]);
