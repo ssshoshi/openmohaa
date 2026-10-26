@@ -478,6 +478,14 @@ void FBO_Init(void)
 		R_CheckFBO(tr.waterReflectFbo);
 	}
 
+	// Added in OPM: r_ssr
+	if (tr.ssrPrevImage)
+	{
+		tr.ssrPrevFbo = FBO_Create("_ssrprev", tr.ssrPrevImage->width, tr.ssrPrevImage->height);
+		FBO_AttachImage(tr.ssrPrevFbo, tr.ssrPrevImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.ssrPrevFbo);
+	}
+
 	if (tr.screenSsaoImage)
 	{
 		tr.screenSsaoFbo = FBO_Create("_screenssao", tr.screenSsaoImage->width, tr.screenSsaoImage->height);

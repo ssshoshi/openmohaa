@@ -3108,6 +3108,12 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
 		}
 
+		// Added in OPM: r_ssr's copy of the last frame, before its glow and tone map
+		if (r_ssr->integer)
+		{
+			tr.ssrPrevImage = R_CreateImage("*ssrPrev", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+		}
+
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)
 		{
 			tr.pshadowMaps[x] = R_CreateImage(va("*shadowmap%i", x), NULL, PSHADOW_MAP_SIZE, PSHADOW_MAP_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
