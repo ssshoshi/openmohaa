@@ -110,7 +110,6 @@ typedef char rt_smallRowFits[(RT_SMALL_FIRST % RT_ATLAS_TILES == 0 && RT_SLOTS >
 // it is out of range.
 #define RT_CUTOFF 1.0f
 
-#define RT_SQRT1_2 0.70710678f
 
 // Leaves, two sided and cut out by their alpha: how much of the light on one
 // side comes through to the other
@@ -4771,12 +4770,27 @@ static float R_RtSlotCode(int slot)
 	return slot < RT_SLOTS_BIG ? (float)(slot * 6) : (float)(RT_SMALL_CODE + (slot - RT_SLOTS_BIG) * 6);
 }
 
+// How much of a face's tile its 90 degrees take: the rest is the guard,
+// RT_FACE_GUARD texels each side, drawn past the face's edge (RtShadowAtlas)
+static float R_RtFaceScale(int size)
+{
+	return 1.0f - 2.0f * RT_FACE_GUARD / (float)size;
+}
+
+// The smallest tile's: the widest faces, for the tests of what a face sees
+static float R_RtFaceScaleMin(void)
+{
+	return R_RtFaceScale(Q_min(r_rtShadowTile->integer, R_RtBakedTile()) / 2);
+}
+
 static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 {
 	viewParms_t parms;
 	int         x, y, size;
+	float       fov;
 
 	R_RtFaceRect(atlas, slot, face, &x, &y, &size);
+	fov = 2.0f * RAD2DEG(atan(1.0f / R_RtFaceScale(size)));
 	Com_Memset(&parms, 0, sizeof(parms));
 	parms.viewportX      = x;
 	parms.viewportY      = y;
@@ -4784,8 +4798,8 @@ static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 	parms.viewportHeight = size;
 	parms.isPortal       = qfalse;
 	parms.isMirror       = qfalse;
-	parms.fovX           = 90;
-	parms.fovY           = 90;
+	parms.fovX           = fov;
+	parms.fovY           = fov;
 	parms.flags          = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_NOCUBEMAPS
 				| (atlas == 0 ? VPF_RTSTATIC : atlas == 1 ? VPF_RTDYNAMIC : VPF_RTBAKED);
 	parms.zFar           = l->range;
@@ -4806,6 +4820,9 @@ static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre
 	vec3_t v;
 	int    faces = 0, f;
 
+	// a face's sides, as drawn with its guard: |left| = fwd * t, |up| = fwd * t
+	const float t = 1.0f / R_RtFaceScaleMin(), n = 1.0f / sqrt(t * t + 1.0f);
+
 	VectorSubtract(centre, l->origin, v);
 	if (DotProduct(v, v) > Square(range + radius)) {
 		return 0;
@@ -4820,14 +4837,13 @@ static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre
 		left = DotProduct(v, axis[1]);
 		up   = DotProduct(v, axis[2]);
 
-		// the four sides of a 90 degree face are |left| = fwd and |up| = fwd
 		if (fwd + radius <= 0) {
 			continue;
 		}
-		if ((fwd - left) * RT_SQRT1_2 < -radius || (fwd + left) * RT_SQRT1_2 < -radius) {
+		if ((fwd * t - left) * n < -radius || (fwd * t + left) * n < -radius) {
 			continue;
 		}
-		if ((fwd - up) * RT_SQRT1_2 < -radius || (fwd + up) * RT_SQRT1_2 < -radius) {
+		if ((fwd * t - up) * n < -radius || (fwd * t + up) * n < -radius) {
 			continue;
 		}
 		faces |= 1 << f;
@@ -5476,7 +5492,9 @@ taps' spread.
 
 static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frustum[5])
 {
-	int faces = 0, f, c, k;
+	// the face's pyramid as drawn, its guard included (R_RtFaceScale)
+	const float side = range / R_RtFaceScaleMin();
+	int         faces = 0, f, c, k;
 
 	for (f = 0; f < 6; f++) {
 		vec3_t axis[3], points[5];
@@ -5485,8 +5503,8 @@ static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frust
 		VectorCopy(l->origin, points[0]);
 		for (c = 0; c < 4; c++) {
 			VectorMA(l->origin, range, axis[0], points[c + 1]);
-			VectorMA(points[c + 1], (c & 1) ? range : -range, axis[1], points[c + 1]);
-			VectorMA(points[c + 1], (c & 2) ? range : -range, axis[2], points[c + 1]);
+			VectorMA(points[c + 1], (c & 1) ? side : -side, axis[1], points[c + 1]);
+			VectorMA(points[c + 1], (c & 2) ? side : -side, axis[2], points[c + 1]);
 		}
 
 		for (k = 0; k < 5; k++) {
