@@ -1033,6 +1033,8 @@ typedef enum
 	UNIFORM_RTAO,     // Added in OPM: r_gtao: x on, the view's ambient occlusion in u_RtAOMap
 	UNIFORM_RTAOMAP,
 	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
+	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
+	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -2265,6 +2267,7 @@ typedef enum {
 	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
 	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
 	GPUTIMER_AO,       // Added in OPM: r_gtao
+	GPUTIMER_VOLUME,   // Added in OPM: r_volumetric
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2576,6 +2579,8 @@ typedef struct {
 	image_t                 *gtaoImage;     // Added in OPM: r_gtao, the view's ambient occlusion
 	image_t                 *gtaoBlurImage; // and half of its blur
 	image_t                 *gtaoDepthImage; // the depth at that size, read by both
+	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
+	image_t                 *volumeBlurImage; // and half of its blur
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2603,6 +2608,8 @@ typedef struct {
 	FBO_t					*gtaoFbo;
 	FBO_t					*gtaoBlurFbo;
 	FBO_t					*gtaoDepthFbo;
+	FBO_t					*volumeFbo;
+	FBO_t					*volumeBlurFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2653,6 +2660,7 @@ typedef struct {
 	shaderProgram_t tonemapShader;
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
+	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
 	shaderProgram_t ssaoShader;
 	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];
@@ -2922,6 +2930,12 @@ extern  cvar_t  *r_ssao;
 extern  cvar_t  *r_gtao;
 extern  cvar_t  *r_gtaoRadius;
 extern  cvar_t  *r_gtaoStrength;
+extern  cvar_t  *r_volumetric;
+extern  cvar_t  *r_volumetricDensity;
+extern  cvar_t  *r_volumetricAnisotropy;
+extern  cvar_t  *r_volumetricSun;
+extern  cvar_t  *r_volumetricLamps;
+extern  cvar_t  *r_volumetricRange;
 
 extern  cvar_t  *r_normalMapping;
 extern  cvar_t  *r_specularMapping;
@@ -3202,6 +3216,7 @@ int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
 void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
+void R_RtSetVolumeUniforms(shaderProgram_t *sp);
 void R_RtFreeSkyLightmaps(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);
