@@ -163,6 +163,7 @@ cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
 cvar_t  *r_shadowMapSize;
 cvar_t  *r_sunShadowFarSize;
+cvar_t  *r_sunShadowStable;
 cvar_t  *r_shadowCascadeZNear;
 cvar_t  *r_shadowCascadeZFar;
 cvar_t  *r_shadowCascadeZBias;
@@ -1661,6 +1662,8 @@ void R_Register( void )
 	r_shadowMapSize = ri.Cvar_Get("r_shadowMapSize", "1024", CVAR_ARCHIVE | CVAR_LATCH);
 	r_sunShadowFarSize = ri.Cvar_Get("r_sunShadowFarSize", "4096", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_sunShadowFarSize, "Texels across the sun's last shadow cascade, the whole level's, which gives every shadow past r_shadowCascadeZFar. Drawn once (again only when the sun moves), so unlike r_shadowMapSize it costs memory, not frame time: 4096 is 64 MB (0: as r_shadowMapSize)");
+	r_sunShadowStable = ri.Cvar_Get("r_sunShadowStable", "1", 0);
+	ri.Cvar_SetDescription(r_sunShadowStable, "Keeps the sun's near shadow cascades still as the view turns and moves: each is a square round the sphere that holds its slice of the view, turned with the world, not the camera, and moved a whole texel at a time, so shadow edges no longer crawl. 0: fitted to the slice and turned with the camera, sharper but shimmering");
 	r_shadowCascadeZNear = ri.Cvar_Get( "r_shadowCascadeZNear", "8", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZFar = ri.Cvar_Get( "r_shadowCascadeZFar", "1024", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZBias = ri.Cvar_Get( "r_shadowCascadeZBias", "0", CVAR_ARCHIVE | CVAR_LATCH );
