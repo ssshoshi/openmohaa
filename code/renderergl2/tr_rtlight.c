@@ -260,6 +260,14 @@ qboolean R_RtLitLive(void)
 	return (R_RtActive() && r_realtimeLighting->integer == 2) ? qtrue : qfalse;
 }
 
+// Whether the game's dynamic lights (muzzle flashes, blasts) are among the
+// realtime lights (r_rtDlights), for the world drawn: what the realtime lights
+// light must not take them into its own light as well, or it has them twice
+qboolean R_RtTakesDlights(void)
+{
+	return (R_RtActive() && r_rtDlights->value > 0 && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL)) ? qtrue : qfalse;
+}
+
 void R_RtRegister(void)
 {
 	r_realtimeLighting = ri.Cvar_Get("r_realtimeLighting", "0", CVAR_ARCHIVE | CVAR_LATCH);
@@ -1809,7 +1817,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 9
+#define RT_BOUNCE_VERSION 10 // 10: the lamps light it as the shaders do (R_RtAttenAt)
 #define RT_BOUNCE_VALUES  6 // each sample's bounce, the daylight's then the lamps'
 #define RT_BOUNCE_FILE_SIZE(n) (20 + sizeof(float) * (RT_BOUNCE_VALUES + 6) * (n))
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
@@ -2257,6 +2265,69 @@ static void R_RtBounceSamples(void)
 
 // What the sun and the sky (out) and the lamps (lamps) put straight on a
 // point facing normal, which sees sky of the sky, raw
+static float R_RtLightShape(const rtLight_t *l, vec4_t shape);
+
+// GLSL's smoothstep, edges either way round (RtAtten has them both ways)
+static float R_RtSmoothstep(float e0, float e1, float x)
+{
+	const float t = Com_Clamp(0.0f, 1.0f, (x - e0) / (e1 - e0));
+
+	return t * t * (3.0f - 2.0f * t);
+}
+
+// What a light gives at P facing N, as the shaders' RtAtten (tr_glsl.c) has it:
+// its falloff, its spot's cone and soft edge, a lamp's shade and glow, a lit
+// surface's angle. For what is lit off the card (the bounce); 0 out of reach.
+static float R_RtAttenAt(const rtLight_t *l, const vec3_t P, const vec3_t N, vec3_t toLight, float *dist)
+{
+	vec4_t      shape;
+	const float kind = R_RtLightShape(l, shape);
+	float       d2, d, ndl, fade, att;
+
+	VectorSubtract(l->origin, P, toLight);
+	d2 = DotProduct(toLight, toLight);
+	if (l->range <= 0 || d2 >= Square(l->range)) {
+		return 0.0f;
+	}
+	d     = sqrt(d2);
+	*dist = d;
+	ndl   = DotProduct(N, toLight) / Q_max(d, 1e-4f);
+	if (ndl <= 0.0f) {
+		return 0.0f;
+	}
+	fade = 1.0f - d2 / Square(l->range);
+	att  = ndl * fade * fade / Q_max(d2, 256.0f);
+
+	if (kind > 2.5f) {
+		const float shut = VectorLength(shape);
+
+		att = ndl * fade * fade / Q_max(d2, Q_max(shape[3] * shape[3], 256.0f));
+		if (shape[3] < 0.0f) {
+			att *= Q_max(0.0f, DotProduct(toLight, shape)) / (d * shut);
+		} else if (shut > 1.0f) {
+			att *= 1.0f - (shut - 1.0f) * R_RtSmoothstep(0.55f, 0.2f, fabs(DotProduct(toLight, shape)) / (d * shut));
+		} else if (shut > 0.0f) {
+			att *= 1.0f - shut * R_RtSmoothstep(-0.05f, 0.3f, -DotProduct(toLight, shape) / (d * shut));
+		}
+	} else if (kind > 0.5f) {
+		const float along = -DotProduct(toLight, shape);
+		vec3_t      off;
+		float       radiusAtDist, sampleRadius;
+
+		if (along <= 0.001f) {
+			return 0.0f;
+		}
+		radiusAtDist = shape[3] * along;
+		VectorMA(toLight, along, shape, off);
+		sampleRadius = VectorLength(off);
+		if (sampleRadius >= radiusAtDist) {
+			return 0.0f;
+		}
+		att *= Com_Clamp(0.0f, 1.0f, (radiusAtDist - sampleRadius) / 32.0f);
+	}
+	return Q_max(att, 0.0f);
+}
+
 static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out, vec3_t lamps)
 {
 	trace_t trace;
@@ -2285,41 +2356,16 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 	for (i = 0; i < rt.numLights; i++) {
 		const rtLight_t *l = &rt.lights[i];
 		vec3_t           toLight;
-		float            d2, d, ndl, fade, att;
+		float            d, att;
 
-		if (l->range <= 0 || l->entity >= 0) {
+		if (l->entity >= 0) {
 			continue;
 		}
-		VectorSubtract(l->origin, xyz, toLight);
-		d2 = DotProduct(toLight, toLight);
-		if (d2 >= Square(l->range)) {
+		// (as the shaders light it: a lamp's shade held back what the bounce
+		// had of its light, and a spot's soft edge, here a hard one)
+		att = R_RtAttenAt(l, xyz, normal, toLight, &d);
+		if (att <= 0) {
 			continue;
-		}
-		d   = sqrt(d2);
-		ndl = DotProduct(normal, toLight) / Q_max(d, 1e-3f);
-		if (ndl <= 0) {
-			continue;
-		}
-		fade = 1.0f - d2 / Square(l->range);
-		att  = ndl * fade * fade / Q_max(d2, l->lamp ? Square(RT_LAMP_NEAR) : l->area > 0 ? Square(l->area) : 256.0f);
-		if (l->area > 0) {
-			// less the further from straight out of its surface
-			att *= Q_max(0.0f, -DotProduct(toLight, l->spotDir) / Q_max(d, 1e-3f));
-			if (att <= 0) {
-				continue;
-			}
-		}
-		if (l->spot) {
-			const float along = -DotProduct(toLight, l->spotDir);
-			vec3_t      off;
-
-			if (along <= 0.001f) {
-				continue;
-			}
-			VectorMA(toLight, along, l->spotDir, off);
-			if (VectorLength(off) >= l->radiusByDist * along) {
-				continue;
-			}
 		}
 		if (Q_max(l->color[0], Q_max(l->color[1], l->color[2])) * att * r_rtScale->value < 0.5f) {
 			continue;

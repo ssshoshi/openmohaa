@@ -3142,6 +3142,7 @@ qboolean R_RtActive(void);
 int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
+qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
 void R_RtFreeWorld(void);
