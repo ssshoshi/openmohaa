@@ -70,6 +70,10 @@ cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
+cvar_t *r_rtShadowGuard;
+
+// The guard the faces are drawn with (r_rtShadowGuard, R_RtRenderShadows)
+static int rt_guard = RT_FACE_GUARD;
 cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
@@ -318,6 +322,9 @@ void R_RtRegister(void)
 	r_rtShadowSoft = ri.Cvar_Get("r_rtShadowSoft", "2", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtShadowSoft, 1, 4, qfalse);
 	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
+	r_rtShadowGuard = ri.Cvar_Get("r_rtShadowGuard", va("%d", RT_FACE_GUARD), 0);
+	ri.Cvar_CheckRange(r_rtShadowGuard, 0, 8, qtrue);
+	ri.Cvar_SetDescription(r_rtShadowGuard, "Texels a realtime light's shadow face is drawn past its edge, so its soft shadow reads on into the next face there (0: none, the taps held inside the face, which left seams along its edges). Changing it draws every face again. Not archived: an A/B switch");
 	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
 	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
 	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
@@ -3797,6 +3804,7 @@ static void R_RtBakeBegin(float alpha, int state)
 	vec4_t off = { 0, 0, 0, 0 }, params = { 1, 2, 1, 0 };
 
 	params[3] = alpha;
+	off[3]    = 16.0f * rt_guard; // the faces' guard (RtShadowAtlas)
 	GL_State(state);
 	GL_Cull(CT_TWO_SIDED);
 	GLSL_BindProgram(&tr.rtLampBakeShader);
@@ -4771,10 +4779,10 @@ static float R_RtSlotCode(int slot)
 }
 
 // How much of a face's tile its 90 degrees take: the rest is the guard,
-// RT_FACE_GUARD texels each side, drawn past the face's edge (RtShadowAtlas)
+// rt_guard texels each side, drawn past the face's edge (RtShadowAtlas)
 static float R_RtFaceScale(int size)
 {
-	return 1.0f - 2.0f * RT_FACE_GUARD / (float)size;
+	return 1.0f - 2.0f * rt_guard / (float)size;
 }
 
 // The smallest tile's: the widest faces, for the tests of what a face sees
@@ -5666,6 +5674,18 @@ static float R_RtFlicker(const rtLight_t *l, int time)
 
 void R_RtRenderShadows(const refdef_t *fd)
 {
+	// a new guard: every face drawn again with it, the lights out until they
+	// are, as when a map loads
+	if (r_rtShadowGuard->integer != rt_guard) {
+		int i;
+
+		rt_guard = r_rtShadowGuard->integer;
+		for (i = 0; i < rt.numLights; i++) {
+			rt.lights[i].staticFaces = 0;
+			rt.lights[i].bakedFaces  = 0;
+		}
+	}
+
 	float     sorted[1024][2];
 	int       numSorted = 0, numChosen, numCandidates, numInView, room;
 	int       candidates[RT_MAX_LIGHTS];
@@ -6558,7 +6578,7 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 				}
 			}
 			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, sky,
-				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value);
+				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value + 16.0f * rt_guard);
 			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
 		}
 		VectorCopy4(tr.rtParams, params);

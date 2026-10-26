@@ -539,9 +539,9 @@ enum
 #define RT_BAKED_TILE   128 // r_realtimeLighting 2: the faces of the world alone, for the baked lamps (R_RtBakeLamps)
 #define RT_SMALL_CODE   4096 // a light's first tile, sent to the shaders, at or past this: quarter tiles
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
-#define RT_FACE_GUARD   4 // texels a face's tile is drawn past its 90 degrees on each side, so the
-                          // taps of a point at the face's edge read what is there, not a clamp
-                          // (r_rtShadowSoft 4 reaches 3: two half texels and the filter's own)
+#define RT_FACE_GUARD   4 // r_rtShadowGuard's default: texels a face's tile is drawn past its 90 degrees on
+                          // each side, so the taps of a point at the face's edge read what is there, not
+                          // a clamp (r_rtShadowSoft 4 reaches 3: two half texels and the filter's own)
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
 #define RT_MAX_RUN      1023 // of those, for one light
 #define TMU_RTCAPSULES  11

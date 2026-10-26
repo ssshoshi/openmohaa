@@ -446,14 +446,15 @@ static const char *rt_glsl =
 	"	vec2  origin = vec2(mod(tile, tiles), floor(tile / tiles));\n"
 	// the four taps (each four texels, filtered) half a texel apart, or as
 	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps.
-	// The face was drawn RT_FACE_GUARD texels wider than its 90 degrees each
-	// side (R_RtFaceScale), so its 90 degrees are the middle of the tile and
-	// the taps near an edge read the guard, what the next face sees there;
-	// clamped inside the tile, they read the same texels over and over and
-	// the shadow smeared into a seam along every edge of the cube.
-	"	float spread = max(u_RtSurface.w, 1.0);\n"
+	// The face was drawn guard texels wider than its 90 degrees each side
+	// (u_RtSurface.w / 16, r_rtShadowGuard; R_RtFaceScale), so its 90 degrees
+	// are the middle of the tile and the taps near an edge read the guard,
+	// what the next face sees there; clamped inside the tile, they read the
+	// same texels over and over and the shadow smeared along every edge.
+	"	float guard  = floor(u_RtSurface.w / 16.0);\n"
+	"	float spread = max(u_RtSurface.w - 16.0 * guard, 1.0);\n"
 	"	float texel  = 1.0 / texels;\n"
-	"	vec2  st     = (faceUV - 0.5) * (1.0 - 2.0 * RT_FACE_GUARD * texel) + 0.5;\n"
+	"	vec2  st     = (faceUV - 0.5) * (1.0 - 2.0 * guard * texel) + 0.5;\n"
 	"	st           = clamp(st, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
 	"	vec2  uv     = (origin + st) / tiles;\n"
 	"	float d      = 0.5 * spread / (RT_TILES * tileTexels);\n"
@@ -1132,8 +1133,8 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 			Q_strcat(dest, size, "#define RT_VERTEX\n#define texture2D texture\n#define shadow2D texture\n");
 		Q_strcat(dest, size, va("#define RT_MAX_LIGHTS %d\n#define RT_TILES %d.0\n#define RT_TILE_TEXELS %d.0\n#define RT_ZNEAR %f\n",
 			RT_MAX_LIGHTS, RT_ATLAS_TILES, r_rtShadowTile->integer, RT_ZNEAR));
-		Q_strcat(dest, size, va("#define RT_SMALL_CODE %d.0\n#define RT_SMALL_ROW %d.0\n#define RT_BAKED_TEXELS %d.0\n#define RT_FACE_GUARD %d.0\n", RT_SMALL_CODE,
-			RT_SMALL_FIRST / RT_ATLAS_TILES, R_RtBakedTile(), RT_FACE_GUARD));
+		Q_strcat(dest, size, va("#define RT_SMALL_CODE %d.0\n#define RT_SMALL_ROW %d.0\n#define RT_BAKED_TEXELS %d.0\n", RT_SMALL_CODE,
+			RT_SMALL_FIRST / RT_ATLAS_TILES, R_RtBakedTile()));
 		Q_strcat(dest, size, va("#define RT_SKY_DIRS %d\n#define RT_SKY_TILES %d.0\n#define RT_SKY_TEXELS %d.0\n",
 			RT_SKY_DIRS, RT_SKY_TILES, r_rtSkyTile->integer));
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)
