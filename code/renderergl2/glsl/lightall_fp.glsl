@@ -153,6 +153,25 @@ varying vec3      var_RtNormal;
 uniform vec4      u_GlobalFogColor;
 uniform vec2      u_GlobalFogParams;
 
+// Added in OPM: r_linearLighting. The colours read as linear light (gamma
+// 2.2, as the display showed them), added up as light; the tone map shows the
+// frame (GLSL_BindProgram sets it, for the world's view alone)
+uniform float     u_Linear;
+
+vec3 Lin(vec3 c)
+{
+	return u_Linear > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c;
+}
+
+// The map's distance fog, mixed as it was shown (the mix of a colour shown and
+// the fog's): mixed as light, a dark wall took far more of a grey fog
+vec3 Fog(vec3 c, vec3 fog, float f)
+{
+	if (u_Linear > 0.5)
+		return Lin(mix(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), fog, f));
+	return mix(c, fog, f);
+}
+
 varying vec4      var_TexCoords;
 varying float     var_FogDist;
 
@@ -427,7 +446,7 @@ void main()
 	E = normalize(viewDir);
 #endif
 
-	lightColor = var_Color.rgb;
+	lightColor = Lin(var_Color.rgb);
 
 #if defined(USE_RTLIGHT) && defined(USE_LIGHT_VERTEX)
 	// all of it live: the baked vertex lighting gives way to the ambient
@@ -443,12 +462,12 @@ void main()
   #if defined(USE_PBR) && !defined(USE_FAST_LIGHT)
 	lightmapColor.rgb *= lightmapColor.rgb;
   #endif
-	lightColor *= lightmapColor.rgb;
+	lightColor *= Lin(lightmapColor.rgb);
 
   #if defined(USE_RTLIGHT)
 	// all of it live: the lightmap gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = var_Color.rgb * u_RtAmbient.rgb;
+		lightColor = Lin(var_Color.rgb) * u_RtAmbient.rgb;
   #endif
 #endif
 
@@ -499,6 +518,9 @@ void main()
 		if (alpha <= 0.0)
 			discard;
 	}
+
+	// (r_linearLighting: the texture's colour as light; its alpha as it is)
+	diffuse.rgb = Lin(diffuse.rgb);
 
 	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
 	// how much sky it sees
@@ -570,7 +592,7 @@ void main()
 	// light is below the surface
 	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
   #else
-	ambientColor = var_ColorAmbient.rgb;
+	ambientColor = Lin(var_ColorAmbient.rgb);
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
@@ -705,7 +727,7 @@ void main()
 	reflectance += CalcDiffuse(diffuse.rgb, NH2, EH2, roughness);
     #endif
 
-	lightColor = u_PrimaryLightColor;
+	lightColor = Lin(u_PrimaryLightColor);
 
     #if defined(USE_SHADOWMAP)
 	lightColor *= shadowValue;
@@ -808,5 +830,5 @@ void main()
 	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer
 	// gets from fixed function GL_FOG.
 	float fogFactor = clamp((var_FogDist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
-	gl_FragColor.rgb = mix(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+	gl_FragColor.rgb = Fog(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
 }

@@ -1006,6 +1006,7 @@ typedef enum
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	UNIFORM_RTLIGHTS,
 	UNIFORM_RTPARAMS,
+	UNIFORM_LINEAR, // Added in OPM: r_linearLighting, read the colours as light (GLSL_BindProgram)
 	UNIFORM_RTSUNDIR,
 	UNIFORM_RTSUNCOLOR,
 	UNIFORM_RTAMBIENT,
@@ -2886,6 +2887,14 @@ extern  cvar_t  *r_forceToneMapMax;
 
 extern  cvar_t  *r_autoExposure;
 extern  cvar_t  *r_forceAutoExposure;
+extern  cvar_t  *r_autoExposureKey;
+extern  cvar_t  *r_autoExposureStrength;
+extern  cvar_t  *r_autoExposureMinEV;
+extern  cvar_t  *r_autoExposureMaxEV;
+extern  cvar_t  *r_autoExposureDarkSpeed;
+extern  cvar_t  *r_autoExposureBrightSpeed;
+extern  cvar_t  *r_autoExposureDebug;
+void RB_EyeAdaptShutdown(void); // Added in OPM: eye adaptation's read back buffer (tr_postprocess.c)
 extern  cvar_t  *r_forceAutoExposureMin;
 extern  cvar_t  *r_forceAutoExposureMax;
 
@@ -3146,6 +3155,8 @@ int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
 qboolean R_RtTakesDlights(void);
+qboolean R_RtLinear(void);
+extern cvar_t *r_linearExposure;
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
 void R_RtFreeWorld(void);

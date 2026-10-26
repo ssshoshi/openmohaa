@@ -12,6 +12,25 @@ uniform int       u_AlphaTest;
 uniform vec4      u_GlobalFogColor;
 uniform vec2      u_GlobalFogParams;
 
+// Added in OPM: r_linearLighting. The colours read as linear light (gamma
+// 2.2, as the display showed them), added up as light; the tone map shows the
+// frame (GLSL_BindProgram sets it, for the world's view alone, not the 2D)
+uniform float     u_Linear;
+
+vec3 Lin(vec3 c)
+{
+	return u_Linear > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c;
+}
+
+// The map's distance fog, mixed as it was shown (the mix of a colour shown and
+// the fog's): mixed as light, a dark wall took far more of a grey fog
+vec3 Fog(vec3 c, vec3 fog, float f)
+{
+	if (u_Linear > 0.5)
+		return Lin(mix(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), fog, f));
+	return mix(c, fog, f);
+}
+
 varying vec2      var_DiffuseTex;
 
 varying vec4      var_Color;
@@ -43,9 +62,11 @@ float SoftLinearDepth(float d)
 void main()
 {
 	vec4 color  = texture2D(u_DiffuseMap, var_DiffuseTex);
+	vec3 vcol   = Lin(var_Color.rgb);
+	color.rgb   = Lin(color.rgb);
 
 	float alpha = color.a * var_Color.a;
-	vec3  rgb   = color.rgb * var_Color.rgb;
+	vec3  rgb   = color.rgb * vcol;
 
 #if defined(USE_RTLIGHT)
 	// Added in OPM: the realtime lights (see RT_STAGE_* in tr_local.h)
@@ -76,12 +97,12 @@ void main()
 		// the texture is the lighting: all of it live, the ambient stands in
 		if (u_RtParams.y > 1.5)
 			color.rgb = u_RtAmbient.rgb;
-		rgb = RtDelta(color.rgb, rtLight) * var_Color.rgb;
+		rgb = RtDelta(color.rgb, rtLight) * vcol;
 	}
 	else if (u_RtStage == RT_STAGE_LIT || u_RtStage == RT_STAGE_PARTICLE_LIT)
 	{
 		// lit by its colour, worked out at run time without the lights
-		rgb = color.rgb * (var_Color.rgb + rtLight);
+		rgb = color.rgb * (vcol + rtLight);
 	}
 	else if (u_RtStage == RT_STAGE_PARTICLE)
 	{
@@ -91,12 +112,12 @@ void main()
 		// all of the light live they were the ambient and the sun at them
 		// instead, dark under an overcast (m3l1a), and a blast's light near
 		// them whited them out a moment.
-		rgb = color.rgb * RtDelta(var_Color.rgb, min(rtLight, var_Color.rgb * 0.75));
+		rgb = color.rgb * RtDelta(vcol, min(rtLight, vcol * 0.75));
 	}
 	else if (u_RtStage == RT_STAGE_LIT_BAKED)
 	{
 		// lit by a colour the map baked: all of it live, the ambient stands in
-		vec3 base = u_RtParams.y > 1.5 ? u_RtAmbient.rgb : var_Color.rgb;
+		vec3 base = u_RtParams.y > 1.5 ? u_RtAmbient.rgb : vcol;
 		rgb = color.rgb * RtDelta(base, rtLight);
 	}
 #endif
@@ -108,6 +129,7 @@ void main()
 	if (u_Texture1Env != 0)
 	{
 		vec4 color2 = texture2D(u_LightMap, var_Tex2);
+		color2.rgb  = Lin(color2.rgb);
 
   #if defined(USE_RTLIGHT) && !defined(RT_NO_PIXEL_LOOP)
 		// the second texture is the lighting
@@ -171,5 +193,5 @@ void main()
 	// MOH:AA global distance fog, linear between the two params. When it is off
 	// the renderer sets the range scale to zero, so the factor stays at zero.
 	float fogFactor = clamp((var_FogDist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
-	gl_FragColor.rgb = mix(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+	gl_FragColor.rgb = Fog(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
 }

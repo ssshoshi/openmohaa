@@ -189,6 +189,7 @@ static uniformInfo_t uniformsInfo[] =
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	{ "u_RtLights",        GLSL_VEC4_RTLIGHTS },
 	{ "u_RtParams",        GLSL_VEC4 },
+	{ "u_Linear",          GLSL_FLOAT },
 	{ "u_RtSunDir",        GLSL_VEC4 },
 	{ "u_RtSunColor",      GLSL_VEC4 },
 	{ "u_RtAmbient",       GLSL_VEC4 },
@@ -2973,6 +2974,17 @@ void GLSL_BindProgram(shaderProgram_t * program)
 
 	if (GL_UseProgram(programObject))
 		backEnd.pc.c_glslShaderBinds++;
+
+	// Added in OPM: r_linearLighting. The world's view reads its textures
+	// and colours as linear light, and the tone map shows it; the 2D, and
+	// scenes without the world, which are not tone mapped, as ever.
+	if (program && program->uniforms[UNIFORM_LINEAR] != -1)
+	{
+		const qboolean linear = R_RtLinear() && (program == &tr.tonemapShader
+			|| (!backEnd.projection2D && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL)));
+
+		GLSL_SetUniformFloat(program, UNIFORM_LINEAR, linear ? 1.0f : 0.0f);
+	}
 }
 
 
