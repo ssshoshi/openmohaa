@@ -70,6 +70,10 @@ cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
+cvar_t *r_rtShadowGuard;
+
+// The guard the faces are drawn with (r_rtShadowGuard, R_RtRenderShadows)
+static int rt_guard = RT_FACE_GUARD;
 cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
@@ -110,7 +114,6 @@ typedef char rt_smallRowFits[(RT_SMALL_FIRST % RT_ATLAS_TILES == 0 && RT_SLOTS >
 // it is out of range.
 #define RT_CUTOFF 1.0f
 
-#define RT_SQRT1_2 0.70710678f
 
 // Leaves, two sided and cut out by their alpha: how much of the light on one
 // side comes through to the other
@@ -327,6 +330,9 @@ void R_RtRegister(void)
 	r_rtShadowSoft = ri.Cvar_Get("r_rtShadowSoft", "2", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtShadowSoft, 1, 4, qfalse);
 	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
+	r_rtShadowGuard = ri.Cvar_Get("r_rtShadowGuard", va("%d", RT_FACE_GUARD), 0);
+	ri.Cvar_CheckRange(r_rtShadowGuard, 0, 8, qtrue);
+	ri.Cvar_SetDescription(r_rtShadowGuard, "Texels a realtime light's shadow face is drawn past its edge, so its soft shadow reads on into the next face there (0: none, the taps held inside the face, which left seams along its edges). Changing it draws every face again. Not archived: an A/B switch");
 	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
 	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
 	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
@@ -3844,6 +3850,7 @@ static void R_RtBakeBegin(float alpha, int state)
 	vec4_t off = { 0, 0, 0, 0 }, params = { 1, 2, 1, 0 };
 
 	params[3] = alpha;
+	off[3]    = 16.0f * rt_guard; // the faces' guard (RtShadowAtlas)
 	GL_State(state);
 	GL_Cull(CT_TWO_SIDED);
 	GLSL_BindProgram(&tr.rtLampBakeShader);
@@ -4817,12 +4824,27 @@ static float R_RtSlotCode(int slot)
 	return slot < RT_SLOTS_BIG ? (float)(slot * 6) : (float)(RT_SMALL_CODE + (slot - RT_SLOTS_BIG) * 6);
 }
 
+// How much of a face's tile its 90 degrees take: the rest is the guard,
+// rt_guard texels each side, drawn past the face's edge (RtShadowAtlas)
+static float R_RtFaceScale(int size)
+{
+	return 1.0f - 2.0f * rt_guard / (float)size;
+}
+
+// The smallest tile's: the widest faces, for the tests of what a face sees
+static float R_RtFaceScaleMin(void)
+{
+	return R_RtFaceScale(Q_min(r_rtShadowTile->integer, R_RtBakedTile()) / 2);
+}
+
 static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 {
 	viewParms_t parms;
 	int         x, y, size;
+	float       fov;
 
 	R_RtFaceRect(atlas, slot, face, &x, &y, &size);
+	fov = 2.0f * RAD2DEG(atan(1.0f / R_RtFaceScale(size)));
 	Com_Memset(&parms, 0, sizeof(parms));
 	parms.viewportX      = x;
 	parms.viewportY      = y;
@@ -4830,8 +4852,8 @@ static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 	parms.viewportHeight = size;
 	parms.isPortal       = qfalse;
 	parms.isMirror       = qfalse;
-	parms.fovX           = 90;
-	parms.fovY           = 90;
+	parms.fovX           = fov;
+	parms.fovY           = fov;
 	parms.flags          = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_NOCUBEMAPS
 				| (atlas == 0 ? VPF_RTSTATIC : atlas == 1 ? VPF_RTDYNAMIC : VPF_RTBAKED);
 	parms.zFar           = l->range;
@@ -4852,6 +4874,9 @@ static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre
 	vec3_t v;
 	int    faces = 0, f;
 
+	// a face's sides, as drawn with its guard: |left| = fwd * t, |up| = fwd * t
+	const float t = 1.0f / R_RtFaceScaleMin(), n = 1.0f / sqrt(t * t + 1.0f);
+
 	VectorSubtract(centre, l->origin, v);
 	if (DotProduct(v, v) > Square(range + radius)) {
 		return 0;
@@ -4866,14 +4891,13 @@ static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre
 		left = DotProduct(v, axis[1]);
 		up   = DotProduct(v, axis[2]);
 
-		// the four sides of a 90 degree face are |left| = fwd and |up| = fwd
 		if (fwd + radius <= 0) {
 			continue;
 		}
-		if ((fwd - left) * RT_SQRT1_2 < -radius || (fwd + left) * RT_SQRT1_2 < -radius) {
+		if ((fwd * t - left) * n < -radius || (fwd * t + left) * n < -radius) {
 			continue;
 		}
-		if ((fwd - up) * RT_SQRT1_2 < -radius || (fwd + up) * RT_SQRT1_2 < -radius) {
+		if ((fwd * t - up) * n < -radius || (fwd * t + up) * n < -radius) {
 			continue;
 		}
 		faces |= 1 << f;
@@ -5522,7 +5546,9 @@ taps' spread.
 
 static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frustum[5])
 {
-	int faces = 0, f, c, k;
+	// the face's pyramid as drawn, its guard included (R_RtFaceScale)
+	const float side = range / R_RtFaceScaleMin();
+	int         faces = 0, f, c, k;
 
 	for (f = 0; f < 6; f++) {
 		vec3_t axis[3], points[5];
@@ -5531,8 +5557,8 @@ static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frust
 		VectorCopy(l->origin, points[0]);
 		for (c = 0; c < 4; c++) {
 			VectorMA(l->origin, range, axis[0], points[c + 1]);
-			VectorMA(points[c + 1], (c & 1) ? range : -range, axis[1], points[c + 1]);
-			VectorMA(points[c + 1], (c & 2) ? range : -range, axis[2], points[c + 1]);
+			VectorMA(points[c + 1], (c & 1) ? side : -side, axis[1], points[c + 1]);
+			VectorMA(points[c + 1], (c & 2) ? side : -side, axis[2], points[c + 1]);
 		}
 
 		for (k = 0; k < 5; k++) {
@@ -5694,6 +5720,18 @@ static float R_RtFlicker(const rtLight_t *l, int time)
 
 void R_RtRenderShadows(const refdef_t *fd)
 {
+	// a new guard: every face drawn again with it, the lights out until they
+	// are, as when a map loads
+	if (r_rtShadowGuard->integer != rt_guard) {
+		int i;
+
+		rt_guard = r_rtShadowGuard->integer;
+		for (i = 0; i < rt.numLights; i++) {
+			rt.lights[i].staticFaces = 0;
+			rt.lights[i].bakedFaces  = 0;
+		}
+	}
+
 	float     sorted[1024][2];
 	int       numSorted = 0, numChosen, numCandidates, numInView, room;
 	int       candidates[RT_MAX_LIGHTS];
@@ -6586,7 +6624,7 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 				}
 			}
 			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, sky,
-				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value);
+				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value + 16.0f * rt_guard);
 			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
 		}
 		VectorCopy4(tr.rtParams, params);
