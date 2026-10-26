@@ -29,6 +29,14 @@ uniform vec4      u_WaterBlood;  // the colour of blood
 uniform vec4      u_BeachWet;    // how far inland the sand is wet, the highest it is, puddles (a share), their size
 uniform vec4      u_BeachSwash;  // how far up the sand a wave runs, at most
 uniform sampler2D u_SpecularMap; // the beach's ground: its height from above, where it is (R_WaterBuildBeach)
+
+// Added in OPM: r_linearLighting, the colours as linear light (GLSL_BindProgram)
+uniform float     u_Linear;
+
+vec3 Lin(vec3 c)
+{
+	return u_Linear > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c;
+}
 uniform vec4      u_BeachGround; // where that grid starts, one over its size (0: the beach is everywhere)
 uniform vec4      u_WaterBloodZone; // w: how many u_SandStains
 uniform vec4      u_SandStains[WATER_MAX_SPOTS]; // x, y, the ground's height, how far the blood has soaked
@@ -256,9 +264,9 @@ void main()
 	// until it goes behind something, which is then what is seen in it;
 	// else the sky, the map's box where the view has drawn it
 	vec3 R      = reflect(-V, n);
-	vec3 sky    = u_WaterSky.rgb;
+	vec3 sky    = Lin(u_WaterSky.rgb);
 	if (u_CubeMapInfo.x > 0.0)
-		sky = mix(sky, textureCubeLod(u_CubeMap, R, 1.0).rgb, u_CubeMapInfo.x);
+		sky = mix(sky, Lin(textureCubeLod(u_CubeMap, R, 1.0).rgb), u_CubeMapInfo.x);
 	vec3 mirror = sky;
 	if (shine > 0.01)
 	{
@@ -288,12 +296,12 @@ void main()
 		}
 	}
 	vec3 sheen = mirror * shine;
-	sheen *= mix(vec3(1.0), blood * 1.4, clamp(stain * (0.5 + puddle), 0.0, 1.0));
+	sheen *= Lin(mix(vec3(1.0), blood * 1.4, clamp(stain * (0.5 + puddle), 0.0, 1.0)));
 
 	// the foam, lit as the sky lights it and pink with the blood in the surf
 	vec3 foamColor = mix(vec3(0.82, 0.84, 0.84), vec3(0.66, 0.42, 0.39), clamp(u_WaterBlood.a * 0.8, 0.0, 1.0));
 	foamColor *= clamp(dot(u_WaterSky.rgb, vec3(0.3)) + 0.1, 0.3, 1.0);
-	sheen += foamColor * swashFoam;
+	sheen += Lin(foamColor) * swashFoam;
 	gl_FragColor = vec4(sheen * (1.0 - fogFactor), 1.0);
 #else
 	// darker for the water in it, darker still under standing water, and
@@ -303,6 +311,7 @@ void main()
 	mul *= mix(vec3(1.0), blood, sheet * clamp(u_WaterBlood.a, 0.0, 1.0) * 0.5); // the surf's blood in it
 	mul *= 1.0 - swashFoam; // the foam is what is added
 	mul *= mix(vec3(1.0), blood, stain);
-	gl_FragColor = vec4(mix(mul, vec3(1.0), fogFactor), 1.0);
+	// (r_linearLighting: a darkening as it was shown, as light)
+	gl_FragColor = vec4(mix(Lin(mul), vec3(1.0), fogFactor), 1.0);
 #endif
 }

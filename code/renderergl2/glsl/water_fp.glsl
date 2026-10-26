@@ -47,6 +47,23 @@ uniform mat4      u_WorldViewProjection; // the world's, to follow what it mirro
 uniform vec4      u_WaterView;           // the view's box on the screen: where it starts, where it ends
 uniform vec4      u_WaterRipples;        // where the ripples' grid starts, one over how wide it is, whether there is one
 
+// Added in OPM: r_linearLighting, the colours as linear light (GLSL_BindProgram)
+uniform float     u_Linear;
+
+vec3 Lin(vec3 c)
+{
+	return u_Linear > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c;
+}
+
+// The map's distance fog, mixed as it was shown (the mix of a colour shown and
+// the fog's): mixed as light, a dark wall took far more of a grey fog
+vec3 Fog(vec3 c, vec3 fog, float f)
+{
+	if (u_Linear > 0.5)
+		return Lin(mix(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), fog, f));
+	return mix(c, fog, f);
+}
+
 varying vec3      var_Position;
 varying vec3      var_Normal;
 
@@ -293,7 +310,7 @@ void main()
 	float clarity = max(u_WaterColor.a, 1.0);
 	vec3  absorb  = vec3(1.0, 0.55, 0.45) * (2.3 / clarity) + blood * vec3(0.3, 1.6, 1.8) / clarity;
 	vec3  T       = exp(-absorb * through);
-	vec3  own     = mix(u_WaterColor.rgb, u_WaterBlood.rgb, clamp(blood * 0.9, 0.0, 1.0));
+	vec3  own     = mix(Lin(u_WaterColor.rgb), Lin(u_WaterBlood.rgb), clamp(blood * 0.9, 0.0, 1.0));
 	// the light the sea scatters back from inside it: more through the thin
 	// water of a crest than in a trough
 	if (u_WaterOcean.x > 0.0)
@@ -318,9 +335,9 @@ void main()
 	// it. The chop only breaks it up a little.
 	vec3  R      = reflect(-V, N);
 	float up     = clamp(R.z, 0.0, 1.0);
-	vec3  sky    = mix(u_WaterSky.rgb, u_WaterSky.rgb * vec3(0.78, 0.85, 0.94), sqrt(up));
+	vec3  sky    = Lin(mix(u_WaterSky.rgb, u_WaterSky.rgb * vec3(0.78, 0.85, 0.94), sqrt(up)));
 	if (u_CubeMapInfo.x > 0.0)
-		sky = mix(sky, textureCubeLod(u_CubeMap, R, 1.0).rgb, u_CubeMapInfo.x);
+		sky = mix(sky, Lin(textureCubeLod(u_CubeMap, R, 1.0).rgb), u_CubeMapInfo.x);
 	float cosV   = clamp(dot(N, V), 0.0, 1.0);
 	float fresnel = below ? 0.0 : 0.03 + 0.97 * pow(1.0 - cosV, 4.0);
 	fresnel = min(fresnel, 0.9);
@@ -365,7 +382,7 @@ void main()
 
 	vec3 L      = normalize(u_PrimaryLightOrigin.xyz);
 	float glint = max(dot(R, L), 0.0);
-	vec3 sun    = u_PrimaryLightColor * (pow(glint, 900.0) * 2.5 + pow(glint, 70.0) * 0.2) * u_WaterLook.z;
+	vec3 sun    = Lin(u_PrimaryLightColor) * (pow(glint, 900.0) * 2.5 + pow(glint, 70.0) * 0.2) * u_WaterLook.z;
 
 	vec3 color = mix(under, mirror, fresnel) + (below ? vec3(0.0) : sun);
 	alpha = mix(alpha, 1.0, fresnel);
@@ -405,7 +422,7 @@ void main()
 	vec3 foamColor = mix(vec3(0.82, 0.84, 0.84), vec3(0.62, 0.30, 0.27), clamp(blood * 1.4, 0.0, 1.0));
 	// lit as the sky lights it: grey under a grey one
 	foamColor *= clamp(dot(u_WaterSky.rgb, vec3(0.3)) + 0.1, 0.3, 1.0);
-	color = mix(color, foamColor, foam);
+	color = mix(color, Lin(foamColor), foam);
 	alpha = max(alpha, foam);
 
 	// Soft where it meets the shore, and not along a ruled line: how far up
@@ -418,7 +435,7 @@ void main()
 	}
 
 	float fogFactor = clamp((dist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
-	color = mix(color, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+	color = Fog(color, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
 
 	gl_FragColor = vec4(color, alpha);
 }

@@ -80,6 +80,9 @@ cvar_t *r_rtDynamicFull;
 cvar_t *r_rtDynamicEvery;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
+cvar_t *r_linearLighting;
+cvar_t *r_linearLightRef;
+cvar_t *r_linearExposure;
 static cvar_t *r_rtBounce;
 static cvar_t *r_rtBakedLamps;
 static cvar_t *r_rtBakedDebug;
@@ -193,6 +196,8 @@ static struct {
 	int        dynamicOwnerFrame[RT_SLOTS]; // the frame it last used it
 
 	vec3_t     ambient;  // raw
+	qboolean   linear;      // r_linearLighting: the colours below and the lights' are linear light (R_RtLinearize)
+	float      linearUnit;  // a light's colour's raw units, of white, when they were made so
 	qboolean   sun;
 	vec3_t     sunDir;   // towards the sun
 	vec3_t     sunColor; // raw
@@ -218,6 +223,10 @@ static struct {
 	int        moverPairs;   // this frame, for r_rtDebug: movers in a dynamic light's range
 	int        moverCulled;  // of those, out of its reach or its light lists
 } rt;
+
+// r_linearLighting (LINEAR LIGHT, below)
+static float R_RtLinearValue(float c);
+static void  R_RtLinearColor(vec3_t color, float unit, float ref);
 
 // Something that casts a shadow, followed from frame to frame: once it has
 // stood still a while it is drawn with what stands still, and kept, until it
@@ -336,6 +345,13 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtBakedLamps, "With r_realtimeLighting 2, every lamp's light on the lightmapped world is baked once a map, with its shadow of the world, so that all of them show however few are lit live (r_rtMaxLights): those add their sharp shadows and shine. 0: only the lamps lit live give light");
 	r_rtBakedDebug = ri.Cvar_Get("r_rtBakedDebug", "0", 0);
 	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake); 3: of the bounce, the lamps' alone; 4: the daylight's alone. Not archived: a test switch");
+	r_linearLighting = ri.Cvar_Get("r_linearLighting", "0", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_linearLighting, "With r_realtimeLighting 2 and r_hdr 1: the light is added up as light (linear), and the frame made fit to show after the tone map. A texture and a lamp at its middle distance look as before; nearer a lamp is less burnt out, further it falls off more gently, and light from several places adds up as it does in a room. Needs vid_restart");
+	r_linearLightRef = ri.Cvar_Get("r_linearLightRef", "0.5", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_CheckRange(r_linearLightRef, 0.05f, 1.0f, qfalse);
+	ri.Cvar_SetDescription(r_linearLightRef, "With r_linearLighting: how bright (of white) a lamp is where it looks as it did without: nearer it is dimmer than it was, further brighter. Needs vid_restart");
+	r_linearExposure = ri.Cvar_Get("r_linearExposure", "0.6", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_linearExposure, "With r_linearLighting: the exposure, in stops, on top of the tone map's (0.6: the tone map's look without r_linearLighting)");
 	r_rtWindowLights = ri.Cvar_Get("r_rtWindowLights", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtWindowLights, "With r_realtimeLighting 2, keep the map's spot lights that stand in for daylight through its windows (0: the sun and the sky come in by themselves, and they go). Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
@@ -756,6 +772,9 @@ static void R_RtEntityLamps(void)
 		VectorCopy(dir, l->spotDir);
 		VectorScale(def->color, def->intensity * 7500.0f, l->color);
 		l->range = R_RtRangeOf(l->color);
+		if (rt.linear) {
+			R_RtLinearColor(l->color, rt.linearUnit, r_linearLightRef->value);
+		}
 		VectorMA(l->origin, Q_min(l->range, nearest > 0 ? nearest : 512.0f), dir, l->pool);
 	}
 
@@ -1967,6 +1986,9 @@ static void R_RtAlbedo(const shader_t *shader, vec3_t out)
 	int i;
 
 	VectorSet(out, 0.4f, 0.4f, 0.4f);
+	if (rt.linear) {
+		VectorSet(out, R_RtLinearValue(0.4f), R_RtLinearValue(0.4f), R_RtLinearValue(0.4f));
+	}
 	if (!shader) {
 		return;
 	}
@@ -2002,16 +2024,19 @@ static void R_RtAlbedo(const shader_t *shader, vec3_t out)
 		qglGetTexImageOPM(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 		for (k = 0; k < w * h; k++) {
 			const float a = pixels[k * 4 + 3] / 255.0f;
+			int         c;
 
-			sum[0] += pixels[k * 4] * a;
-			sum[1] += pixels[k * 4 + 1] * a;
-			sum[2] += pixels[k * 4 + 2] * a;
-			alpha  += a;
+			// (r_linearLighting: as light, each texel, before they are averaged)
+			for (c = 0; c < 3; c++) {
+				sum[c] += (rt.linear ? R_RtLinearValue(pixels[k * 4 + c] / 255.0f) : pixels[k * 4 + c] / 255.0f) * a;
+			}
+			alpha += a;
 		}
 		ri.Hunk_FreeTempMemory(pixels);
 		if (alpha > 0) {
 			for (k = 0; k < 3; k++) {
-				out[k] = Com_Clamp(0.03f, 0.85f, sum[k] / (alpha * 255.0f));
+				out[k] = rt.linear ? Com_Clamp(R_RtLinearValue(0.03f), R_RtLinearValue(0.85f), sum[k] / alpha)
+				                   : Com_Clamp(0.03f, 0.85f, sum[k] / alpha);
 			}
 		}
 		VectorCopy(out, rt_albedo[shader->index]);
@@ -2479,8 +2504,8 @@ static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean w
 		outL[2] *= albedo[2];
 		rt_bounce.models++;
 	} else {
-		VectorScale(out, RT_BOUNCE_ALBEDO, out);
-		VectorScale(outL, RT_BOUNCE_ALBEDO, outL);
+		VectorScale(out, rt.linear ? R_RtLinearValue(RT_BOUNCE_ALBEDO) : RT_BOUNCE_ALBEDO, out);
+		VectorScale(outL, rt.linear ? R_RtLinearValue(RT_BOUNCE_ALBEDO) : RT_BOUNCE_ALBEDO, outL);
 		rt_bounce.misses++;
 		if (trace->shaderNum >= 0 && trace->shaderNum < 4096) {
 			rt_missByShader[trace->shaderNum]++;
@@ -2993,6 +3018,7 @@ static unsigned R_RtBounceKey(void)
 #define RT_HASH(x, count) for (k = 0; k < (int)(count) * (int)sizeof(float); k++) { h = (h ^ ((const byte *)(x))[k]) * 16777619u; }
 	n = 0;
 	v[n++] = RT_BOUNCE_VERSION;
+	v[n++] = rt.linear ? 1.0f : 0.0f; // the albedo as light (R_RtAlbedo)
 	v[n++] = (float)rt_bounce.width;
 	v[n++] = (float)rt_bounce.height;
 	v[n++] = (float)rt_bounce.numSamples;
@@ -4566,6 +4592,99 @@ static void R_RtBakeLamps(float ease)
 	}
 }
 
+/*
+=============================================================================
+
+LINEAR LIGHT (r_linearLighting)
+
+The compiler added its lights up in the numbers it wrote into the lightmaps,
+and the display shows those numbers as if they were gamma encoded: a value c
+(of white) is shown as c ^ 2.2 of linear light. So the lights here, added up in
+those numbers, were added up in gamma space, and fell off as 1 / d^4.4 in
+light: burnt out near a lamp, dark a little way off, two lamps not adding up as
+light does. With r_linearLighting a constant light (the sun's, the sky's, the
+ambient) is made the linear light it was shown as. A point light is made the
+light it was where it gave r_linearLightRef of white, at d0 with d0^2 its
+brightest over that, and falls off as light does from there. The textures are
+read as linear light too (u_Linear, GLSL_BindProgram), and the tone map shows
+the frame (tonemap_fp.glsl).
+
+=============================================================================
+*/
+
+// gamma 2.2: what the display makes of a value, as light
+static float R_RtLinearValue(float c)
+{
+	return c > 0.0f ? powf(c, 2.2f) : 0.0f;
+}
+
+// A colour in raw units (unit of them a white) made linear light: ref 0 a
+// constant light, else a point light, as it was where it gave ref of white
+static void R_RtLinearColor(vec3_t color, float unit, float ref)
+{
+	vec3_t c;
+	float  brightest, d0;
+	int    k;
+
+	if (unit <= 0.0f) {
+		return;
+	}
+	VectorScale(color, unit, c);
+	if (ref <= 0.0f) {
+		for (k = 0; k < 3; k++) {
+			c[k] = R_RtLinearValue(c[k]);
+		}
+	} else {
+		brightest = Q_max(c[0], Q_max(c[1], c[2]));
+		if (brightest <= 0.0f) {
+			return;
+		}
+		d0 = brightest / ref; // the distance squared it gave ref at
+		for (k = 0; k < 3; k++) {
+			c[k] = d0 * R_RtLinearValue(c[k] / d0);
+		}
+	}
+	VectorScale(c, 1.0f / unit, color);
+}
+
+// Whether the light is linear: the shaders read the textures as light then
+qboolean R_RtLinear(void)
+{
+	return R_RtActive() && rt.linear ? qtrue : qfalse;
+}
+
+// The least a light may give a pixel to be looked up there (RtLight, R_RtReach).
+// With r_linearLighting it is light, not a value as shown: r_rtCutoff 0.0005
+// is then 0.03 of white as shown, and still changed nothing that showed in the
+// m3l2 lamp room (0.009% of its pixels by more than 8 of 255, against taking it
+// as shown, whose light, 5e-8, reached so far it cost the room 1.2 ms)
+static float R_RtCutoff(void)
+{
+	return Q_max(0.0f, r_rtCutoff->value);
+}
+
+// The map's lights, the sun, the sky and the ambient made linear light, once
+// they are all made (R_RtLoadWorld); the entity lamps as they are lit
+// (R_RtEntityLamps) and the game's lights as they are sent (R_RtRenderShadows)
+static void R_RtLinearize(void)
+{
+	const int   shift = r_mapOverBrightBits->integer - tr.overbrightBits;
+	const float bake  = (float)(1 << Q_max(0, shift)) / 255.0f;
+	int         i;
+
+	rt.linear = r_linearLighting->integer && r_realtimeLighting->integer == 2 && r_hdr->integer ? qtrue : qfalse;
+	if (!rt.linear) {
+		return;
+	}
+	rt.linearUnit = bake * r_rtScale->value;
+	for (i = 0; i < rt.numMapLights; i++) {
+		R_RtLinearColor(rt.lights[i].color, rt.linearUnit, r_linearLightRef->value);
+	}
+	R_RtLinearColor(rt.sunColor, bake, 0.0f);
+	R_RtLinearColor(rt.skyColor, bake, 0.0f);
+	R_RtLinearColor(rt.ambient, bake, 0.0f);
+}
+
 void R_RtLoadWorld(void)
 {
 	int i;
@@ -4667,6 +4786,7 @@ void R_RtLoadWorld(void)
 	}
 
 	R_RtSetupSky();
+	R_RtLinearize();
 
 	rt.loaded = qtrue;
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lights%s\n", rt.numLights, rt.sun ? " and the sun" : "");
@@ -5740,7 +5860,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		// how far it gives a pixel enough to see (R_RtReach)
 		VectorScale(l->color, scale, colorRange);
 		colorRange[3] = l->range;
-		lightReach    = R_RtReach(colorRange, r_rtCutoff->value);
+		lightReach    = R_RtReach(colorRange, R_RtCutoff());
 		if (lightReach == 0.0f || lightReach < -0.5f) {
 			continue; // it gives nothing anywhere
 		}
@@ -5934,7 +6054,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 				VectorScale(l->color, scale, colorRange);
 				colorRange[3] = l->range;
-				reach = R_RtReach(colorRange, r_rtCutoff->value);
+				reach = R_RtReach(colorRange, R_RtCutoff());
 			} else {
 				reach = l->range;
 			}
@@ -6075,6 +6195,9 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorCopy(dl->origin, data[0]);
 		data[0][3] = 2.0f;
 		VectorScale(dl->color, intensity * scale * r_rtDlights->value, data[1]);
+		if (rt.linear) {
+			R_RtLinearColor(data[1], 1.0f, r_linearLightRef->value); // already of white
+		}
 		data[1][3] = dl->radius;
 		VectorClear4(data[2]);
 		VectorSet4(data[3], -1.0f, -1.0f, -1.0f, dl->radius);
@@ -6098,7 +6221,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		Com_Clamp(0.0f, 1.0f, r_rtDarkest->value));
 	// how far each light's light is worth looking up (R_RtReach)
 	for (i = 0; i < tr.rtNumActive; i++) {
-		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], r_rtCutoff->value);
+		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], R_RtCutoff());
 	}
 
 	// each program is sent the lights once a frame, not compared with them
@@ -6125,7 +6248,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
 	// the least a light may add to a pixel and be looked up there (RtLight)
-	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
+	tr.rtAmbient[3] = R_RtCutoff();
 
 	if (r_rtDebug->integer) {
 		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
