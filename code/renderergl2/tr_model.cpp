@@ -1189,6 +1189,8 @@ static void R_AddSkelDrawSurfs(trRefEntity_t *ent, dtiki_t *tiki, qboolean perso
     skelSurfaceGame_t *surface;
     int                mesh;
     int                i;
+    // Added in OPM: the reflection probe where it stands (r_cubeMapping)
+    const int          cubemap = R_ViewCubemapForPoint(ent->e.origin);
 
     dsurf = tiki->surfaces;
     bsurf = &ent->e.surfaces[0];
@@ -1240,10 +1242,10 @@ static void R_AddSkelDrawSurfs(trRefEntity_t *ent, dtiki_t *tiki, qboolean perso
                 if ((*bsurf & 0x40) && (dsurf->numskins > 1)) {
                     int iShaderNum = ent->e.skinNum + (*bsurf & 2);
 
-                    R_AddDrawSurf((surfaceType_t *)surface, tr.shaders[dsurf->hShader[iShaderNum]], 0, 0, 0, 0);
-                    R_AddDrawSurf((surfaceType_t *)surface, tr.shaders[dsurf->hShader[iShaderNum + 1]], 0, 0, 0, 0);
+                    R_AddDrawSurf((surfaceType_t *)surface, tr.shaders[dsurf->hShader[iShaderNum]], 0, 0, 0, cubemap);
+                    R_AddDrawSurf((surfaceType_t *)surface, tr.shaders[dsurf->hShader[iShaderNum + 1]], 0, 0, 0, cubemap);
                 } else {
-                    R_AddDrawSurf((surfaceType_t *)surface, shader, 0, 0, 0, 0);
+                    R_AddDrawSurf((surfaceType_t *)surface, shader, 0, 0, 0, cubemap);
                 }
             }
 
