@@ -3501,6 +3501,28 @@ static void R_RtBounceStep(float bake, float ease)
 	}
 }
 
+/*
+=============
+R_RtBindVertexArray
+
+The bakes' own vertex arrays bound with the renderer's VAO cache kept true.
+Bound behind it, the cache went on naming the VAO bound before (tess.vao,
+say): the next R_BindVao of that one did nothing, and its draws took
+whatever was bound in its place. R_RtBakeQuad, made the first time a lamp
+goes live, before anything cleared the cache, left it so. With one of these
+bound the cache names a stand-in, so R_BindVao and R_BindNullVao both bind
+for real after it.
+=============
+*/
+static void R_RtBindVertexArray(GLuint vao)
+{
+	static vao_t bakeVao = { "rtBake_VAO" };
+
+	qglBindVertexArray(vao);
+	bakeVao.vao = vao;
+	glState.currentVao = vao ? &bakeVao : NULL;
+}
+
 static void R_RtBakeSkyLightmaps(void)
 {
 	rtBakeList_t list;
@@ -3561,7 +3583,7 @@ static void R_RtBakeSkyLightmaps(void)
 
 		R_BindNullVao();
 		qglGenVertexArrays(1, &vao);
-		qglBindVertexArray(vao);
+		R_RtBindVertexArray(vao);
 		qglGenBuffers(1, &vbo);
 		qglBindBuffer(GL_ARRAY_BUFFER, vbo);
 		qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * list.num, list.verts, GL_STATIC_DRAW);
@@ -3595,7 +3617,7 @@ static void R_RtBakeSkyLightmaps(void)
 		qglDisableVertexAttribArray(ATTR_INDEX_TEXCOORD);
 		qglBindBuffer(GL_ARRAY_BUFFER, 0);
 		qglDeleteBuffers(1, &vbo);
-		qglBindVertexArray(0);
+		R_RtBindVertexArray(0);
 		qglDeleteVertexArrays(1, &vao);
 		FBO_Bind(NULL);
 
@@ -3839,7 +3861,7 @@ static float R_RtLightShape(const rtLight_t *l, vec4_t shape)
 static qboolean R_RtBakeUpload(rtBakePage_t *page)
 {
 	qglGenVertexArrays(1, &page->vao);
-	qglBindVertexArray(page->vao);
+	R_RtBindVertexArray(page->vao);
 	qglGenBuffers(1, &page->vbo);
 	qglBindBuffer(GL_ARRAY_BUFFER, page->vbo);
 	qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * page->list.num, page->list.verts, GL_STATIC_DRAW);
@@ -3849,7 +3871,7 @@ static qboolean R_RtBakeUpload(rtBakePage_t *page)
 	qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
 	qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
 	qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
-	qglBindVertexArray(0);
+	R_RtBindVertexArray(0);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
 	page->firsts = ri.Malloc(sizeof(GLint) * Q_max(1, page->list.numChunks));
 	page->counts = ri.Malloc(sizeof(GLsizei) * Q_max(1, page->list.numChunks));
@@ -3867,7 +3889,7 @@ static qboolean R_RtBakeTarget(rtBakePage_t *page, image_t *image)
 	}
 	qglViewport(0, 0, image->width, image->height);
 	qglScissor(0, 0, image->width, image->height);
-	qglBindVertexArray(page->vao);
+	R_RtBindVertexArray(page->vao);
 	return qtrue;
 }
 
@@ -3898,7 +3920,7 @@ static void R_RtBakeMode(float mode, float alpha)
 
 static void R_RtBakeEnd(void)
 {
-	qglBindVertexArray(0);
+	R_RtBindVertexArray(0);
 	FBO_Bind(NULL);
 }
 
@@ -4004,7 +4026,7 @@ static qboolean R_RtBakeQuad(void)
 	verts[1].lm[0] = 2.0f;
 	verts[2].lm[1] = 2.0f;
 	qglGenVertexArrays(1, &rt_bake.quadVao);
-	qglBindVertexArray(rt_bake.quadVao);
+	R_RtBindVertexArray(rt_bake.quadVao);
 	qglGenBuffers(1, &rt_bake.quadVbo);
 	qglBindBuffer(GL_ARRAY_BUFFER, rt_bake.quadVbo);
 	qglBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
@@ -4014,7 +4036,7 @@ static qboolean R_RtBakeQuad(void)
 	qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
 	qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
 	qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
-	qglBindVertexArray(0);
+	R_RtBindVertexArray(0);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
 	return qtrue;
 }
@@ -4027,7 +4049,7 @@ static qboolean R_RtLiveFillPass(rtBakePage_t *page, image_t *src, image_t *dst,
 	if (!R_RtBakeTarget(page, dst)) {
 		return qfalse;
 	}
-	qglBindVertexArray(rt_bake.quadVao);
+	R_RtBindVertexArray(rt_bake.quadVao);
 	GL_State(state);
 	GL_Cull(CT_TWO_SIDED);
 	GLSL_BindProgram(&tr.rtBakeFillShader);
