@@ -133,6 +133,8 @@ typedef char rt_smallRowFits[(RT_SMALL_FIRST % RT_ATLAS_TILES == 0 && RT_SLOTS >
 // faces it will move away from before they are seen
 #define RT_LIGHT_SETTLE_FRAMES 3
 
+#define RT_VIEW_SPOTS  9      // points on what the view sees, a 3 by 3 grid across the screen
+
 typedef struct {
 	vec3_t   origin;
 	vec3_t   color;        // raw lightmap units: intensity * 7500 * colour
@@ -194,6 +196,9 @@ static struct {
 	int       *seenLights;   // the lights listed for the leaves it can see
 	int       *candidateOf;  // each light's place among this frame's candidates, -1 none
 	int        numSeen;
+	vec3_t     viewSpots[RT_VIEW_SPOTS]; // what the view sees across the screen (R_RtViewSpots)
+	int        numViewSpots;
+	int        viewSpotsFrame;
 	int        staticOwner[RT_SLOTS]; // the light in each slot, -1 none
 	int        dynamicOwner[RT_SLOTS];     // the light holding each slot of what moves, plus one (0 none)
 	int        dynamicOwnerFrame[RT_SLOTS]; // the frame it last used it
@@ -5714,16 +5719,27 @@ static qboolean R_RtPointInView(const vec3_t p, const cplane_t frustum[5], float
 
 /*
 Whether a light's light is in the view: its bulbs, or its pool, or the view
-well inside its reach (a lamp overhead lights the floor ahead). Its reach
-alone takes in the view from most of the map: a lamp of the map gives a
-little light a long way.
+well inside its reach (a lamp overhead lights the floor ahead), or what the
+view sees well inside it (R_RtViewSpots: a lamp over the wall beside the view
+lights the wall across the lane). Its reach alone takes in the view from most
+of the map: a lamp of the map gives a little light a long way.
 */
 static qboolean R_RtInView(const rtLight_t *l, float reach, const vec3_t vieworg, const cplane_t frustum[5])
 {
+	int s;
+
 	if (DistanceSquared(l->origin, vieworg) < Square(reach * 0.5f)) {
 		return qtrue;
 	}
-	return (R_RtPointInView(l->origin, frustum, RT_VIEW_MARGIN) || R_RtPointInView(l->pool, frustum, RT_VIEW_MARGIN)) ? qtrue : qfalse;
+	if (R_RtPointInView(l->origin, frustum, RT_VIEW_MARGIN) || R_RtPointInView(l->pool, frustum, RT_VIEW_MARGIN)) {
+		return qtrue;
+	}
+	for (s = 0; s < rt.numViewSpots; s++) {
+		if (DistanceSquared(rt.viewSpots[s], l->origin) < Square(reach * 0.5f)) {
+			return qtrue;
+		}
+	}
+	return qfalse;
 }
 
 // Whether a line from the view gets to p
@@ -5742,11 +5758,65 @@ may be seen from the view's cluster, which out of doors is most of the map,
 the lamps in every house round about. Looked at again every few frames, a
 few lights a frame.
 */
-static qboolean R_RtViewSees(rtLight_t *l, int index, const vec3_t vieworg)
+/*
+Where the view's lines across the screen first meet the world, a 3 by 3 grid
+of them, every few frames: a lamp whose light falls there is seen though its
+bulb and pool are not. Each is pulled back off what it hit, so that a line
+from it to a lamp does not start in the wall.
+*/
+static void R_RtViewSpots(const refdef_t *fd)
+{
+	const float tx = tan(fd->fov_x / 360.0f * M_PI) * 0.7f;
+	const float ty = tan(fd->fov_y / 360.0f * M_PI) * 0.7f;
+	vec3_t      zero = {0, 0, 0};
+	int         x, y;
+
+	if (rt.numViewSpots && rt.frame - rt.viewSpotsFrame < RT_SEEN_EVERY) {
+		return;
+	}
+	rt.viewSpotsFrame = rt.frame;
+	rt.numViewSpots   = 0;
+	for (y = -1; y <= 1; y++) {
+		for (x = -1; x <= 1; x++) {
+			trace_t trace;
+			vec3_t  dir, end;
+
+			VectorCopy(fd->viewaxis[0], dir);
+			VectorMA(dir, -x * tx, fd->viewaxis[1], dir);
+			VectorMA(dir, -y * ty, fd->viewaxis[2], dir);
+			VectorNormalize(dir);
+			VectorMA(fd->vieworg, 8192.0f, dir, end);
+			ri.CM_BoxTrace(&trace, fd->vieworg, end, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			if (trace.startsolid || trace.fraction >= 1.0f) {
+				continue;
+			}
+			VectorMA(trace.endpos, -4.0f, dir, rt.viewSpots[rt.numViewSpots]);
+			rt.numViewSpots++;
+		}
+	}
+}
+
+/*
+Whether the view sees a light: its bulbs, its pool, or its light on what the
+view sees (R_RtViewSpots). A lamp over the wall beside the view lights the
+wall across the lane, with the shadows of what stands between; going up to
+the near wall hid its bulb and its pool, so it went to the back of those to
+be lit, out of the few lit live, and its shadows went with it.
+*/
+static qboolean R_RtViewSees(rtLight_t *l, int index, const vec3_t vieworg, float reach)
 {
 	if (!l->seenTested || rt.frame - l->seenTested >= RT_SEEN_EVERY * 4
 		|| (rt.frame + index) % RT_SEEN_EVERY == 0) {
 		l->seenByView = (R_RtClearTo(vieworg, l->origin) || R_RtClearTo(vieworg, l->pool)) ? qtrue : qfalse;
+		if (!l->seenByView && reach > 0.0f) {
+			int s;
+
+			for (s = 0; s < rt.numViewSpots && !l->seenByView; s++) {
+				if (DistanceSquared(rt.viewSpots[s], l->origin) < Square(reach * 0.5f) && R_RtClearTo(rt.viewSpots[s], l->origin)) {
+					l->seenByView = qtrue;
+				}
+			}
+		}
 		l->seenTested = rt.frame;
 	}
 	return l->seenByView;
@@ -5929,6 +5999,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	// the view take what room is left, so that one just off the screen is
 	// most often lit already as the view turns to it.
 	seen = R_RtMarkSeenLights(fd->vieworg);
+	R_RtViewSpots(fd);
 	for (i = 0; i < rt.numLights && numSorted < 1024; i++) {
 		rtLight_t *l = &rt.lights[i];
 		vec4_t     colorRange;
@@ -5964,7 +6035,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 				l->enteredView = rt.frame;
 			}
 			l->inViewFrame = rt.frame;
-			if (!R_RtViewSees(l, i, fd->vieworg)) {
+			if (!R_RtViewSees(l, i, fd->vieworg, lightReach)) {
 				sorted[numSorted][1] += RT_HIDDEN;
 			}
 		}
