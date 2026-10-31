@@ -458,7 +458,7 @@ void main()
 #if defined(USE_RTLIGHT) && defined(USE_LIGHT_VERTEX)
 	// all of it live: the baked vertex lighting gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = u_RtAmbient.rgb;
+		lightColor = u_RtAmbient.rgb * RtAmbientOcclusion();
 #endif
 
 #if defined(USE_LIGHTMAP)
@@ -474,7 +474,7 @@ void main()
   #if defined(USE_RTLIGHT)
 	// all of it live: the lightmap gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = Lin(var_Color.rgb) * u_RtAmbient.rgb;
+		lightColor = Lin(var_Color.rgb) * u_RtAmbient.rgb * RtAmbientOcclusion();
   #endif
 #endif
 

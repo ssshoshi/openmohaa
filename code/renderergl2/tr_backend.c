@@ -1666,6 +1666,86 @@ const void	*RB_DrawSurfs( const void *data ) {
 				R_GpuTimerEnd(GPUTIMER_SHADOWMASK);
 			}
 
+			// Added in OPM: r_gtao, the occlusion of the light from all round,
+			// for the view's lit stages to read (rt_ao, TMU_RTAO)
+			backEnd.gtaoOn = qfalse;
+			if (tr.gtaoFbo && R_RtLitLive() && r_gtaoStrength->value > 0 && !backEnd.viewParms.isPortal
+				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+			{
+				vec4_t quadVerts[4], aoParams, blurInfo;
+				vec2_t texCoords[4];
+				vec3_t viewVector;
+				vec4_t box;
+				const float zmax = backEnd.viewParms.zFar;
+				const float ymax = zmax * tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+				const float xmax = zmax * tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+
+				R_GpuTimerBegin(GPUTIMER_AO);
+				// the depth at half the size, one of each four: what is read
+				// round a pixel is read near it in memory (the whole depth,
+				// read a quarter of the screen off, was most of the cost)
+				FBO_FastBlit(tr.hdrDepthFbo, NULL, tr.gtaoDepthFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+				qglGenerateTextureMipmapEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D);
+
+				FBO_Bind(tr.gtaoFbo);
+				qglViewport(0, 0, tr.gtaoFbo->width, tr.gtaoFbo->height);
+				qglScissor(0, 0, tr.gtaoFbo->width, tr.gtaoFbo->height);
+
+				box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+				box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+				box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+				box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+				texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
+				texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
+				texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
+				texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
+				VectorSet4(quadVerts[0], -1,  1, 0, 1);
+				VectorSet4(quadVerts[1],  1,  1, 0, 1);
+				VectorSet4(quadVerts[2],  1, -1, 0, 1);
+				VectorSet4(quadVerts[3], -1, -1, 0, 1);
+
+				GL_State(GLS_DEPTHTEST_DISABLE);
+				GLSL_BindProgram(&tr.gtaoShader);
+				GL_BindToTMU(tr.gtaoDepthImage, TB_COLORMAP);
+
+				VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+				GLSL_SetUniformVec3(&tr.gtaoShader, UNIFORM_VIEWFORWARD, viewVector);
+				VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+				GLSL_SetUniformVec3(&tr.gtaoShader, UNIFORM_VIEWLEFT, viewVector);
+				VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+				GLSL_SetUniformVec3(&tr.gtaoShader, UNIFORM_VIEWUP, viewVector);
+				VectorSet4(blurInfo, viewInfo[0], viewInfo[1], 1.0f / tr.gtaoDepthImage->width, 1.0f / tr.gtaoDepthImage->height);
+				GLSL_SetUniformVec4(&tr.gtaoShader, UNIFORM_VIEWINFO, blurInfo);
+				VectorSet4(aoParams, Q_max(4.0f, r_gtaoRadius->value), r_gtaoStrength->value, 0, 0);
+				GLSL_SetUniformVec4(&tr.gtaoShader, UNIFORM_AOPARAMS, aoParams);
+				RB_InstantQuad2(quadVerts, texCoords);
+
+				// smoothed by the depth, across and then up
+				texCoords[0][0] = 0; texCoords[0][1] = 1;
+				texCoords[1][0] = 1; texCoords[1][1] = 1;
+				texCoords[2][0] = 1; texCoords[2][1] = 0;
+				texCoords[3][0] = 0; texCoords[3][1] = 0;
+				VectorSet4(blurInfo, viewInfo[0], viewInfo[1], 1.0f / tr.gtaoImage->width, 1.0f / tr.gtaoImage->height);
+
+				FBO_Bind(tr.gtaoBlurFbo);
+				GLSL_BindProgram(&tr.depthBlurShader[0]);
+				GL_BindToTMU(tr.gtaoImage, TB_COLORMAP);
+				GL_BindToTMU(tr.gtaoDepthImage, TB_LIGHTMAP);
+				GLSL_SetUniformVec4(&tr.depthBlurShader[0], UNIFORM_VIEWINFO, blurInfo);
+				RB_InstantQuad2(quadVerts, texCoords);
+
+				FBO_Bind(tr.gtaoFbo);
+				GLSL_BindProgram(&tr.depthBlurShader[1]);
+				GL_BindToTMU(tr.gtaoBlurImage, TB_COLORMAP);
+				GL_BindToTMU(tr.gtaoDepthImage, TB_LIGHTMAP);
+				GLSL_SetUniformVec4(&tr.depthBlurShader[1], UNIFORM_VIEWINFO, blurInfo);
+				RB_InstantQuad2(quadVerts, texCoords);
+
+				GL_BindToTMU(tr.gtaoImage, TMU_RTAO);
+				backEnd.gtaoOn = qtrue;
+				R_GpuTimerEnd(GPUTIMER_AO);
+			}
+
 			if (r_ssao->integer)
 			{
 				vec4_t quadVerts[4];
@@ -1752,6 +1832,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 		R_CpuTimerBegin(CPUTIMER_MAIN3D);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 		backEnd.depthPrepassed = qfalse;
+		backEnd.gtaoOn = qfalse;
 
 		if (r_drawSun->integer)
 		{

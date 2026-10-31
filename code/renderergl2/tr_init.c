@@ -135,6 +135,9 @@ cvar_t  *r_forceAutoExposureMax;
 cvar_t  *r_depthPrepass;
 cvar_t  *r_earlyZ;
 cvar_t  *r_ssao;
+cvar_t  *r_gtao;
+cvar_t  *r_gtaoRadius;
+cvar_t  *r_gtaoStrength;
 
 cvar_t  *r_normalMapping;
 cvar_t  *r_specularMapping;
@@ -1641,6 +1644,13 @@ void R_Register( void )
 	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "0", 0 );
 	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Can make layers flicker where the prepass's depth differs by a bit. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
+	// Added in OPM: ambient occlusion on the light from all round alone (gtao_fp.glsl)
+	r_gtao = ri.Cvar_Get( "r_gtao", "1", CVAR_LATCH | CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_gtao, "With r_realtimeLighting 2: ambient occlusion on the light that comes from all round (the sky, the bounce, the ambient), not on the lamps' or the sun's, which have shadows of their own: corners, the floor under furniture, the creases of a body darker. Needs vid_restart");
+	r_gtaoRadius = ri.Cvar_Get( "r_gtaoRadius", "32", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_gtaoRadius, "Ambient occlusion: how far round a point what is near it darkens it, in units");
+	r_gtaoStrength = ri.Cvar_Get( "r_gtaoStrength", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_gtaoStrength, "Ambient occlusion: how dark it gets (0: none; 2: twice as dark)");
 
 	r_normalMapping = ri.Cvar_Get( "r_normalMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_specularMapping = ri.Cvar_Get( "r_specularMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
