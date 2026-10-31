@@ -2548,9 +2548,12 @@ void RB_StageIteratorGeneric( void )
 	//
 	// set face culling appropriately
 	//
-	// Added in OPM: a lamp's shadow has both sides of every face (R_CullSurface)
+	// Added in OPM: a lamp's shadow has both sides of the world's faces
+	// (R_CullSurface). Not of the models': one lies a card flat on the ground
+	// under a bush, and both its sides cast a dark square beside it.
 	if (input->shader->cullType == CT_TWO_SIDED
-		|| (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)))
+		|| ((backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED))
+			&& backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel))
 	{
 		GL_Cull( CT_TWO_SIDED );
 	}
