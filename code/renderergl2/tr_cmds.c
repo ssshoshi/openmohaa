@@ -52,7 +52,7 @@ static void R_ReportGpuTimers( int interval )
 	gpuTimerResults_t avg;
 	int   numFrames = 0;
 	int   i;
-	char  line[256];
+	char  line[512];
 	float accounted = 0.0f;
 
 	if (!glRefConfig.timerQuery)

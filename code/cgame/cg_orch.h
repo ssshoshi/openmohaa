@@ -64,6 +64,9 @@ extern "C" {
     void CG_OrchFly_f(void);
     // orch_return: back to where the player last froze.
     void CG_OrchReturn_f(void);
+    // orch_campos x y z [pitch yaw]: freeze, and hold the camera's eye exactly
+    // there; no arguments lets it go.
+    void CG_OrchCamPos_f(void);
     // Whether the free camera is on: the player's body is drawn, not the view model.
     qboolean CG_OrchFreecamActive(void);
     // Whether it roams a running world: the body is not predicted then.

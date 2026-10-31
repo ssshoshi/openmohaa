@@ -3041,7 +3041,8 @@ void R_CreateBuiltinImages( void ) {
 
 		// Added in OPM: soft particles read the view's depth from it too
 		// and water, to see how deep it is (tr_water.c)
-		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer)
+		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer
+			|| (r_gtao->integer && r_realtimeLighting->integer == 2))
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 
 		// Added in OPM: the view before its water, which the water shows through (tr_water.c)
@@ -3103,6 +3104,23 @@ void R_CreateBuiltinImages( void ) {
 			}
 		}
 
+		// Added in OPM: r_gtao's, at half the view's size
+		if (r_gtao->integer && r_realtimeLighting->integer == 2)
+		{
+			tr.gtaoImage     = R_CreateImage("*gtao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+			tr.gtaoBlurImage = R_CreateImage("*gtaoBlur", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+			// with smaller copies of itself: what is read further off is
+			// read from a smaller one, so still near in memory (SAO's)
+			// (not IMGFLAG_MIPMAP: that would scale an empty image up to a
+			// power of two)
+			tr.gtaoDepthImage = R_CreateImage("*gtaoDepth", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+			for (x = 1; x <= GTAO_DEPTH_MIPS; x++)
+				qglTextureImage2DEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, x, GL_R32F, MAX(1, (width / 2) >> x), MAX(1, (height / 2) >> x), 0, GL_RED, GL_FLOAT, NULL);
+			qglTextureParameteriEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+			qglTextureParameteriEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			qglTextureParameteriEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GTAO_DEPTH_MIPS);
+		}
+
 		if (r_ssao->integer)
 		{
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
@@ -3112,6 +3130,14 @@ void R_CreateBuiltinImages( void ) {
 		if (r_ssr->integer)
 		{
 			tr.ssrPrevImage = R_CreateImage("*ssrPrev", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+		}
+
+		// Added in OPM: r_volumetric's, at a quarter of the view's size
+		// across, brighter than white
+		if (r_volumetric->integer && r_realtimeLighting->integer == 2)
+		{
+			tr.volumeImage     = R_CreateImage("*volume", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.volumeBlurImage = R_CreateImage("*volumeBlur", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 		}
 
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)

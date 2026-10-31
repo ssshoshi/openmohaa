@@ -104,6 +104,8 @@ typedef struct cubemap_s {
 	vec3_t origin;
 	float parallaxRadius;
 	image_t *image;
+	int area;    // Added in OPM: the BSP area it is in, -1 not known (R_CubemapForPoint)
+	int cluster; // and its PVS cluster
 } cubemap_t;
 
 typedef struct dlight_s {
@@ -526,9 +528,11 @@ enum
 #define TMU_RTBOUNCELAMP     21 // the lamps' light bounced (R_RtBounce)
 #define TMU_RTLIVE           22 // the baked lamps lit live, taken out of their bake (R_RtLiveIn)
 #define TMU_RTLIVEDIR        23 // and the way it came from
-#define TMU_SSRCOLOR         24 // Added in OPM: r_ssr, the last frame before its tone map
-#define TMU_SSRDEPTH         25 // and this frame's depth
-#define NUM_TEXTURE_UNITS    26
+#define TMU_RTAO             24 // Added in OPM: the view's ambient occlusion (r_gtao)
+#define GTAO_DEPTH_MIPS      4  // and the smaller copies of the depth it reads (gtao_fp.glsl's)
+#define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
+#define TMU_SSRDEPTH         26 // and this frame's depth
+#define NUM_TEXTURE_UNITS    27
 
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -541,6 +545,9 @@ enum
 #define RT_BAKED_TILE   128 // r_realtimeLighting 2: the faces of the world alone, for the baked lamps (R_RtBakeLamps)
 #define RT_SMALL_CODE   4096 // a light's first tile, sent to the shaders, at or past this: quarter tiles
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
+#define RT_FACE_GUARD   4 // r_rtShadowGuard's default: texels a face's tile is drawn past its 90 degrees on
+                          // each side, so the taps of a point at the face's edge read what is there, not
+                          // a clamp (r_rtShadowSoft 4 reaches 3: two half texels and the filter's own)
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
 #define RT_MAX_RUN      1023 // of those, for one light
 #define TMU_RTCAPSULES  11
@@ -1005,6 +1012,7 @@ typedef enum
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	UNIFORM_RTLIGHTS,
 	UNIFORM_RTPARAMS,
+	UNIFORM_LINEAR, // Added in OPM: r_linearLighting, read the colours as light (GLSL_BindProgram)
 	UNIFORM_RTSUNDIR,
 	UNIFORM_RTSUNCOLOR,
 	UNIFORM_RTAMBIENT,
@@ -1024,6 +1032,11 @@ typedef enum
 	UNIFORM_RTSKYLIGHTMAP,
 	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
 	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTAO,     // Added in OPM: r_gtao: x on, the view's ambient occlusion in u_RtAOMap
+	UNIFORM_RTAOMAP,
+	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
+	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
+	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -2260,6 +2273,8 @@ typedef enum {
 	GPUTIMER_PRESENT,
 	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
 	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
+	GPUTIMER_AO,       // Added in OPM: r_gtao
+	GPUTIMER_VOLUME,   // Added in OPM: r_volumetric
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2479,6 +2494,7 @@ typedef struct {
 	qboolean    colorMask[4];
 	qboolean    depthFill;
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
+	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
 	float       greyscale;
@@ -2568,6 +2584,11 @@ typedef struct {
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
 	image_t                 *ssrPrevImage; // Added in OPM: r_ssr
+	image_t                 *gtaoImage;     // Added in OPM: r_gtao, the view's ambient occlusion
+	image_t                 *gtaoBlurImage; // and half of its blur
+	image_t                 *gtaoDepthImage; // the depth at that size, read by both
+	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
+	image_t                 *volumeBlurImage; // and half of its blur
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2595,6 +2616,11 @@ typedef struct {
 	FBO_t					*ssrPrevFbo;  // Added in OPM: r_ssr, the last frame before its tone map
 	float                   ssrPrevViewProj[16]; // and the world to its clip space
 	int                     ssrPrevFrame; // the frame it is from (0: none yet)
+	FBO_t					*gtaoFbo;
+	FBO_t					*gtaoBlurFbo;
+	FBO_t					*gtaoDepthFbo;
+	FBO_t					*volumeFbo;
+	FBO_t					*volumeBlurFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2645,7 +2671,9 @@ typedef struct {
 	shaderProgram_t tonemapShader;
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
+	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
 	shaderProgram_t ssaoShader;
+	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
@@ -2894,6 +2922,14 @@ extern  cvar_t  *r_forceToneMapMax;
 
 extern  cvar_t  *r_autoExposure;
 extern  cvar_t  *r_forceAutoExposure;
+extern  cvar_t  *r_autoExposureKey;
+extern  cvar_t  *r_autoExposureStrength;
+extern  cvar_t  *r_autoExposureMinEV;
+extern  cvar_t  *r_autoExposureMaxEV;
+extern  cvar_t  *r_autoExposureDarkSpeed;
+extern  cvar_t  *r_autoExposureBrightSpeed;
+extern  cvar_t  *r_autoExposureDebug;
+void RB_EyeAdaptShutdown(void); // Added in OPM: eye adaptation's read back buffer (tr_postprocess.c)
 extern  cvar_t  *r_forceAutoExposureMin;
 extern  cvar_t  *r_forceAutoExposureMax;
 
@@ -2905,6 +2941,15 @@ extern  cvar_t  *r_ssao;
 extern  cvar_t  *r_ssr;
 extern  cvar_t  *r_ssrStrength;
 extern  cvar_t  *r_ssrDistance;
+extern  cvar_t  *r_gtao;
+extern  cvar_t  *r_gtaoRadius;
+extern  cvar_t  *r_gtaoStrength;
+extern  cvar_t  *r_volumetric;
+extern  cvar_t  *r_volumetricDensity;
+extern  cvar_t  *r_volumetricAnisotropy;
+extern  cvar_t  *r_volumetricSun;
+extern  cvar_t  *r_volumetricLamps;
+extern  cvar_t  *r_volumetricRange;
 
 extern  cvar_t  *r_normalMapping;
 extern  cvar_t  *r_specularMapping;
@@ -2914,6 +2959,7 @@ extern  cvar_t  *r_parallaxMapOffset;
 extern  cvar_t  *r_parallaxMapShadows;
 extern  cvar_t  *r_cubeMapping;
 extern  cvar_t  *r_cubemapSize;
+extern  cvar_t  *r_cubemapStrength;
 extern  cvar_t  *r_deluxeSpecular;
 extern  cvar_t  *r_pbr;
 extern  cvar_t  *r_baseNormalX;
@@ -2956,8 +3002,12 @@ extern  cvar_t  *r_rtDebug;
 extern  cvar_t  *r_sunShadowScale;
 extern  cvar_t  *r_shadowFilter;
 extern  cvar_t  *r_shadowBlur;
+extern  cvar_t  *r_contactShadows;
+extern  cvar_t  *r_contactShadowLength;
+extern  cvar_t  *r_contactShadowThickness;
 extern  cvar_t  *r_shadowMapSize;
 extern  cvar_t  *r_sunShadowFarSize;
+extern  cvar_t  *r_sunShadowStable;
 extern  cvar_t  *r_shadowCascadeZNear;
 extern  cvar_t  *r_shadowCascadeZFar;
 extern  cvar_t  *r_shadowCascadeZBias;
@@ -3155,6 +3205,9 @@ qboolean R_RtActive(void);
 int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
+qboolean R_RtLinear(void);
+extern cvar_t *r_linearExposure;
+qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
 void R_RtFreeWorld(void);
@@ -3178,6 +3231,7 @@ void R_RtAddTestEntity(void);
 void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
 void R_SsrSetUniforms(shaderProgram_t *sp);
+void R_RtSetVolumeUniforms(shaderProgram_t *sp);
 void R_RtFreeSkyLightmaps(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);
@@ -3569,6 +3623,9 @@ void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
 int R_CubemapForPoint( vec3_t point );
+void R_PlaceEnvProbes( const lump_t *entityLump );
+int R_ViewCubemapForPoint( const vec3_t point );
+void R_ReflectionInfo_f( void );
 
 /*
 ============================================================

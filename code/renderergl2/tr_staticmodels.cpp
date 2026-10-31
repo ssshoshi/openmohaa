@@ -404,13 +404,19 @@ void R_AddStaticModelSurfaces(void)
         if (iRadiusCull != CULL_OUT
             && (iRadiusCull != CULL_CLIP || R_CullStaticModel(SM->tiki, tiki_scale, tiki_localorigin) != CULL_OUT)) {
             dtikisurface_t *dsurf;
+            // Added in OPM: the reflection probe where it stands (r_cubeMapping)
+            const int       cubemap = R_ViewCubemapForPoint(tiki_worldorigin);
 
             tr.rtDrawCulled = ~R_RtSphereMask(tiki_worldorigin, SM->cull_radius, rtCandidates);
 
+            // Added in OPM: as big as the model's lod_scale makes it, which the
+            // trees set so the LOD leaves them whole (their far sprites are gone)
+            const float lodRadius = SM->cull_radius * tiki->lod_scale / SM->scale;
+
             if (tr.viewParms.isPortal) {
-                SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
+                SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, lodRadius);
             } else {
-                SM->lodpercentage[0] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
+                SM->lodpercentage[0] = R_CalcLod(tiki_worldorigin, lodRadius);
             }
 
             //
@@ -489,7 +495,7 @@ void R_AddStaticModelSurfaces(void)
                     }
 
                     SM->bRendered = qtrue;
-                    R_AddDrawSurf((surfaceType_t *)s_surface, shader, 0, 0, 0, 0);
+                    R_AddDrawSurf((surfaceType_t *)s_surface, shader, 0, 0, 0, cubemap);
 
                     if (r_showstaticlod->integer) {
                         vec3_t org;
@@ -532,7 +538,10 @@ void RB_Static_BuildDLights()
 {
     int i;
 
-    backEnd.currentStaticModel->useSpecialLighting = backEnd.refdef.num_dlights > 0;
+    // Added in OPM: not when the realtime lights have the dynamic lights: a
+    // static model's baked colours are lit by them on top, both ways
+    // (RT_STAGE_LIT_BAKED), and a muzzle flash lit it twice
+    backEnd.currentStaticModel->useSpecialLighting = backEnd.refdef.num_dlights > 0 && !R_RtTakesDlights();
     backEnd.currentStaticModel->numdlights         = 0;
 
     if (!backEnd.currentStaticModel->useSpecialLighting) {

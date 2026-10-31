@@ -486,6 +486,31 @@ void FBO_Init(void)
 		R_CheckFBO(tr.ssrPrevFbo);
 	}
 
+	// Added in OPM: r_gtao
+	if (tr.gtaoImage && tr.gtaoBlurImage && tr.gtaoDepthImage && tr.hdrDepthFbo)
+	{
+		tr.gtaoDepthFbo = FBO_Create("_gtaodepth", tr.gtaoDepthImage->width, tr.gtaoDepthImage->height);
+		FBO_AttachImage(tr.gtaoDepthFbo, tr.gtaoDepthImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.gtaoDepthFbo);
+		tr.gtaoFbo = FBO_Create("_gtao", tr.gtaoImage->width, tr.gtaoImage->height);
+		FBO_AttachImage(tr.gtaoFbo, tr.gtaoImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.gtaoFbo);
+		tr.gtaoBlurFbo = FBO_Create("_gtaoblur", tr.gtaoBlurImage->width, tr.gtaoBlurImage->height);
+		FBO_AttachImage(tr.gtaoBlurFbo, tr.gtaoBlurImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.gtaoBlurFbo);
+	}
+
+	// Added in OPM: r_volumetric
+	if (tr.volumeImage && tr.volumeBlurImage)
+	{
+		tr.volumeFbo = FBO_Create("_volume", tr.volumeImage->width, tr.volumeImage->height);
+		FBO_AttachImage(tr.volumeFbo, tr.volumeImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.volumeFbo);
+		tr.volumeBlurFbo = FBO_Create("_volumeblur", tr.volumeBlurImage->width, tr.volumeBlurImage->height);
+		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.volumeBlurFbo);
+	}
+
 	if (tr.screenSsaoImage)
 	{
 		tr.screenSsaoFbo = FBO_Create("_screenssao", tr.screenSsaoImage->width, tr.screenSsaoImage->height);

@@ -2069,7 +2069,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 						GL_BindToTMU( tr.whiteImage, TB_SPECULARMAP );
 				}
 
-				enableTextures[3] = (r_cubeMapping->integer && !(tr.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex) ? 1.0f : 0.0f;
+				enableTextures[3] = (r_cubeMapping->integer && !(backEnd.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex) ? r_cubemapStrength->value : 0.0f;
 			}
 
 			GLSL_SetUniformVec4(sp, UNIFORM_ENABLETEXTURES, enableTextures);
@@ -2087,7 +2087,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		//
 		// testing cube map
 		//
-		if (!(tr.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex && r_cubeMapping->integer)
+		if (!(backEnd.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex && r_cubeMapping->integer)
 		{
 			vec4_t vec;
 			cubemap_t *cubemap = &tr.cubemaps[input->cubemapIndex - 1];
