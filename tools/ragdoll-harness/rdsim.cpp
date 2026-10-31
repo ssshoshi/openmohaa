@@ -4,6 +4,10 @@
 #include "rd_anims.h"
 #include "cg_ragdoll.h"
 #include "cg_physics_ragdoll.h"
+#include "cg_water.h"
+
+static int    rd_simsum;
+static double rd_simsumValue;
 #include <cstdio>
 #include <cmath>
 
@@ -766,6 +770,14 @@ static int RunScenario(const Scenario &sc)
 #ifdef RD_JOLT
         RDJ_Step(0.016f);
 #endif
+        // RD_SIMSUM: a checksum of where the simulation put the joints, every
+        // frame of every scenario, printed at the end. What only changes how
+        // the body is drawn (cg_ragdoll_interp) must leave it the same.
+        if (rd_simsum) {
+            float pp[23*3];
+            const int n = CG_RagdollDebugParticles(entnum, pp, 23);
+            for (int q = 0; q < n * 3; q++) rd_simsumValue += (double)pp[q] * (double)((q % 7) + 1);
+        }
 
         if (wdT >= 0 && cg.time >= wdT) {
             float pp[23*3];
@@ -2205,6 +2217,7 @@ static int RunScenario(const Scenario &sc)
 
 int main(void)
 {
+    rd_simsum = getenv("RD_SIMSUM") != NULL;
     memset(&cgi, 0, sizeof(cgi));
     cgi.Tag_NumForName   = Stub_TagNumForName;
     cgi.TIKI_Orientation = Stub_TIKI_Orientation;
@@ -2321,6 +2334,7 @@ int main(void)
         if (only && strcmp(only, scen[i].name)) continue;
         rc |= RunScenario(scen[i]);
     }
+    if (rd_simsum) printf("simulation checksum %.6f\n", rd_simsumValue);
     printf("\n%s\n", rc ? "SOME SCENARIOS FAILED" : "ALL SCENARIOS PASS");
     return rc;
 }
@@ -2343,7 +2357,25 @@ extern "C" void CG_PhysicsGrabDenied(void) {}
 extern "C" void CG_PhysicsGrabSetTarget(const vec3_t) {}
 extern "C" void CG_PhysicsGrabPoint(vec3_t out) { VectorClear(out); }
 extern "C" qboolean CG_PhysicsPunt(const vec3_t, const vec3_t, float, float) { return qfalse; }
+// Added 2026-10-25: what the solver has come to call since, none of it
+// anything the harness measures: gore, water, the orchestrator's camera,
+// impact sounds, hanging lamps.
+extern "C" void CG_GoreAddEntity(centity_t *, const refEntity_t *, qboolean) {}
+extern "C" void CG_GoreModifyEntity(centity_t *, refEntity_t *, qboolean) {}
+extern "C" qboolean CG_GoreGrabCandidate(const vec3_t, const vec3_t, float, float *) { return qfalse; }
+extern "C" qboolean CG_GoreGrabStart(const vec3_t, const vec3_t, float, float) { return qfalse; }
+extern "C" qboolean CG_GorePunt(const vec3_t, const vec3_t, float, float) { return qfalse; }
+extern "C" void CG_GoreTransfer(int, int) {}
+extern "C" qboolean CG_OrchFreecamActive(void) { return qfalse; }
+extern "C" void CG_PhysicsRagdollImpact(int, qboolean, const trace_t *, float) {}
+extern "C" void CG_WaterBleed(int, int, const vec3_t, qboolean) {}
+extern "C" void CG_WaterStain(int, int, const vec3_t, qboolean) {}
+extern "C" qboolean CG_WaterSample(const vec3_t, cgWaterSample_t *) { return qfalse; }
+cvar_t *cg_physics_hanging;
 #ifndef RD_JOLT
+extern "C" int CG_PhysicsStepSerial(void) { return 0; }
+extern "C" float CG_PhysicsLerp(void) { return 1.0f; }
+qboolean CG_JoltRagdollFloating(int) { return qfalse; }
 // Without --jolt the Jolt ragdoll is not built: making one fails, and the
 // particles carry every body.
 int CG_JoltRagdollCreate(const vec3_t[RD_NUM_JOINTS], const vec3_t[RD_NUM_JOINTS], const float[RD_NUM_JOINTS], float) { return 0; }
