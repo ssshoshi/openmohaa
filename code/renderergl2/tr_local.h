@@ -2997,6 +2997,7 @@ extern  cvar_t  *r_rtSky;
 extern  cvar_t  *r_rtSkyTile;
 extern  cvar_t  *r_rtFacesPerFrame;
 extern  cvar_t  *r_rtMaxLights;
+extern  cvar_t  *r_rtShadowSlope;
 extern  cvar_t  *r_rtAmbient;
 extern  cvar_t  *r_rtDynamicLights;
 extern  cvar_t  *r_rtShadowCharacters;

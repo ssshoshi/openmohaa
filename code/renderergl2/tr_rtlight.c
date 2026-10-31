@@ -54,6 +54,7 @@ cvar_t *r_rtShadows;
 cvar_t *r_rtShadowTile;
 cvar_t *r_rtFacesPerFrame;
 cvar_t *r_rtMaxLights;
+cvar_t *r_rtShadowSlope;
 cvar_t *r_rtAmbient;
 cvar_t *r_rtDynamicLights;
 cvar_t *r_rtShadowCharacters;
@@ -295,6 +296,8 @@ void R_RtRegister(void)
 	r_rtShadowTile = ri.Cvar_Get("r_rtShadowTile", "256", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_rtShadowTile, 64, 512, qtrue);
 	r_rtFacesPerFrame = ri.Cvar_Get("r_rtFacesPerFrame", "12", CVAR_ARCHIVE);
+	r_rtShadowSlope = ri.Cvar_Get("r_rtShadowSlope", "2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtShadowSlope, "How far the side of the world's faces towards a lamp is pushed back in its shadow, by the slope of its depth: the ground shadowed itself in blotches where the light came in low. Lamp shadows are redrawn when the lamps are next lit (vid_restart for all)");
 	r_rtMaxLights = ri.Cvar_Get("r_rtMaxLights", "24", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtMaxLights, 0, RT_MAX_LIGHTS, qtrue);
 	ri.Cvar_SetDescription(r_rtMaxLights, "How many realtime lights are lit live, with their shadows: the nearest and those the view sees. With r_rtBakedLamps the rest still light the world, baked; these add sharp shadows, shine and the light on people and props");

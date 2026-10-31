@@ -2477,6 +2477,7 @@ static void RB_ComputeEntityLightColors( void )
 
 void RB_StageIteratorGeneric( void )
 {
+	qboolean rtWorld;
 	shaderCommands_t *input;
 	unsigned int vertexAttribs = 0;
 
@@ -2549,11 +2550,10 @@ void RB_StageIteratorGeneric( void )
 	// set face culling appropriately
 	//
 	// Added in OPM: a lamp's shadow has both sides of the world's faces
-	// (R_CullSurface). Not of the models': one lies a card flat on the ground
-	// under a bush, and both its sides cast a dark square beside it.
-	if (input->shader->cullType == CT_TWO_SIDED
-		|| ((backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED))
-			&& backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel))
+	// (R_CullSurface), the models' as they were.
+	rtWorld = (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED))
+		&& backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel;
+	if (input->shader->cullType == CT_TWO_SIDED || rtWorld)
 	{
 		GL_Cull( CT_TWO_SIDED );
 	}
@@ -2588,7 +2588,23 @@ void RB_StageIteratorGeneric( void )
 	//
 	if (backEnd.depthFill)
 	{
+		// Added in OPM: the side of the world's faces towards a lamp, pushed
+		// back by how steeply its depth runs across the texel. Drawn as it
+		// is, the ground shadowed itself where a lamp's light came in low
+		// across it, in blotches that came and went as the lamp's tile
+		// changed size with the view (r_rtShadowSlope).
+		if (rtWorld && r_rtShadowSlope->value > 0) {
+			qglEnable( GL_POLYGON_OFFSET_FILL );
+			qglPolygonOffset( r_rtShadowSlope->value, r_rtShadowSlope->value );
+		}
+
 		RB_IterateStagesGeneric( input );
+
+		if (rtWorld && r_rtShadowSlope->value > 0) {
+			qglPolygonOffset( r_offsetFactor->value, r_offsetUnits->value );
+			if (!input->shader->polygonOffset)
+				qglDisable( GL_POLYGON_OFFSET_FILL );
+		}
 
 		//
 		// reset polygon offset
