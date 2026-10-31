@@ -436,7 +436,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	vec4_t quadVerts[4], viewInfo, volParams, volRange, froxel, v;
 	vec4_t volumes[FOG_MAX_VOLUMES * 3];
 	static vec4_t blobs[SMOKE_MAX_BLOBS * 2];
-	int numBlobs;
+	int numBlobs, sum;
 	GLuint noise;
 	vec2_t texCoords[4];
 	vec3_t viewVector;
@@ -501,23 +501,38 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
 
 	// each tile of the view's furthest depth: the cells behind it are left
-	// unlit. Its quad takes the view's share of the depth image.
+	// unlit. In two steps of 4 x 4 each, the first into a quarter tile each
+	// (raw depth), its quad over the view's share of the depth image: one
+	// fragment a tile reading all of it read one texel at a time, and kept
+	// the card waiting (0.55 ms at 2560 x 1440)
 	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
 	texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
 	texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
 	texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
-	FBO_Bind(tr.froxelDepthFbo);
-	qglViewport(0, 0, tr.froxelDepthFbo->width, tr.froxelDepthFbo->height);
-	qglScissor(0, 0, tr.froxelDepthFbo->width, tr.froxelDepthFbo->height);
+	FBO_Bind(tr.froxelDepthQuarterFbo);
+	qglViewport(0, 0, tr.froxelDepthQuarterFbo->width, tr.froxelDepthQuarterFbo->height);
+	qglScissor(0, 0, tr.froxelDepthQuarterFbo->width, tr.froxelDepthQuarterFbo->height);
 	GLSL_BindProgram(&tr.froxelShader[3]);
-	VectorSet4(viewInfo, zmax / zmin, zmax, (box[2] - box[0]) / froxel[0], (box[3] - box[1]) / froxel[1]);
+	VectorSet4(viewInfo, zmax / zmin, zmax, (box[2] - box[0]) / (froxel[0] * 4.0f), (box[3] - box[1]) / (froxel[1] * 4.0f));
 	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VIEWINFO, viewInfo);
+	VectorSet4(v, range, 0.0f, 0.0f, 0.0f);
+	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VOLRANGE, v);
 	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
 	texCoords[0][0] = 0; texCoords[0][1] = 1;
 	texCoords[1][0] = 1; texCoords[1][1] = 1;
 	texCoords[2][0] = 1; texCoords[2][1] = 0;
 	texCoords[3][0] = 0; texCoords[3][1] = 0;
+	// then the tiles, made forward depths
+	FBO_Bind(tr.froxelDepthFbo);
+	qglViewport(0, 0, tr.froxelDepthFbo->width, tr.froxelDepthFbo->height);
+	qglScissor(0, 0, tr.froxelDepthFbo->width, tr.froxelDepthFbo->height);
+	VectorSet4(viewInfo, zmax / zmin, zmax, 1.0f / froxel[0], 1.0f / froxel[1]);
+	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VIEWINFO, viewInfo);
+	VectorSet4(v, range, 0.0f, 0.0f, 1.0f);
+	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VOLRANGE, v);
+	GL_BindToTMU(tr.froxelDepthQuarterImage, TB_LIGHTMAP);
+	RB_InstantQuad2(quadVerts, texCoords);
 
 	// each cell lit, into the image last frame's are not in
 	FBO_Bind(tr.froxelLightFbo[lit]);
@@ -612,11 +627,23 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	VectorCopy(backEnd.refdef.viewaxis[1], froxelPrev.axis[1]);
 	VectorCopy(backEnd.refdef.viewaxis[2], froxelPrev.axis[2]);
 
-	// summed from the eye
-	FBO_Bind(tr.froxelSumFbo);
+	// summed from the eye, as a prefix scan: the first pass the lit cells
+	// and the slice before each, then each pass twice as many slices apart,
+	// from one image to the other (log2 FROXEL_SLICES passes of two reads a
+	// cell, where summing each cell's column read half the column a cell)
 	GLSL_BindProgram(&tr.froxelShader[1]);
-	GL_BindToTMU(tr.froxelLightImage[lit], TB_COLORMAP);
-	RB_InstantQuad2(quadVerts, texCoords);
+	{
+		int pass = 0, apart;
+
+		for (apart = 1; apart < FROXEL_SLICES; apart *= 2, pass++) {
+			FBO_Bind(tr.froxelSumFbo[pass & 1]);
+			GL_BindToTMU(pass ? tr.froxelSumImage[(pass - 1) & 1] : tr.froxelLightImage[lit], TB_COLORMAP);
+			VectorSet4(v, (float)apart, pass ? 0.0f : 1.0f, 0.0f, 0.0f);
+			GLSL_SetUniformVec4(&tr.froxelShader[1], UNIFORM_FROXELJITTER, v);
+			RB_InstantQuad2(quadVerts, texCoords);
+		}
+		sum = (pass - 1) & 1;
+	}
 
 	// the view through it: times what it lets through, plus what it adds
 	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
@@ -630,7 +657,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	GL_State(GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_SRC_ALPHA);
 	qglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 	GLSL_BindProgram(&tr.froxelShader[2]);
-	GL_BindToTMU(tr.froxelSumImage, TB_COLORMAP);
+	GL_BindToTMU(tr.froxelSumImage[sum], TB_COLORMAP);
 	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
 	qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);

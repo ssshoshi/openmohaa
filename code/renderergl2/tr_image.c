@@ -3150,8 +3150,11 @@ void R_CreateBuiltinImages( void ) {
 
 			tr.froxelLightImage[0] = R_CreateImage("*froxelLight0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			tr.froxelLightImage[1] = R_CreateImage("*froxelLight1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
-			tr.froxelSumImage   = R_CreateImage("*froxelSum", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelSumImage[0] = R_CreateImage("*froxelSum0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelSumImage[1] = R_CreateImage("*froxelSum1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			tr.froxelDepthImage = R_CreateImage("*froxelDepth", NULL, cellsX, cellsY, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			// raw depth, which a half float cannot tell apart near 1
+			tr.froxelDepthQuarterImage = R_CreateImage("*froxelDepthQuarter", NULL, cellsX * 4, cellsY * 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 		}
 
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)

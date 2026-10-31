@@ -2619,8 +2619,9 @@ typedef struct {
 	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
 	image_t                 *volumeBlurImage; // and half of its blur
 	image_t                 *froxelLightImage[2]; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row), this frame's and last
-	image_t                 *froxelSumImage;   // and summed from the eye
+	image_t                 *froxelSumImage[2]; // and summed from the eye, in passes from one to the other
 	image_t                 *froxelDepthImage; // and each tile of the view's furthest depth
+	image_t                 *froxelDepthQuarterImage; // and each quarter tile's, on the way (raw depth)
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2654,8 +2655,9 @@ typedef struct {
 	FBO_t					*volumeFbo;
 	FBO_t					*volumeBlurFbo;
 	FBO_t					*froxelLightFbo[2];
-	FBO_t					*froxelSumFbo;
+	FBO_t					*froxelSumFbo[2];
 	FBO_t					*froxelDepthFbo;
+	FBO_t					*froxelDepthQuarterFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;

@@ -101,17 +101,20 @@ vec3 CellRay(vec2 uv)
 
 #if defined(FROXEL_DEPTH)
 
-// each tile's furthest depth, forward of the eye, from its FROXEL_PIXELS
-// square of the view (u_ViewInfo.zw: a cell's size in the depth image)
+// the furthest of a 4 x 4 square of the depth (u_ViewInfo.zw: the square's
+// size in it): raw, or (u_VolRange.w 1) made a depth forward of the eye.
+// Twice, the view's depth to quarter tiles, then those to the tiles.
 void main()
 {
 	vec2  corner = var_DepthTex - 0.5 * u_ViewInfo.zw;
-	vec2  step   = u_ViewInfo.zw / FROXEL_PIXELS;
+	vec2  step   = u_ViewInfo.zw / 4.0;
 	float far    = 0.0;
-	for (int y = 0; y < int(FROXEL_PIXELS); y++)
-		for (int x = 0; x < int(FROXEL_PIXELS); x++)
+	for (int y = 0; y < 4; y++)
+		for (int x = 0; x < 4; x++)
 			far = max(far, texture2D(u_ScreenDepthMap, corner + (vec2(float(x), float(y)) + 0.5) * step).r);
-	gl_FragColor = vec4(min(u_ViewInfo.y / mix(u_ViewInfo.x, 1.0, far), 60000.0), 0.0, 0.0, 1.0);
+	if (u_VolRange.w > 0.5)
+		far = min(u_ViewInfo.y / mix(u_ViewInfo.x, 1.0, far), 60000.0);
+	gl_FragColor = vec4(far, 0.0, 0.0, 1.0);
 }
 
 #elif defined(FROXEL_LIGHT)
@@ -433,6 +436,31 @@ void main()
 
 #elif defined(FROXEL_INTEGRATE)
 
+// a slice's own light and what it lets through, from its lit cell at uv
+// (Frostbite's: the light over the slice, as the slice takes some of it out)
+vec4 SliceOwn(vec2 uv, float s, float along)
+{
+	vec4  v  = texture2D(u_ScreenImageMap, AtlasUV(uv, s));
+	float st = max(v.a, 0.0); // FROXEL_HIDDEN: none
+	float dt = (SliceDepth(s + 1.0) - SliceDepth(s)) * along;
+	if (st > 1e-6)
+	{
+		float through = exp(-st * dt);
+		return vec4(v.rgb * ((1.0 - through) / st), through);
+	}
+	return vec4(v.rgb * dt, 1.0);
+}
+
+// the air of a nearer stretch, then a further one: what both add, and let through
+vec4 Behind(vec4 nearer, vec4 further)
+{
+	return vec4(nearer.rgb + nearer.a * further.rgb, nearer.a * further.a);
+}
+
+// Summed from the eye in log2(slices) passes (a prefix scan, u_FroxelJitter.x
+// slices apart): each cell takes the sum ending u_FroxelJitter.x slices
+// nearer as what is before its own. The first (u_FroxelJitter.y 1) reads the
+// lit cells and takes the slice before; the others what the last pass left.
 void main()
 {
 	vec2  fc    = floor(gl_FragCoord.xy);
@@ -440,36 +468,23 @@ void main()
 	vec2  cell  = fc - tile * u_Froxel.xy;
 	float slice = tile.y * FROXEL_TILES + tile.x;
 	vec2  uv    = (cell + 0.5) / u_Froxel.xy;
-	float along = length(CellRay(uv));
-	vec3  scat  = vec3(0.0);
-	float T     = 1.0;
-	float zNear = 0.0;
+	float apart = u_FroxelJitter.x;
+	vec4  own;
 
-	// front to back, each slice's light as it is let through what is
-	// before it (Frostbite's: the light over the slice, as the slice takes
-	// some of it out)
-	for (int s = 0; s < 128; s++)
+	if (u_FroxelJitter.y > 0.5)
 	{
-		float fs = float(s);
-		if (fs > slice) break;
-		vec4  v     = texture2D(u_ScreenImageMap, AtlasUV(uv, fs));
-		v.a = max(v.a, 0.0); // FROXEL_HIDDEN: none
-		float zFar  = SliceDepth(fs + 1.0);
-		float dt    = (zFar - zNear) * along;
-		zNear = zFar;
-		if (v.a > 1e-6)
-		{
-			float through = exp(-v.a * dt);
-			scat += T * v.rgb * ((1.0 - through) / v.a);
-			T    *= through;
-		}
-		else
-		{
-			scat += T * v.rgb * dt;
-		}
+		float along = length(CellRay(uv));
+		own = SliceOwn(uv, slice, along);
+		if (slice >= 1.0)
+			own = Behind(SliceOwn(uv, slice - 1.0, along), own);
 	}
-
-	gl_FragColor = vec4(scat, T);
+	else
+	{
+		own = texture2D(u_ScreenImageMap, AtlasUV(uv, slice));
+		if (slice >= apart)
+			own = Behind(texture2D(u_ScreenImageMap, AtlasUV(uv, slice - apart)), own);
+	}
+	gl_FragColor = own;
 }
 
 #elif defined(FROXEL_APPLY)
