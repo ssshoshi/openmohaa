@@ -153,6 +153,25 @@ varying vec3      var_RtNormal;
 uniform vec4      u_GlobalFogColor;
 uniform vec2      u_GlobalFogParams;
 
+// Added in OPM: r_linearLighting. The colours read as linear light (gamma
+// 2.2, as the display showed them), added up as light; the tone map shows the
+// frame (GLSL_BindProgram sets it, for the world's view alone)
+uniform float     u_Linear;
+
+vec3 Lin(vec3 c)
+{
+	return u_Linear > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c;
+}
+
+// The map's distance fog, mixed as it was shown (the mix of a colour shown and
+// the fog's): mixed as light, a dark wall took far more of a grey fog
+vec3 Fog(vec3 c, vec3 fog, float f)
+{
+	if (u_Linear > 0.5)
+		return Lin(mix(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), fog, f));
+	return mix(c, fog, f);
+}
+
 varying vec4      var_TexCoords;
 varying float     var_FogDist;
 
@@ -282,7 +301,11 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, ve
 	return bestDepth - r_parallaxMapOffset;
 }
 
-float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
+// (OPM: gx, gy, the pixel's own texture gradients, as for the search: the ray
+// stops at its first hit and is only cast where parallax is on, both per
+// pixel, so the plain reads it made had undefined derivatives and could fetch
+// any mip, the noise the search had before it read with gradients)
+float LightRay(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, vec2 gy)
 {
 	const int linearSearchSteps = 16;
 
@@ -292,7 +315,7 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 	// current height from initial texel depth
 	float height = 0.0;
 
-	float startDepth = SampleDepth(normalMap, dp);
+	float startDepth = SampleDepthGrad(normalMap, dp, gx, gy);
 
 	// find a collision or escape
 	for(int i = 0; i < linearSearchSteps - 1; ++i)
@@ -302,7 +325,7 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 		if (startDepth < height)
 			return 1.0;
 		
-		float t = SampleDepth(normalMap, dp + ds * height);
+		float t = SampleDepthGrad(normalMap, dp + ds * height, gx, gy);
 
 		if (startDepth > t + height)
 			return 0.0;
@@ -316,13 +339,13 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 // shadow: dividing by z there made the ray NaN, and whatever that fetch read
 // put black blotches in every crevice. The shadow fades in over the first few
 // degrees above the plane, where the ray would stretch across the texture.
-float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap)
+float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap, vec2 gx, vec2 gy)
 {
 	float fade = smoothstep(0.0, 0.1, lightDir.z);
 	if (fade <= 0.0)
 		return 1.0;
 
-	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap), fade);
+	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap, gx, gy), fade);
 }
 #endif
 
@@ -413,7 +436,14 @@ void main()
 	float NL, NH, NE, EH, attenuation;
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_GROUNDCOVER)
+	// Added in OPM: a tuft is lit from above as the ground it stands in is,
+	// whichever side of it shows (turned over, the tufts seen from behind
+	// went black in clumps)
+	vec3 surfNormal = var_Normal.xyz;
+  #else
 	vec3 surfNormal = (!gl_FrontFacing ? var_Normal : -var_Normal).xyz;
+  #endif
   #if defined(USE_TANGENT_FRAME)
 	mat3 tangentToWorld = mat3(var_Tangent.xyz, var_Bitangent.xyz, surfNormal);
 	viewDir = vec3(var_Normal.w, var_Tangent.w, var_Bitangent.w);
@@ -423,12 +453,12 @@ void main()
 	E = normalize(viewDir);
 #endif
 
-	lightColor = var_Color.rgb;
+	lightColor = Lin(var_Color.rgb);
 
 #if defined(USE_RTLIGHT) && defined(USE_LIGHT_VERTEX)
 	// all of it live: the baked vertex lighting gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = u_RtAmbient.rgb;
+		lightColor = u_RtAmbient.rgb * RtAmbientOcclusion();
 #endif
 
 #if defined(USE_LIGHTMAP)
@@ -439,12 +469,12 @@ void main()
   #if defined(USE_PBR) && !defined(USE_FAST_LIGHT)
 	lightmapColor.rgb *= lightmapColor.rgb;
   #endif
-	lightColor *= lightmapColor.rgb;
+	lightColor *= Lin(lightmapColor.rgb);
 
   #if defined(USE_RTLIGHT)
 	// all of it live: the lightmap gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = var_Color.rgb * u_RtAmbient.rgb;
+		lightColor = Lin(var_Color.rgb) * u_RtAmbient.rgb * RtAmbientOcclusion();
   #endif
 #endif
 
@@ -495,6 +525,9 @@ void main()
 		if (alpha <= 0.0)
 			discard;
 	}
+
+	// (r_linearLighting: the texture's colour as light; its alpha as it is)
+	diffuse.rgb = Lin(diffuse.rgb);
 
 	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
 	// how much sky it sees
@@ -547,7 +580,7 @@ void main()
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	float parallaxShadow = parallaxOn ? ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap) : 1.0;
+	float parallaxShadow = parallaxOn ? ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap, parallaxGx, parallaxGy) : 1.0;
   #endif
 
 
@@ -566,7 +599,7 @@ void main()
 	// light is below the surface
 	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
   #else
-	ambientColor = var_ColorAmbient.rgb;
+	ambientColor = Lin(var_ColorAmbient.rgb);
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
@@ -670,6 +703,9 @@ void main()
 
     #if defined(USE_PBR)
 	cubeLightColor *= cubeLightColor;
+    #else
+	// Added in OPM: a cubemap holds what was shown, not light (r_linearLighting)
+	cubeLightColor = Lin(cubeLightColor);
     #endif
 
 	// multiply cubemap values by lighting
@@ -701,7 +737,7 @@ void main()
 	reflectance += CalcDiffuse(diffuse.rgb, NH2, EH2, roughness);
     #endif
 
-	lightColor = u_PrimaryLightColor;
+	lightColor = Lin(u_PrimaryLightColor);
 
     #if defined(USE_SHADOWMAP)
 	lightColor *= shadowValue;
@@ -712,7 +748,7 @@ void main()
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
 	if (parallaxOn)
-		lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
+		lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap, parallaxGx, parallaxGy);
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;
@@ -781,7 +817,11 @@ void main()
 		rt_specView  = E;
 		rt_specRough = roughness;
   #else
+    #if defined(USE_GROUNDCOVER)
+		vec3 rtNormal = normalize(var_RtNormal);
+    #else
 		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+    #endif
   #endif
   #if defined(USE_LIGHTMAP)
 		rt_skyLM = var_TexCoords.zw;
@@ -804,5 +844,5 @@ void main()
 	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer
 	// gets from fixed function GL_FOG.
 	float fogFactor = clamp((var_FogDist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
-	gl_FragColor.rgb = mix(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+	gl_FragColor.rgb = Fog(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
 }

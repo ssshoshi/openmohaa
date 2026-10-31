@@ -70,6 +70,10 @@ cvar_t *r_rtCutoff;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
+cvar_t *r_rtShadowGuard;
+
+// The guard the faces are drawn with (r_rtShadowGuard, R_RtRenderShadows)
+static int rt_guard = RT_FACE_GUARD;
 cvar_t *r_rtSkyLightmaps;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
@@ -80,6 +84,9 @@ cvar_t *r_rtDynamicFull;
 cvar_t *r_rtDynamicEvery;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
+cvar_t *r_linearLighting;
+cvar_t *r_linearLightRef;
+cvar_t *r_linearExposure;
 static cvar_t *r_rtBounce;
 static cvar_t *r_rtBakedLamps;
 static cvar_t *r_rtBakedDebug;
@@ -110,7 +117,6 @@ typedef char rt_smallRowFits[(RT_SMALL_FIRST % RT_ATLAS_TILES == 0 && RT_SLOTS >
 // it is out of range.
 #define RT_CUTOFF 1.0f
 
-#define RT_SQRT1_2 0.70710678f
 
 // Leaves, two sided and cut out by their alpha: how much of the light on one
 // side comes through to the other
@@ -193,6 +199,8 @@ static struct {
 	int        dynamicOwnerFrame[RT_SLOTS]; // the frame it last used it
 
 	vec3_t     ambient;  // raw
+	qboolean   linear;      // r_linearLighting: the colours below and the lights' are linear light (R_RtLinearize)
+	float      linearUnit;  // a light's colour's raw units, of white, when they were made so
 	qboolean   sun;
 	vec3_t     sunDir;   // towards the sun
 	vec3_t     sunColor; // raw
@@ -218,6 +226,10 @@ static struct {
 	int        moverPairs;   // this frame, for r_rtDebug: movers in a dynamic light's range
 	int        moverCulled;  // of those, out of its reach or its light lists
 } rt;
+
+// r_linearLighting (LINEAR LIGHT, below)
+static float R_RtLinearValue(float c);
+static void  R_RtLinearColor(vec3_t color, float unit, float ref);
 
 // Something that casts a shadow, followed from frame to frame: once it has
 // stood still a while it is drawn with what stands still, and kept, until it
@@ -258,6 +270,14 @@ qboolean R_RtActive(void)
 qboolean R_RtLitLive(void)
 {
 	return (R_RtActive() && r_realtimeLighting->integer == 2) ? qtrue : qfalse;
+}
+
+// Whether the game's dynamic lights (muzzle flashes, blasts) are among the
+// realtime lights (r_rtDlights), for the world drawn: what the realtime lights
+// light must not take them into its own light as well, or it has them twice
+qboolean R_RtTakesDlights(void)
+{
+	return (R_RtActive() && r_rtDlights->value > 0 && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL)) ? qtrue : qfalse;
 }
 
 void R_RtRegister(void)
@@ -319,6 +339,9 @@ void R_RtRegister(void)
 	r_rtShadowSoft = ri.Cvar_Get("r_rtShadowSoft", "2", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtShadowSoft, 1, 4, qfalse);
 	ri.Cvar_SetDescription(r_rtShadowSoft, "How soft the edges of the realtime lights' shadows are, in half texels of their shadow faces between its taps (1: the hardest)");
+	r_rtShadowGuard = ri.Cvar_Get("r_rtShadowGuard", va("%d", RT_FACE_GUARD), 0);
+	ri.Cvar_CheckRange(r_rtShadowGuard, 0, 8, qtrue);
+	ri.Cvar_SetDescription(r_rtShadowGuard, "Texels a realtime light's shadow face is drawn past its edge, so its soft shadow reads on into the next face there (0: none, the taps held inside the face, which left seams along its edges). Changing it draws every face again. Not archived: an A/B switch");
 	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
 	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
 	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
@@ -336,6 +359,13 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtBakedLamps, "With r_realtimeLighting 2, every lamp's light on the lightmapped world is baked once a map, with its shadow of the world, so that all of them show however few are lit live (r_rtMaxLights): those add their sharp shadows and shine. 0: only the lamps lit live give light");
 	r_rtBakedDebug = ri.Cvar_Get("r_rtBakedDebug", "0", 0);
 	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake); 3: of the bounce, the lamps' alone; 4: the daylight's alone. Not archived: a test switch");
+	r_linearLighting = ri.Cvar_Get("r_linearLighting", "0", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_linearLighting, "With r_realtimeLighting 2 and r_hdr 1: the light is added up as light (linear), and the frame made fit to show after the tone map. A texture and a lamp at its middle distance look as before; nearer a lamp is less burnt out, further it falls off more gently, and light from several places adds up as it does in a room. Needs vid_restart");
+	r_linearLightRef = ri.Cvar_Get("r_linearLightRef", "0.5", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_CheckRange(r_linearLightRef, 0.05f, 1.0f, qfalse);
+	ri.Cvar_SetDescription(r_linearLightRef, "With r_linearLighting: how bright (of white) a lamp is where it looks as it did without: nearer it is dimmer than it was, further brighter. Needs vid_restart");
+	r_linearExposure = ri.Cvar_Get("r_linearExposure", "0.6", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_linearExposure, "With r_linearLighting: the exposure, in stops, on top of the tone map's (0.6: the tone map's look without r_linearLighting)");
 	r_rtWindowLights = ri.Cvar_Get("r_rtWindowLights", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtWindowLights, "With r_realtimeLighting 2, keep the map's spot lights that stand in for daylight through its windows (0: the sun and the sky come in by themselves, and they go). Applies when a map is loaded");
 	r_rtSkyTile = ri.Cvar_Get("r_rtSkyTile", "1024", CVAR_ARCHIVE | CVAR_LATCH);
@@ -756,6 +786,9 @@ static void R_RtEntityLamps(void)
 		VectorCopy(dir, l->spotDir);
 		VectorScale(def->color, def->intensity * 7500.0f, l->color);
 		l->range = R_RtRangeOf(l->color);
+		if (rt.linear) {
+			R_RtLinearColor(l->color, rt.linearUnit, r_linearLightRef->value);
+		}
 		VectorMA(l->origin, Q_min(l->range, nearest > 0 ? nearest : 512.0f), dir, l->pool);
 	}
 
@@ -1809,7 +1842,7 @@ lights, the sun and the sky are as they were.
 #define RT_BOUNCE_HASH    64.0f  // the size of the hash's cells: the samples are a lightmap texel
                                  // (16 units) RT_BOUNCE_DOWN apart on a big wall
 #define RT_BOUNCE_OUTDOOR 0.6f   // seeing this much of the sky it is out under it: lit live
-#define RT_BOUNCE_VERSION 9
+#define RT_BOUNCE_VERSION 10 // 10: the lamps light it as the shaders do (R_RtAttenAt)
 #define RT_BOUNCE_VALUES  6 // each sample's bounce, the daylight's then the lamps'
 #define RT_BOUNCE_FILE_SIZE(n) (20 + sizeof(float) * (RT_BOUNCE_VALUES + 6) * (n))
 #define RT_BOUNCE_ALBEDO  0.35f  // the colour of what no sample is near
@@ -1967,6 +2000,9 @@ static void R_RtAlbedo(const shader_t *shader, vec3_t out)
 	int i;
 
 	VectorSet(out, 0.4f, 0.4f, 0.4f);
+	if (rt.linear) {
+		VectorSet(out, R_RtLinearValue(0.4f), R_RtLinearValue(0.4f), R_RtLinearValue(0.4f));
+	}
 	if (!shader) {
 		return;
 	}
@@ -2002,16 +2038,19 @@ static void R_RtAlbedo(const shader_t *shader, vec3_t out)
 		qglGetTexImageOPM(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 		for (k = 0; k < w * h; k++) {
 			const float a = pixels[k * 4 + 3] / 255.0f;
+			int         c;
 
-			sum[0] += pixels[k * 4] * a;
-			sum[1] += pixels[k * 4 + 1] * a;
-			sum[2] += pixels[k * 4 + 2] * a;
-			alpha  += a;
+			// (r_linearLighting: as light, each texel, before they are averaged)
+			for (c = 0; c < 3; c++) {
+				sum[c] += (rt.linear ? R_RtLinearValue(pixels[k * 4 + c] / 255.0f) : pixels[k * 4 + c] / 255.0f) * a;
+			}
+			alpha += a;
 		}
 		ri.Hunk_FreeTempMemory(pixels);
 		if (alpha > 0) {
 			for (k = 0; k < 3; k++) {
-				out[k] = Com_Clamp(0.03f, 0.85f, sum[k] / (alpha * 255.0f));
+				out[k] = rt.linear ? Com_Clamp(R_RtLinearValue(0.03f), R_RtLinearValue(0.85f), sum[k] / alpha)
+				                   : Com_Clamp(0.03f, 0.85f, sum[k] / alpha);
 			}
 		}
 		VectorCopy(out, rt_albedo[shader->index]);
@@ -2257,6 +2296,69 @@ static void R_RtBounceSamples(void)
 
 // What the sun and the sky (out) and the lamps (lamps) put straight on a
 // point facing normal, which sees sky of the sky, raw
+static float R_RtLightShape(const rtLight_t *l, vec4_t shape);
+
+// GLSL's smoothstep, edges either way round (RtAtten has them both ways)
+static float R_RtSmoothstep(float e0, float e1, float x)
+{
+	const float t = Com_Clamp(0.0f, 1.0f, (x - e0) / (e1 - e0));
+
+	return t * t * (3.0f - 2.0f * t);
+}
+
+// What a light gives at P facing N, as the shaders' RtAtten (tr_glsl.c) has it:
+// its falloff, its spot's cone and soft edge, a lamp's shade and glow, a lit
+// surface's angle. For what is lit off the card (the bounce); 0 out of reach.
+static float R_RtAttenAt(const rtLight_t *l, const vec3_t P, const vec3_t N, vec3_t toLight, float *dist)
+{
+	vec4_t      shape;
+	const float kind = R_RtLightShape(l, shape);
+	float       d2, d, ndl, fade, att;
+
+	VectorSubtract(l->origin, P, toLight);
+	d2 = DotProduct(toLight, toLight);
+	if (l->range <= 0 || d2 >= Square(l->range)) {
+		return 0.0f;
+	}
+	d     = sqrt(d2);
+	*dist = d;
+	ndl   = DotProduct(N, toLight) / Q_max(d, 1e-4f);
+	if (ndl <= 0.0f) {
+		return 0.0f;
+	}
+	fade = 1.0f - d2 / Square(l->range);
+	att  = ndl * fade * fade / Q_max(d2, 256.0f);
+
+	if (kind > 2.5f) {
+		const float shut = VectorLength(shape);
+
+		att = ndl * fade * fade / Q_max(d2, Q_max(shape[3] * shape[3], 256.0f));
+		if (shape[3] < 0.0f) {
+			att *= Q_max(0.0f, DotProduct(toLight, shape)) / (d * shut);
+		} else if (shut > 1.0f) {
+			att *= 1.0f - (shut - 1.0f) * R_RtSmoothstep(0.55f, 0.2f, fabs(DotProduct(toLight, shape)) / (d * shut));
+		} else if (shut > 0.0f) {
+			att *= 1.0f - shut * R_RtSmoothstep(-0.05f, 0.3f, -DotProduct(toLight, shape) / (d * shut));
+		}
+	} else if (kind > 0.5f) {
+		const float along = -DotProduct(toLight, shape);
+		vec3_t      off;
+		float       radiusAtDist, sampleRadius;
+
+		if (along <= 0.001f) {
+			return 0.0f;
+		}
+		radiusAtDist = shape[3] * along;
+		VectorMA(toLight, along, shape, off);
+		sampleRadius = VectorLength(off);
+		if (sampleRadius >= radiusAtDist) {
+			return 0.0f;
+		}
+		att *= Com_Clamp(0.0f, 1.0f, (radiusAtDist - sampleRadius) / 32.0f);
+	}
+	return Q_max(att, 0.0f);
+}
+
 static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky, vec3_t out, vec3_t lamps)
 {
 	trace_t trace;
@@ -2285,41 +2387,16 @@ static void R_RtBounceDirectAt(const vec3_t xyz, const vec3_t normal, float sky,
 	for (i = 0; i < rt.numLights; i++) {
 		const rtLight_t *l = &rt.lights[i];
 		vec3_t           toLight;
-		float            d2, d, ndl, fade, att;
+		float            d, att;
 
-		if (l->range <= 0 || l->entity >= 0) {
+		if (l->entity >= 0) {
 			continue;
 		}
-		VectorSubtract(l->origin, xyz, toLight);
-		d2 = DotProduct(toLight, toLight);
-		if (d2 >= Square(l->range)) {
+		// (as the shaders light it: a lamp's shade held back what the bounce
+		// had of its light, and a spot's soft edge, here a hard one)
+		att = R_RtAttenAt(l, xyz, normal, toLight, &d);
+		if (att <= 0) {
 			continue;
-		}
-		d   = sqrt(d2);
-		ndl = DotProduct(normal, toLight) / Q_max(d, 1e-3f);
-		if (ndl <= 0) {
-			continue;
-		}
-		fade = 1.0f - d2 / Square(l->range);
-		att  = ndl * fade * fade / Q_max(d2, l->lamp ? Square(RT_LAMP_NEAR) : l->area > 0 ? Square(l->area) : 256.0f);
-		if (l->area > 0) {
-			// less the further from straight out of its surface
-			att *= Q_max(0.0f, -DotProduct(toLight, l->spotDir) / Q_max(d, 1e-3f));
-			if (att <= 0) {
-				continue;
-			}
-		}
-		if (l->spot) {
-			const float along = -DotProduct(toLight, l->spotDir);
-			vec3_t      off;
-
-			if (along <= 0.001f) {
-				continue;
-			}
-			VectorMA(toLight, along, l->spotDir, off);
-			if (VectorLength(off) >= l->radiusByDist * along) {
-				continue;
-			}
 		}
 		if (Q_max(l->color[0], Q_max(l->color[1], l->color[2])) * att * r_rtScale->value < 0.5f) {
 			continue;
@@ -2479,8 +2556,8 @@ static int R_RtBounceRadiance(const trace_t *trace, const vec3_t dir, qboolean w
 		outL[2] *= albedo[2];
 		rt_bounce.models++;
 	} else {
-		VectorScale(out, RT_BOUNCE_ALBEDO, out);
-		VectorScale(outL, RT_BOUNCE_ALBEDO, outL);
+		VectorScale(out, rt.linear ? R_RtLinearValue(RT_BOUNCE_ALBEDO) : RT_BOUNCE_ALBEDO, out);
+		VectorScale(outL, rt.linear ? R_RtLinearValue(RT_BOUNCE_ALBEDO) : RT_BOUNCE_ALBEDO, outL);
 		rt_bounce.misses++;
 		if (trace->shaderNum >= 0 && trace->shaderNum < 4096) {
 			rt_missByShader[trace->shaderNum]++;
@@ -2993,6 +3070,7 @@ static unsigned R_RtBounceKey(void)
 #define RT_HASH(x, count) for (k = 0; k < (int)(count) * (int)sizeof(float); k++) { h = (h ^ ((const byte *)(x))[k]) * 16777619u; }
 	n = 0;
 	v[n++] = RT_BOUNCE_VERSION;
+	v[n++] = rt.linear ? 1.0f : 0.0f; // the albedo as light (R_RtAlbedo)
 	v[n++] = (float)rt_bounce.width;
 	v[n++] = (float)rt_bounce.height;
 	v[n++] = (float)rt_bounce.numSamples;
@@ -3798,6 +3876,7 @@ static void R_RtBakeBegin(float alpha, int state)
 	vec4_t off = { 0, 0, 0, 0 }, params = { 1, 2, 1, 0 };
 
 	params[3] = alpha;
+	off[3]    = 16.0f * rt_guard; // the faces' guard (RtShadowAtlas)
 	GL_State(state);
 	GL_Cull(CT_TWO_SIDED);
 	GLSL_BindProgram(&tr.rtLampBakeShader);
@@ -4566,6 +4645,99 @@ static void R_RtBakeLamps(float ease)
 	}
 }
 
+/*
+=============================================================================
+
+LINEAR LIGHT (r_linearLighting)
+
+The compiler added its lights up in the numbers it wrote into the lightmaps,
+and the display shows those numbers as if they were gamma encoded: a value c
+(of white) is shown as c ^ 2.2 of linear light. So the lights here, added up in
+those numbers, were added up in gamma space, and fell off as 1 / d^4.4 in
+light: burnt out near a lamp, dark a little way off, two lamps not adding up as
+light does. With r_linearLighting a constant light (the sun's, the sky's, the
+ambient) is made the linear light it was shown as. A point light is made the
+light it was where it gave r_linearLightRef of white, at d0 with d0^2 its
+brightest over that, and falls off as light does from there. The textures are
+read as linear light too (u_Linear, GLSL_BindProgram), and the tone map shows
+the frame (tonemap_fp.glsl).
+
+=============================================================================
+*/
+
+// gamma 2.2: what the display makes of a value, as light
+static float R_RtLinearValue(float c)
+{
+	return c > 0.0f ? powf(c, 2.2f) : 0.0f;
+}
+
+// A colour in raw units (unit of them a white) made linear light: ref 0 a
+// constant light, else a point light, as it was where it gave ref of white
+static void R_RtLinearColor(vec3_t color, float unit, float ref)
+{
+	vec3_t c;
+	float  brightest, d0;
+	int    k;
+
+	if (unit <= 0.0f) {
+		return;
+	}
+	VectorScale(color, unit, c);
+	if (ref <= 0.0f) {
+		for (k = 0; k < 3; k++) {
+			c[k] = R_RtLinearValue(c[k]);
+		}
+	} else {
+		brightest = Q_max(c[0], Q_max(c[1], c[2]));
+		if (brightest <= 0.0f) {
+			return;
+		}
+		d0 = brightest / ref; // the distance squared it gave ref at
+		for (k = 0; k < 3; k++) {
+			c[k] = d0 * R_RtLinearValue(c[k] / d0);
+		}
+	}
+	VectorScale(c, 1.0f / unit, color);
+}
+
+// Whether the light is linear: the shaders read the textures as light then
+qboolean R_RtLinear(void)
+{
+	return R_RtActive() && rt.linear ? qtrue : qfalse;
+}
+
+// The least a light may give a pixel to be looked up there (RtLight, R_RtReach).
+// With r_linearLighting it is light, not a value as shown: r_rtCutoff 0.0005
+// is then 0.03 of white as shown, and still changed nothing that showed in the
+// m3l2 lamp room (0.009% of its pixels by more than 8 of 255, against taking it
+// as shown, whose light, 5e-8, reached so far it cost the room 1.2 ms)
+static float R_RtCutoff(void)
+{
+	return Q_max(0.0f, r_rtCutoff->value);
+}
+
+// The map's lights, the sun, the sky and the ambient made linear light, once
+// they are all made (R_RtLoadWorld); the entity lamps as they are lit
+// (R_RtEntityLamps) and the game's lights as they are sent (R_RtRenderShadows)
+static void R_RtLinearize(void)
+{
+	const int   shift = r_mapOverBrightBits->integer - tr.overbrightBits;
+	const float bake  = (float)(1 << Q_max(0, shift)) / 255.0f;
+	int         i;
+
+	rt.linear = r_linearLighting->integer && r_realtimeLighting->integer == 2 && r_hdr->integer ? qtrue : qfalse;
+	if (!rt.linear) {
+		return;
+	}
+	rt.linearUnit = bake * r_rtScale->value;
+	for (i = 0; i < rt.numMapLights; i++) {
+		R_RtLinearColor(rt.lights[i].color, rt.linearUnit, r_linearLightRef->value);
+	}
+	R_RtLinearColor(rt.sunColor, bake, 0.0f);
+	R_RtLinearColor(rt.skyColor, bake, 0.0f);
+	R_RtLinearColor(rt.ambient, bake, 0.0f);
+}
+
 void R_RtLoadWorld(void)
 {
 	int i;
@@ -4667,6 +4839,7 @@ void R_RtLoadWorld(void)
 	}
 
 	R_RtSetupSky();
+	R_RtLinearize();
 
 	rt.loaded = qtrue;
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lights%s\n", rt.numLights, rt.sun ? " and the sun" : "");
@@ -4771,12 +4944,27 @@ static float R_RtSlotCode(int slot)
 	return slot < RT_SLOTS_BIG ? (float)(slot * 6) : (float)(RT_SMALL_CODE + (slot - RT_SLOTS_BIG) * 6);
 }
 
+// How much of a face's tile its 90 degrees take: the rest is the guard,
+// rt_guard texels each side, drawn past the face's edge (RtShadowAtlas)
+static float R_RtFaceScale(int size)
+{
+	return 1.0f - 2.0f * rt_guard / (float)size;
+}
+
+// The smallest tile's: the widest faces, for the tests of what a face sees
+static float R_RtFaceScaleMin(void)
+{
+	return R_RtFaceScale(Q_min(r_rtShadowTile->integer, R_RtBakedTile()) / 2);
+}
+
 static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 {
 	viewParms_t parms;
 	int         x, y, size;
+	float       fov;
 
 	R_RtFaceRect(atlas, slot, face, &x, &y, &size);
+	fov = 2.0f * RAD2DEG(atan(1.0f / R_RtFaceScale(size)));
 	Com_Memset(&parms, 0, sizeof(parms));
 	parms.viewportX      = x;
 	parms.viewportY      = y;
@@ -4784,8 +4972,8 @@ static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 	parms.viewportHeight = size;
 	parms.isPortal       = qfalse;
 	parms.isMirror       = qfalse;
-	parms.fovX           = 90;
-	parms.fovY           = 90;
+	parms.fovX           = fov;
+	parms.fovY           = fov;
 	parms.flags          = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_NOCUBEMAPS
 				| (atlas == 0 ? VPF_RTSTATIC : atlas == 1 ? VPF_RTDYNAMIC : VPF_RTBAKED);
 	parms.zFar           = l->range;
@@ -4806,6 +4994,9 @@ static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre
 	vec3_t v;
 	int    faces = 0, f;
 
+	// a face's sides, as drawn with its guard: |left| = fwd * t, |up| = fwd * t
+	const float t = 1.0f / R_RtFaceScaleMin(), n = 1.0f / sqrt(t * t + 1.0f);
+
 	VectorSubtract(centre, l->origin, v);
 	if (DotProduct(v, v) > Square(range + radius)) {
 		return 0;
@@ -4820,14 +5011,13 @@ static int R_RtFacesTouched(const rtLight_t *l, float range, const vec3_t centre
 		left = DotProduct(v, axis[1]);
 		up   = DotProduct(v, axis[2]);
 
-		// the four sides of a 90 degree face are |left| = fwd and |up| = fwd
 		if (fwd + radius <= 0) {
 			continue;
 		}
-		if ((fwd - left) * RT_SQRT1_2 < -radius || (fwd + left) * RT_SQRT1_2 < -radius) {
+		if ((fwd * t - left) * n < -radius || (fwd * t + left) * n < -radius) {
 			continue;
 		}
-		if ((fwd - up) * RT_SQRT1_2 < -radius || (fwd + up) * RT_SQRT1_2 < -radius) {
+		if ((fwd * t - up) * n < -radius || (fwd * t + up) * n < -radius) {
 			continue;
 		}
 		faces |= 1 << f;
@@ -5476,7 +5666,9 @@ taps' spread.
 
 static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frustum[5])
 {
-	int faces = 0, f, c, k;
+	// the face's pyramid as drawn, its guard included (R_RtFaceScale)
+	const float side = range / R_RtFaceScaleMin();
+	int         faces = 0, f, c, k;
 
 	for (f = 0; f < 6; f++) {
 		vec3_t axis[3], points[5];
@@ -5485,8 +5677,8 @@ static int R_RtFacesInView(const rtLight_t *l, float range, const cplane_t frust
 		VectorCopy(l->origin, points[0]);
 		for (c = 0; c < 4; c++) {
 			VectorMA(l->origin, range, axis[0], points[c + 1]);
-			VectorMA(points[c + 1], (c & 1) ? range : -range, axis[1], points[c + 1]);
-			VectorMA(points[c + 1], (c & 2) ? range : -range, axis[2], points[c + 1]);
+			VectorMA(points[c + 1], (c & 1) ? side : -side, axis[1], points[c + 1]);
+			VectorMA(points[c + 1], (c & 2) ? side : -side, axis[2], points[c + 1]);
 		}
 
 		for (k = 0; k < 5; k++) {
@@ -5648,6 +5840,18 @@ static float R_RtFlicker(const rtLight_t *l, int time)
 
 void R_RtRenderShadows(const refdef_t *fd)
 {
+	// a new guard: every face drawn again with it, the lights out until they
+	// are, as when a map loads
+	if (r_rtShadowGuard->integer != rt_guard) {
+		int i;
+
+		rt_guard = r_rtShadowGuard->integer;
+		for (i = 0; i < rt.numLights; i++) {
+			rt.lights[i].staticFaces = 0;
+			rt.lights[i].bakedFaces  = 0;
+		}
+	}
+
 	float     sorted[1024][2];
 	int       numSorted = 0, numChosen, numCandidates, numInView, room;
 	int       candidates[RT_MAX_LIGHTS];
@@ -5740,7 +5944,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		// how far it gives a pixel enough to see (R_RtReach)
 		VectorScale(l->color, scale, colorRange);
 		colorRange[3] = l->range;
-		lightReach    = R_RtReach(colorRange, r_rtCutoff->value);
+		lightReach    = R_RtReach(colorRange, R_RtCutoff());
 		if (lightReach == 0.0f || lightReach < -0.5f) {
 			continue; // it gives nothing anywhere
 		}
@@ -5934,7 +6138,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 				VectorScale(l->color, scale, colorRange);
 				colorRange[3] = l->range;
-				reach = R_RtReach(colorRange, r_rtCutoff->value);
+				reach = R_RtReach(colorRange, R_RtCutoff());
 			} else {
 				reach = l->range;
 			}
@@ -6075,6 +6279,9 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorCopy(dl->origin, data[0]);
 		data[0][3] = 2.0f;
 		VectorScale(dl->color, intensity * scale * r_rtDlights->value, data[1]);
+		if (rt.linear) {
+			R_RtLinearColor(data[1], 1.0f, r_linearLightRef->value); // already of white
+		}
 		data[1][3] = dl->radius;
 		VectorClear4(data[2]);
 		VectorSet4(data[3], -1.0f, -1.0f, -1.0f, dl->radius);
@@ -6098,7 +6305,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		Com_Clamp(0.0f, 1.0f, r_rtDarkest->value));
 	// how far each light's light is worth looking up (R_RtReach)
 	for (i = 0; i < tr.rtNumActive; i++) {
-		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], r_rtCutoff->value);
+		tr.rtLightReach[i] = R_RtReach(tr.rtLightData[i * RT_LIGHT_VEC4S + 1], R_RtCutoff());
 	}
 
 	// each program is sent the lights once a frame, not compared with them
@@ -6125,7 +6332,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
 	// the least a light may add to a pixel and be looked up there (RtLight)
-	tr.rtAmbient[3] = Q_max(0.0f, r_rtCutoff->value);
+	tr.rtAmbient[3] = R_RtCutoff();
 
 	if (r_rtDebug->integer) {
 		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
@@ -6540,12 +6747,22 @@ void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean
 				}
 			}
 			VectorSet4(surface, R_RtIsFoliage(tess.shader) ? RT_FOLIAGE_THROUGH : 0.0f, sky,
-				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value);
+				Q_max(0.0f, r_rtSpecular->value), r_rtShadowSoft->value + 16.0f * rt_guard);
 			GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);
 		}
 		VectorCopy4(tr.rtParams, params);
 		params[0] = (float)count;
 		GLSL_SetUniformVec4(sp, UNIFORM_RTPARAMS, params);
+		{
+			// r_gtao: the main view's solid surfaces only (what is seen
+			// through glass would take the occlusion of what is behind it)
+			vec4_t ao = { 0, 0, 0, 0 };
+
+			if (backEnd.gtaoOn && tess.shader->sort <= SS_OPAQUE && !backEnd.depthFill) {
+				ao[0] = 1.0f;
+			}
+			GLSL_SetUniformVec4(sp, UNIFORM_RTAO, ao);
+		}
 		if (!count && !tr.rtSunDir[3] && tr.rtParams[1] < 1.5f) {
 			return;
 		}

@@ -122,12 +122,22 @@ cvar_t  *r_forceToneMapMax;
 
 cvar_t  *r_autoExposure;
 cvar_t  *r_forceAutoExposure;
+cvar_t  *r_autoExposureKey;
+cvar_t  *r_autoExposureStrength;
+cvar_t  *r_autoExposureMinEV;
+cvar_t  *r_autoExposureMaxEV;
+cvar_t  *r_autoExposureDarkSpeed;
+cvar_t  *r_autoExposureBrightSpeed;
+cvar_t  *r_autoExposureDebug;
 cvar_t  *r_forceAutoExposureMin;
 cvar_t  *r_forceAutoExposureMax;
 
 cvar_t  *r_depthPrepass;
 cvar_t  *r_earlyZ;
 cvar_t  *r_ssao;
+cvar_t  *r_gtao;
+cvar_t  *r_gtaoRadius;
+cvar_t  *r_gtaoStrength;
 cvar_t  *r_volumetric;
 cvar_t  *r_volumetricDensity;
 cvar_t  *r_volumetricAnisotropy;
@@ -143,6 +153,7 @@ cvar_t  *r_parallaxMapOffset;
 cvar_t  *r_parallaxMapShadows;
 cvar_t  *r_cubeMapping;
 cvar_t  *r_cubemapSize;
+cvar_t  *r_cubemapStrength;
 cvar_t  *r_deluxeSpecular;
 cvar_t  *r_pbr;
 cvar_t  *r_baseNormalX;
@@ -167,8 +178,12 @@ cvar_t  *r_sunShadows;
 cvar_t  *r_sunShadowScale;
 cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
+cvar_t  *r_contactShadows;
+cvar_t  *r_contactShadowLength;
+cvar_t  *r_contactShadowThickness;
 cvar_t  *r_shadowMapSize;
 cvar_t  *r_sunShadowFarSize;
+cvar_t  *r_sunShadowStable;
 cvar_t  *r_shadowCascadeZNear;
 cvar_t  *r_shadowCascadeZFar;
 cvar_t  *r_shadowCascadeZBias;
@@ -1594,7 +1609,25 @@ void R_Register( void )
 	// Off for MOH:AA: eye adaptation rescales the frame by its own average
 	// luminance, so brightness drifts as you turn and looking at anything bright
 	// darkens everything else. Only has an effect when r_hdr is on.
+	// (OPM: now an eye's: a part of the way, slower into the dark than out of
+	// it, and no more than a few stops off the fixed exposure; RB_EyeAdapt)
 	r_autoExposure = ri.Cvar_Get( "r_autoExposure", "0", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposure, "Eye adaptation (with r_hdr 1): the exposure follows how bright the view is, a part of the way (r_autoExposureStrength), slowly into the dark and quicker out of it, a few stops off the fixed exposure at most");
+	r_autoExposureKey = ri.Cvar_Get( "r_autoExposureKey", "-4.2", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureKey, "Eye adaptation: how bright a view is (its average light, in stops: r_autoExposureDebug 1 shows it) that the fixed exposure is right for; darker views are brightened, brighter ones darkened");
+	r_autoExposureStrength = ri.Cvar_Get( "r_autoExposureStrength", "0.4", CVAR_ARCHIVE );
+	ri.Cvar_CheckRange(r_autoExposureStrength, 0, 1, qfalse);
+	ri.Cvar_SetDescription(r_autoExposureStrength, "Eye adaptation: how much of the way it goes (1: a dark room ends up as bright as a sunny street; 0.4: less than half way, a room stays darker)");
+	r_autoExposureMinEV = ri.Cvar_Get( "r_autoExposureMinEV", "-1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureMinEV, "Eye adaptation: the most it darkens a bright view, in stops");
+	r_autoExposureMaxEV = ri.Cvar_Get( "r_autoExposureMaxEV", "1.5", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureMaxEV, "Eye adaptation: the most it brightens a dark view, in stops");
+	r_autoExposureDarkSpeed = ri.Cvar_Get( "r_autoExposureDarkSpeed", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureDarkSpeed, "Eye adaptation: how quickly it gets used to the dark (per second: 1 is most of the way in about 2 seconds)");
+	r_autoExposureBrightSpeed = ri.Cvar_Get( "r_autoExposureBrightSpeed", "3", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_autoExposureBrightSpeed, "Eye adaptation: how quickly it gets used to the light (per second)");
+	r_autoExposureDebug = ri.Cvar_Get( "r_autoExposureDebug", "0", 0 );
+	ri.Cvar_SetDescription(r_autoExposureDebug, "1: prints the view's average light and the exposure eye adaptation gives it, once a second");
 	r_forceAutoExposure = ri.Cvar_Get( "r_forceAutoExposure", "0", CVAR_CHEAT );
 	r_forceAutoExposureMin = ri.Cvar_Get( "r_forceAutoExposureMin", "-2.0", CVAR_CHEAT );
 	r_forceAutoExposureMax = ri.Cvar_Get( "r_forceAutoExposureMax", "2.0", CVAR_CHEAT );
@@ -1618,6 +1651,13 @@ void R_Register( void )
 	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "0", 0 );
 	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Can make layers flicker where the prepass's depth differs by a bit. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
+	// Added in OPM: ambient occlusion on the light from all round alone (gtao_fp.glsl)
+	r_gtao = ri.Cvar_Get( "r_gtao", "1", CVAR_LATCH | CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_gtao, "With r_realtimeLighting 2: ambient occlusion on the light that comes from all round (the sky, the bounce, the ambient), not on the lamps' or the sun's, which have shadows of their own: corners, the floor under furniture, the creases of a body darker. Needs vid_restart");
+	r_gtaoRadius = ri.Cvar_Get( "r_gtaoRadius", "32", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_gtaoRadius, "Ambient occlusion: how far round a point what is near it darkens it, in units");
+	r_gtaoStrength = ri.Cvar_Get( "r_gtaoStrength", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_gtaoStrength, "Ambient occlusion: how dark it gets (0: none; 2: twice as dark)");
 	// Added in OPM: the light in the air (volumetric_fp.glsl)
 	r_volumetric = ri.Cvar_Get( "r_volumetric", "1", CVAR_LATCH | CVAR_ARCHIVE );
 	ri.Cvar_SetDescription(r_volumetric, "With r_realtimeLighting 2: the light in the air, the sun's shafts through windows and trees and the glow round lamps, in their shadows. Needs vid_restart");
@@ -1640,6 +1680,9 @@ void R_Register( void )
 	r_parallaxMapShadows = ri.Cvar_Get( "r_parallaxMapShadows", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_cubemapSize = ri.Cvar_Get( "r_cubemapSize", "128", CVAR_ARCHIVE | CVAR_LATCH );
+	// Added in OPM: live, for comparing
+	r_cubemapStrength = ri.Cvar_Get( "r_cubemapStrength", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_cubemapStrength, "With r_cubeMapping: how strong the reflections of the room round a shiny surface are (0 none, 1 as the material has it)");
 	// Off for MOH:AA. This drives specular from a deluxe map, which MOH:AA BSPs
 	// do not have, and on the non-light-vector path (every lightmapped world
 	// surface) the value is not used as a scale at all -- it only bends the
@@ -1677,9 +1720,18 @@ void R_Register( void )
 	r_sunShadowScale = ri.Cvar_Get( "r_sunShadowScale", "0.85", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowBlur = ri.Cvar_Get("r_shadowBlur", "0", CVAR_ARCHIVE | CVAR_LATCH);
+	// Added in OPM: contact shadows (shadowmask_fp.glsl)
+	r_contactShadows = ri.Cvar_Get("r_contactShadows", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_contactShadows, "Contact shadows: what stands close to a point and the sun, too small for the sun's shadow maps (a boot, a crate's corner, a step), still shadows it: the view's depth is searched a short way towards the sun (0: off)");
+	r_contactShadowLength = ri.Cvar_Get("r_contactShadowLength", "24", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_contactShadowLength, "Contact shadows: how far towards the sun the depth is searched, in units (longer further off)");
+	r_contactShadowThickness = ri.Cvar_Get("r_contactShadowThickness", "16", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_contactShadowThickness, "Contact shadows: how thick something seen in front is taken to be, in units: thicker shadows more, thinner lets light round what only seems close");
 	r_shadowMapSize = ri.Cvar_Get("r_shadowMapSize", "1024", CVAR_ARCHIVE | CVAR_LATCH);
 	r_sunShadowFarSize = ri.Cvar_Get("r_sunShadowFarSize", "4096", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_sunShadowFarSize, "Texels across the sun's last shadow cascade, the whole level's, which gives every shadow past r_shadowCascadeZFar. Drawn once (again only when the sun moves), so unlike r_shadowMapSize it costs memory, not frame time: 4096 is 64 MB (0: as r_shadowMapSize)");
+	r_sunShadowStable = ri.Cvar_Get("r_sunShadowStable", "1", 0);
+	ri.Cvar_SetDescription(r_sunShadowStable, "Keeps the sun's near shadow cascades still as the view turns and moves: each is a square round the sphere that holds its slice of the view, turned with the world, not the camera, and moved a whole texel at a time, so shadow edges no longer crawl. 0: fitted to the slice and turned with the camera, sharper but shimmering");
 	r_shadowCascadeZNear = ri.Cvar_Get( "r_shadowCascadeZNear", "8", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZFar = ri.Cvar_Get( "r_shadowCascadeZFar", "1024", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowCascadeZBias = ri.Cvar_Get( "r_shadowCascadeZBias", "0", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1838,11 +1890,11 @@ void R_Register( void )
 	// a pixel or two, and it shifts towards *more* tessellation. So the delta
 	// is refinement, not degradation.
 	//
-	// It stays opt-in only because that characterisation rests on one map;
-	// dm/mohdm1 and dm/mohdm6, which the original 1.6%/2.6% figures came from,
-	// could not be re-checked because DM spawn points are picked at random and
-	// two runs do not share a camera.
-	r_vaoCache = ri.Cvar_Get("r_vaoCache", "0", CVAR_ARCHIVE);
+	// That rested on one map until dm/mohdm6, where the original 1.6%/2.6%
+	// figures came from, was re-checked with the camera pinned and the world
+	// frozen (orch_campos): three views, cache off and on, the same pixels but
+	// for 0.018% of one view; off against off, the same. So it is on.
+	r_vaoCache = ri.Cvar_Get("r_vaoCache", "1", CVAR_ARCHIVE);
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
@@ -1919,6 +1971,7 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
 	// Added in OPM
 	ri.Cmd_AddCommand( "groundcoverinfo", R_GroundCoverInfo_f );
+	ri.Cmd_AddCommand( "reflectioninfo", R_ReflectionInfo_f );
 	ri.Cmd_AddCommand( "waterinfo", R_WaterInfo_f );
 	ri.Cmd_AddCommand( "waterreload", R_WaterReload_f );
 	ri.Cmd_AddCommand( "skelgpuinfo", R_SkelGpuInfo_f );
@@ -2197,6 +2250,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
 	// Added in OPM
 	ri.Cmd_RemoveCommand( "groundcoverinfo" );
+	ri.Cmd_RemoveCommand( "reflectioninfo" );
 	ri.Cmd_RemoveCommand( "waterinfo" );
 	ri.Cmd_RemoveCommand( "waterreload" );
 	ri.Cmd_RemoveCommand( "skelgpuinfo" );
@@ -2211,6 +2265,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 		R_ShutDownQueries();
 		if (glRefConfig.framebufferObject)
 			FBO_Shutdown();
+			RB_EyeAdaptShutdown();
 		R_DeleteTextures();
 		R_ShutdownVaos();
 		GLSL_ShutdownGPUShaders();

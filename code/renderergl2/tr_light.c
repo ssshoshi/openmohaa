@@ -493,8 +493,23 @@ int R_CubemapForPoint( vec3_t point )
 
 	if (r_cubeMapping->integer && tr.numCubemaps)
 	{
-		int i;
-		vec_t shortest = (float)WORLD_SIZE * (float)WORLD_SIZE;
+		int i, area = -1, sameArea = -1;
+		vec_t shortest = (float)WORLD_SIZE * (float)WORLD_SIZE, shortestSame = shortest;
+		const byte *vis = NULL;
+
+		// Added in OPM: the nearest that the point's area holds and its
+		// cluster can see (not one in the next room through the wall), the
+		// nearest of all where none is
+		if (tr.world)
+		{
+			mnode_t *leaf = R_PointInLeaf(point);
+			if (leaf->cluster >= 0)
+			{
+				area = leaf->area;
+				if (tr.world->vis && leaf->cluster < tr.world->numClusters)
+					vis = tr.world->vis + leaf->cluster * tr.world->clusterBytes;
+			}
+		}
 
 		for (i = 0; i < tr.numCubemaps; i++)
 		{
@@ -509,10 +524,55 @@ int R_CubemapForPoint( vec3_t point )
 				shortest = length;
 				cubemapIndex = i;
 			}
+			if (area >= 0 && tr.cubemaps[i].area == area && shortestSame > length
+				&& (!vis || (tr.cubemaps[i].cluster >= 0 && (vis[tr.cubemaps[i].cluster >> 3] & (1 << (tr.cubemaps[i].cluster & 7))))))
+			{
+				shortestSame = length;
+				sameArea = i;
+			}
 		}
+		if (sameArea >= 0)
+			cubemapIndex = sameArea;
 	}
 
 	return cubemapIndex + 1;
+}
+
+// Added in OPM: the reflection probes (r_cubeMapping), and the one where the
+// view is
+void R_ReflectionInfo_f( void )
+{
+	int i, here;
+
+	extern int r_envPlaces, r_envSpots, r_envDrawMsec;
+
+	ri.Printf(PRINT_ALL, "placed from %d path nodes and spawns, %d of them over a floor; drawn at load in %d ms\n", r_envPlaces, r_envSpots, r_envDrawMsec);
+	if (!r_cubeMapping->integer || !tr.numCubemaps)
+	{
+		ri.Printf(PRINT_ALL, "no reflection probes (r_cubeMapping %d)\n", r_cubeMapping->integer);
+		return;
+	}
+	here = R_CubemapForPoint(tr.refdef.vieworg);
+	for (i = 0; i < tr.numCubemaps; i++)
+	{
+		const cubemap_t *c = &tr.cubemaps[i];
+		ri.Printf(PRINT_ALL, "%c%3d %-12s (%5.0f %5.0f %5.0f) radius %4.0f area %d%s\n", i + 1 == here ? '*' : ' ', i, c->name,
+			c->origin[0], c->origin[1], c->origin[2], c->parallaxRadius, c->area, c->image ? "" : " (not drawn)");
+	}
+	ri.Printf(PRINT_ALL, "%d probes, %d px; the view takes %d\n", tr.numCubemaps, r_cubemapSize->integer, here - 1);
+}
+
+// Added in OPM: R_CubemapForPoint for a model drawn in this view; none in a
+// view that draws no colour (it would only split the batches)
+int R_ViewCubemapForPoint( const vec3_t point )
+{
+	vec3_t p;
+
+	if (!r_cubeMapping->integer || !tr.numCubemaps
+		|| (tr.viewParms.flags & (VPF_NOCUBEMAPS | VPF_SHADOWMAP | VPF_DEPTHSHADOW)))
+		return 0;
+	VectorCopy(point, p);
+	return R_CubemapForPoint(p);
 }
 
 //
@@ -631,7 +691,11 @@ static int RB_GetEntityGridLighting( void )
 		vLight[0] = vLight[1] = vLight[2] = tr.identityLight * 150.0;
 	}
 
-	R_AddDlightsToGridValue( &backEnd.refdef, lightOrigin, vLight );
+	// Added in OPM: not when the realtime lights light the model, all of the
+	// light live, the dynamic lights among them: it had them twice
+	if ( !R_RtLitLive() || !R_RtTakesDlights() ) {
+		R_AddDlightsToGridValue( &backEnd.refdef, lightOrigin, vLight );
+	}
 	R_NormalizeGridLighting( vLight );
 
 	return R_PackGridLighting( vLight );
@@ -712,7 +776,10 @@ void RB_SetupStaticModelGridLighting(trRefdef_t *refdef, cStaticModelUnpacked_t 
 		vLight[0] = vLight[1] = vLight[2] = tr.identityLight * 150.0;
 	}
 
-	R_AddDlightsToGridValue( refdef, lightOrigin, vLight );
+	// Added in OPM: as for an entity (RB_GetEntityGridLighting)
+	if ( !R_RtLitLive() || !R_RtTakesDlights() ) {
+		R_AddDlightsToGridValue( refdef, lightOrigin, vLight );
+	}
 	R_NormalizeGridLighting( vLight );
 
 	ent->iGridLighting = R_PackGridLighting( vLight );

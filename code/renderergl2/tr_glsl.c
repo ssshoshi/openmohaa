@@ -46,6 +46,8 @@ extern const char *fallbackShader_shadowfill_vp;
 extern const char *fallbackShader_shadowfill_fp;
 extern const char *fallbackShader_shadowmask_vp;
 extern const char *fallbackShader_shadowmask_fp;
+extern const char *fallbackShader_gtao_vp;
+extern const char *fallbackShader_gtao_fp;
 extern const char *fallbackShader_volumetric_vp;
 extern const char *fallbackShader_volumetric_fp;
 extern const char *fallbackShader_ssao_vp;
@@ -191,6 +193,7 @@ static uniformInfo_t uniformsInfo[] =
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	{ "u_RtLights",        GLSL_VEC4_RTLIGHTS },
 	{ "u_RtParams",        GLSL_VEC4 },
+	{ "u_Linear",          GLSL_FLOAT },
 	{ "u_RtSunDir",        GLSL_VEC4 },
 	{ "u_RtSunColor",      GLSL_VEC4 },
 	{ "u_RtAmbient",       GLSL_VEC4 },
@@ -210,6 +213,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtSkyLightmap",   GLSL_INT },
 	{ "u_RtBounce",        GLSL_VEC4 },
 	{ "u_RtBounceMap",     GLSL_INT },
+	{ "u_RtAO",            GLSL_VEC4 },
+	{ "u_RtAOMap",         GLSL_INT },
+	{ "u_AOParams",        GLSL_VEC4 },
 	{ "u_VolParams",       GLSL_VEC4 },
 	{ "u_VolRange",        GLSL_VEC4 },
 	{ "u_RtBounceLampMap", GLSL_INT },
@@ -402,6 +408,9 @@ static const char *rt_glsl =
 	// the light bounced onto each texel of the lightmap (R_RtBounce), at rt_skyLM; its scale, w 1 on
 	"uniform vec4 u_RtBounce;\n"
 	"uniform sampler2D u_RtBounceMap;\n"
+	// r_gtao: x on, the view's ambient occlusion in u_RtAOMap (RB_RenderDrawSurfList)
+	"uniform sampler2D u_RtAOMap;\n"
+	"uniform vec4      u_RtAO;\n"
 	// the lamps' light bounced, apart: as it would be, under a roof or not (z its scale)
 	"uniform sampler2D u_RtBounceLampMap;\n"
 	// on what has no lightmap, from the probes round it: for each colour m + v . N (xyz v, w m)
@@ -449,10 +458,17 @@ static const char *rt_glsl =
 	"	}\n"
 	"	vec2  origin = vec2(mod(tile, tiles), floor(tile / tiles));\n"
 	// the four taps (each four texels, filtered) half a texel apart, or as
-	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps
-	"	float spread = max(u_RtSurface.w, 1.0);\n"
+	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps.
+	// The face was drawn guard texels wider than its 90 degrees each side
+	// (u_RtSurface.w / 16, r_rtShadowGuard; R_RtFaceScale), so its 90 degrees
+	// are the middle of the tile and the taps near an edge read the guard,
+	// what the next face sees there; clamped inside the tile, they read the
+	// same texels over and over and the shadow smeared along every edge.
+	"	float guard  = floor(u_RtSurface.w / 16.0);\n"
+	"	float spread = max(u_RtSurface.w - 16.0 * guard, 1.0);\n"
 	"	float texel  = 1.0 / texels;\n"
-	"	vec2  st     = clamp(faceUV, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
+	"	vec2  st     = (faceUV - 0.5) * (1.0 - 2.0 * guard * texel) + 0.5;\n"
+	"	st           = clamp(st, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
 	"	vec2  uv     = (origin + st) / tiles;\n"
 	"	float d      = 0.5 * spread / (RT_TILES * tileTexels);\n"
 	"	return 0.25 * (shadow2D(atlas, vec3(uv + vec2(-d, -d), depth))\n"
@@ -599,6 +615,13 @@ static const char *rt_glsl =
 	"vec3  rt_specView  = vec3(0.0, 0.0, 1.0);\n"
 	"float rt_specRough = 1.0;\n"
 	"vec3  rt_spec      = vec3(0.0);\n"
+	// r_gtao: how much of the light from all round reaches the pixel (the
+	// sky, the bounce, the probes, the ambient); the caller reads it
+	"float rt_ao        = 1.0;\n"
+	"float RtAmbientOcclusion()\n"
+	"{\n"
+	"	return u_RtAO.x > 0.5 ? texture2D(u_RtAOMap, gl_FragCoord.xy * r_FBufScale).r : 1.0;\n"
+	"}\n"
 	"float RtSpecular(vec3 N, vec3 L)\n"
 	"{\n"
 	"	vec3  H  = normalize(L + rt_specView);\n"
@@ -672,6 +695,7 @@ static const char *rt_glsl =
 	"vec3 RtLight(vec3 P, vec3 N, bool delta)\n"
 	"{\n"
 	"	vec3 sum   = vec3(0.0);\n"
+	"	rt_ao = delta ? 1.0 : RtAmbientOcclusion();\n"
 	"	int  count = int(u_RtParams.x);\n"
 	// the baked lamps (u_RtDirect.w, eased in): their light on a lightmap
 	// is read from it, all of them, and the few lit live add what they
@@ -743,14 +767,14 @@ static const char *rt_glsl =
 	// soft, and the same over a model or a leaf: worked out at its vertexes
 	// on a lightmap, worked out for each of its texels once a map
 	"		if (u_RtSurface.y > 1.5)\n"
-	"			sum += u_RtSkyColor.rgb * (float(RT_SKY_DIRS) * 0.5) * texture2D(u_RtSkyLightmap, rt_skyLM).r;\n"
+	"			sum += rt_ao * u_RtSkyColor.rgb * (float(RT_SKY_DIRS) * 0.5) * texture2D(u_RtSkyLightmap, rt_skyLM).r;\n"
 	"		else\n"
 	"#if defined(USE_RTSKY_VERTEX)\n"
 	"		if (u_RtSurface.y > 0.5)\n"
-	"			sum += var_RtSky;\n"
+	"			sum += rt_ao * var_RtSky;\n"
 	"		else\n"
 	"#endif\n"
-	"		sum += RtSky(P, N);\n"
+	"		sum += rt_ao * RtSky(P, N);\n"
 	"	}\n"
 	// what the sun, the sky and the lamps light round it gives back
 	"#if defined(RT_BOUNCE)\n"
@@ -758,10 +782,10 @@ static const char *rt_glsl =
 	// x out under the sky, y deep in a room, by how far in its texel is (alpha)
 	"	{\n"
 	"		vec4 b = texture2D(u_RtBounceMap, rt_skyLM);\n"
-	"		sum += mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb + u_RtBounce.z * texture2D(u_RtBounceLampMap, rt_skyLM).rgb;\n"
+	"		sum += rt_ao * (mix(u_RtBounce.x, u_RtBounce.y, b.a) * b.rgb + u_RtBounce.z * texture2D(u_RtBounceLampMap, rt_skyLM).rgb);\n"
 	"	}\n"
 	"	else if (u_RtBounce.w > 0.5 && !delta)\n"
-	"		sum += u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
+	"		sum += rt_ao * u_RtBounce.rgb * max(vec3(0.0), vec3(u_RtProbeR.w + dot(u_RtProbeR.xyz, N), u_RtProbeG.w + dot(u_RtProbeG.xyz, N), u_RtProbeB.w + dot(u_RtProbeB.xyz, N)));\n"
 	"#endif\n"
 	// the baked lamps' light on this lightmap (R_RtBakeLamps), rgb its scale
 	// the baked lamps' light on this lightmap (R_RtBakeLamps), rgb its scale,
@@ -2011,7 +2035,9 @@ static qboolean GLSL_InitLightallShader(int i)
 		| LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)))
 		return qfalse;
 
-	if ((i & LIGHTDEF_GROUNDCOVER) && (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX))
+	// (lit by its vertexes it may be: the tufts bring no light direction, and
+	// their colour, all of the light live, gives way to the ambient)
+	if ((i & LIGHTDEF_GROUNDCOVER) && lightType == LIGHTDEF_USE_LIGHTMAP)
 		return qfalse;
 
 	// Added in OPM: a skeletal model posed from the frame's bones, which
@@ -2193,6 +2219,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTAOMAP,         TMU_RTAO);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
@@ -2321,6 +2348,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
+	GLSL_SetUniformInt(sp, UNIFORM_RTAOMAP,         TMU_RTAO);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
 	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTMAP,     TMU_RTDIRECT);
 	GLSL_SetUniformInt(sp, UNIFORM_RTDIRECTDIR,     TMU_RTDIRECTDIR);
@@ -2776,6 +2804,19 @@ void GLSL_InitGPUShaders(void)
 
 		numEtcShaders++;
 
+		// Added in OPM: r_gtao's pass, with all of the light live
+		if (r_gtao->integer && r_realtimeLighting->integer == 2)
+		{
+			if (!GLSL_InitGPUShader(&tr.gtaoShader, "gtao", attribs, qtrue, extradefines, qtrue, fallbackShader_gtao_vp, fallbackShader_gtao_fp))
+			{
+				ri.Error(ERR_FATAL, "Could not load gtao shader!");
+			}
+			GLSL_InitUniforms(&tr.gtaoShader);
+			GLSL_SetUniformInt(&tr.gtaoShader, UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+			GLSL_FinishGPUShader(&tr.gtaoShader);
+			numEtcShaders++;
+		}
+
 
 		for (i = 0; i < 4; i++)
 		{
@@ -2975,6 +3016,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.volumetricShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
+	GLSL_DeleteGPUShader(&tr.gtaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
@@ -3000,6 +3042,17 @@ void GLSL_BindProgram(shaderProgram_t * program)
 
 	if (GL_UseProgram(programObject))
 		backEnd.pc.c_glslShaderBinds++;
+
+	// Added in OPM: r_linearLighting. The world's view reads its textures
+	// and colours as linear light, and the tone map shows it; the 2D, and
+	// scenes without the world, which are not tone mapped, as ever.
+	if (program && program->uniforms[UNIFORM_LINEAR] != -1)
+	{
+		const qboolean linear = R_RtLinear() && (program == &tr.tonemapShader
+			|| (!backEnd.projection2D && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL)));
+
+		GLSL_SetUniformFloat(program, UNIFORM_LINEAR, linear ? 1.0f : 0.0f);
+	}
 }
 
 

@@ -76,6 +76,7 @@ const char *const gpuTimerNames[GPUTIMER_COUNT] = {
 	"present",
 	"flares",
 	"sprites",
+	"ao",
 	"volume"
 };
 
