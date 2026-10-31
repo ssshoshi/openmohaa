@@ -407,10 +407,14 @@ void R_AddStaticModelSurfaces(void)
 
             tr.rtDrawCulled = ~R_RtSphereMask(tiki_worldorigin, SM->cull_radius, rtCandidates);
 
+            // Added in OPM: as big as the model's lod_scale makes it, which the
+            // trees set so the LOD leaves them whole (their far sprites are gone)
+            const float lodRadius = SM->cull_radius * tiki->lod_scale / SM->scale;
+
             if (tr.viewParms.isPortal) {
-                SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
+                SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, lodRadius);
             } else {
-                SM->lodpercentage[0] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
+                SM->lodpercentage[0] = R_CalcLod(tiki_worldorigin, lodRadius);
             }
 
             //
