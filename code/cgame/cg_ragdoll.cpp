@@ -53,6 +53,7 @@ cvar_t *cg_ragdoll_blendtime;
 cvar_t *cg_ragdoll_impulse;
 cvar_t *cg_ragdoll_duration;
 cvar_t *cg_ragdoll_physicsrate;
+cvar_t *cg_ragdoll_interp;
 cvar_t *cg_ragdoll_iterations;
 cvar_t *cg_ragdoll_damping;
 cvar_t *cg_ragdoll_friction;
@@ -1270,6 +1271,19 @@ typedef struct {
     int    moverNum[RD_MAX_MOVERS];
     vec3_t moverOrigin[RD_MAX_MOVERS];
     vec3_t moverAngles[RD_MAX_MOVERS];
+
+    // Added in OPM: the pose as built for the step before the last, and as
+    // built last frame, and how far this frame is into the step after the last
+    // (0 to 1). What is drawn goes between the first and this frame's pose
+    // (cg_ragdoll_interp): a body stepped at 60 Hz otherwise moved in 60 Hz
+    // jumps on a 144 Hz screen, holding still two or three frames and then
+    // catching up. stepKey is the steps taken when lastOverrides was built:
+    // the physics world's for the Jolt body, stepTotal for the particles.
+    boneOverride_t fromOverrides[RD_NUM_BONES + 2];
+    boneOverride_t lastOverrides[RD_NUM_BONES + 2];
+    int            numFrom, numLast;
+    int            stepKey, stepTotal;
+    float          drawLerp;
 } cg_ragdoll_t;
 
 static cg_ragdoll_t cg_ragdolls[MAX_RAGDOLLS];
@@ -1793,6 +1807,122 @@ CG_RagdollWriteBoneModel(const refEntity_t *model, const vec3_t worldPos, const 
 // most of the vertices and collapses the arms, and lit as though it still lay
 // where it fell. The matrices are relative to the origin, so moving the one and
 // taking the same distance off the other leaves every bone exactly where it was.
+// Added in OPM: a bone matrix's rotation (its rows, the bone's axes) as a
+// quaternion, and back
+static void CG_RagdollMatToQuat(const float m[4][3], float q[4])
+{
+    const float tr = m[0][0] + m[1][1] + m[2][2];
+
+    if (tr > 0.0f) {
+        const float s = sqrt(tr + 1.0f) * 2.0f;
+        q[3] = 0.25f * s;
+        q[0] = (m[1][2] - m[2][1]) / s;
+        q[1] = (m[2][0] - m[0][2]) / s;
+        q[2] = (m[0][1] - m[1][0]) / s;
+    } else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+        const float s = sqrt(1.0f + m[0][0] - m[1][1] - m[2][2]) * 2.0f;
+        q[3] = (m[1][2] - m[2][1]) / s;
+        q[0] = 0.25f * s;
+        q[1] = (m[1][0] + m[0][1]) / s;
+        q[2] = (m[2][0] + m[0][2]) / s;
+    } else if (m[1][1] > m[2][2]) {
+        const float s = sqrt(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f;
+        q[3] = (m[2][0] - m[0][2]) / s;
+        q[0] = (m[1][0] + m[0][1]) / s;
+        q[1] = 0.25f * s;
+        q[2] = (m[2][1] + m[1][2]) / s;
+    } else {
+        const float s = sqrt(1.0f + m[2][2] - m[0][0] - m[1][1]) * 2.0f;
+        q[3] = (m[0][1] - m[1][0]) / s;
+        q[0] = (m[2][0] + m[0][2]) / s;
+        q[1] = (m[2][1] + m[1][2]) / s;
+        q[2] = 0.25f * s;
+    }
+}
+
+static void CG_RagdollQuatToMat(const float q[4], float m[4][3])
+{
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+
+    m[0][0] = 1.0f - 2.0f * (y * y + z * z);
+    m[0][1] = 2.0f * (x * y + z * w);
+    m[0][2] = 2.0f * (x * z - y * w);
+    m[1][0] = 2.0f * (x * y - z * w);
+    m[1][1] = 1.0f - 2.0f * (x * x + z * z);
+    m[1][2] = 2.0f * (y * z + x * w);
+    m[2][0] = 2.0f * (x * z + y * w);
+    m[2][1] = 2.0f * (y * z - x * w);
+    m[2][2] = 1.0f - 2.0f * (x * x + y * y);
+}
+
+// Added in OPM: the pose built for the step before the last kept, once a step
+// has come since the pose was last built (CG_RagdollDrawBetween)
+static void CG_RagdollKeepPoses(cg_ragdoll_t *rd)
+{
+    const int key = rd->jolt ? CG_PhysicsStepSerial() : rd->stepTotal;
+
+    if (key != rd->stepKey || !rd->numLast) {
+        if (rd->numLast) {
+            memcpy(rd->fromOverrides, rd->lastOverrides, rd->numLast * sizeof(rd->lastOverrides[0]));
+            rd->numFrom = rd->numLast;
+        } else {
+            memcpy(rd->fromOverrides, rd->overrides, rd->numOverrides * sizeof(rd->overrides[0]));
+            rd->numFrom = rd->numOverrides;
+        }
+        rd->stepKey = key;
+    }
+    memcpy(rd->lastOverrides, rd->overrides, rd->numOverrides * sizeof(rd->overrides[0]));
+    rd->numLast = rd->numOverrides;
+}
+
+// Added in OPM: the pose drawn from the step before the last's toward this
+// frame's, as far as this frame is into the next step (cg_ragdoll_interp), the
+// way the props are drawn: a step behind the simulation at most. Only the
+// drawn matrices: the pose the solver, the sleep test and the shape memory
+// read is the simulation's own, so this changes nothing the body does.
+static void CG_RagdollDrawBetween(cg_ragdoll_t *rd)
+{
+    const float t = Q_max(rd->drawLerp, 0.0f);
+    int         i, k;
+
+    if (!cg_ragdoll_interp->integer || rd->state == RD_SLEEPING || t >= 1.0f || rd->numFrom != rd->numOverrides) {
+        return;
+    }
+    for (i = 0; i < rd->numOverrides; i++) {
+        if (rd->fromOverrides[i].boneIndex != rd->drawOverrides[i].boneIndex) {
+            return;
+        }
+    }
+
+    for (i = 0; i < rd->numOverrides; i++) {
+        float (*to)[3]          = rd->drawOverrides[i].matrix;
+        const float (*from)[3] = rd->fromOverrides[i].matrix;
+        float a[4], b[4], q[4], len, dot = 0.0f;
+
+        for (k = 0; k < 3; k++) {
+            to[3][k] = from[3][k] + (to[3][k] - from[3][k]) * t;
+        }
+
+        CG_RagdollMatToQuat(from, a);
+        CG_RagdollMatToQuat(to, b);
+        for (k = 0; k < 4; k++) {
+            dot += a[k] * b[k];
+        }
+        // the short way round
+        for (k = 0; k < 4; k++) {
+            q[k] = a[k] + ((dot < 0.0f ? -b[k] : b[k]) - a[k]) * t;
+        }
+        len = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        if (len < 1e-6f) {
+            continue;
+        }
+        for (k = 0; k < 4; k++) {
+            q[k] /= len;
+        }
+        CG_RagdollQuatToMat(q, to);
+    }
+}
+
 static void CG_RagdollRecenter(cg_ragdoll_t *rd, refEntity_t *model)
 {
     const float scale = CG_RagdollModelScale(model);
@@ -1800,6 +1930,8 @@ static void CG_RagdollRecenter(cg_ragdoll_t *rd, refEntity_t *model)
     int         i, k;
 
     memcpy(rd->drawOverrides, rd->overrides, rd->numOverrides * sizeof(rd->overrides[0]));
+    // Added in OPM
+    CG_RagdollDrawBetween(rd);
 
     if (scale <= 0.0f) {
         return;
@@ -1807,8 +1939,9 @@ static void CG_RagdollRecenter(cg_ragdoll_t *rd, refEntity_t *model)
 
     // Where the root is drawn this frame, from its own matrix: that is right
     // however the pose was written, sleeping, pinned or riding the entity.
+    // (OPM: the drawn one, CG_RagdollDrawBetween's)
     for (i = 0; i < rd->numOverrides; i++) {
-        if (rd->overrides[i].boneIndex == rd->boneIndex[0]) {
+        if (rd->drawOverrides[i].boneIndex == rd->boneIndex[0]) {
             break;
         }
     }
@@ -1818,7 +1951,7 @@ static void CG_RagdollRecenter(cg_ragdoll_t *rd, refEntity_t *model)
 
     VectorCopy(model->origin, target);
     for (k = 0; k < 3; k++) {
-        const float local = (rd->overrides[i].matrix[3][k] + (model->tiki ? model->tiki->load_origin[k] : 0.0f)) * scale;
+        const float local = (rd->drawOverrides[i].matrix[3][k] + (model->tiki ? model->tiki->load_origin[k] : 0.0f)) * scale;
 
         VectorMA(target, local, model->axis[k], target);
     }
@@ -9038,6 +9171,8 @@ void CG_InitRagdoll(void)
     cgi.Cvar_CheckRange(cg_ragdoll_duration, 0, 60000, qtrue);
 
     cg_ragdoll_physicsrate = cgi.Cvar_Get("cg_ragdoll_physicsrate", "60", CVAR_ARCHIVE);
+    // Added in OPM: the drawn pose goes smoothly between steps (CG_RagdollDrawBetween)
+    cg_ragdoll_interp = cgi.Cvar_Get("cg_ragdoll_interp", "1", CVAR_ARCHIVE);
     cg_ragdoll_iterations  = cgi.Cvar_Get("cg_ragdoll_iterations", "10", CVAR_ARCHIVE);
     cg_ragdoll_damping     = cgi.Cvar_Get("cg_ragdoll_damping", "0.02", CVAR_ARCHIVE);
     cg_ragdoll_friction    = cgi.Cvar_Get("cg_ragdoll_friction", "0.55", CVAR_ARCHIVE);
@@ -10271,7 +10406,9 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
                 maxDisp = CG_RagdollStep(rd, cent->currentState.number, dt);
                 rd->accum -= dt;
                 steps++;
+                rd->stepTotal++;
             }
+            rd->drawLerp = rd->jolt ? CG_PhysicsLerp() : rd->accum / dt;
 
             if (steps) {
                 // Judged on the average joint rather than the fastest one.
@@ -10311,6 +10448,7 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         // Build the pose before falling asleep, so the matrices that get
         // frozen are this frame's rather than the previous frame's.
         CG_RagdollBuildPose(rd, model, weight);
+        CG_RagdollKeepPoses(rd);
 
         CG_RagdollDumpFrame(rd, weight);
 

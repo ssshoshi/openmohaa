@@ -1354,6 +1354,14 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
 
     cg.refdef.time = cg.time;
     memcpy(cg.refdef.areamask, cg.snap->areamask, sizeof(cg.refdef.areamask));
+    // Added in OPM
+    //  The server's areamask is the body's: the areas its doors let it see.
+    //  The orchestrator's free camera is elsewhere, and past a door from the
+    //  body the world it was in wasn't drawn at all. Every area is open to it
+    //  (a shut door still hides what is behind it, as a wall).
+    if (CG_OrchFreecamActive()) {
+        memset(cg.refdef.areamask, 0, sizeof(cg.refdef.areamask));
+    }
 
     // update audio positions
     cgi.S_Respatialize(cg.snap->ps.clientNum, cg.SoundOrg, cg.SoundAxis);
