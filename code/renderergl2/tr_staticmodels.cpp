@@ -25,11 +25,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "tr_local.h"
 #include "../corepp/tiki.h"
 
-#define MAX_STATIC_MODELS_SURFS    8192
 #define MAX_DISTINCT_STATIC_MODELS 1000
 
-int             g_nStaticSurfaces;
-staticSurface_t g_staticSurfaces[MAX_STATIC_MODELS_SURFS];
 qboolean        g_bInfostaticmodels = qfalse;
 
 /*
@@ -103,6 +100,41 @@ void R_InitStaticModels(void)
         }
 
         pSM->radius = ri.TIKI_GlobalRadius(pSM->tiki);
+
+        // Added in OPM
+        //  Its surfaces for the draw lists, in the order R_AddStaticModelSurfaces
+        //  goes through them. They were taken from a pool of 8192 a frame, which
+        //  every view of the frame drew from, and maps with many trees ran out.
+        {
+            staticSurface_t *s_surface;
+            int              numSurfaces = 0;
+            int              ofsStaticData = 0;
+
+            for (j = 0; j < pSM->tiki->numMeshes; j++) {
+                const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+                if (skel) {
+                    numSurfaces += skel->numSurfaces;
+                }
+            }
+
+            pSM->surfaces = s_surface =
+                (staticSurface_t *)ri.Hunk_Alloc(Q_max(numSurfaces, 1) * sizeof(staticSurface_t), h_dontcare);
+
+            for (j = 0; j < pSM->tiki->numMeshes; j++) {
+                skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+                skelSurfaceGame_t *surf;
+
+                for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces;
+                     k++, surf = surf->pNext, s_surface++) {
+                    s_surface->ident         = SF_TIKI_STATIC;
+                    s_surface->ofsStaticData = ofsStaticData;
+                    s_surface->surface       = surf;
+                    s_surface->meshNum       = j;
+                    ofsStaticData += surf->numVerts;
+                }
+            }
+        }
 
         // Added in OPM
         //  The map keeps a colour for each vertex of the model as it was when
@@ -326,7 +358,6 @@ void R_AddStaticModelSurfaces(void)
 {
     cStaticModelUnpacked_t *SM;
     int                     i, j, k;
-    int                     ofsStaticData;
     int                     iRadiusCull;
     dtiki_t                *tiki;
     float                   tiki_scale;
@@ -377,8 +408,6 @@ void R_AddStaticModelSurfaces(void)
 
         R_RotateForStaticModel(SM, &tr.viewParms, &tr.ori);
 
-        ofsStaticData = 0;
-
         // get the world position
         tiki_scale = tiki->load_scale * SM->scale;
         VectorScale(tiki->load_origin, tiki_scale, tiki_localorigin);
@@ -403,7 +432,8 @@ void R_AddStaticModelSurfaces(void)
 
         if (iRadiusCull != CULL_OUT
             && (iRadiusCull != CULL_CLIP || R_CullStaticModel(SM->tiki, tiki_scale, tiki_localorigin) != CULL_OUT)) {
-            dtikisurface_t *dsurf;
+            dtikisurface_t  *dsurf;
+            staticSurface_t *s_surface;
             // Added in OPM: the reflection probe where it stands (r_cubeMapping)
             const int       cubemap = R_ViewCubemapForPoint(tiki_worldorigin);
 
@@ -422,11 +452,11 @@ void R_AddStaticModelSurfaces(void)
             //
             // draw all meshes
             //
-            dsurf = tiki->surfaces;
+            dsurf     = tiki->surfaces;
+            s_surface = SM->surfaces;
             for (int mesh = 0; mesh < tiki->numMeshes; mesh++) {
                 skelHeaderGame_t  *skelmodel = ri.TIKI_GetSkel(tiki->mesh[mesh]);
                 skelSurfaceGame_t *surface;
-                staticSurface_t   *s_surface;
                 shader_t          *shader;
                 float              fDist;
                 vec3_t             vDelta;
@@ -439,23 +469,7 @@ void R_AddStaticModelSurfaces(void)
                 // draw all surfaces
                 //
                 surface = skelmodel->pSurfaces;
-                for (j = 0; j < skelmodel->numSurfaces;
-                     j++, ofsStaticData += surface->numVerts, surface = surface->pNext, dsurf++) {
-                    if (g_nStaticSurfaces >= MAX_STATIC_MODELS_SURFS) {
-                        ri.Printf(
-                            PRINT_DEVELOPER,
-                            "^~^~^ ERROR: MAX_STATIC_MODELS_SURFS exceeded - surface of '%s' skipped\n",
-                            tiki->a->name
-                        );
-                        continue;
-                    }
-
-                    s_surface                = &g_staticSurfaces[g_nStaticSurfaces++];
-                    s_surface->ident         = SF_TIKI_STATIC;
-                    s_surface->ofsStaticData = ofsStaticData;
-                    s_surface->surface       = surface;
-                    s_surface->meshNum       = mesh;
-
+                for (j = 0; j < skelmodel->numSurfaces; j++, surface = surface->pNext, dsurf++, s_surface++) {
                     shader = tr.shaders[dsurf->hShader[0]];
 
                     if (shader->numUnfoggedPasses == 1 && !r_nocull->integer) {

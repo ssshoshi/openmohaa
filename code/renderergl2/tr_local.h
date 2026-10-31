@@ -1761,6 +1761,12 @@ typedef struct cStaticModelUnpacked_s {
     //  one loaded under its name (a remodelled prop, or a mod's): it is lit by
     //  the light grid instead (RB_SurfaceStaticModel).
     qboolean noVertexData;
+
+    // Added in OPM
+    //  Its surfaces for the draw lists, one for each of its meshes' surfaces,
+    //  made when the map loads: they are the same for every view, and a frame
+    //  draws many (the sun cascades, the lights' shadows, the cubemaps).
+    staticSurface_t *surfaces;
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
@@ -4126,7 +4132,6 @@ void R_InfoWorldTris_f(void);
 void R_PrintInfoWorldtris(void);
 void R_DebugSkeleton(void);
 
-extern int g_nStaticSurfaces;
 extern qboolean g_bInfostaticmodels;
 extern qboolean g_bInfoworldtris;
 
