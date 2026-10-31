@@ -436,7 +436,14 @@ void main()
 	float NL, NH, NE, EH, attenuation;
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_GROUNDCOVER)
+	// Added in OPM: a tuft is lit from above as the ground it stands in is,
+	// whichever side of it shows (turned over, the tufts seen from behind
+	// went black in clumps)
+	vec3 surfNormal = var_Normal.xyz;
+  #else
 	vec3 surfNormal = (!gl_FrontFacing ? var_Normal : -var_Normal).xyz;
+  #endif
   #if defined(USE_TANGENT_FRAME)
 	mat3 tangentToWorld = mat3(var_Tangent.xyz, var_Bitangent.xyz, surfNormal);
 	viewDir = vec3(var_Normal.w, var_Tangent.w, var_Bitangent.w);
@@ -810,7 +817,11 @@ void main()
 		rt_specView  = E;
 		rt_specRough = roughness;
   #else
+    #if defined(USE_GROUNDCOVER)
+		vec3 rtNormal = normalize(var_RtNormal);
+    #else
 		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+    #endif
   #endif
   #if defined(USE_LIGHTMAP)
 		rt_skyLM = var_TexCoords.zw;
