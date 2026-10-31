@@ -48,6 +48,8 @@ extern const char *fallbackShader_shadowmask_vp;
 extern const char *fallbackShader_shadowmask_fp;
 extern const char *fallbackShader_gtao_vp;
 extern const char *fallbackShader_gtao_fp;
+extern const char *fallbackShader_volumetric_vp;
+extern const char *fallbackShader_volumetric_fp;
 extern const char *fallbackShader_ssao_vp;
 extern const char *fallbackShader_ssao_fp;
 extern const char *fallbackShader_texturecolor_vp;
@@ -214,6 +216,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtAO",            GLSL_VEC4 },
 	{ "u_RtAOMap",         GLSL_INT },
 	{ "u_AOParams",        GLSL_VEC4 },
+	{ "u_VolParams",       GLSL_VEC4 },
+	{ "u_VolRange",        GLSL_VEC4 },
 	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
@@ -2733,6 +2737,35 @@ void GLSL_InitGPUShaders(void)
 		numEtcShaders++;
 	}
 
+	// Added in OPM: the light in the air, which reads the realtime lights
+	if (r_volumetric->integer && r_realtimeLighting->integer == 2)
+	{
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
+
+		if (!GLSL_InitGPUShader(&tr.volumetricShader, "volumetric", attribs, qtrue, extradefines, qtrue, fallbackShader_volumetric_vp, fallbackShader_volumetric_fp))
+		{
+			ri.Error(ERR_FATAL, "Could not load volumetric shader!");
+		}
+
+		GLSL_InitUniforms(&tr.volumetricShader);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_SHADOWMAP,  TB_SHADOWMAP);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_SHADOWMAP2, TB_SHADOWMAP2);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_SHADOWMAP3, TB_SHADOWMAP3);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_SHADOWMAP4, TB_SHADOWMAP4);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+		GLSL_SetUniformInt(&tr.volumetricShader, UNIFORM_RTSKYMAP,        TMU_RTSKY);
+		GLSL_FinishGPUShader(&tr.volumetricShader);
+
+		numEtcShaders++;
+	}
+
 
 	if (!GLSL_InitGPUShader(&tr.greyscaleShader, "greyscale", attribs, qtrue, extradefines, qtrue,
 		fallbackShader_greyscale_vp, fallbackShader_greyscale_fp))
@@ -2981,6 +3014,7 @@ void GLSL_ShutdownGPUShaders(void)
 		GLSL_DeleteGPUShader(&tr.calclevels4xShader[i]);
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
+	GLSL_DeleteGPUShader(&tr.volumetricShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.gtaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);

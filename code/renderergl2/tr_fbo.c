@@ -492,6 +492,17 @@ void FBO_Init(void)
 		R_CheckFBO(tr.gtaoBlurFbo);
 	}
 
+	// Added in OPM: r_volumetric
+	if (tr.volumeImage && tr.volumeBlurImage)
+	{
+		tr.volumeFbo = FBO_Create("_volume", tr.volumeImage->width, tr.volumeImage->height);
+		FBO_AttachImage(tr.volumeFbo, tr.volumeImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.volumeFbo);
+		tr.volumeBlurFbo = FBO_Create("_volumeblur", tr.volumeBlurImage->width, tr.volumeBlurImage->height);
+		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.volumeBlurFbo);
+	}
+
 	if (tr.screenSsaoImage)
 	{
 		tr.screenSsaoFbo = FBO_Create("_screenssao", tr.screenSsaoImage->width, tr.screenSsaoImage->height);

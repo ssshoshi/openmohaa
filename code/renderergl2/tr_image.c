@@ -3126,6 +3126,14 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
 		}
 
+		// Added in OPM: r_volumetric's, at a quarter of the view's size
+		// across, brighter than white
+		if (r_volumetric->integer && r_realtimeLighting->integer == 2)
+		{
+			tr.volumeImage     = R_CreateImage("*volume", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.volumeBlurImage = R_CreateImage("*volumeBlur", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
+
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)
 		{
 			tr.pshadowMaps[x] = R_CreateImage(va("*shadowmap%i", x), NULL, PSHADOW_MAP_SIZE, PSHADOW_MAP_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
