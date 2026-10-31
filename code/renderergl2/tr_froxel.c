@@ -42,11 +42,33 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 // The cells are lit at another place in each every frame and mixed with what
 // they had last frame, found where they were then (r_volumetricTemporal).
+//
+// Smoke: a sprite the cgame marks RF_VOLUME_SMOKE (an emitter's
+// `smokevolume`, or a volumetric smoke source) nearer than the grid's depth
+// is put in the air as a puff (R_FroxelTakesSprite) in place of its sprite:
+// a ball as wide as the sprite, as thick through its middle as the sprite is
+// opaque, broken up by a 3D noise, lit by the sun (shadowed by the smoke
+// between) and the lamps, and taking the light out of what is behind it.
 
 #include "tr_local.h"
+#include "tr_dsa.h"
 
 cvar_t *r_volumetricFog;
 cvar_t *r_volumetricTemporal;
+cvar_t *r_volumetricSmoke;
+cvar_t *r_volumetricSmokeNoise;
+
+// the smoke's noise: a tiling 3D texture, made once (R_FroxelSmokeNoise)
+#define SMOKE_NOISE_SIZE 64
+// how much of the light on it smoke gives back
+#define SMOKE_ALBEDO 0.6f
+static GLuint smokeNoiseTexture;
+
+// the sprites taken as puffs this scene (R_FroxelTakesSprite)
+static struct {
+	int scene;
+	int taken;
+} smokeTaken;
 
 #define FOG_MAX_VOLUMES (WATER_MAX_SPOTS / 3)
 
@@ -190,6 +212,10 @@ void R_FroxelInit(void)
 	ri.Cvar_SetDescription(r_volumetricFog, "With r_volumetric 2: how thick the map's fog banks are (fog/<map>.txt), 0 none");
 	r_volumetricTemporal = ri.Cvar_Get("r_volumetricTemporal", "0.9", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_volumetricTemporal, "With r_volumetric 2: how much of the light in the air each frame keeps from the last (0 none: noisier, quicker to change)");
+	r_volumetricSmoke = ri.Cvar_Get("r_volumetricSmoke", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_volumetricSmoke, "With r_volumetric 2: smoke grenades and other smoke with a volume drawn in the air, lit and shadowed, in place of their sprites; how thick (0: sprites)");
+	r_volumetricSmokeNoise = ri.Cvar_Get("r_volumetricSmokeNoise", "0.4", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_volumetricSmokeNoise, "With r_volumetric 2: how much the noise breaks up the smoke's puffs, 0 smooth balls, 1 shreds");
 	ri.Cmd_AddCommand("foginfo", R_FogInfo_f);
 	ri.Cmd_AddCommand("fogreload", R_FogReload_f);
 	froxelPrev.frame = -1;
@@ -197,8 +223,191 @@ void R_FroxelInit(void)
 
 void R_FroxelShutdown(void)
 {
+	if (smokeNoiseTexture) {
+		qglDeleteTextures(1, &smokeNoiseTexture);
+		smokeNoiseTexture = 0;
+	}
 	ri.Cmd_RemoveCommand("foginfo");
 	ri.Cmd_RemoveCommand("fogreload");
+}
+
+/*
+=============
+R_FroxelTakesSprite
+
+Whether a puff of smoke goes into the air's grid this view, in place of its
+sprite. The main view only (a reflection or a portal draws the sprite), with
+the grid on, the puff nearer than its depth, and room for it. The answer is
+kept on the sprite for the backend (RB_VolumetricFroxels).
+=============
+*/
+qboolean R_FroxelTakesSprite(const refSprite_t *sprite)
+{
+	refSprite_t *spr = (refSprite_t *)sprite;
+	vec3_t       delta;
+	const float  range = Q_max(64.0f, r_volumetricRange->value);
+
+	if (r_volumetric->integer != 2 || r_volumetricSmoke->value <= 0 || !tr.froxelDepthFbo || !tr.froxelShader[0].program
+		|| !R_RtLitLive() || tr.viewParms.isPortal || tr.viewParms.isPortalSky || (tr.viewParms.flags & VPF_WATERREFLECT)
+		|| (tr.refdef.rdflags & RDF_NOWORLDMODEL)) {
+		return qfalse;
+	}
+	if (smokeTaken.scene != tr.sceneCount) {
+		smokeTaken.scene = tr.sceneCount;
+		smokeTaken.taken = 0;
+	}
+	if (spr->froxelTaken) {
+		return qtrue;
+	}
+	if (smokeTaken.taken >= SMOKE_MAX_BLOBS) {
+		return qfalse;
+	}
+	// a little short of the grid's far side, so the puff fits in it
+	VectorSubtract(spr->origin, tr.viewParms.ori.origin, delta);
+	if (VectorLengthSquared(delta) > Square(range * 0.85f)) {
+		return qfalse;
+	}
+	spr->froxelTaken = qtrue;
+	smokeTaken.taken++;
+	return qtrue;
+}
+
+/*
+=============
+R_FroxelSmokeBlobs
+
+The scene's puffs, as the shader takes them: middle and radius, colour and
+density (per unit, at the middle).
+=============
+*/
+static int R_FroxelSmokeBlobs(vec4_t *out)
+{
+	int i, n = 0;
+
+	for (i = 0; i < backEnd.refdef.num_sprites && n < SMOKE_MAX_BLOBS; i++) {
+		const refSprite_t *spr = &backEnd.refdef.sprites[i];
+		const model_t     *model;
+		float              radius, alpha;
+
+		if (!spr->froxelTaken) {
+			continue;
+		}
+		model = tr.models[spr->hModel > 0 && spr->hModel < tr.numModels ? spr->hModel : 0];
+		if (model->type != MOD_SPRITE || !model->d.sprite) {
+			continue;
+		}
+		// a little wider than the sprite: the noise eats its edge
+		radius = Q_max(model->d.sprite->origin_x, model->d.sprite->origin_y) * spr->scale * model->d.sprite->scale * 1.15f;
+		alpha  = Com_Clamp(0.0f, 0.99f, spr->shaderRGBA[3] / 255.0f);
+		if (radius < 1.0f || alpha <= 0.0f) {
+			continue;
+		}
+		VectorCopy(spr->origin, out[n * 2]);
+		out[n * 2][3] = radius;
+		// smoke is grey: its tint times SMOKE_ALBEDO
+		VectorSet(out[n * 2 + 1], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
+			spr->shaderRGBA[2] / 255.0f * SMOKE_ALBEDO);
+		// as opaque straight through its middle as the sprite was: the
+		// 1 - q fall-off takes 2/3 of the middle's along a diameter
+		out[n * 2 + 1][3] = -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value;
+		n++;
+	}
+	return n;
+}
+
+qboolean R_FroxelHasWork(void)
+{
+	int i;
+
+	if (R_FroxelFogOn()) {
+		return qtrue;
+	}
+	for (i = 0; i < backEnd.refdef.num_sprites; i++) {
+		if (backEnd.refdef.sprites[i].froxelTaken) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+// a lattice value, wrapping every period cells
+static float R_NoiseLattice(int x, int y, int z, int period)
+{
+	unsigned int h;
+
+	x = ((x % period) + period) % period;
+	y = ((y % period) + period) % period;
+	z = ((z % period) + period) % period;
+	h = (unsigned int)(x * 73856093) ^ (unsigned int)(y * 19349663) ^ (unsigned int)(z * 83492791);
+	h = (h ^ (h >> 13)) * 1274126177u;
+	return (float)((h ^ (h >> 16)) & 0xffff) / 65535.0f;
+}
+
+// smooth value noise at p (in cells), wrapping every period cells
+static float R_NoiseValue(float px, float py, float pz, int period)
+{
+	const int   x = (int)floorf(px), y = (int)floorf(py), z = (int)floorf(pz);
+	float       fx = px - x, fy = py - y, fz = pz - z;
+	float       c[2][2][2], a, b;
+	int         i, j, k;
+
+	for (i = 0; i < 2; i++)
+		for (j = 0; j < 2; j++)
+			for (k = 0; k < 2; k++)
+				c[i][j][k] = R_NoiseLattice(x + i, y + j, z + k, period);
+	fx = fx * fx * (3.0f - 2.0f * fx);
+	fy = fy * fy * (3.0f - 2.0f * fy);
+	fz = fz * fz * (3.0f - 2.0f * fz);
+	a = (c[0][0][0] * (1 - fx) + c[1][0][0] * fx) * (1 - fy) + (c[0][1][0] * (1 - fx) + c[1][1][0] * fx) * fy;
+	b = (c[0][0][1] * (1 - fx) + c[1][0][1] * fx) * (1 - fy) + (c[0][1][1] * (1 - fx) + c[1][1][1] * fx) * fy;
+	return a * (1 - fz) + b * fz;
+}
+
+/*
+=============
+R_FroxelSmokeNoise
+
+The smoke's noise, made the first time it is wanted: SMOKE_NOISE_SIZE cubed,
+tiling, billows (the fold of three octaves of value noise), one channel.
+=============
+*/
+static GLuint R_FroxelSmokeNoise(void)
+{
+	byte *data;
+	int   x, y, z;
+
+	if (smokeNoiseTexture || !qglTexImage3D) {
+		return smokeNoiseTexture;
+	}
+
+	data = ri.Hunk_AllocateTempMemory(SMOKE_NOISE_SIZE * SMOKE_NOISE_SIZE * SMOKE_NOISE_SIZE);
+	for (z = 0; z < SMOKE_NOISE_SIZE; z++) {
+		for (y = 0; y < SMOKE_NOISE_SIZE; y++) {
+			for (x = 0; x < SMOKE_NOISE_SIZE; x++) {
+				float v = 0.0f, amp = 0.5f, sum = 0.0f;
+				int   period = 4, o;
+
+				for (o = 0; o < 3; o++, period *= 2, amp *= 0.5f) {
+					const float s = (float)period / SMOKE_NOISE_SIZE;
+					// billows: the noise folded about its middle, upside down
+					v   += amp * (1.0f - fabsf(2.0f * R_NoiseValue(x * s, y * s, z * s, period) - 1.0f));
+					sum += amp;
+				}
+				data[(z * SMOKE_NOISE_SIZE + y) * SMOKE_NOISE_SIZE + x] = (byte)(Com_Clamp(0.0f, 1.0f, v / sum) * 255.0f);
+			}
+		}
+	}
+
+	qglGenTextures(1, &smokeNoiseTexture);
+	GL_BindMultiTexture(GL_TEXTURE0 + TB_SPECULARMAP, GL_TEXTURE_3D, smokeNoiseTexture);
+	qglTexImage3D(GL_TEXTURE_3D, 0, GL_R8, SMOKE_NOISE_SIZE, SMOKE_NOISE_SIZE, SMOKE_NOISE_SIZE, 0, GL_RED, GL_UNSIGNED_BYTE, data);
+	qglTextureParameteriEXT(smokeNoiseTexture, GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	qglTextureParameteriEXT(smokeNoiseTexture, GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	qglTextureParameteriEXT(smokeNoiseTexture, GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	qglTextureParameteriEXT(smokeNoiseTexture, GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	qglTextureParameteriEXT(smokeNoiseTexture, GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+	ri.Hunk_FreeTempMemory(data);
+	return smokeNoiseTexture;
 }
 
 static float R_Halton(int index, int base)
@@ -226,6 +435,9 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 {
 	vec4_t quadVerts[4], viewInfo, volParams, volRange, froxel, v;
 	vec4_t volumes[FOG_MAX_VOLUMES * 3];
+	static vec4_t blobs[SMOKE_MAX_BLOBS * 2];
+	int numBlobs;
+	GLuint noise;
 	vec2_t texCoords[4];
 	vec3_t viewVector;
 	vec4_t box;
@@ -355,6 +567,20 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	}
 	v[3] = 0.0f;
 	GLSL_SetUniformVec4(&tr.froxelShader[0], UNIFORM_FOGAMBIENT, v);
+
+	// the puffs of smoke, and their noise
+	numBlobs = R_FroxelSmokeBlobs(blobs);
+	noise    = numBlobs ? R_FroxelSmokeNoise() : 0;
+	if (numBlobs) {
+		GLSL_SetUniformSmoke(&tr.froxelShader[0], UNIFORM_SMOKEBLOBS, (const vec4_t *)blobs, numBlobs * 2);
+	}
+	if (noise) {
+		GL_BindMultiTexture(GL_TEXTURE0 + TB_SPECULARMAP, GL_TEXTURE_3D, noise);
+	}
+	// how many, the noise's scale (a tile 80 units across), its drift, and
+	// how far it eats into the puffs (none without it)
+	VectorSet4(v, (float)numBlobs, 1.0f / 80.0f, backEnd.refdef.floatTime * 0.08f, noise ? Com_Clamp(0.0f, 1.0f, r_volumetricSmokeNoise->value) : 0.0f);
+	GLSL_SetUniformVec4(&tr.froxelShader[0], UNIFORM_SMOKEPARAMS, v);
 
 	// where in each cell this frame (Halton, 2 3 5), and where the cells
 	// were last frame

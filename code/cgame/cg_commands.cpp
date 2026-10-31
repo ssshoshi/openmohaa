@@ -1119,6 +1119,15 @@ Event EV_Client_Wind
     NULL,
     "Makes the temp model be affected by wind"
 );
+// Added in OPM
+Event EV_Client_SmokeVolume
+(
+    "smokevolume",
+    EV_DEFAULT,
+    NULL,
+    NULL,
+    "The sprites are puffs of smoke with a volume: with r_volumetric 2 they are drawn in the air, lit and shadowed, in place of the sprites"
+);
 Event EV_Client_SpriteGridLighting
 (
     "spritegridlighting",
@@ -1366,6 +1375,7 @@ CLASS_DECLARATION(Listener, ClientGameCommandManager, NULL) {
     {&EV_Client_Detail,                     &ClientGameCommandManager::SetDetail                 },
     {&EV_Client_Wind,                       &ClientGameCommandManager::SetWindAffect             },
     {&EV_Client_SpriteGridLighting,         &ClientGameCommandManager::SpriteGridLighting        },
+    {&EV_Client_SmokeVolume,                &ClientGameCommandManager::SmokeVolume               },
     {&EV_Client_WaterOnly,                  &ClientGameCommandManager::SetWaterOnly              },
     {&EV_Client_SetAlignStretch,            &ClientGameCommandManager::SetAlignStretch           },
     {&EV_Client_SetClampVelocity,           &ClientGameCommandManager::SetClampVel               },
@@ -1763,6 +1773,15 @@ void ClientGameCommandManager::SetWindAffect(Event *ev)
     }
 
     m_spawnthing->cgd.flags2 |= T2_WIND_AFFECT;
+}
+
+void ClientGameCommandManager::SmokeVolume(Event *ev)
+{
+    if (!m_spawnthing) {
+        return;
+    }
+
+    m_spawnthing->cgd.flags2 |= T2_SMOKEVOLUME;
 }
 
 void ClientGameCommandManager::SpriteGridLighting(Event *ev)

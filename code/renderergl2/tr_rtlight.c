@@ -6836,6 +6836,11 @@ void R_RtSetVolumeUniforms(shaderProgram_t *sp)
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTAMBIENT, tr.rtAmbient);
+	// the sky's light, for the fog and the smoke (RtSky)
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSKYCOLOR, tr.rtSkyColor);
+	if (tr.rtSkyColor[3] > 0) {
+		GLSL_SetUniformRtSky(sp, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
+	}
 	// one tap of each shadow's four, unspread
 	VectorSet4(surface, 0.0f, 0.0f, 0.0f, 1.0f);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);

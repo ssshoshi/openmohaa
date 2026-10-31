@@ -229,6 +229,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_FroxelPrevLeft",    GLSL_VEC4 },
 	{ "u_FroxelPrevUp",      GLSL_VEC4 },
 	{ "u_FroxelJitter",    GLSL_VEC4 },
+	{ "u_SmokeBlobs",      GLSL_VEC4_SMOKE },
+	{ "u_SmokeParams",     GLSL_VEC4 },
+	{ "u_SmokeNoise",      GLSL_INT },
 	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
@@ -1537,6 +1540,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 			case GLSL_VEC4_WATERSPOTS:
 				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
 				break;
+			case GLSL_VEC4_SMOKE:
+				size += sizeof(vec4_t) * SMOKE_MAX_BLOBS * 2;
+				break;
 			default:
 				break;
 		}
@@ -1893,6 +1899,33 @@ void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const v
 
 	if (vec4s > WATER_MAX_SPOTS) {
 		vec4s = WATER_MAX_SPOTS;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
+The puffs of smoke in the air's grid (tr_froxel.c), two vec4s each; only
+those sent.
+*/
+void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SMOKE) {
+		ri.Printf(PRINT_WARNING, "GLSL_SetUniformSmoke: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+	if (vec4s > SMOKE_MAX_BLOBS * 2) {
+		vec4s = SMOKE_MAX_BLOBS * 2;
 	}
 	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
 		return;
@@ -2800,7 +2833,7 @@ void GLSL_InitGPUShaders(void)
 			attribs = ATTR_POSITION | ATTR_TEXCOORD;
 			Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
 			Q_strcat(extradefines, sizeof(extradefines), passes[i]);
-			Q_strcat(extradefines, sizeof(extradefines), va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
+			Q_strcat(extradefines, sizeof(extradefines), va("#define WATER_MAX_SPOTS %d\n#define SMOKE_MAX_BLOBS %d\n", WATER_MAX_SPOTS, SMOKE_MAX_BLOBS));
 
 			if (!GLSL_InitGPUShader(sp, "froxel", attribs, qtrue, extradefines, qtrue, fallbackShader_froxel_vp, fallbackShader_froxel_fp))
 			{
@@ -2823,6 +2856,7 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(sp, UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
 			GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 			GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
+			GLSL_SetUniformInt(sp, UNIFORM_SMOKENOISE,      TB_SPECULARMAP);
 			GLSL_FinishGPUShader(sp);
 
 			numEtcShaders++;

@@ -1080,6 +1080,10 @@ void ClientGameCommandManager::AddTempModels(void)
 
         // Animate and do trails (swipes)
         newEnt.renderfx   = p->ent.renderfx;
+        // Added in OPM: a puff of smoke the renderer may draw in the air
+        if (p->cgd.flags2 & T2_SMOKEVOLUME) {
+            newEnt.renderfx |= RF_VOLUME_SMOKE;
+        }
         newEnt.hModel     = p->ent.hModel;
         newEnt.reType     = p->ent.reType;
         newEnt.shaderTime = p->ent.shaderTime;

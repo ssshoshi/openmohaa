@@ -1222,14 +1222,15 @@ void ClientGameCommandManager::AddVSSSources()
     for (pCurrent = this->m_active_vsssources.prev; pCurrent != &this->m_active_vsssources; pCurrent = pComp) {
         pComp = pCurrent->prev;
 
-        newEnt.renderfx = 0;
+        // Added in OPM: each source is a puff the renderer may draw in the air
+        newEnt.renderfx = RF_VOLUME_SMOKE;
         if ((pCurrent->flags & T_DETAIL) && !cg_detail->integer) {
             FreeVSSSource(pCurrent);
             continue;
         }
 
         if ((pCurrent->flags2 & T2_ALWAYSDRAW) != 0) {
-            newEnt.renderfx = RF_ALWAYSDRAW;
+            newEnt.renderfx |= RF_ALWAYSDRAW;
         }
 
         if (pCurrent->lastPhysicsTime) {

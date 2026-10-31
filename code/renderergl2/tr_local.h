@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 QGL_1_1_PROCS;
 QGL_DESKTOP_1_1_PROCS;
 QGL_1_3_PROCS;
+QGL_TEXTURE3D_PROCS;
 QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;
@@ -891,8 +892,11 @@ enum
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
-	GLSL_VEC4_WATERSPOTS  // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_WATERSPOTS, // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 2 vec4s (tr_froxel.c)
 };
+
+#define SMOKE_MAX_BLOBS 96 // Added in OPM: the most puffs of smoke the air's grid takes a frame (tr_froxel.c)
 
 #define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
 #define WATER_RIPPLE_SIZE 1024 // Added in OPM: the water's ripples, a grid this many texels across (tr_water.c)
@@ -1052,6 +1056,9 @@ typedef enum
 	UNIFORM_FROXELPREVLEFT,
 	UNIFORM_FROXELPREVUP,
 	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
+	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, colour and density
+	UNIFORM_SMOKEPARAMS,  // how many, the noise's scale, its drift (time), how much it eats into them
+	UNIFORM_SMOKENOISE,   // the smoke's 3D noise
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -1794,6 +1801,7 @@ typedef struct refSprite_s {
     byte shaderRGBA[4];
     int renderfx;
     float shaderTime;
+    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke, not as a sprite (R_FroxelTakesSprite)
 } refSprite_t;
 
 //=========================
@@ -4074,6 +4082,10 @@ void R_FroxelInit(void);
 void R_FroxelShutdown(void);
 void R_FogLoadWorld(const char *mapName);
 qboolean R_FroxelFogOn(void);
+extern cvar_t *r_volumetricSmoke;
+qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
+qboolean R_FroxelHasWork(void);
+void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
