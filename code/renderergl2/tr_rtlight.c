@@ -4377,6 +4377,75 @@ static void R_RtShadowProbe_f(void)
 	}
 }
 
+// r_rtShadowProbeAll x y z: every lamp lit live now, what its tiles of what
+// stands and of what moves hold towards (x y z), against that point's depth
+static int    rt_probeAll;
+static vec3_t rt_probeAllPoint;
+
+static void R_RtShadowProbeAll_f(void)
+{
+	VectorSet(rt_probeAllPoint, atof(ri.Cmd_Argv(1)), atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)));
+	rt_probeAll = 1;
+}
+
+// the linear depth a slot's face holds towards p, and p's own (want)
+static float R_RtProbeTexel(const rtLight_t *l, int atlas, int slot, const vec3_t p, float *want)
+{
+	vec3_t v;
+	float  fwd, left, up, n = RT_ZNEAR, f = l->range, got = 0, d;
+	int    face, x0, y0, size, px, py;
+
+	VectorSubtract(p, l->origin, v);
+	if (fabs(v[0]) >= fabs(v[1]) && fabs(v[0]) >= fabs(v[2])) {
+		face = v[0] > 0 ? 0 : 1; fwd = fabs(v[0]); left = v[0] > 0 ? v[1] : -v[1]; up = v[2];
+	} else if (fabs(v[1]) >= fabs(v[2])) {
+		face = v[1] > 0 ? 2 : 3; fwd = fabs(v[1]); left = v[1] > 0 ? -v[0] : v[0]; up = v[2];
+	} else {
+		face = v[2] > 0 ? 4 : 5; fwd = fabs(v[2]); left = v[2] > 0 ? -v[1] : v[1]; up = v[0];
+	}
+	*want = fwd;
+	R_RtFaceRect(atlas, slot, face, &x0, &y0, &size);
+	px = x0 + (int)(((-left / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+	py = y0 + (int)(((up / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+	FBO_Bind(tr.rtShadowFbo[atlas]);
+	qglReadPixels(px, py, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &got);
+	FBO_Bind(NULL);
+	d = got * 2.0f - 1.0f;
+	return 2.0f * f * n / ((f + n) - d * (f - n));
+}
+
+static void R_RtShadowProbeAllStep(void)
+{
+	int i;
+
+	if (!rt_probeAll) {
+		return;
+	}
+	rt_probeAll = 0;
+	for (i = 0; i < tr.rtNumActive; i++) {
+		const rtLight_t *l;
+		float            want, st = -1, dy = -1;
+
+		if (rt.active[i] < 0) {
+			continue;
+		}
+		l = &rt.lights[rt.active[i]];
+		if (Distance(l->origin, rt_probeAllPoint) > l->range) {
+			continue;
+		}
+		if (l->staticSlot >= 0) {
+			st = R_RtProbeTexel(l, 0, l->staticSlot, rt_probeAllPoint, &want);
+		}
+		if (l->dynamicSlot > 0) {
+			dy = R_RtProbeTexel(l, 1, l->dynamicSlot - 1, rt_probeAllPoint, &want);
+		}
+		R_RtProbeTexel(l, 0, 0, rt_probeAllPoint, &want);
+		ri.Printf(PRINT_ALL, "probeall %d (%.0f %.0f %.0f): point %.1f static %.1f%s moving %.1f%s\n", rt.active[i],
+			l->origin[0], l->origin[1], l->origin[2], want, st, st >= 0 && st < want - 0.5f ? " SHADOWED" : "",
+			dy, dy >= 0 && dy < want - 0.5f ? " SHADOWED" : "");
+	}
+}
+
 static void R_RtShadowProbeStep(void)
 {
 	const int  slot = RT_SLOTS_BIG - 1, tile = R_RtBakedTile();
@@ -6417,6 +6486,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtBounceStep(bake, ease);
 	rt_bake.scale = scale;
 	R_RtShadowProbeStep();
+	R_RtShadowProbeAllStep();
 	// the lamps lit live last frame and no longer: their bake put back
 	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
@@ -7087,6 +7157,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
 		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
 		ri.Cmd_AddCommand("r_rtShadowProbe", R_RtShadowProbe_f);
+		ri.Cmd_AddCommand("r_rtShadowProbeAll", R_RtShadowProbeAll_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
@@ -7094,6 +7165,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_RemoveCommand("r_rtProbeTest");
 		ri.Cmd_RemoveCommand("r_rtBakeAt");
 		ri.Cmd_RemoveCommand("r_rtShadowProbe");
+		ri.Cmd_RemoveCommand("r_rtShadowProbeAll");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}

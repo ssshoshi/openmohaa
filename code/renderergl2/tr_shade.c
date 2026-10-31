@@ -326,6 +326,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.skin.valid = qfalse;
 	tess.skin.deferred = qfalse;
 	tess.groundCover = qfalse;
+	tess.terrain = qfalse;
 	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 	tess.xstages = state->stages;
@@ -2550,9 +2551,13 @@ void RB_StageIteratorGeneric( void )
 	// set face culling appropriately
 	//
 	// Added in OPM: a lamp's shadow has both sides of the world's faces
-	// (R_CullSurface), the models' as they were.
+	// (R_CullSurface), the models' and the terrain's as they were. The
+	// terrain is drawn as finely as the view is near: a lamp's shadow drawn
+	// from further off had it coarser, standing over the ground drawn now,
+	// and its side towards the lamp shadowed that in blocks that came and
+	// went as the view walked up to them.
 	rtWorld = (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED))
-		&& backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel;
+		&& backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel && !input->terrain;
 	if (input->shader->cullType == CT_TWO_SIDED || rtWorld)
 	{
 		GL_Cull( CT_TWO_SIDED );

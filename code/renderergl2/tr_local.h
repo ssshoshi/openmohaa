@@ -3527,6 +3527,7 @@ typedef struct shaderCommands_s
 	// only their counts, and the vertex program sways them (time, draw
 	// distance, wind)
 	qboolean    groundCover;
+	qboolean    terrain;    // Added in OPM: a terrain patch is in the batch (lamp shadows draw its one side)
 	vec4_t      groundCoverParams;
 
 	// Added in OPM: the batch is polygons (marks, decals): the realtime

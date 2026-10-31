@@ -72,7 +72,7 @@ static qboolean	R_CullSurface( msurface_t *surf ) {
 		// wall were within a texel or two of that: the lamp lit a line along
 		// them from the far side of the wall. The shaders' offset off the
 		// surface keeps the near side from shadowing what it is.
-		if ( tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED) )
+		if ( (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)) )
 		{
 			return qfalse;
 		}
