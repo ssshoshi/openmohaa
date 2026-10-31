@@ -147,6 +147,7 @@ cvar_t  *r_parallaxMapOffset;
 cvar_t  *r_parallaxMapShadows;
 cvar_t  *r_cubeMapping;
 cvar_t  *r_cubemapSize;
+cvar_t  *r_cubemapStrength;
 cvar_t  *r_deluxeSpecular;
 cvar_t  *r_pbr;
 cvar_t  *r_baseNormalX;
@@ -1660,6 +1661,9 @@ void R_Register( void )
 	r_parallaxMapShadows = ri.Cvar_Get( "r_parallaxMapShadows", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_cubemapSize = ri.Cvar_Get( "r_cubemapSize", "128", CVAR_ARCHIVE | CVAR_LATCH );
+	// Added in OPM: live, for comparing
+	r_cubemapStrength = ri.Cvar_Get( "r_cubemapStrength", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_cubemapStrength, "With r_cubeMapping: how strong the reflections of the room round a shiny surface are (0 none, 1 as the material has it)");
 	// Off for MOH:AA. This drives specular from a deluxe map, which MOH:AA BSPs
 	// do not have, and on the non-light-vector path (every lightmapped world
 	// surface) the value is not used as a scale at all -- it only bends the
@@ -1948,6 +1952,7 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
 	// Added in OPM
 	ri.Cmd_AddCommand( "groundcoverinfo", R_GroundCoverInfo_f );
+	ri.Cmd_AddCommand( "reflectioninfo", R_ReflectionInfo_f );
 	ri.Cmd_AddCommand( "waterinfo", R_WaterInfo_f );
 	ri.Cmd_AddCommand( "waterreload", R_WaterReload_f );
 	ri.Cmd_AddCommand( "skelgpuinfo", R_SkelGpuInfo_f );
@@ -2226,6 +2231,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "exportCubemaps" );
 	// Added in OPM
 	ri.Cmd_RemoveCommand( "groundcoverinfo" );
+	ri.Cmd_RemoveCommand( "reflectioninfo" );
 	ri.Cmd_RemoveCommand( "waterinfo" );
 	ri.Cmd_RemoveCommand( "waterreload" );
 	ri.Cmd_RemoveCommand( "skelgpuinfo" );

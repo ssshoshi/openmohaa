@@ -404,6 +404,8 @@ void R_AddStaticModelSurfaces(void)
         if (iRadiusCull != CULL_OUT
             && (iRadiusCull != CULL_CLIP || R_CullStaticModel(SM->tiki, tiki_scale, tiki_localorigin) != CULL_OUT)) {
             dtikisurface_t *dsurf;
+            // Added in OPM: the reflection probe where it stands (r_cubeMapping)
+            const int       cubemap = R_ViewCubemapForPoint(tiki_worldorigin);
 
             tr.rtDrawCulled = ~R_RtSphereMask(tiki_worldorigin, SM->cull_radius, rtCandidates);
 
@@ -489,7 +491,7 @@ void R_AddStaticModelSurfaces(void)
                     }
 
                     SM->bRendered = qtrue;
-                    R_AddDrawSurf((surfaceType_t *)s_surface, shader, 0, 0, 0, 0);
+                    R_AddDrawSurf((surfaceType_t *)s_surface, shader, 0, 0, 0, cubemap);
 
                     if (r_showstaticlod->integer) {
                         vec3_t org;

@@ -104,6 +104,8 @@ typedef struct cubemap_s {
 	vec3_t origin;
 	float parallaxRadius;
 	image_t *image;
+	int area;    // Added in OPM: the BSP area it is in, -1 not known (R_CubemapForPoint)
+	int cluster; // and its PVS cluster
 } cubemap_t;
 
 typedef struct dlight_s {
@@ -2929,6 +2931,7 @@ extern  cvar_t  *r_parallaxMapOffset;
 extern  cvar_t  *r_parallaxMapShadows;
 extern  cvar_t  *r_cubeMapping;
 extern  cvar_t  *r_cubemapSize;
+extern  cvar_t  *r_cubemapStrength;
 extern  cvar_t  *r_deluxeSpecular;
 extern  cvar_t  *r_pbr;
 extern  cvar_t  *r_baseNormalX;
@@ -3590,6 +3593,9 @@ void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
 int R_CubemapForPoint( vec3_t point );
+void R_PlaceEnvProbes( const lump_t *entityLump );
+int R_ViewCubemapForPoint( const vec3_t point );
+void R_ReflectionInfo_f( void );
 
 /*
 ============================================================
