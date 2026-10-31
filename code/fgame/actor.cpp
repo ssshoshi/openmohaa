@@ -5444,6 +5444,13 @@ void Actor::EventKilled(Event *ev)
         DropHeldGrenade();
     }
 
+    // Added in OPM
+    //  A soldier the model browser spawned without AI still dies: its death
+    //  only plays while the AI thinks.
+    if (!m_bDoAI && G_OrchSpawned(this)) {
+        m_bDoAI = true;
+    }
+
     DispatchEventKilled(ev, true);
 
     attacker = ev->GetEntity(1);
