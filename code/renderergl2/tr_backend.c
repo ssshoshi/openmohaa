@@ -2559,7 +2559,7 @@ static void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP4);
 	}
 	R_RtSetVolumeUniforms(&tr.froxelShader[0]);
-	GL_BindToTMU(tr.froxelDepthImage, TB_LIGHTMAP);
+	GL_BindToTMU(tr.froxelDepthImage, TB_NORMALMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
 
 	// summed from the eye

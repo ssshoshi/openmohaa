@@ -2800,7 +2800,9 @@ void GLSL_InitGPUShaders(void)
 
 			GLSL_InitUniforms(sp);
 			GLSL_SetUniformInt(sp, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
-			GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+			// the light pass's tile depths off TB_LIGHTMAP, which is the
+			// sun's third cascade (TB_SHADOWMAP3) there
+			GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP, i == 0 ? TB_NORMALMAP : TB_LIGHTMAP);
 			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP,  TB_SHADOWMAP);
 			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP2, TB_SHADOWMAP2);
 			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP3, TB_SHADOWMAP3);
