@@ -50,6 +50,8 @@ extern const char *fallbackShader_gtao_vp;
 extern const char *fallbackShader_gtao_fp;
 extern const char *fallbackShader_volumetric_vp;
 extern const char *fallbackShader_volumetric_fp;
+extern const char *fallbackShader_froxel_vp;
+extern const char *fallbackShader_froxel_fp;
 extern const char *fallbackShader_ssao_vp;
 extern const char *fallbackShader_ssao_fp;
 extern const char *fallbackShader_texturecolor_vp;
@@ -218,6 +220,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_AOParams",        GLSL_VEC4 },
 	{ "u_VolParams",       GLSL_VEC4 },
 	{ "u_VolRange",        GLSL_VEC4 },
+	{ "u_Froxel",          GLSL_VEC4 },
 	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
@@ -2749,7 +2752,7 @@ void GLSL_InitGPUShaders(void)
 	}
 
 	// Added in OPM: the light in the air, which reads the realtime lights
-	if (r_volumetric->integer && r_realtimeLighting->integer == 2)
+	if (r_volumetric->integer == 1 && r_realtimeLighting->integer == 2)
 	{
 		attribs = ATTR_POSITION | ATTR_TEXCOORD;
 		Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
@@ -2775,6 +2778,44 @@ void GLSL_InitGPUShaders(void)
 		GLSL_FinishGPUShader(&tr.volumetricShader);
 
 		numEtcShaders++;
+	}
+
+	// Added in OPM: r_volumetric 2, the light in the air in a grid of cells
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+	{
+		static const char *passes[3] = { "#define FROXEL_LIGHT\n", "#define FROXEL_INTEGRATE\n", "#define FROXEL_APPLY\n" };
+
+		for (i = 0; i < 3; i++)
+		{
+			shaderProgram_t *sp = &tr.froxelShader[i];
+
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
+			Q_strcat(extradefines, sizeof(extradefines), passes[i]);
+
+			if (!GLSL_InitGPUShader(sp, "froxel", attribs, qtrue, extradefines, qtrue, fallbackShader_froxel_vp, fallbackShader_froxel_fp))
+			{
+				ri.Error(ERR_FATAL, "Could not load froxel shader!");
+			}
+
+			GLSL_InitUniforms(sp);
+			GLSL_SetUniformInt(sp, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP,  TB_SHADOWMAP);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP2, TB_SHADOWMAP2);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP3, TB_SHADOWMAP3);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP4, TB_SHADOWMAP4);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
+			GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
+			GLSL_FinishGPUShader(sp);
+
+			numEtcShaders++;
+		}
 	}
 
 
@@ -3026,6 +3067,8 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.volumetricShader);
+	for (i = 0; i < 3; i++)
+		GLSL_DeleteGPUShader(&tr.froxelShader[i]);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.gtaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);

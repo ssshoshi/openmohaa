@@ -2446,6 +2446,127 @@ static void RB_Volumetric(FBO_t *dstFbo, ivec4_t dstBox)
 	R_GpuTimerEnd(GPUTIMER_VOLUME);
 }
 
+/*
+=============
+RB_VolumetricFroxels
+
+Added in OPM: the light in the air in a grid of cells over the view
+(r_volumetric 2, froxel_fp.glsl): each cell lit, then summed from the eye,
+then the view seen through it at each pixel's depth.
+=============
+*/
+static void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
+{
+	vec4_t quadVerts[4], viewInfo, volParams, volRange, froxel;
+	vec2_t texCoords[4];
+	vec3_t viewVector;
+	vec4_t box;
+	const float zmin  = r_znear->value;
+	const float zmax  = backEnd.viewParms.zFar;
+	const float tanY  = tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+	const float tanX  = tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+	const float range = Q_max(64.0f, r_volumetricRange->value);
+	const float density = Q_max(0.0f, r_volumetricDensity->value) * 0.001f;
+	const qboolean cascades = r_sunlightMode->integer && (backEnd.viewParms.flags & VPF_USESUNLIGHT) && tr.sunShadowDepthImage[3];
+	int i;
+
+	R_GpuTimerBegin(GPUTIMER_VOLUME);
+
+	VectorSet4(quadVerts[0], -1,  1, 0, 1);
+	VectorSet4(quadVerts[1],  1,  1, 0, 1);
+	VectorSet4(quadVerts[2],  1, -1, 0, 1);
+	VectorSet4(quadVerts[3], -1, -1, 0, 1);
+	texCoords[0][0] = 0; texCoords[0][1] = 1;
+	texCoords[1][0] = 1; texCoords[1][1] = 1;
+	texCoords[2][0] = 1; texCoords[2][1] = 0;
+	texCoords[3][0] = 0; texCoords[3][1] = 0;
+
+	VectorSet4(froxel, (float)(tr.froxelLightImage->width / FROXEL_TILES), (float)(tr.froxelLightImage->height / (FROXEL_SLICES / FROXEL_TILES)),
+		(float)FROXEL_SLICES, log2f(range / 256.0f + 1.0f));
+	VectorSet4(viewInfo, zmax / zmin, zmax, 0.0f, 0.0f);
+	// the density in units: r_volumetricDensity 1 is a light haze, which
+	// takes nothing out of the light through it
+	VectorSet4(volParams, density, Q_max(-0.95f, Q_min(r_volumetricAnisotropy->value, 0.95f)),
+		Q_max(0.0f, r_volumetricSun->value), Q_max(0.0f, r_volumetricLamps->value));
+	VectorSet4(volRange, range, cascades ? 1.0f : 0.0f, 0.0f, 0.0f);
+
+	GL_State(GLS_DEPTHTEST_DISABLE);
+	GL_Cull(CT_TWO_SIDED);
+
+	for (i = 0; i < 3; i++)
+	{
+		shaderProgram_t *sp = &tr.froxelShader[i];
+
+		GLSL_BindProgram(sp);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, backEnd.refdef.viewaxis[0]);
+		VectorScale(backEnd.refdef.viewaxis[1], tanX, viewVector);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWLEFT, viewVector);
+		VectorScale(backEnd.refdef.viewaxis[2], tanY, viewVector);
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWUP, viewVector);
+		GLSL_SetUniformVec4(sp, UNIFORM_VIEWINFO, viewInfo);
+		GLSL_SetUniformVec4(sp, UNIFORM_VOLPARAMS, volParams);
+		GLSL_SetUniformVec4(sp, UNIFORM_VOLRANGE, volRange);
+		GLSL_SetUniformVec4(sp, UNIFORM_FROXEL, froxel);
+	}
+
+	// each cell lit
+	FBO_Bind(tr.froxelLightFbo);
+	qglViewport(0, 0, tr.froxelLightFbo->width, tr.froxelLightFbo->height);
+	qglScissor(0, 0, tr.froxelLightFbo->width, tr.froxelLightFbo->height);
+	GLSL_BindProgram(&tr.froxelShader[0]);
+	if (cascades)
+	{
+		GL_BindToTMU(tr.sunShadowDepthImage[0], TB_SHADOWMAP);
+		GL_BindToTMU(tr.sunShadowDepthImage[1], TB_SHADOWMAP2);
+		GL_BindToTMU(tr.sunShadowDepthImage[2], TB_SHADOWMAP3);
+		GL_BindToTMU(tr.sunShadowDepthImage[3], TB_SHADOWMAP4);
+		GLSL_SetUniformMat4(&tr.froxelShader[0], UNIFORM_SHADOWMVP,  backEnd.refdef.sunShadowMvp[0]);
+		GLSL_SetUniformMat4(&tr.froxelShader[0], UNIFORM_SHADOWMVP2, backEnd.refdef.sunShadowMvp[1]);
+		GLSL_SetUniformMat4(&tr.froxelShader[0], UNIFORM_SHADOWMVP3, backEnd.refdef.sunShadowMvp[2]);
+		GLSL_SetUniformMat4(&tr.froxelShader[0], UNIFORM_SHADOWMVP4, backEnd.refdef.sunShadowMvp[3]);
+	}
+	else
+	{
+		// a depth image either way: a shadow sampler on a colour one reads nothing defined
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP);
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP2);
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP3);
+		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP4);
+	}
+	R_RtSetVolumeUniforms(&tr.froxelShader[0]);
+	RB_InstantQuad2(quadVerts, texCoords);
+
+	// summed from the eye
+	FBO_Bind(tr.froxelSumFbo);
+	GLSL_BindProgram(&tr.froxelShader[1]);
+	GL_BindToTMU(tr.froxelLightImage, TB_COLORMAP);
+	RB_InstantQuad2(quadVerts, texCoords);
+
+	// the view through it: times what it lets through, plus what it adds
+	box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+	box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
+	texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
+	texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
+	texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
+
+	FBO_Bind(dstFbo);
+	qglViewport(dstBox[0], dstBox[1], dstBox[2], dstBox[3]);
+	qglScissor(dstBox[0], dstBox[1], dstBox[2], dstBox[3]);
+	GL_State(GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_SRC_ALPHA);
+	qglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+	GLSL_BindProgram(&tr.froxelShader[2]);
+	GL_BindToTMU(tr.froxelSumImage, TB_COLORMAP);
+	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
+	RB_InstantQuad2(quadVerts, texCoords);
+	qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
+
+	R_GpuTimerEnd(GPUTIMER_VOLUME);
+}
+
 const void *RB_PostProcess(const void *data)
 {
 	const postProcessCommand_t *cmd = data;
@@ -2512,6 +2633,9 @@ const void *RB_PostProcess(const void *data)
 	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
 		RB_Volumetric(srcFbo, srcBox);
+	else if (srcFbo && tr.froxelSumFbo && tr.froxelShader[2].program && R_RtLitLive() && r_volumetricDensity->value > 0
+		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
+		RB_VolumetricFroxels(srcFbo, srcBox);
 
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)

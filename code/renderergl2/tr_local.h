@@ -534,6 +534,12 @@ enum
 #define TMU_SSRDEPTH         26 // and this frame's depth
 #define NUM_TEXTURE_UNITS    27
 
+// Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
+// FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
+// out FROXEL_TILES slices a row of a 2D image
+#define FROXEL_PIXELS  16
+#define FROXEL_SLICES  64
+#define FROXEL_TILES   8
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
 #define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
@@ -1037,6 +1043,7 @@ typedef enum
 	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
 	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
 	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
+	UNIFORM_FROXEL,       // Added in OPM: r_volumetric 2 (froxel_fp.glsl): the grid's cells across, up, slices, its depth curve
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -2595,6 +2602,8 @@ typedef struct {
 	image_t                 *gtaoDepthImage; // the depth at that size, read by both
 	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
 	image_t                 *volumeBlurImage; // and half of its blur
+	image_t                 *froxelLightImage; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row)
+	image_t                 *froxelSumImage;   // and summed from the eye
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2627,6 +2636,8 @@ typedef struct {
 	FBO_t					*gtaoDepthFbo;
 	FBO_t					*volumeFbo;
 	FBO_t					*volumeBlurFbo;
+	FBO_t					*froxelLightFbo;
+	FBO_t					*froxelSumFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2678,6 +2689,7 @@ typedef struct {
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
 	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
+	shaderProgram_t froxelShader[3];  // Added in OPM: r_volumetric 2 (froxel_fp.glsl): FROXEL_LIGHT, FROXEL_INTEGRATE, FROXEL_APPLY
 	shaderProgram_t ssaoShader;
 	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];

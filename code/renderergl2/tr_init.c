@@ -1670,7 +1670,7 @@ void R_Register( void )
 	ri.Cvar_SetDescription(r_gtaoStrength, "Ambient occlusion: how dark it gets (0: none; 2: twice as dark)");
 	// Added in OPM: the light in the air (volumetric_fp.glsl)
 	r_volumetric = ri.Cvar_Get( "r_volumetric", "1", CVAR_LATCH | CVAR_ARCHIVE );
-	ri.Cvar_SetDescription(r_volumetric, "With r_realtimeLighting 2: the light in the air, the sun's shafts through windows and trees and the glow round lamps, in their shadows. Needs vid_restart");
+	ri.Cvar_SetDescription(r_volumetric, "With r_realtimeLighting 2: the light in the air, the sun's shafts through windows and trees and the glow round lamps, in their shadows. 1 marched along each ray, 2 in a grid of cells over the view (froxels). Needs vid_restart");
 	r_volumetricDensity = ri.Cvar_Get( "r_volumetricDensity", "1", CVAR_ARCHIVE );
 	ri.Cvar_SetDescription(r_volumetricDensity, "How thick the air is: how much of the light it shows (0 none)");
 	r_volumetricAnisotropy = ri.Cvar_Get( "r_volumetricAnisotropy", "0.5", CVAR_ARCHIVE );

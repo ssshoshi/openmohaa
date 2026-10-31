@@ -510,6 +510,15 @@ void FBO_Init(void)
 		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.volumeBlurFbo);
 	}
+	if (tr.froxelLightImage && tr.froxelSumImage)
+	{
+		tr.froxelLightFbo = FBO_Create("_froxellight", tr.froxelLightImage->width, tr.froxelLightImage->height);
+		FBO_AttachImage(tr.froxelLightFbo, tr.froxelLightImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.froxelLightFbo);
+		tr.froxelSumFbo = FBO_Create("_froxelsum", tr.froxelSumImage->width, tr.froxelSumImage->height);
+		FBO_AttachImage(tr.froxelSumFbo, tr.froxelSumImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.froxelSumFbo);
+	}
 
 	if (tr.screenSsaoImage)
 	{
