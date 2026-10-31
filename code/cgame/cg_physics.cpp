@@ -47,6 +47,7 @@ cvar_t *cg_physics_clipped;
 
 static int   phys_lastTime;
 static float phys_accum;
+static int   phys_serial; // steps taken since the world was made, for CG_PhysicsStepSerial
 
 // For cg_physics_log: what the simulation costs, reported every few seconds.
 static double phys_stepUs, phys_worstStepUs;
@@ -151,6 +152,28 @@ void CG_ShutdownPhysics(void)
     phys_temp   = NULL;
 }
 
+int CG_PhysicsStepSerial(void)
+{
+    return phys_serial;
+}
+
+float CG_PhysicsLerp(void)
+{
+    float a;
+
+    if (!phys_lastTime) {
+        return 1.0f;
+    }
+    // CG_PhysicsFrame runs after the entities: what they read now is where
+    // last frame's steps left the bodies, and the time past the last step,
+    // then, is what was left over. Drawn that far from the step before toward
+    // the last, a body is a step behind the simulation, evenly, every frame.
+    // (Counting this frame's time too ran past the last step on most frames,
+    // and they were drawn at it, in jumps again.)
+    a = phys_accum * PHYS_STEP_HZ;
+    return a < 0.0f ? 0.0f : a > 1.0f ? 1.0f : a;
+}
+
 void CG_PhysicsFrame(void)
 {
     if (!phys_system || !cg_physics->integer || !cg.snap) {
@@ -211,6 +234,7 @@ void CG_PhysicsFrame(void)
             }
 
             phys_accum -= dt;
+            phys_serial++;
             steps++;
         }
 

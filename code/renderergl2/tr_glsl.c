@@ -191,6 +191,7 @@ static uniformInfo_t uniformsInfo[] =
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	{ "u_RtLights",        GLSL_VEC4_RTLIGHTS },
 	{ "u_RtParams",        GLSL_VEC4 },
+	{ "u_Linear",          GLSL_FLOAT },
 	{ "u_RtSunDir",        GLSL_VEC4 },
 	{ "u_RtSunColor",      GLSL_VEC4 },
 	{ "u_RtAmbient",       GLSL_VEC4 },
@@ -453,10 +454,17 @@ static const char *rt_glsl =
 	"	}\n"
 	"	vec2  origin = vec2(mod(tile, tiles), floor(tile / tiles));\n"
 	// the four taps (each four texels, filtered) half a texel apart, or as
-	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps
-	"	float spread = max(u_RtSurface.w, 1.0);\n"
+	// many halves as r_rtShadowSoft asks (u_RtSurface.w): softer, as many taps.
+	// The face was drawn guard texels wider than its 90 degrees each side
+	// (u_RtSurface.w / 16, r_rtShadowGuard; R_RtFaceScale), so its 90 degrees
+	// are the middle of the tile and the taps near an edge read the guard,
+	// what the next face sees there; clamped inside the tile, they read the
+	// same texels over and over and the shadow smeared along every edge.
+	"	float guard  = floor(u_RtSurface.w / 16.0);\n"
+	"	float spread = max(u_RtSurface.w - 16.0 * guard, 1.0);\n"
 	"	float texel  = 1.0 / texels;\n"
-	"	vec2  st     = clamp(faceUV, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
+	"	vec2  st     = (faceUV - 0.5) * (1.0 - 2.0 * guard * texel) + 0.5;\n"
+	"	st           = clamp(st, vec2((1.0 + 0.5 * spread) * texel), vec2(1.0 - (1.0 + 0.5 * spread) * texel));\n"
 	"	vec2  uv     = (origin + st) / tiles;\n"
 	"	float d      = 0.5 * spread / (RT_TILES * tileTexels);\n"
 	"	return 0.25 * (shadow2D(atlas, vec3(uv + vec2(-d, -d), depth))\n"
@@ -2998,6 +3006,17 @@ void GLSL_BindProgram(shaderProgram_t * program)
 
 	if (GL_UseProgram(programObject))
 		backEnd.pc.c_glslShaderBinds++;
+
+	// Added in OPM: r_linearLighting. The world's view reads its textures
+	// and colours as linear light, and the tone map shows it; the 2D, and
+	// scenes without the world, which are not tone mapped, as ever.
+	if (program && program->uniforms[UNIFORM_LINEAR] != -1)
+	{
+		const qboolean linear = R_RtLinear() && (program == &tr.tonemapShader
+			|| (!backEnd.projection2D && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL)));
+
+		GLSL_SetUniformFloat(program, UNIFORM_LINEAR, linear ? 1.0f : 0.0f);
+	}
 }
 
 

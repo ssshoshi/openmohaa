@@ -104,6 +104,8 @@ void RDJ_Build(const vec3_t floorN, int box, const vec3_t mins, const vec3_t max
     phys_system->OptimizeBroadPhase();
 }
 
+static int rdj_serial;
+
 // A frame of the harness: the world at 60 Hz, as CG_PhysicsFrame steps it.
 void RDJ_Step(float frametime)
 {
@@ -114,5 +116,11 @@ void RDJ_Step(float frametime)
         CG_JoltRagdollsStep(dt);
         phys_system->Update(dt, 1, rdj_world.temp, rdj_world.jobs);
         rdj_accum -= dt;
+        rdj_serial++;
     }
 }
+
+// The drawn pose's interpolation (cg_ragdoll_interp) reads these; the harness
+// measures the simulation, not the drawing.
+extern "C" int CG_PhysicsStepSerial(void) { return rdj_serial; }
+extern "C" float CG_PhysicsLerp(void) { return 1.0f; }
