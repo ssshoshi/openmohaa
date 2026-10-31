@@ -1025,7 +1025,7 @@ r_toneMap	0	1	code/renderergl2/tr_init.c:1573	Tone mapping when r_hdr is on. (Op
 r_uifullscreen	0	1	code/renderergl2/tr_init.c:1556	Whether a fullscreen UI is being drawn. Set by the UI. (OpenGL 2 renderer.)
 r_useglfog	0	1	code/renderergl1/tr_init.c:1538	Use OpenGL fog for the map's fog. (OpenGL 1 renderer.)
 r_uselod	0	1	code/renderergl1/tr_init.c:1427	Level of detail for skeletal models. 0 always draws full detail.
-r_vaoCache	0	1	code/renderergl2/tr_init.c:1781	Cache world geometry in video memory between frames instead of re-uploading it. A large win on desktop GL; off by default after upstream disabled it for slow GLES drivers. (OpenGL 2 renderer.)
+r_vaoCache	0	1	code/renderergl2/tr_init.c:1781	Cache world geometry in video memory between frames instead of re-uploading it. A large win on desktop GL where the frame is CPU bound (upstream disabled it for slow GLES drivers); curved patches draw at full detail. On by default. (OpenGL 2 renderer.)
 r_verbose	0	1	code/renderergl1/tr_init.c:1492	Print extra renderer information. Cheat-protected.
 r_vertexLight	0	1	code/renderergl1/tr_init.c:1374	Light the world by vertex instead of lightmaps: faster and much flatter.
 r_vidmode1024	0	1	code/renderergl1/tr_init.c:1356	Legacy: the 1024x768 mode is available.

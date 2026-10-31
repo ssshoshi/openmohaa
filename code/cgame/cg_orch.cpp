@@ -150,6 +150,9 @@ typedef struct {
     vec3_t        frozeAt;    // where the player was when frozen, for orch_return
     int           health;     // the body's, last frame, while ghosting
     int           hitMsgAt;   // when the panel last said it was hit
+    qboolean      pinned;     // orch_campos: held at pinOrigin, looking pinAngles, the mouse and keys ignored
+    vec3_t        pinOrigin;  // the eye's
+    vec3_t        pinAngles;
 } orchFreecam_t;
 
 static orchFreecam_t fc;
@@ -806,6 +809,7 @@ static void CG_OrchFreecamEnd(qboolean here)
 
     fc.active = qfalse;
     fc.live   = qfalse;
+    fc.pinned = qfalse;
     cgi.Cvar_Set("cl_freecam", here ? "-1" : "0");
     if (CG_OrchPaused()) {
         cgi.Cmd_Execute(EXEC_NOW, "pause\n");
@@ -873,6 +877,41 @@ void CG_OrchFly_f(void)
     }
 }
 
+// orch_campos x y z [pitch yaw]: the world frozen and the camera's eye put at
+// x y z, looking pitch yaw, and held there, for A/B shots of one exact view (a
+// teleport lands the body a few units off, and the mouse turns the view).
+// With no arguments the camera is let go, still frozen; orch_freeze resumes.
+void CG_OrchCamPos_f(void)
+{
+    if (!cg.snap) {
+        return;
+    }
+    if (!orch_active->integer) {
+        cgi.Printf("orch_campos: turn the orchestrator on first (orch)\n");
+        return;
+    }
+    if (cgi.Argc() < 4) {
+        if (fc.pinned) {
+            fc.pinned = qfalse;
+            CG_OrchAddMsg("Camera let go", qfalse);
+        }
+        return;
+    }
+
+    if (!fc.active || fc.live) {
+        CG_OrchFreecamBegin(qfalse);
+        if (!fc.active) {
+            return; // not single player
+        }
+    }
+
+    fc.pinned = qtrue;
+    VectorSet(fc.pinOrigin, atof(cgi.Argv(1)), atof(cgi.Argv(2)), atof(cgi.Argv(3)));
+    VectorSet(fc.pinAngles, cgi.Argc() > 4 ? atof(cgi.Argv(4)) : fc.ps.viewangles[0],
+              cgi.Argc() > 5 ? atof(cgi.Argv(5)) : fc.ps.viewangles[1], 0.0f);
+    CG_OrchLog("campos", "\"eye\": " + CG_JsonVec(fc.pinOrigin) + ", \"angles\": " + CG_JsonVec(fc.pinAngles));
+}
+
 // orch_return: back to where the player last froze, after a "here" gone wrong.
 void CG_OrchReturn_f(void)
 {
@@ -930,6 +969,17 @@ qboolean CG_OrchFreecamView(vec3_t origin, vec3_t angles)
     fc.lastMs = now;
     if (dt > 100) {
         dt = 100;
+    }
+
+    // Pinned, the camera is exactly where it was put: two shots of one view,
+    // with the world frozen, differ only by what was changed between them.
+    if (fc.pinned) {
+        VectorCopy(fc.pinOrigin, fc.ps.origin);
+        fc.ps.origin[2] -= fc.ps.viewheight;
+        VectorCopy(fc.pinAngles, fc.ps.viewangles);
+        VectorCopy(fc.pinOrigin, origin);
+        VectorCopy(fc.pinAngles, angles);
+        return qtrue;
     }
 
     if (dt > 0) {

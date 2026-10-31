@@ -631,7 +631,11 @@ static int RB_GetEntityGridLighting( void )
 		vLight[0] = vLight[1] = vLight[2] = tr.identityLight * 150.0;
 	}
 
-	R_AddDlightsToGridValue( &backEnd.refdef, lightOrigin, vLight );
+	// Added in OPM: not when the realtime lights light the model, all of the
+	// light live, the dynamic lights among them: it had them twice
+	if ( !R_RtLitLive() || !R_RtTakesDlights() ) {
+		R_AddDlightsToGridValue( &backEnd.refdef, lightOrigin, vLight );
+	}
 	R_NormalizeGridLighting( vLight );
 
 	return R_PackGridLighting( vLight );
@@ -712,7 +716,10 @@ void RB_SetupStaticModelGridLighting(trRefdef_t *refdef, cStaticModelUnpacked_t 
 		vLight[0] = vLight[1] = vLight[2] = tr.identityLight * 150.0;
 	}
 
-	R_AddDlightsToGridValue( refdef, lightOrigin, vLight );
+	// Added in OPM: as for an entity (RB_GetEntityGridLighting)
+	if ( !R_RtLitLive() || !R_RtTakesDlights() ) {
+		R_AddDlightsToGridValue( refdef, lightOrigin, vLight );
+	}
 	R_NormalizeGridLighting( vLight );
 
 	ent->iGridLighting = R_PackGridLighting( vLight );
