@@ -67,7 +67,8 @@ UNLIT_BLENDS = {
 #   f0:     specular reflectance at normal incidence (also darkens the diffuse
 #           by 1 - f0 in lightall, so keep dielectrics near 0.04)
 #   gloss:  gloss range, crevices at the low end and exposed surfaces at the
-#           high end (r_glossType 0: roughness = exp2(-3 * gloss))
+#           high end, as smoothness (r_glossType 1, the default:
+#           roughness = 1 - gloss)
 #   bump:   normal strength multiplier
 #   depth:  parallax depth, as a fraction of r_baseParallax; presets without
 #           one get a plain normal map even with --parallax (see PARALLAX)

@@ -282,7 +282,11 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, ve
 	return bestDepth - r_parallaxMapOffset;
 }
 
-float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
+// (OPM: gx, gy, the pixel's own texture gradients, as for the search: the ray
+// stops at its first hit and is only cast where parallax is on, both per
+// pixel, so the plain reads it made had undefined derivatives and could fetch
+// any mip, the noise the search had before it read with gradients)
+float LightRay(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, vec2 gy)
 {
 	const int linearSearchSteps = 16;
 
@@ -292,7 +296,7 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 	// current height from initial texel depth
 	float height = 0.0;
 
-	float startDepth = SampleDepth(normalMap, dp);
+	float startDepth = SampleDepthGrad(normalMap, dp, gx, gy);
 
 	// find a collision or escape
 	for(int i = 0; i < linearSearchSteps - 1; ++i)
@@ -302,7 +306,7 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 		if (startDepth < height)
 			return 1.0;
 		
-		float t = SampleDepth(normalMap, dp + ds * height);
+		float t = SampleDepthGrad(normalMap, dp + ds * height, gx, gy);
 
 		if (startDepth > t + height)
 			return 0.0;
@@ -316,13 +320,13 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 // shadow: dividing by z there made the ray NaN, and whatever that fetch read
 // put black blotches in every crevice. The shadow fades in over the first few
 // degrees above the plane, where the ray would stretch across the texture.
-float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap)
+float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap, vec2 gx, vec2 gy)
 {
 	float fade = smoothstep(0.0, 0.1, lightDir.z);
 	if (fade <= 0.0)
 		return 1.0;
 
-	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap), fade);
+	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap, gx, gy), fade);
 }
 #endif
 
@@ -547,7 +551,7 @@ void main()
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	float parallaxShadow = parallaxOn ? ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap) : 1.0;
+	float parallaxShadow = parallaxOn ? ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap, parallaxGx, parallaxGy) : 1.0;
   #endif
 
 
@@ -712,7 +716,7 @@ void main()
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
 	if (parallaxOn)
-		lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
+		lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap, parallaxGx, parallaxGy);
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;

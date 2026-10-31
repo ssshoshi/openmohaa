@@ -35,21 +35,15 @@ varying vec3   var_ViewDir;
 // so the maximum error is 1.0 / 2^24
 #define DEPTH_MAX_ERROR 0.000000059604644775390625
 
-// Input: It uses texture coords as the random number seed.
-// Output: Random number: [0,1), that is between 0.0 and 0.999999... inclusive.
-// Author: Michael Pohoreski
-// Copyright: Copyleft 2012 :-)
-// Source: http://stackoverflow.com/questions/5149544/can-i-generate-a-random-number-inside-a-pixel-shader
-
+// OPM: interleaved gradient noise (Jimenez, "Next Generation Post Processing
+// in Call of Duty: Advanced Warfare"), as an angle. The old seed,
+// mod(123456789., 1e-7 + 256. * dot(p, r)), was white noise at best (a float
+// mod of a number past float precision), with small, banded angles where the
+// screen's corner makes the divisor small. This one turns neighbouring pixels'
+// taps as far apart as it can, so the few taps read as fine, even grain.
 float random( const vec2 p )
 {
-  // We need irrationals for pseudo randomness.
-  // Most (all?) known transcendental numbers will (generally) work.
-  const vec2 r = vec2(
-    23.1406926327792690,  // e^pi (Gelfond's constant)
-     2.6651441426902251); // 2^sqrt(2) (Gelfond-Schneider constant)
-  //return fract( cos( mod( 123456789., 1e-7 + 256. * dot(p,r) ) ) );
-  return mod( 123456789., 1e-7 + 256. * dot(p,r) );  
+	return 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 }
 
 // (OPM: size, the map's texels across: the whole level's cascade has its own,
@@ -107,6 +101,29 @@ float getLinearDepth(sampler2D depthMap, vec2 tex, float zFarDivZNear)
 	return 1.0 / mix(zFarDivZNear, 1.0, sampleZDivW);
 }
 
+#if defined(USE_SHADOW_CASCADE)
+// OPM: over the last tenth of a cascade's square the next one is blended in,
+// so the step from its sharper texels to the next one's coarser ones is a
+// ramp, not a line that crosses the ground as the view moves.
+#define CASCADE_BLEND 0.1
+
+bool Inside(const vec4 sp)
+{
+	return all(lessThan(abs(sp.xyz), vec3(abs(sp.w))));
+}
+
+float Edge(const vec4 sp)
+{
+	return smoothstep(1.0 - CASCADE_BLEND, 1.0, max(abs(sp.x), abs(sp.y)) / abs(sp.w));
+}
+
+float Sample(const sampler2DShadow shadowmap, vec4 sp, const float size)
+{
+	sp.xyz = sp.xyz * (0.5 / sp.w) + vec3(0.5);
+	return PCF(shadowmap, sp.xy, sp.z, size);
+}
+#endif
+
 // Added in OPM: contact shadows. The cascades' texels are an inch or more
 // across, and a shadow a foot or a crate's corner casts under that is lost.
 // A few steps from the point towards the sun through the view's own depth:
@@ -155,52 +172,49 @@ void main()
 	float depth = getLinearDepth(u_ScreenDepthMap, var_DepthTex, u_ViewInfo.x);
 	vec4 biasPos = vec4(u_ViewOrigin + var_ViewDir * (depth - 0.5 / u_ViewInfo.x), 1.0);
 
-	vec4 shadowpos = u_ShadowMvp * biasPos;
-
 	if ( depth >= 0.999 )
 	{
 		result = 1.0;
 	}
 	else
-#if defined(USE_SHADOW_CASCADE)
-	if (all(lessThan(abs(shadowpos.xyz), vec3(abs(shadowpos.w)))))
-#endif
 	{
-		shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
 #if defined(USE_SHADOW_CASCADE)
-		result = PCF(u_ShadowMap, shadowpos.xy, shadowpos.z, r_shadowMapSize);
-#else
-		result = PCF(u_ShadowMap, shadowpos.xy, shadowpos.z, r_sunShadowFarSize);
-#endif
-	}
-#if defined(USE_SHADOW_CASCADE)
-	else
-	{
-		shadowpos = u_ShadowMvp2 * biasPos;
+		vec4 s0 = u_ShadowMvp  * biasPos;
+		vec4 s1 = u_ShadowMvp2 * biasPos;
+		vec4 s2 = u_ShadowMvp3 * biasPos;
+		float t;
 
-		if (all(lessThan(abs(shadowpos.xyz), vec3(abs(shadowpos.w)))))
+		if (Inside(s0))
 		{
-			shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-			result = PCF(u_ShadowMap2, shadowpos.xy, shadowpos.z, r_shadowMapSize);
+			result = Sample(u_ShadowMap, s0, r_shadowMapSize);
+			t = Edge(s0);
+			if (t > 0.0 && Inside(s1))
+				result = mix(result, Sample(u_ShadowMap2, s1, r_shadowMapSize), t);
+		}
+		else if (Inside(s1))
+		{
+			result = Sample(u_ShadowMap2, s1, r_shadowMapSize);
+			t = Edge(s1);
+			if (t > 0.0 && Inside(s2))
+				result = mix(result, Sample(u_ShadowMap3, s2, r_shadowMapSize), t);
+		}
+		else if (Inside(s2))
+		{
+			result = Sample(u_ShadowMap3, s2, r_shadowMapSize);
+			t = Edge(s2);
+			if (t > 0.0)
+				result = mix(result, Sample(u_ShadowMap4, u_ShadowMvp4 * biasPos, r_sunShadowFarSize), t);
 		}
 		else
 		{
-			shadowpos = u_ShadowMvp3 * biasPos;
-
-			if (all(lessThan(abs(shadowpos.xyz), vec3(abs(shadowpos.w)))))
-			{
-				shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-				result = PCF(u_ShadowMap3, shadowpos.xy, shadowpos.z, r_shadowMapSize);
-			}
-			else
-			{
-				shadowpos = u_ShadowMvp4 * biasPos;
-				shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
-				result = PCF(u_ShadowMap4, shadowpos.xy, shadowpos.z, r_sunShadowFarSize);
-			}
+			result = Sample(u_ShadowMap4, u_ShadowMvp4 * biasPos, r_sunShadowFarSize);
 		}
-	}
+#else
+		vec4 shadowpos = u_ShadowMvp * biasPos;
+		shadowpos.xyz = shadowpos.xyz * (0.5 / shadowpos.w) + vec3(0.5);
+		result = PCF(u_ShadowMap, shadowpos.xy, shadowpos.z, r_sunShadowFarSize);
 #endif
+	}
 
 	// Added in OPM: what the cascades let through, what stands close enough
 	// to the point to be under their texels may still stop
