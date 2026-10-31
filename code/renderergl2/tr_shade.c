@@ -2548,7 +2548,9 @@ void RB_StageIteratorGeneric( void )
 	//
 	// set face culling appropriately
 	//
-	if (input->shader->cullType == CT_TWO_SIDED)
+	// Added in OPM: a lamp's shadow has both sides of every face (R_CullSurface)
+	if (input->shader->cullType == CT_TWO_SIDED
+		|| (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)))
 	{
 		GL_Cull( CT_TWO_SIDED );
 	}
