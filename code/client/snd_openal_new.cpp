@@ -114,6 +114,10 @@ static void S_OPENAL_ListActive();
 static int
 S_OPENAL_SpatializeStereoSound(const vec3_t listener_origin, const vec3_t listener_left, const vec3_t origin);
 static void   S_OPENAL_reverb(int iChannel, int iReverbType, float fReverbLevel);
+// Added in OPM: the room's sound (EFX)
+static void S_OPENAL_EfxInit();
+static void S_OPENAL_EfxShutdown();
+static void S_OPENAL_EfxUpdate(const vec3_t vListenerOrigin);
 static bool   S_OPENAL_LoadMP3_Codec(const char *_path, sfx_t *pSfx);
 static ALuint S_OPENAL_Format(float width, int channels);
 
@@ -233,6 +237,9 @@ S_OPENAL_NukeContext
 static void S_OPENAL_NukeContext()
 {
     int i;
+
+    // Added in OPM: the sources let go of the room first
+    S_OPENAL_EfxShutdown();
 
     Com_Printf("OpenAL: Destroying channels...\n");
 
@@ -633,6 +640,9 @@ qboolean S_OPENAL_Init()
         }
     }
     s_reverb->modified = false;
+
+    // Added in OPM
+    S_OPENAL_EfxInit();
 
     al_current_volume = Square(s_volume->value);
     qalListenerf(AL_GAIN, al_current_volume);
@@ -2527,6 +2537,9 @@ void S_OPENAL_Respatialize(int iEntNum, const vec3_t vHeadPos, const vec3_t vAxi
 
     S_OPENAL_AddLoopSounds(vTempAxis);
     s_bReverbChanged = false;
+
+    // Added in OPM
+    S_OPENAL_EfxUpdate(vListenerOrigin);
 }
 
 /*
@@ -5189,4 +5202,391 @@ int S_ActiveSoundMarkers(soundMarker_t *out, int max)
     }
 
     return n;
+}
+
+/*
+=============================================================================
+
+Added in OPM: the room's sound (OpenAL Soft's EFX)
+
+MOH:AA's maps have no reverb of their own (no trigger_reverb, no .snd), and
+the original's EAX was never in OpenMoHAA. So the room is found the way
+Source's automatic DSP does it: rays from the listener every so often, how
+far its walls are and how much of it is open sky, and an EAX reverb set
+from that, eased from one place to the next. A gun in a small stone room
+rings short and close, in a hall long, in a street hardly at all.
+
+Each 3D sound behind a wall from the listener is muffled (a low pass on its
+direct path), its reverb left as it is: it still comes round through the
+room.
+
+s_efx 1 (snd_restart), s_efxReverb 1 how loud the room is, s_efxOcclusion 1
+how much a wall muffles, s_efxDebug 1 prints the room as it changes, 2 every time it is looked for.
+
+=============================================================================
+*/
+
+#define EFX_RAYS      24
+#define EFX_RAY_LEN   3000.0f
+#define EFX_ROOM_MSEC 150
+
+static cvar_t *s_efx;
+static cvar_t *s_efxReverb;
+static cvar_t *s_efxOcclusion;
+static cvar_t *s_efxDebug;
+
+static LPALGENEFFECTS                  qalGenEffects;
+static LPALDELETEEFFECTS               qalDeleteEffects;
+static LPALEFFECTI                     qalEffecti;
+static LPALEFFECTF                     qalEffectf;
+static LPALGENFILTERS                  qalGenFilters;
+static LPALDELETEFILTERS               qalDeleteFilters;
+static LPALFILTERI                     qalFilteri;
+static LPALFILTERF                     qalFilterf;
+static LPALGENAUXILIARYEFFECTSLOTS     qalGenAuxiliaryEffectSlots;
+static LPALDELETEAUXILIARYEFFECTSLOTS  qalDeleteAuxiliaryEffectSlots;
+static LPALAUXILIARYEFFECTSLOTI        qalAuxiliaryEffectSloti;
+static LPALAUXILIARYEFFECTSLOTF        qalAuxiliaryEffectSlotf;
+
+static struct {
+    bool   on;
+    bool   eax;    // AL_EFFECT_EAXREVERB, else the plain reverb
+    ALuint slot;
+    ALuint effect;
+    ALuint filters[MAX_SOUNDSYSTEM_CHANNELS_3D];
+    ALuint connected[MAX_SOUNDSYSTEM_CHANNELS_3D]; // the source each send was set on
+    float  occlusion[MAX_SOUNDSYSTEM_CHANNELS_3D]; // eased, 0 clear .. 1 behind a wall
+    float  occlusionTarget[MAX_SOUNDSYSTEM_CHANNELS_3D];
+    float  applied[MAX_SOUNDSYSTEM_CHANNELS_3D];
+    vec3_t rays[EFX_RAYS];
+
+    // the room: found, and as heard (eased towards it)
+    float  size, open;
+    float  heardSize, heardOpen;
+    float  appliedSize, appliedOpen, appliedLevel;
+    int    lastRoomTime;
+    int    lastTime;
+    int    frame;
+    vec3_t lastRoomOrigin;
+} efx;
+
+static void *S_OPENAL_EfxProc(const char *name)
+{
+    void *proc = qalGetProcAddress(name);
+    if (!proc) {
+        Com_Printf("OpenAL: EFX %s not found\n", name);
+    }
+    return proc;
+}
+
+static void S_OPENAL_EfxInit()
+{
+    int i;
+
+    s_efx          = Cvar_Get("s_efx", "1", CVAR_SOUND_LATCH | CVAR_ARCHIVE);
+    s_efxReverb    = Cvar_Get("s_efxReverb", "1", CVAR_ARCHIVE);
+    s_efxOcclusion = Cvar_Get("s_efxOcclusion", "1", CVAR_ARCHIVE);
+    s_efxDebug     = Cvar_Get("s_efxDebug", "0", 0);
+    Cvar_SetDescription(s_efx, "The room's sound: reverb from how far the walls are and how open it is, sounds behind walls muffled (OpenAL Soft's EFX). Needs snd_restart");
+    Cvar_SetDescription(s_efxReverb, "How loud the room's reverb is (0 none, 1 as found, 2 twice)");
+    Cvar_SetDescription(s_efxOcclusion, "How much a wall between a sound and you muffles it (0 not at all, 1 as found)");
+
+    Com_Memset(&efx, 0, sizeof(efx));
+    if (!s_efx->integer) {
+        return;
+    }
+    if (!al_device || !qalcIsExtensionPresent(al_device, "ALC_EXT_EFX")) {
+        Com_Printf("OpenAL: no EFX; the room's sound is off\n");
+        return;
+    }
+
+    qalGenEffects                 = (LPALGENEFFECTS)S_OPENAL_EfxProc("alGenEffects");
+    qalDeleteEffects              = (LPALDELETEEFFECTS)S_OPENAL_EfxProc("alDeleteEffects");
+    qalEffecti                    = (LPALEFFECTI)S_OPENAL_EfxProc("alEffecti");
+    qalEffectf                    = (LPALEFFECTF)S_OPENAL_EfxProc("alEffectf");
+    qalGenFilters                 = (LPALGENFILTERS)S_OPENAL_EfxProc("alGenFilters");
+    qalDeleteFilters              = (LPALDELETEFILTERS)S_OPENAL_EfxProc("alDeleteFilters");
+    qalFilteri                    = (LPALFILTERI)S_OPENAL_EfxProc("alFilteri");
+    qalFilterf                    = (LPALFILTERF)S_OPENAL_EfxProc("alFilterf");
+    qalGenAuxiliaryEffectSlots    = (LPALGENAUXILIARYEFFECTSLOTS)S_OPENAL_EfxProc("alGenAuxiliaryEffectSlots");
+    qalDeleteAuxiliaryEffectSlots = (LPALDELETEAUXILIARYEFFECTSLOTS)S_OPENAL_EfxProc("alDeleteAuxiliaryEffectSlots");
+    qalAuxiliaryEffectSloti       = (LPALAUXILIARYEFFECTSLOTI)S_OPENAL_EfxProc("alAuxiliaryEffectSloti");
+    qalAuxiliaryEffectSlotf       = (LPALAUXILIARYEFFECTSLOTF)S_OPENAL_EfxProc("alAuxiliaryEffectSlotf");
+    if (!qalGenEffects || !qalDeleteEffects || !qalEffecti || !qalEffectf || !qalGenFilters || !qalDeleteFilters
+        || !qalFilteri || !qalFilterf || !qalGenAuxiliaryEffectSlots || !qalDeleteAuxiliaryEffectSlots
+        || !qalAuxiliaryEffectSloti || !qalAuxiliaryEffectSlotf) {
+        return;
+    }
+
+    qalGetError();
+    qalGenEffects(1, &efx.effect);
+    qalEffecti(efx.effect, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
+    efx.eax = qalGetError() == AL_NO_ERROR;
+    if (!efx.eax) {
+        qalEffecti(efx.effect, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
+    }
+    qalGenAuxiliaryEffectSlots(1, &efx.slot);
+    qalGenFilters(MAX_SOUNDSYSTEM_CHANNELS_3D, efx.filters);
+    for (i = 0; i < MAX_SOUNDSYSTEM_CHANNELS_3D; i++) {
+        qalFilteri(efx.filters[i], AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+        efx.applied[i] = -1.0f;
+    }
+    if (qalGetError() != AL_NO_ERROR) {
+        Com_Printf("OpenAL: EFX failed to set up; the room's sound is off\n");
+        S_OPENAL_EfxShutdown();
+        return;
+    }
+
+    // directions all round, evenly (a Fibonacci sphere)
+    for (i = 0; i < EFX_RAYS; i++) {
+        const float z   = 1.0f - 2.0f * (i + 0.5f) / EFX_RAYS;
+        const float r   = sqrtf(1.0f - z * z);
+        const float phi = i * 2.39996323f;
+        VectorSet(efx.rays[i], r * cosf(phi), r * sinf(phi), z);
+    }
+
+    efx.on        = true;
+    efx.heardSize = efx.size = 256.0f;
+    efx.heardOpen = efx.open = 1.0f;
+    efx.appliedSize = -1.0f;
+    Com_Printf("OpenAL: the room's sound on (%s reverb)\n", efx.eax ? "EAX" : "standard");
+}
+
+static void S_OPENAL_EfxShutdown()
+{
+    int i;
+
+    if (!efx.slot && !efx.effect && !efx.filters[0]) {
+        return;
+    }
+
+    for (i = 0; i < MAX_SOUNDSYSTEM_CHANNELS_3D; i++) {
+        if (efx.connected[i] && openal.chan_3D[i].source) {
+            qalSource3i(openal.chan_3D[i].source, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL);
+            qalSourcei(openal.chan_3D[i].source, AL_DIRECT_FILTER, AL_FILTER_NULL);
+        }
+    }
+    if (efx.slot) {
+        qalAuxiliaryEffectSloti(efx.slot, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
+        qalDeleteAuxiliaryEffectSlots(1, &efx.slot);
+    }
+    if (efx.effect) {
+        qalDeleteEffects(1, &efx.effect);
+    }
+    if (efx.filters[0]) {
+        qalDeleteFilters(MAX_SOUNDSYSTEM_CHANNELS_3D, efx.filters);
+    }
+    qalGetError();
+    Com_Memset(&efx, 0, sizeof(efx));
+}
+
+/*
+==============
+S_OPENAL_EfxFindRoom
+
+How far the walls are round the listener, and how much of what is round it
+is open sky: the mean distance of what the rays hit, and the share of them
+that hit the sky or nothing.
+==============
+*/
+static void S_OPENAL_EfxFindRoom(const vec3_t origin)
+{
+    trace_t trace;
+    vec3_t  end;
+    float   sum = 0;
+    int     hits = 0, open = 0, i;
+
+    for (i = 0; i < EFX_RAYS; i++) {
+        VectorMA(origin, EFX_RAY_LEN, efx.rays[i], end);
+        CM_BoxTrace(&trace, origin, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+        if (trace.startsolid) {
+            continue;
+        }
+        if (trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY)) {
+            open++;
+        } else {
+            sum += trace.fraction * EFX_RAY_LEN;
+            hits++;
+        }
+    }
+    if (hits + open == 0) {
+        return;
+    }
+    efx.open = (float)open / (float)(hits + open);
+    // a room as big as its walls are far; out in the open, as big as what is
+    // round it, and some
+    efx.size = hits ? sum / hits : EFX_RAY_LEN;
+}
+
+/*
+==============
+S_OPENAL_EfxApplyRoom
+
+The reverb for a room size and how open it is (a unit is about an inch).
+==============
+*/
+static void S_OPENAL_EfxApplyRoom(float size, float open, float level)
+{
+    // 0 a cupboard, 1 a hall
+    const float big     = Q_min(1.0f, Q_max(0.0f, (size - 64.0f) / 1200.0f));
+    const float closed  = 1.0f - open;
+    // the walls' first echo, there and back at the speed of sound (13500 units a second)
+    const float firstDelay = Q_min(0.3f, Q_max(0.002f, 2.0f * size / 13500.0f));
+    float       decay   = (0.35f + 2.6f * big) * (0.35f + 0.65f * closed);
+    float       gain    = level * 0.32f * (0.25f + 0.75f * closed);
+    float       reflect = (1.2f - 0.9f * big) * (0.15f + 0.85f * closed);
+    float       late    = (1.5f - 0.6f * big) * (0.3f + 0.7f * closed);
+
+    decay = Q_max(0.1f, Q_min(decay, 20.0f));
+    gain  = Q_max(0.0f, Q_min(gain, 1.0f));
+
+    if (efx.eax) {
+        qalEffectf(efx.effect, AL_EAXREVERB_DENSITY, 0.6f + 0.4f * big);
+        qalEffectf(efx.effect, AL_EAXREVERB_DIFFUSION, 0.6f + 0.4f * closed);
+        qalEffectf(efx.effect, AL_EAXREVERB_GAIN, gain);
+        qalEffectf(efx.effect, AL_EAXREVERB_GAINHF, 0.89f - 0.3f * big);
+        qalEffectf(efx.effect, AL_EAXREVERB_GAINLF, 1.0f);
+        qalEffectf(efx.effect, AL_EAXREVERB_DECAY_TIME, decay);
+        qalEffectf(efx.effect, AL_EAXREVERB_DECAY_HFRATIO, 0.83f);
+        qalEffectf(efx.effect, AL_EAXREVERB_REFLECTIONS_GAIN, Q_min(reflect, 3.16f));
+        qalEffectf(efx.effect, AL_EAXREVERB_REFLECTIONS_DELAY, firstDelay);
+        qalEffectf(efx.effect, AL_EAXREVERB_LATE_REVERB_GAIN, Q_min(late, 10.0f));
+        qalEffectf(efx.effect, AL_EAXREVERB_LATE_REVERB_DELAY, Q_min(0.1f, 0.5f * firstDelay + 0.01f));
+        qalEffectf(efx.effect, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, 0.994f);
+        qalEffectf(efx.effect, AL_EAXREVERB_ROOM_ROLLOFF_FACTOR, 0.0f);
+        qalEffecti(efx.effect, AL_EAXREVERB_DECAY_HFLIMIT, AL_TRUE);
+    } else {
+        qalEffectf(efx.effect, AL_REVERB_DENSITY, 0.6f + 0.4f * big);
+        qalEffectf(efx.effect, AL_REVERB_DIFFUSION, 0.6f + 0.4f * closed);
+        qalEffectf(efx.effect, AL_REVERB_GAIN, gain);
+        qalEffectf(efx.effect, AL_REVERB_GAINHF, 0.89f - 0.3f * big);
+        qalEffectf(efx.effect, AL_REVERB_DECAY_TIME, decay);
+        qalEffectf(efx.effect, AL_REVERB_DECAY_HFRATIO, 0.83f);
+        qalEffectf(efx.effect, AL_REVERB_REFLECTIONS_GAIN, Q_min(reflect, 3.16f));
+        qalEffectf(efx.effect, AL_REVERB_REFLECTIONS_DELAY, firstDelay);
+        qalEffectf(efx.effect, AL_REVERB_LATE_REVERB_GAIN, Q_min(late, 10.0f));
+        qalEffectf(efx.effect, AL_REVERB_LATE_REVERB_DELAY, Q_min(0.1f, 0.5f * firstDelay + 0.01f));
+    }
+    // a slot takes its effect's settings when the effect is set on it again
+    qalAuxiliaryEffectSloti(efx.slot, AL_EFFECTSLOT_EFFECT, efx.effect);
+
+    if (s_efxDebug->integer) {
+        int i, playing = 0, muffled = 0;
+
+        for (i = 0; i < MAX_SOUNDSYSTEM_CHANNELS_3D; i++) {
+            if (openal.chan_3D[i].source && openal.chan_3D[i].is_playing()) {
+                playing++;
+                muffled += efx.occlusionTarget[i] > 0.5f;
+            }
+        }
+        Com_Printf(
+            "efx: room %.0f units, %.0f%% open: decay %.2f s, gain %.2f, reflections %.2f after %.3f s, late %.2f; %d of %d sounds behind a wall\n",
+            size,
+            open * 100.0f,
+            decay,
+            gain,
+            reflect,
+            firstDelay,
+            late,
+            muffled,
+            playing
+        );
+    }
+}
+
+static void S_OPENAL_EfxUpdate(const vec3_t vListenerOrigin)
+{
+    float  dt, ease;
+    int    i;
+
+    if (!efx.on) {
+        return;
+    }
+
+    dt = (cls.realtime - efx.lastTime) * 0.001f;
+    efx.lastTime = cls.realtime;
+    dt = Q_max(0.0f, Q_min(dt, 0.25f));
+    efx.frame++;
+
+    if (clc.state != CA_ACTIVE || !CM_NumClusters()) {
+        return;
+    }
+
+    // the room, every so often or when the listener has moved far
+    if (cls.realtime - efx.lastRoomTime >= EFX_ROOM_MSEC || Distance(vListenerOrigin, efx.lastRoomOrigin) > 96.0f) {
+        efx.lastRoomTime = cls.realtime;
+        VectorCopy(vListenerOrigin, efx.lastRoomOrigin);
+        S_OPENAL_EfxFindRoom(vListenerOrigin);
+    }
+
+    // heard: eased towards it over half a second or so, going through a door
+    ease = Q_min(1.0f, dt * 3.0f);
+    efx.heardSize += (efx.size - efx.heardSize) * ease;
+    efx.heardOpen += (efx.open - efx.heardOpen) * ease;
+    if (fabsf(efx.heardSize - efx.appliedSize) > efx.appliedSize * 0.04f + 4.0f
+        || fabsf(efx.heardOpen - efx.appliedOpen) > 0.03f || efx.appliedLevel != s_efxReverb->value
+        || (s_efxDebug->integer > 1 && efx.lastRoomTime == cls.realtime)) {
+        efx.appliedSize  = efx.heardSize;
+        efx.appliedOpen  = efx.heardOpen;
+        efx.appliedLevel = s_efxReverb->value;
+        S_OPENAL_EfxApplyRoom(efx.heardSize, efx.heardOpen, Q_max(0.0f, s_efxReverb->value));
+    }
+
+    // each 3D sound: into the room, and muffled behind a wall
+    ease = Q_min(1.0f, dt * 8.0f);
+    for (i = 0; i < MAX_SOUNDSYSTEM_CHANNELS_3D; i++) {
+        openal_channel *pChannel = &openal.chan_3D[i];
+        float           occ, gain, gainHF;
+
+        if (!pChannel->source) {
+            continue;
+        }
+        if (efx.connected[i] != pChannel->source) {
+            qalSource3i(pChannel->source, AL_AUXILIARY_SEND_FILTER, efx.slot, 0, AL_FILTER_NULL);
+            efx.connected[i] = pChannel->source;
+            efx.applied[i]   = -1.0f;
+        }
+        if (!pChannel->is_playing()) {
+            efx.occlusion[i] = efx.occlusionTarget[i] = 0.0f;
+            continue;
+        }
+
+        // a quarter of them a frame
+        if ((i & 3) == (efx.frame & 3)) {
+            efx.occlusionTarget[i] = 0.0f;
+            const bool hasEnt = !(pChannel->iFlags & CHANNEL_FLAG_NO_ENTITY) && pChannel->iEntNum >= 0
+                             && pChannel->iEntNum < MAX_GENTITIES;
+            if (!(pChannel->iFlags & CHANNEL_FLAG_LOCAL_LISTENER) && !(hasEnt && s_entity[pChannel->iEntNum].use_listener)
+                && pChannel->iEntNum != s_iListenerNumber) {
+                trace_t trace;
+                vec3_t  to, end;
+                float   dist;
+
+                // to a little short of it: a bullet's hit, a footstep, is
+                // on the surface the trace would stop at
+                VectorSubtract(pChannel->vOrigin, vListenerOrigin, to);
+                dist = VectorNormalize(to);
+                if (dist > 32.0f) {
+                    VectorMA(vListenerOrigin, dist - 24.0f, to, end);
+                    CM_BoxTrace(&trace, vListenerOrigin, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+                    if (trace.fraction < 1.0f && !trace.startsolid) {
+                        efx.occlusionTarget[i] = 1.0f;
+                    }
+                }
+            }
+        }
+        efx.occlusion[i] += (efx.occlusionTarget[i] - efx.occlusion[i]) * ease;
+
+        occ = efx.occlusion[i] * Q_max(0.0f, Q_min(s_efxOcclusion->value, 2.0f));
+        if (fabsf(occ - efx.applied[i]) < 0.02f) {
+            continue;
+        }
+        efx.applied[i] = occ;
+        gain   = Q_max(0.05f, 1.0f - 0.4f * occ);
+        gainHF = Q_max(0.02f, 1.0f - 0.85f * occ);
+        qalFilterf(efx.filters[i], AL_LOWPASS_GAIN, gain);
+        qalFilterf(efx.filters[i], AL_LOWPASS_GAINHF, gainHF);
+        qalSourcei(pChannel->source, AL_DIRECT_FILTER, occ > 0.0f ? efx.filters[i] : AL_FILTER_NULL);
+    }
+    qalGetError();
 }
