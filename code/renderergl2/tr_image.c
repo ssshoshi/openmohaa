@@ -3126,6 +3126,12 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
 		}
 
+		// Added in OPM: r_ssr's copy of the last frame, before its glow and tone map
+		if (r_ssr->integer)
+		{
+			tr.ssrPrevImage = R_CreateImage("*ssrPrev", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+		}
+
 		// Added in OPM: r_volumetric's, at a quarter of the view's size
 		// across, brighter than white
 		if (r_volumetric->integer && r_realtimeLighting->integer == 2)

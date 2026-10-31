@@ -270,6 +270,11 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },
 	{ "u_WetSky",          GLSL_VEC4 },
+	{ "u_SsrColorMap",     GLSL_INT },
+	{ "u_SsrDepthMap",     GLSL_INT },
+	{ "u_SsrViewProj",     GLSL_MAT16 },
+	{ "u_SsrPrevViewProj", GLSL_MAT16 },
+	{ "u_SsrParams",       GLSL_VEC4 },
 	{ "u_WetSun",          GLSL_VEC4 }
 };
 
@@ -2106,6 +2111,10 @@ static qboolean GLSL_InitLightallShader(int i)
 		if ((i & LIGHTDEF_USE_SPECULARMAP) && r_specularMapping->integer)
 			Q_strcat(extradefines, 1024, "#define USE_SPECULARMAP\n");
 
+		// Added in OPM: reflections of what is on the screen (R_SsrSetUniforms)
+		if (r_ssr->integer)
+			Q_strcat(extradefines, 1024, "#define USE_SSR\n");
+
 		if (r_cubeMapping->integer)
 		{
 			Q_strcat(extradefines, 1024, "#define USE_CUBEMAP\n");
@@ -2227,6 +2236,8 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRCOLORMAP,     TMU_SSRCOLOR);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRDEPTHMAP,     TMU_SSRDEPTH);
 
 	GLSL_FinishGPUShader(&tr.lightallShader[i]);
 

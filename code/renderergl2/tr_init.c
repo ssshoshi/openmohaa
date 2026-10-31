@@ -135,6 +135,9 @@ cvar_t  *r_forceAutoExposureMax;
 cvar_t  *r_depthPrepass;
 cvar_t  *r_earlyZ;
 cvar_t  *r_ssao;
+cvar_t  *r_ssr;
+cvar_t  *r_ssrStrength;
+cvar_t  *r_ssrDistance;
 cvar_t  *r_gtao;
 cvar_t  *r_gtaoRadius;
 cvar_t  *r_gtaoStrength;
@@ -1651,6 +1654,13 @@ void R_Register( void )
 	r_earlyZ = ri.Cvar_Get( "r_earlyZ", "0", 0 );
 	ri.Cvar_SetDescription( r_earlyZ, "After the depth prepass, opaque surfaces test the depth it left instead of writing it again, so hidden pixels are rejected before they are shaded. Can make layers flicker where the prepass's depth differs by a bit. Not archived: an A/B switch" );
 	r_ssao = ri.Cvar_Get( "r_ssao", "0", CVAR_LATCH | CVAR_ARCHIVE );
+	// Added in OPM: reflections of what is on the screen (lightall's SsrTrace)
+	r_ssr = ri.Cvar_Get( "r_ssr", "1", CVAR_LATCH | CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_ssr, "Reflections of what is on the screen on smooth surfaces: polished and wet floors, metal, glass. Needs vid_restart");
+	r_ssrStrength = ri.Cvar_Get( "r_ssrStrength", "1", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_ssrStrength, "How strong the reflections of what is on the screen are (0 none)");
+	r_ssrDistance = ri.Cvar_Get( "r_ssrDistance", "1536", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription(r_ssrDistance, "How far a reflection of what is on the screen is looked for, in units");
 	// Added in OPM: ambient occlusion on the light from all round alone (gtao_fp.glsl)
 	r_gtao = ri.Cvar_Get( "r_gtao", "1", CVAR_LATCH | CVAR_ARCHIVE );
 	ri.Cvar_SetDescription(r_gtao, "With r_realtimeLighting 2: ambient occlusion on the light that comes from all round (the sky, the bounce, the ambient), not on the lamps' or the sun's, which have shadows of their own: corners, the floor under furniture, the creases of a body darker. Needs vid_restart");

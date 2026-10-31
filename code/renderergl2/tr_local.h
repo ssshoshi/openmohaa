@@ -530,7 +530,9 @@ enum
 #define TMU_RTLIVEDIR        23 // and the way it came from
 #define TMU_RTAO             24 // Added in OPM: the view's ambient occlusion (r_gtao)
 #define GTAO_DEPTH_MIPS      4  // and the smaller copies of the depth it reads (gtao_fp.glsl's)
-#define NUM_TEXTURE_UNITS    25
+#define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
+#define TMU_SSRDEPTH         26 // and this frame's depth
+#define NUM_TEXTURE_UNITS    27
 
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
@@ -1086,6 +1088,11 @@ typedef enum
 	UNIFORM_BLOOMTEXEL,
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
 	UNIFORM_WETSKY,
+	UNIFORM_SSRCOLORMAP,    // Added in OPM: r_ssr (lightall's SsrTrace)
+	UNIFORM_SSRDEPTHMAP,
+	UNIFORM_SSRVIEWPROJ,    // the world to this frame's clip space
+	UNIFORM_SSRPREVVIEWPROJ, // and to the last frame's
+	UNIFORM_SSRPARAMS,      // strength (0: off), reach, near, far
 	UNIFORM_WETSUN,
 
 	UNIFORM_COUNT
@@ -2576,6 +2583,7 @@ typedef struct {
 	image_t					*sunShadowDepthImage[4];
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
+	image_t                 *ssrPrevImage; // Added in OPM: r_ssr
 	image_t                 *gtaoImage;     // Added in OPM: r_gtao, the view's ambient occlusion
 	image_t                 *gtaoBlurImage; // and half of its blur
 	image_t                 *gtaoDepthImage; // the depth at that size, read by both
@@ -2605,6 +2613,9 @@ typedef struct {
 	FBO_t					*sunShadowFbo[4];
 	FBO_t					*screenShadowFbo;
 	FBO_t					*screenSsaoFbo;
+	FBO_t					*ssrPrevFbo;  // Added in OPM: r_ssr, the last frame before its tone map
+	float                   ssrPrevViewProj[16]; // and the world to its clip space
+	int                     ssrPrevFrame; // the frame it is from (0: none yet)
 	FBO_t					*gtaoFbo;
 	FBO_t					*gtaoBlurFbo;
 	FBO_t					*gtaoDepthFbo;
@@ -2927,6 +2938,9 @@ extern  cvar_t  *r_cameraExposure;
 extern  cvar_t  *r_depthPrepass;
 extern  cvar_t  *r_earlyZ;
 extern  cvar_t  *r_ssao;
+extern  cvar_t  *r_ssr;
+extern  cvar_t  *r_ssrStrength;
+extern  cvar_t  *r_ssrDistance;
 extern  cvar_t  *r_gtao;
 extern  cvar_t  *r_gtaoRadius;
 extern  cvar_t  *r_gtaoStrength;
@@ -3216,6 +3230,7 @@ int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
 void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
+void R_SsrSetUniforms(shaderProgram_t *sp);
 void R_RtSetVolumeUniforms(shaderProgram_t *sp);
 void R_RtFreeSkyLightmaps(void);
 void R_RenderPshadowMaps(const refdef_t *fd);

@@ -2275,6 +2275,62 @@ RB_PostProcess
 */
 /*
 =============
+R_SsrSetUniforms
+
+Added in OPM: lightall's reflections of what is on the screen (r_ssr,
+SsrTrace): this frame's depth from its prepass, to march the reflected ray
+through, and the last frame before its glow and tone map, where the ray
+hits it, to take the colour from. Only in the view of the world itself, and
+only once there is a last frame.
+=============
+*/
+void R_SsrSetUniforms(shaderProgram_t *sp)
+{
+	vec4_t params;
+
+	if (!tr.ssrPrevFbo || !tr.ssrPrevFrame || tr.ssrPrevFrame < tr.frameCount - 2 || r_ssrStrength->value <= 0.0f
+		|| !backEnd.depthPrepassed || backEnd.depthFill || backEnd.viewParms.isPortal || backEnd.viewParms.isMirror
+		|| (backEnd.viewParms.flags & (VPF_NOCUBEMAPS | VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_WATERREFLECT))
+		|| (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || !tr.renderDepthImage)
+	{
+		VectorClear4(params);
+		GLSL_SetUniformVec4(sp, UNIFORM_SSRPARAMS, params);
+		return;
+	}
+
+	{
+		mat4_t viewProj;
+
+		Mat4Multiply(backEnd.viewParms.projectionMatrix, backEnd.viewParms.world.modelMatrix, viewProj);
+		GLSL_SetUniformMat4(sp, UNIFORM_SSRVIEWPROJ, viewProj);
+	}
+	GLSL_SetUniformMat4(sp, UNIFORM_SSRPREVVIEWPROJ, tr.ssrPrevViewProj);
+	VectorSet4(params, r_ssrStrength->value, Q_max(64.0f, r_ssrDistance->value), r_znear->value, backEnd.viewParms.zFar);
+	GLSL_SetUniformVec4(sp, UNIFORM_SSRPARAMS, params);
+	GL_BindToTMU(tr.ssrPrevImage, TMU_SSRCOLOR);
+	GL_BindToTMU(tr.renderDepthImage, TMU_SSRDEPTH);
+}
+
+/*
+=============
+RB_SsrKeep
+
+Added in OPM: the frame as it is before its glow and tone map, and where it
+was seen from, for the next frame's reflections (R_SsrSetUniforms).
+=============
+*/
+static void RB_SsrKeep(FBO_t *srcFbo, ivec4_t srcBox)
+{
+	if (!tr.ssrPrevFbo || backEnd.viewParms.isPortal || (backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+		return;
+
+	FBO_FastBlit(srcFbo, srcBox, tr.ssrPrevFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	Mat4Multiply(backEnd.viewParms.projectionMatrix, backEnd.viewParms.world.modelMatrix, tr.ssrPrevViewProj);
+	tr.ssrPrevFrame = tr.frameCount;
+}
+
+/*
+=============
 RB_Volumetric
 
 Added in OPM: the light in the air (r_volumetric, volumetric_fp.glsl), worked
@@ -2442,6 +2498,9 @@ const void *RB_PostProcess(const void *data)
 	srcBox[2] = backEnd.viewParms.viewportWidth;
 	srcBox[3] = backEnd.viewParms.viewportHeight;
 
+	// Added in OPM: kept for the next frame's reflections, as lit
+	if (srcFbo && r_ssr->integer)
+		RB_SsrKeep(srcFbo, srcBox);
 	// Added in OPM: the light in the air, before what glows of it
 	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)

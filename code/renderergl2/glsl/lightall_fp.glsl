@@ -145,6 +145,98 @@ vec3 WetSky(vec3 N, vec3 E, float roughness, vec3 specular, vec3 light)
 	return sky * F * sees * (1.0 - roughness) * edge;
 }
 
+#if defined(USE_SSR)
+// Added in OPM: reflections of what is on the screen (r_ssr). The reflected
+// ray marched through this frame's depth (its prepass), in steps that grow
+// with the distance, and the last frame's colour, before its glow and tone
+// map, where it hits; R_SsrSetUniforms. The cubemap's, or the wet film's
+// sky, stands in where the ray finds nothing on the screen.
+uniform sampler2D u_SsrColorMap;
+uniform sampler2D u_SsrDepthMap;
+uniform mat4      u_SsrViewProj;
+uniform mat4      u_SsrPrevViewProj;
+uniform vec4      u_SsrParams; // strength (0: off), how far, near, far
+
+#define SSR_STEPS    16
+#define SSR_REFINE   5
+// rougher than this, the reflection is too blurred to be one
+#define SSR_ROUGHEST 0.45
+
+float SsrSceneDepth(vec2 uv)
+{
+	float z = texture2D(u_SsrDepthMap, uv).r * 2.0 - 1.0;
+	float n = u_SsrParams.z, f = u_SsrParams.w;
+	return 2.0 * n * f / (f + n - z * (f - n));
+}
+
+// x y z the colour, w how much of it (0: none found)
+vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness)
+{
+	if (u_SsrParams.x <= 0.0 || roughness >= SSR_ROUGHEST)
+		return vec4(0.0);
+
+	vec3  R      = reflect(-E, N);
+	float reach  = u_SsrParams.y;
+	float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+	float prevT  = 0.0, t = 0.0;
+	bool  hit    = false;
+	vec4  c;
+
+	for (int i = 0; i < SSR_STEPS; i++)
+	{
+		float s = (float(i) + jitter) / float(SSR_STEPS);
+		t = 2.0 + reach * s * s;
+		c = u_SsrViewProj * vec4(P + R * t, 1.0);
+		if (c.w <= 1.0)
+			break;
+		vec2 uv = c.xy / c.w * 0.5 + 0.5;
+		if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+			break;
+		float behind = c.w - SsrSceneDepth(uv);
+		if (behind > 0.0)
+		{
+			// behind what is seen there, not by much: the ray meets it.
+			// Further behind, it passed behind something: what it would
+			// meet is hidden from the screen
+			if (behind < max(12.0, 1.5 * (t - prevT)))
+				hit = true;
+			break;
+		}
+		prevT = t;
+	}
+	if (!hit)
+		return vec4(0.0);
+
+	// where between the last two steps it meets it
+	{
+		float a = prevT, b = t;
+		for (int j = 0; j < SSR_REFINE; j++)
+		{
+			float m  = 0.5 * (a + b);
+			vec4  cm = u_SsrViewProj * vec4(P + R * m, 1.0);
+			if (cm.w - SsrSceneDepth(cm.xy / cm.w * 0.5 + 0.5) > 0.0)
+				b = m;
+			else
+				a = m;
+		}
+		t = b;
+	}
+
+	// there in the last frame
+	vec4 pc = u_SsrPrevViewProj * vec4(P + R * t, 1.0);
+	if (pc.w <= 1.0)
+		return vec4(0.0);
+	vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+	vec2 edge = min(puv, vec2(1.0) - puv);
+	float w = smoothstep(0.0, 0.08, min(edge.x, edge.y))
+		* (1.0 - smoothstep(0.6 * reach, reach, t))
+		* (1.0 - smoothstep(0.5 * SSR_ROUGHEST, SSR_ROUGHEST, roughness));
+	if (w <= 0.0)
+		return vec4(0.0);
+	return vec4(texture2D(u_SsrColorMap, puv).rgb, w * min(u_SsrParams.x, 1.0));
+}
+#endif
+
 #if defined(USE_RTLIGHT)
 varying vec3      var_RtPos;
 varying vec3      var_RtNormal;
@@ -534,6 +626,8 @@ void main()
 	vec3 wetSurfN;
 	vec2 wet       = WetAmount(wetSurfN);
 	vec3 wetLight  = lightColor;
+	// Added in OPM: the reflection of what is on the screen (SsrTrace)
+	vec4 ssr       = vec4(0.0);
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	L = var_LightDir.xyz;
@@ -668,6 +762,10 @@ void main()
 		NH = clamp(dot(N, H), 0.0, 1.0);
 	}
 
+  #if defined(USE_SSR)
+	ssr = SsrTrace(var_WetPos, N, E, roughness);
+  #endif
+
 	reflectance  = CalcDiffuse(diffuse.rgb, NH, EH, roughness);
 
   #if defined(r_deluxeSpecular)
@@ -712,7 +810,14 @@ void main()
 	// not technically correct, but helps make reflections look less unnatural
 	//cubeLightColor *= lightColor * (attenuation * NL) + ambientColor;
 
+    #if defined(USE_SSR)
+	cubeLightColor = mix(cubeLightColor, ssr.rgb, ssr.a);
+    #endif
+
 	gl_FragColor.rgb += cubeLightColor * reflectance;
+  #elif defined(USE_SSR)
+	// Added in OPM: with no cubemap, the reflection where one was found
+	gl_FragColor.rgb += ssr.rgb * ssr.a * EnvironmentBRDF(roughness, NE, specular.rgb);
   #endif
 
   #if defined(USE_PRIMARY_LIGHT) || defined(SHADOWMAP_MODULATE)
@@ -763,7 +868,7 @@ void main()
 	if (wet.y > 0.0)
 	{
     #if !defined(USE_CUBEMAP)
-		gl_FragColor.rgb += wet.y * WetSky(N, E, roughness, specular.rgb, wetLight);
+		gl_FragColor.rgb += wet.y * (1.0 - ssr.a) * WetSky(N, E, roughness, specular.rgb, wetLight);
     #endif
     #if !defined(USE_PRIMARY_LIGHT) && !defined(SHADOWMAP_MODULATE)
 		{
