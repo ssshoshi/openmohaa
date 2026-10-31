@@ -1006,6 +1006,7 @@ typedef enum
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	UNIFORM_RTLIGHTS,
 	UNIFORM_RTPARAMS,
+	UNIFORM_LINEAR, // Added in OPM: r_linearLighting, read the colours as light (GLSL_BindProgram)
 	UNIFORM_RTSUNDIR,
 	UNIFORM_RTSUNCOLOR,
 	UNIFORM_RTAMBIENT,
@@ -3145,6 +3146,8 @@ qboolean R_RtActive(void);
 int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
+qboolean R_RtLinear(void);
+extern cvar_t *r_linearExposure;
 qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
