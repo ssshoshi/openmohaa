@@ -2433,8 +2433,15 @@ static void RB_Volumetric(FBO_t *dstFbo, ivec4_t dstBox)
 	GLSL_SetUniformVec4(&tr.depthBlurShader[1], UNIFORM_VIEWINFO, viewInfo);
 	RB_InstantQuad2(quadVerts, texCoords);
 
-	// added to the view
-	FBO_Blit(tr.volumeFbo, NULL, NULL, dstFbo, dstBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+	// added to the view. FBO_Blit takes a box it is given (top down) the
+	// other way from none (bottom up): with dstBox and no source box the air
+	// went on upside down, a copy of the view turned over wherever its light
+	// had an edge to it (the shafts round a gate or a roof)
+	{
+		ivec4_t volBox = { 0, 0, tr.volumeFbo->width, tr.volumeFbo->height };
+
+		FBO_Blit(tr.volumeFbo, volBox, NULL, dstFbo, dstBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+	}
 
 	R_GpuTimerEnd(GPUTIMER_VOLUME);
 }
