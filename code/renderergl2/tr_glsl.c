@@ -221,6 +221,14 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_VolParams",       GLSL_VEC4 },
 	{ "u_VolRange",        GLSL_VEC4 },
 	{ "u_Froxel",          GLSL_VEC4 },
+	{ "u_FogVolumes",      GLSL_VEC4_WATERSPOTS },
+	{ "u_FogParams",       GLSL_VEC4 },
+	{ "u_FogAmbient",      GLSL_VEC4 },
+	{ "u_FroxelPrevOrigin",  GLSL_VEC4 },
+	{ "u_FroxelPrevForward", GLSL_VEC4 },
+	{ "u_FroxelPrevLeft",    GLSL_VEC4 },
+	{ "u_FroxelPrevUp",      GLSL_VEC4 },
+	{ "u_FroxelJitter",    GLSL_VEC4 },
 	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
@@ -2792,6 +2800,7 @@ void GLSL_InitGPUShaders(void)
 			attribs = ATTR_POSITION | ATTR_TEXCOORD;
 			Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
 			Q_strcat(extradefines, sizeof(extradefines), passes[i]);
+			Q_strcat(extradefines, sizeof(extradefines), va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
 
 			if (!GLSL_InitGPUShader(sp, "froxel", attribs, qtrue, extradefines, qtrue, fallbackShader_froxel_vp, fallbackShader_froxel_fp))
 			{

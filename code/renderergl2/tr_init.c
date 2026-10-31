@@ -1984,6 +1984,7 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "reflectioninfo", R_ReflectionInfo_f );
 	ri.Cmd_AddCommand( "waterinfo", R_WaterInfo_f );
 	ri.Cmd_AddCommand( "waterreload", R_WaterReload_f );
+	R_FroxelInit();
 	ri.Cmd_AddCommand( "skelgpuinfo", R_SkelGpuInfo_f );
 	R_RtTestCommands( qtrue );
 
@@ -2263,6 +2264,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 	ri.Cmd_RemoveCommand( "reflectioninfo" );
 	ri.Cmd_RemoveCommand( "waterinfo" );
 	ri.Cmd_RemoveCommand( "waterreload" );
+	R_FroxelShutdown();
 	ri.Cmd_RemoveCommand( "skelgpuinfo" );
 	R_RtTestCommands( qfalse );
 

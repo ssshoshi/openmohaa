@@ -1044,6 +1044,14 @@ typedef enum
 	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
 	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
 	UNIFORM_FROXEL,       // Added in OPM: r_volumetric 2 (froxel_fp.glsl): the grid's cells across, up, slices, its depth curve
+	UNIFORM_FOGVOLUMES,   // the map's fog banks, three vec4s each (tr_froxel.c)
+	UNIFORM_FOGPARAMS,    // how many
+	UNIFORM_FOGAMBIENT,   // their own light
+	UNIFORM_FROXELPREVORIGIN,  // last frame's eye, w how much of last frame each cell keeps
+	UNIFORM_FROXELPREVFORWARD, // its axes, left and up over the view's half width and height
+	UNIFORM_FROXELPREVLEFT,
+	UNIFORM_FROXELPREVUP,
+	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -2602,7 +2610,7 @@ typedef struct {
 	image_t                 *gtaoDepthImage; // the depth at that size, read by both
 	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
 	image_t                 *volumeBlurImage; // and half of its blur
-	image_t                 *froxelLightImage; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row)
+	image_t                 *froxelLightImage[2]; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row), this frame's and last
 	image_t                 *froxelSumImage;   // and summed from the eye
 	image_t                 *froxelDepthImage; // and each tile of the view's furthest depth
 	image_t					*hdrDepthImage;
@@ -2637,7 +2645,7 @@ typedef struct {
 	FBO_t					*gtaoDepthFbo;
 	FBO_t					*volumeFbo;
 	FBO_t					*volumeBlurFbo;
-	FBO_t					*froxelLightFbo;
+	FBO_t					*froxelLightFbo[2];
 	FBO_t					*froxelSumFbo;
 	FBO_t					*froxelDepthFbo;
 	FBO_t					*hdrDepthFbo;
@@ -4058,6 +4066,15 @@ void R_WaterRegisterCvars(void);
 void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs);
 void R_PlaneForSurface(surfaceType_t *surfType, cplane_t *plane);
 void R_WaterLoadWorld(const char *mapName);
+
+// Added in OPM: tr_froxel.c, r_volumetric 2 and the maps' fog banks
+extern cvar_t *r_volumetricFog;
+extern cvar_t *r_volumetricTemporal;
+void R_FroxelInit(void);
+void R_FroxelShutdown(void);
+void R_FogLoadWorld(const char *mapName);
+qboolean R_FroxelFogOn(void);
+void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
 void RB_BeachDraw(void);

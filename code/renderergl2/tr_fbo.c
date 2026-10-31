@@ -510,14 +510,17 @@ void FBO_Init(void)
 		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.volumeBlurFbo);
 	}
-	if (tr.froxelLightImage && tr.froxelSumImage && tr.froxelDepthImage)
+	if (tr.froxelLightImage[0] && tr.froxelLightImage[1] && tr.froxelSumImage && tr.froxelDepthImage)
 	{
 		tr.froxelDepthFbo = FBO_Create("_froxeldepth", tr.froxelDepthImage->width, tr.froxelDepthImage->height);
 		FBO_AttachImage(tr.froxelDepthFbo, tr.froxelDepthImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.froxelDepthFbo);
-		tr.froxelLightFbo = FBO_Create("_froxellight", tr.froxelLightImage->width, tr.froxelLightImage->height);
-		FBO_AttachImage(tr.froxelLightFbo, tr.froxelLightImage, GL_COLOR_ATTACHMENT0, 0);
-		R_CheckFBO(tr.froxelLightFbo);
+		for (i = 0; i < 2; i++)
+		{
+			tr.froxelLightFbo[i] = FBO_Create(va("_froxellight%d", i), tr.froxelLightImage[i]->width, tr.froxelLightImage[i]->height);
+			FBO_AttachImage(tr.froxelLightFbo[i], tr.froxelLightImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.froxelLightFbo[i]);
+		}
 		tr.froxelSumFbo = FBO_Create("_froxelsum", tr.froxelSumImage->width, tr.froxelSumImage->height);
 		FBO_AttachImage(tr.froxelSumFbo, tr.froxelSumImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.froxelSumFbo);

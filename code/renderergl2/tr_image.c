@@ -3148,7 +3148,8 @@ void R_CreateBuiltinImages( void ) {
 			const int atlasW = cellsX * FROXEL_TILES;
 			const int atlasH = cellsY * (FROXEL_SLICES / FROXEL_TILES);
 
-			tr.froxelLightImage = R_CreateImage("*froxelLight", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelLightImage[0] = R_CreateImage("*froxelLight0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelLightImage[1] = R_CreateImage("*froxelLight1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			tr.froxelSumImage   = R_CreateImage("*froxelSum", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			tr.froxelDepthImage = R_CreateImage("*froxelDepth", NULL, cellsX, cellsY, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 		}

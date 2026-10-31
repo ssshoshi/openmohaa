@@ -13,7 +13,16 @@
 // The grid is a 2D atlas, FROXEL_TILES slices a row, as the renderer has no
 // 3D textures. Its slices go from the eye to u_VolRange.x, about even near
 // the eye and further apart with distance (SliceDepth).
-uniform sampler2D u_ScreenImageMap;  // the grid, lit (integrate) or integrated (apply)
+//
+// What is in the air: the haze (r_volumetricDensity, everywhere, taking
+// nothing out) and the map's fog banks (fog/<map>.txt, tr_froxel.c), boxes
+// soft at their edges that take light out as they scatter it, and have a
+// light of their own where neither the sun nor a lamp reaches.
+//
+// Each frame the light is taken at another place in each cell (u_FroxelJitter)
+// and mixed with what the cell had last frame, found where it was then
+// (u_FroxelPrev*): many places over a few frames, for the cost of one.
+uniform sampler2D u_ScreenImageMap;  // the grid: last frame's, lit (light), lit (integrate), integrated (apply)
 uniform sampler2D u_ScreenDepthMap;  // the view's depth (depth, apply), its tiles' furthest (light)
 
 uniform sampler2DShadow u_ShadowMap;
@@ -33,6 +42,14 @@ uniform vec4   u_ViewInfo;    // zfar / znear, zfar; depth: a cell's size in the
 uniform vec4   u_VolParams;   // the air's scattering per unit, anisotropy, the sun's share, the lamps'
 uniform vec4   u_VolRange;    // the grid's depth, the sun's cascades (1: there), the air's extinction per unit, -
 uniform vec4   u_Froxel;      // cells across, up, slices, log2 of the depth's curve at the far side
+uniform vec4   u_FogVolumes[WATER_MAX_SPOTS]; // three a bank: mins and density, maxs and soft edge, colour
+uniform vec4   u_FogParams;   // banks, -, -, -
+uniform vec4   u_FogAmbient;  // the banks' light where no sun or lamp reaches, rgb
+uniform vec4   u_FroxelPrevOrigin;  // last frame's eye, w how much of last frame to keep (0: none)
+uniform vec4   u_FroxelPrevForward; // its unit forward
+uniform vec4   u_FroxelPrevLeft;    // its left over the view's half width forward
+uniform vec4   u_FroxelPrevUp;      // its up likewise
+uniform vec4   u_FroxelJitter;      // where in each cell the light is taken this frame: across, up, deep (0 to 1)
 
 varying vec2   var_DepthTex;
 varying vec2   var_CellUV;
@@ -41,6 +58,9 @@ varying vec2   var_CellUV;
 #define FROXEL_PIXELS 16.0
 // how far the slices stay about even: one unit of depth in this many
 #define FROXEL_CURVE 256.0
+// a cell no pixel sees (FROXEL_LIGHT): taken as none by the sum, and as no
+// history by the next frame, whatever it is filtered with
+#define FROXEL_HIDDEN -1000.0
 
 // the depth (forward of the eye) of the near side of slice s
 float SliceDepth(float s)
@@ -190,6 +210,32 @@ float LampShape(int i, vec3 P, out vec3 toLight)
 	return att;
 }
 
+// what is in the air at P: rgb what it scatters (the haze's and the banks'),
+// a what it takes out; fog the banks' share of the scattering (their own light)
+vec4 Media(vec3 P, out vec3 fog)
+{
+	vec4 m = vec4(vec3(u_VolParams.x), u_VolRange.z);
+	int  count = int(u_FogParams.x);
+
+	fog = vec3(0.0);
+	for (int i = 0; i < WATER_MAX_SPOTS / 3; i++)
+	{
+		if (i >= count) break;
+		vec4  lo = u_FogVolumes[i * 3];
+		vec4  hi = u_FogVolumes[i * 3 + 1];
+		vec3  c  = u_FogVolumes[i * 3 + 2].rgb;
+		// how far inside its nearest face, over its soft edge
+		vec3  in3 = min(P - lo.xyz, hi.xyz - P);
+		float in1 = min(min(in3.x, in3.y), in3.z);
+		if (in1 <= 0.0) continue;
+		float d = lo.w * (hi.w > 0.0 ? smoothstep(0.0, 1.0, in1 / hi.w) : 1.0);
+		m.rgb += d * c;
+		m.a   += d;
+		fog   += d * c;
+	}
+	return m;
+}
+
 void main()
 {
 	vec2  fc    = floor(gl_FragCoord.xy);
@@ -199,44 +245,45 @@ void main()
 	float z0    = SliceDepth(slice);
 	float z1    = SliceDepth(slice + 1.0);
 	vec2  uv    = (cell + 0.5) / u_Froxel.xy;
-	vec3  ray   = CellRay(uv);
+	// this frame's place in the cell, and a second across from it
+	vec2  uvA   = (cell + u_FroxelJitter.xy) / u_Froxel.xy;
+	vec2  uvB   = (cell + fract(u_FroxelJitter.xy + 0.5)) / u_Froxel.xy;
+	vec3  ray   = CellRay(uvA);
 	vec3  D     = normalize(ray);
-	vec3  P     = u_ViewOrigin + ray * (0.5 * (z0 + z1));
+	vec3  P     = u_ViewOrigin + ray * mix(z0, z1, u_FroxelJitter.z);
 	vec3  L     = vec3(0.0);
 
 	// behind everything in its tile and the tiles round it: no pixel sees
-	// it, nor filters it in (apply), so its air is left dark
+	// it, nor filters it in (apply)
 	float seen = 0.0;
 	for (int y = -1; y <= 1; y++)
 		for (int x = -1; x <= 1; x++)
 			seen = max(seen, texture2D(u_ScreenDepthMap, (clamp(cell + vec2(float(x), float(y)), vec2(0.0), u_Froxel.xy - 1.0) + 0.5) / u_Froxel.xy).r);
 	if (z0 > seen)
 	{
-		gl_FragColor = vec4(0.0, 0.0, 0.0, u_VolRange.z);
+		gl_FragColor = vec4(0.0, 0.0, 0.0, FROXEL_HIDDEN);
 		return;
 	}
 
-	// the sun: four taps spread over the cell, across and in depth
+	// the sun: two taps, this frame's place and one across the cell from it
 	if (u_RtSunDir.w > 0.5 && u_VolParams.z > 0.0)
 	{
 		float lit = 1.0;
 		if (u_VolRange.y > 0.5)
 		{
-			vec2 du = 0.25 / u_Froxel.xy;
-			lit  = SunShadow(u_ViewOrigin + CellRay(uv + vec2(-du.x, -du.y)) * mix(z0, z1, 0.125));
-			lit += SunShadow(u_ViewOrigin + CellRay(uv + vec2( du.x, -du.y)) * mix(z0, z1, 0.625));
-			lit += SunShadow(u_ViewOrigin + CellRay(uv + vec2(-du.x,  du.y)) * mix(z0, z1, 0.875));
-			lit += SunShadow(u_ViewOrigin + CellRay(uv + vec2( du.x,  du.y)) * mix(z0, z1, 0.375));
-			lit *= 0.25;
+			lit  = SunShadow(P);
+			lit += SunShadow(u_ViewOrigin + CellRay(uvB) * mix(z0, z1, fract(u_FroxelJitter.z + 0.5)));
+			lit *= 0.5;
 		}
 		L += u_RtSunColor.rgb * (u_VolParams.z * Phase(dot(D, u_RtSunDir.xyz)) * lit);
 	}
 
-	// the lamps, at the cell's middle: their 1 / distance squared, kept off
-	// the nearest 16 units as the ray march keeps it
+	// the lamps: their 1 / distance squared, kept off the nearest 16 units as
+	// the ray march keeps it
 	if (u_VolParams.w > 0.0)
 	{
-		int count = int(u_RtParams.x);
+		vec3 lamps = vec3(0.0);
+		int  count = int(u_RtParams.x);
 		for (int k = 0; k < RT_MAX_LIGHTS; k++)
 		{
 			if (k >= count) break;
@@ -251,12 +298,38 @@ void main()
 			vec4 l3 = u_RtLights[i * 4 + 3];
 			if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))
 				f *= LampShadow(l3, -toLight);
-			L += l1.rgb * (f * Phase(dot(D, toLight) * inversesqrt(max(d2, 1.0))) / max(d2, 256.0));
+			lamps += l1.rgb * (f * Phase(dot(D, toLight) * inversesqrt(max(d2, 1.0))) / max(d2, 256.0));
 		}
-		L *= u_VolParams.w;
+		L += lamps * u_VolParams.w;
 	}
 
-	gl_FragColor = vec4(L * u_VolParams.x, u_VolRange.z);
+	vec3 fog;
+	vec4 media = Media(P, fog);
+	vec4 cur   = vec4(L * media.rgb + u_FogAmbient.rgb * fog, media.a);
+
+	// last frame's, where this cell's middle was then
+	if (u_FroxelPrevOrigin.w > 0.0)
+	{
+		vec3  d  = u_ViewOrigin + CellRay(uv) * (0.5 * (z0 + z1)) - u_FroxelPrevOrigin.xyz;
+		float pz = dot(d, u_FroxelPrevForward.xyz);
+		if (pz > 0.0)
+		{
+			vec2  puv = vec2(-dot(d, u_FroxelPrevLeft.xyz), dot(d, u_FroxelPrevUp.xyz)) / pz * 0.5 + 0.5;
+			float ps  = DepthSlice(pz) - 0.5;
+			if (all(greaterThanEqual(puv, vec2(0.0))) && all(lessThanEqual(puv, vec2(1.0))) && ps > -0.5 && ps < u_Froxel.z - 0.5)
+			{
+				float s0 = clamp(floor(ps), 0.0, u_Froxel.z - 1.0);
+				float s1 = min(s0 + 1.0, u_Froxel.z - 1.0);
+				vec4  h0 = texture2D(u_ScreenImageMap, AtlasUV(puv, s0));
+				vec4  h1 = texture2D(u_ScreenImageMap, AtlasUV(puv, s1));
+				// none where it was hidden, even in part
+				if (min(h0.a, h1.a) >= 0.0)
+					cur = mix(cur, mix(h0, h1, clamp(ps - s0, 0.0, 1.0)), u_FroxelPrevOrigin.w);
+			}
+		}
+	}
+
+	gl_FragColor = cur;
 }
 
 #elif defined(FROXEL_INTEGRATE)
@@ -281,6 +354,7 @@ void main()
 		float fs = float(s);
 		if (fs > slice) break;
 		vec4  v     = texture2D(u_ScreenImageMap, AtlasUV(uv, fs));
+		v.a = max(v.a, 0.0); // FROXEL_HIDDEN: none
 		float zFar  = SliceDepth(fs + 1.0);
 		float dt    = (zFar - zNear) * along;
 		zNear = zFar;
