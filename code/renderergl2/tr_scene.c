@@ -395,6 +395,13 @@ void RE_BeginScene(const refdef_t *fd)
 		tr.refdef.autoExposureMinMax[0] = r_forceAutoExposureMin->value;
 		tr.refdef.autoExposureMinMax[1] = r_forceAutoExposureMax->value;
 	}
+	else if (r_autoExposure->integer)
+	{
+		// Added in OPM: eye adaptation sets the level itself, clamped
+		// (RB_EyeAdapt): the tone map is not to clamp it again
+		tr.refdef.autoExposureMinMax[0] = -10.0f;
+		tr.refdef.autoExposureMinMax[1] = 10.0f;
+	}
 	else
 	{
 		tr.refdef.autoExposureMinMax[0] = tr.autoExposureMinMax[0];
