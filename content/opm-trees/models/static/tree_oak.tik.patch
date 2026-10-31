@@ -1,0 +1,10 @@
+--- a/models/static/tree_oak.tik
++++ b/models/static/tree_oak.tik
+@@ -5,6 +5,7 @@
+ 	scale 1
+ 	path models/static/natural
+ 	skelmodel tree_oak.skd
++	lod_scale 100 // OPM: no LOD, the far sprite is gone (opm-trees)
+ 	surface tree4_1 shader static_tree4_1
+ 	surface tree4_2 shader static_tree4_2
+ 	surface tree4_3 shader static_tree4_3

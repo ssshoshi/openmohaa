@@ -1,0 +1,10 @@
+--- a/models/static/tree_birch.tik
++++ b/models/static/tree_birch.tik
+@@ -4,6 +4,7 @@
+ 	scale 0.52			// Set default scale to 16/30.5 since world is in 16 units per foot and model is in cm's
+ 	path models/static/natural
+ 	skelmodel birch.skd
++	lod_scale 100 // OPM: no LOD, the far sprite is gone (opm-trees)
+ 	surface tree2_1 shader static_tree2_1
+ 	surface tree2_2 shader static_tree2_2
+ 	surface tree2_3 shader static_tree2_3
