@@ -2,6 +2,7 @@
 // (r_volumetric 2): froxels, each a tile of the view across and a slice of
 // its depth. Three passes, one program each (RB_VolumetricFroxels):
 //
+// FROXEL_DEPTH     each tile of the view: the furthest depth in it
 // FROXEL_LIGHT      each cell: how much light its air scatters toward the eye
 //                   (rgb, a unit along the ray) and how much it takes out (a)
 // FROXEL_INTEGRATE  each cell: what the air from the eye to its far side
@@ -13,7 +14,7 @@
 // 3D textures. Its slices go from the eye to u_VolRange.x, about even near
 // the eye and further apart with distance (SliceDepth).
 uniform sampler2D u_ScreenImageMap;  // the grid, lit (integrate) or integrated (apply)
-uniform sampler2D u_ScreenDepthMap;
+uniform sampler2D u_ScreenDepthMap;  // the view's depth (depth, apply), its tiles' furthest (light)
 
 uniform sampler2DShadow u_ShadowMap;
 uniform sampler2DShadow u_ShadowMap2;
@@ -28,7 +29,7 @@ uniform vec3   u_ViewOrigin;
 uniform vec3   u_ViewForward; // a unit forward
 uniform vec3   u_ViewLeft;    // left, as far as the view's edge is a unit forward
 uniform vec3   u_ViewUp;      // up, likewise
-uniform vec4   u_ViewInfo;    // zfar / znear, zfar
+uniform vec4   u_ViewInfo;    // zfar / znear, zfar; depth: a cell's size in the depth image
 uniform vec4   u_VolParams;   // the air's scattering per unit, anisotropy, the sun's share, the lamps'
 uniform vec4   u_VolRange;    // the grid's depth, the sun's cascades (1: there), the air's extinction per unit, -
 uniform vec4   u_Froxel;      // cells across, up, slices, log2 of the depth's curve at the far side
@@ -37,6 +38,7 @@ varying vec2   var_DepthTex;
 varying vec2   var_CellUV;
 
 #define FROXEL_TILES 8.0
+#define FROXEL_PIXELS 16.0
 // how far the slices stay about even: one unit of depth in this many
 #define FROXEL_CURVE 256.0
 
@@ -68,7 +70,22 @@ vec3 CellRay(vec2 uv)
 	return u_ViewForward - u_ViewLeft * ndc.x + u_ViewUp * ndc.y;
 }
 
-#if defined(FROXEL_LIGHT)
+#if defined(FROXEL_DEPTH)
+
+// each tile's furthest depth, forward of the eye, from its FROXEL_PIXELS
+// square of the view (u_ViewInfo.zw: a cell's size in the depth image)
+void main()
+{
+	vec2  corner = var_DepthTex - 0.5 * u_ViewInfo.zw;
+	vec2  step   = u_ViewInfo.zw / FROXEL_PIXELS;
+	float far    = 0.0;
+	for (int y = 0; y < int(FROXEL_PIXELS); y++)
+		for (int x = 0; x < int(FROXEL_PIXELS); x++)
+			far = max(far, texture2D(u_ScreenDepthMap, corner + (vec2(float(x), float(y)) + 0.5) * step).r);
+	gl_FragColor = vec4(min(u_ViewInfo.y / mix(u_ViewInfo.x, 1.0, far), 60000.0), 0.0, 0.0, 1.0);
+}
+
+#elif defined(FROXEL_LIGHT)
 
 float Phase(float cosTheta)
 {
@@ -186,6 +203,18 @@ void main()
 	vec3  D     = normalize(ray);
 	vec3  P     = u_ViewOrigin + ray * (0.5 * (z0 + z1));
 	vec3  L     = vec3(0.0);
+
+	// behind everything in its tile and the tiles round it: no pixel sees
+	// it, nor filters it in (apply), so its air is left dark
+	float seen = 0.0;
+	for (int y = -1; y <= 1; y++)
+		for (int x = -1; x <= 1; x++)
+			seen = max(seen, texture2D(u_ScreenDepthMap, (clamp(cell + vec2(float(x), float(y)), vec2(0.0), u_Froxel.xy - 1.0) + 0.5) / u_Froxel.xy).r);
+	if (z0 > seen)
+	{
+		gl_FragColor = vec4(0.0, 0.0, 0.0, u_VolRange.z);
+		return;
+	}
 
 	// the sun: four taps spread over the cell, across and in depth
 	if (u_RtSunDir.w > 0.5 && u_VolParams.z > 0.0)

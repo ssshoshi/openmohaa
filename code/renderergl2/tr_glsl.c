@@ -2783,9 +2783,9 @@ void GLSL_InitGPUShaders(void)
 	// Added in OPM: r_volumetric 2, the light in the air in a grid of cells
 	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
 	{
-		static const char *passes[3] = { "#define FROXEL_LIGHT\n", "#define FROXEL_INTEGRATE\n", "#define FROXEL_APPLY\n" };
+		static const char *passes[4] = { "#define FROXEL_LIGHT\n", "#define FROXEL_INTEGRATE\n", "#define FROXEL_APPLY\n", "#define FROXEL_DEPTH\n" };
 
-		for (i = 0; i < 3; i++)
+		for (i = 0; i < 4; i++)
 		{
 			shaderProgram_t *sp = &tr.froxelShader[i];
 
@@ -3067,7 +3067,7 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.volumetricShader);
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.froxelShader[i]);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.gtaoShader);

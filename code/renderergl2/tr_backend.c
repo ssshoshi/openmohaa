@@ -2493,7 +2493,7 @@ static void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	GL_State(GLS_DEPTHTEST_DISABLE);
 	GL_Cull(CT_TWO_SIDED);
 
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < 4; i++)
 	{
 		shaderProgram_t *sp = &tr.froxelShader[i];
 
@@ -2509,6 +2509,30 @@ static void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 		GLSL_SetUniformVec4(sp, UNIFORM_VOLRANGE, volRange);
 		GLSL_SetUniformVec4(sp, UNIFORM_FROXEL, froxel);
 	}
+
+	box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
+	box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
+	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
+	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+
+	// each tile of the view's furthest depth: the cells behind it are left
+	// unlit. Its quad takes the view's share of the depth image.
+	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
+	texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
+	texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
+	texCoords[3][0] = box[0]; texCoords[3][1] = box[1];
+	FBO_Bind(tr.froxelDepthFbo);
+	qglViewport(0, 0, tr.froxelDepthFbo->width, tr.froxelDepthFbo->height);
+	qglScissor(0, 0, tr.froxelDepthFbo->width, tr.froxelDepthFbo->height);
+	GLSL_BindProgram(&tr.froxelShader[3]);
+	VectorSet4(viewInfo, zmax / zmin, zmax, (box[2] - box[0]) / froxel[0], (box[3] - box[1]) / froxel[1]);
+	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VIEWINFO, viewInfo);
+	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
+	RB_InstantQuad2(quadVerts, texCoords);
+	texCoords[0][0] = 0; texCoords[0][1] = 1;
+	texCoords[1][0] = 1; texCoords[1][1] = 1;
+	texCoords[2][0] = 1; texCoords[2][1] = 0;
+	texCoords[3][0] = 0; texCoords[3][1] = 0;
 
 	// each cell lit
 	FBO_Bind(tr.froxelLightFbo);
@@ -2535,6 +2559,7 @@ static void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 		GL_BindToTMU(tr.rtShadowImage[0], TB_SHADOWMAP4);
 	}
 	R_RtSetVolumeUniforms(&tr.froxelShader[0]);
+	GL_BindToTMU(tr.froxelDepthImage, TB_LIGHTMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
 
 	// summed from the eye
@@ -2544,10 +2569,6 @@ static void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	RB_InstantQuad2(quadVerts, texCoords);
 
 	// the view through it: times what it lets through, plus what it adds
-	box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
-	box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
-	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
-	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
 	texCoords[0][0] = box[0]; texCoords[0][1] = box[3];
 	texCoords[1][0] = box[2]; texCoords[1][1] = box[3];
 	texCoords[2][0] = box[2]; texCoords[2][1] = box[1];
@@ -2633,7 +2654,7 @@ const void *RB_PostProcess(const void *data)
 	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
 		RB_Volumetric(srcFbo, srcBox);
-	else if (srcFbo && tr.froxelSumFbo && tr.froxelShader[2].program && R_RtLitLive() && r_volumetricDensity->value > 0
+	else if (srcFbo && tr.froxelDepthFbo && tr.froxelShader[3].program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
 		RB_VolumetricFroxels(srcFbo, srcBox);
 

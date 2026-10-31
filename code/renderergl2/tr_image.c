@@ -3150,6 +3150,7 @@ void R_CreateBuiltinImages( void ) {
 
 			tr.froxelLightImage = R_CreateImage("*froxelLight", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			tr.froxelSumImage   = R_CreateImage("*froxelSum", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelDepthImage = R_CreateImage("*froxelDepth", NULL, cellsX, cellsY, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 		}
 
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)
