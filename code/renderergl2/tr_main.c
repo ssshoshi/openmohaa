@@ -2843,11 +2843,10 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 	// Make up a projection
 	VectorScale(lightDir, -1.0f, lightViewAxis[0]);
 
-	// Added in OPM: the models whose shadows can fall in the slice (the last
-	// cascade is the whole level's, not the view's)
+	// Added in OPM: the models whose shadows can fall where the view reads
+	// this cascade (set once its box is known, below; the last cascade is
+	// the whole level's, not the view's)
 	sunCaster.active = qfalse;
-	if (level != 3)
-		R_SetSunCasterSlice(fd, lightViewAxis[0], splitZNear, splitZFar);
 
 	if (level == 3 || lightViewIndependentOfCameraView)
 	{
@@ -3044,6 +3043,34 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 			lightviewBounds[1][1] = floor(lightviewBounds[1][1]);
 			lightviewBounds[1][2] = floor(lightviewBounds[1][2]);
 			VectorScale(lightviewBounds[1], worldUnitsPerTexel, lightviewBounds[1]);
+		}
+
+		// Added in OPM: the shadow mask reads a point from the first cascade
+		// whose box holds it (shadowmask_fp.glsl), and the box, square
+		// to the sun round a pyramid's slice, goes well past the slice.
+		// Casters were kept only for the slice, so a wall past
+		// it, read from this cascade, lost the shadow of a tree that was past
+		// it too, and the shadow came and went as the view moved. The slice
+		// the casters are kept for runs as far as the box's corners do.
+		if (level != 3)
+		{
+			float boxNear = splitZNear, boxFar = splitZFar;
+			int   i;
+
+			for (i = 0; i < 8; i++)
+			{
+				vec3_t corner;
+				float  z;
+
+				VectorCopy(lightOrigin, corner);
+				VectorMA(corner, lightviewBounds[i & 1][0], lightViewAxis[0], corner);
+				VectorMA(corner, lightviewBounds[(i >> 1) & 1][1], lightViewAxis[1], corner);
+				VectorMA(corner, lightviewBounds[(i >> 2) & 1][2], lightViewAxis[2], corner);
+				z = DotProduct(corner, fd->viewaxis[0]) - DotProduct(fd->vieworg, fd->viewaxis[0]);
+				boxNear = MIN(boxNear, z);
+				boxFar = MAX(boxFar, z);
+			}
+			R_SetSunCasterSlice(fd, lightViewAxis[0], boxNear, boxFar);
 		}
 
 		//ri.Printf(PRINT_ALL, "level %d znear %f zfar %f\n", level, lightviewBounds[0][0], lightviewBounds[1][0]);		
