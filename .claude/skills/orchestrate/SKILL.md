@@ -146,7 +146,7 @@ When the user asks you to work it (or a limit has reset and they say "check"):
 
 F10 orchestrator mode on/off, F11 freeze/resume the world (they walk around
 it; N flies), B ghost (the camera roams the running world, the body stays),
-MOUSE3 screenshot, MOUSE5 mark (hold: what is under the crosshair is outlined, the wheel steps
+HOME screenshot, MOUSE5 mark (hold: what is under the crosshair is outlined, the wheel steps
 front to back through everything the line passes, "nothing" last; let go to mark it, on "nothing"
 to cancel; the wheel's own binding comes back, the ragdoll grabber's or the stock one; recorded as
 a shot records it, with no screenshot or save; marks of the last minute are outlined on the next shot), hold MOUSE4 to talk (the
