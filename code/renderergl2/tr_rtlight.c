@@ -4357,7 +4357,9 @@ static void R_RtBakeFinish(void)
 // r_rtShadowProbe n x y z: light n's faces of the world alone drawn into the
 // third atlas (slot RT_SLOTS_BIG - 1, its owner's redrawn after), and the
 // frame after, the depth there towards (x y z) against that point's (a test)
-static int    rt_probeLight = -1, rt_probeStage;
+static void  R_RtFaceRect(int atlas, int slot, int face, int *x, int *y, int *size);
+static float R_RtFaceScale(int size);
+static int    rt_probeLight = -1, rt_probeStage, rt_probeLive;
 static vec3_t rt_probePoint;
 
 static void R_RtShadowProbe_f(void)
@@ -4365,6 +4367,11 @@ static void R_RtShadowProbe_f(void)
 	rt_probeLight = atoi(ri.Cmd_Argv(1));
 	VectorSet(rt_probePoint, atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)), atof(ri.Cmd_Argv(4)));
 	rt_probeStage = (rt_probeLight >= 0 && rt_probeLight < rt.numLights && tr.rtShadowFbo[2]) ? 1 : 0;
+	// "live": what the light's own static tile holds now, as the shaders read it
+	rt_probeLive = !Q_stricmp(ri.Cmd_Argv(5), "live");
+	if (rt_probeLive && rt_probeStage) {
+		rt_probeStage = rt.lights[rt_probeLight].staticSlot >= 0 ? 2 : 0;
+	}
 }
 
 static void R_RtShadowProbeStep(void)
@@ -4405,8 +4412,16 @@ static void R_RtShadowProbeStep(void)
 	y0   = ((slot * 6 + face) / RT_ATLAS_TILES) * tile;
 	px   = x0 + (int)((-left / fwd * 0.5f + 0.5f) * tile);
 	py   = y0 + (int)((up / fwd * 0.5f + 0.5f) * tile);
+	if (rt_probeLive) {
+		int size;
+
+		R_RtFaceRect(0, l->staticSlot, face, &x0, &y0, &size);
+		px = x0 + (int)(((-left / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+		py = y0 + (int)(((up / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+		ri.Printf(PRINT_ALL, "live static slot %d, tile %d at %d %d, texel %d %d\n", l->staticSlot, size, x0, y0, px, py);
+	}
 	Com_Memset(got, 0, sizeof(got));
-	FBO_Bind(tr.rtShadowFbo[2]);
+	FBO_Bind(tr.rtShadowFbo[rt_probeLive ? 0 : 2]);
 	qglReadPixels(Q_max(px - 2, x0), Q_max(py - 2, y0), 5, 5, GL_DEPTH_COMPONENT, GL_FLOAT, got);
 	FBO_Bind(NULL);
 	ri.Printf(PRINT_ALL, "light %d at %.0f %.0f %.0f to %.0f %.0f %.0f: face %d uv %.3f %.3f, fwd %.1f, depth %.6f\n", rt_probeLight, l->origin[0], l->origin[1],
