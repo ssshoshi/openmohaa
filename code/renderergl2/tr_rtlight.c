@@ -54,6 +54,7 @@ cvar_t *r_rtShadows;
 cvar_t *r_rtShadowTile;
 cvar_t *r_rtFacesPerFrame;
 cvar_t *r_rtMaxLights;
+cvar_t *r_rtShadowSlope;
 cvar_t *r_rtAmbient;
 cvar_t *r_rtDynamicLights;
 cvar_t *r_rtShadowCharacters;
@@ -133,6 +134,8 @@ typedef char rt_smallRowFits[(RT_SMALL_FIRST % RT_ATLAS_TILES == 0 && RT_SLOTS >
 // faces it will move away from before they are seen
 #define RT_LIGHT_SETTLE_FRAMES 3
 
+#define RT_VIEW_SPOTS  9      // points on what the view sees, a 3 by 3 grid across the screen
+
 typedef struct {
 	vec3_t   origin;
 	vec3_t   color;        // raw lightmap units: intensity * 7500 * colour
@@ -194,6 +197,9 @@ static struct {
 	int       *seenLights;   // the lights listed for the leaves it can see
 	int       *candidateOf;  // each light's place among this frame's candidates, -1 none
 	int        numSeen;
+	vec3_t     viewSpots[RT_VIEW_SPOTS]; // what the view sees across the screen (R_RtViewSpots)
+	int        numViewSpots;
+	int        viewSpotsFrame;
 	int        staticOwner[RT_SLOTS]; // the light in each slot, -1 none
 	int        dynamicOwner[RT_SLOTS];     // the light holding each slot of what moves, plus one (0 none)
 	int        dynamicOwnerFrame[RT_SLOTS]; // the frame it last used it
@@ -290,6 +296,8 @@ void R_RtRegister(void)
 	r_rtShadowTile = ri.Cvar_Get("r_rtShadowTile", "256", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_rtShadowTile, 64, 512, qtrue);
 	r_rtFacesPerFrame = ri.Cvar_Get("r_rtFacesPerFrame", "12", CVAR_ARCHIVE);
+	r_rtShadowSlope = ri.Cvar_Get("r_rtShadowSlope", "2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtShadowSlope, "How far the side of the world's faces towards a lamp is pushed back in its shadow, by the slope of its depth: the ground shadowed itself in blotches where the light came in low. Lamp shadows are redrawn when the lamps are next lit (vid_restart for all)");
 	r_rtMaxLights = ri.Cvar_Get("r_rtMaxLights", "24", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtMaxLights, 0, RT_MAX_LIGHTS, qtrue);
 	ri.Cvar_SetDescription(r_rtMaxLights, "How many realtime lights are lit live, with their shadows: the nearest and those the view sees. With r_rtBakedLamps the rest still light the world, baked; these add sharp shadows, shine and the light on people and props");
@@ -4352,7 +4360,9 @@ static void R_RtBakeFinish(void)
 // r_rtShadowProbe n x y z: light n's faces of the world alone drawn into the
 // third atlas (slot RT_SLOTS_BIG - 1, its owner's redrawn after), and the
 // frame after, the depth there towards (x y z) against that point's (a test)
-static int    rt_probeLight = -1, rt_probeStage;
+static void  R_RtFaceRect(int atlas, int slot, int face, int *x, int *y, int *size);
+static float R_RtFaceScale(int size);
+static int    rt_probeLight = -1, rt_probeStage, rt_probeLive;
 static vec3_t rt_probePoint;
 
 static void R_RtShadowProbe_f(void)
@@ -4360,6 +4370,80 @@ static void R_RtShadowProbe_f(void)
 	rt_probeLight = atoi(ri.Cmd_Argv(1));
 	VectorSet(rt_probePoint, atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)), atof(ri.Cmd_Argv(4)));
 	rt_probeStage = (rt_probeLight >= 0 && rt_probeLight < rt.numLights && tr.rtShadowFbo[2]) ? 1 : 0;
+	// "live": what the light's own static tile holds now, as the shaders read it
+	rt_probeLive = !Q_stricmp(ri.Cmd_Argv(5), "live");
+	if (rt_probeLive && rt_probeStage) {
+		rt_probeStage = rt.lights[rt_probeLight].staticSlot >= 0 ? 2 : 0;
+	}
+}
+
+// r_rtShadowProbeAll x y z: every lamp lit live now, what its tiles of what
+// stands and of what moves hold towards (x y z), against that point's depth
+static int    rt_probeAll;
+static vec3_t rt_probeAllPoint;
+
+static void R_RtShadowProbeAll_f(void)
+{
+	VectorSet(rt_probeAllPoint, atof(ri.Cmd_Argv(1)), atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)));
+	rt_probeAll = 1;
+}
+
+// the linear depth a slot's face holds towards p, and p's own (want)
+static float R_RtProbeTexel(const rtLight_t *l, int atlas, int slot, const vec3_t p, float *want)
+{
+	vec3_t v;
+	float  fwd, left, up, n = RT_ZNEAR, f = l->range, got = 0, d;
+	int    face, x0, y0, size, px, py;
+
+	VectorSubtract(p, l->origin, v);
+	if (fabs(v[0]) >= fabs(v[1]) && fabs(v[0]) >= fabs(v[2])) {
+		face = v[0] > 0 ? 0 : 1; fwd = fabs(v[0]); left = v[0] > 0 ? v[1] : -v[1]; up = v[2];
+	} else if (fabs(v[1]) >= fabs(v[2])) {
+		face = v[1] > 0 ? 2 : 3; fwd = fabs(v[1]); left = v[1] > 0 ? -v[0] : v[0]; up = v[2];
+	} else {
+		face = v[2] > 0 ? 4 : 5; fwd = fabs(v[2]); left = v[2] > 0 ? -v[1] : v[1]; up = v[0];
+	}
+	*want = fwd;
+	R_RtFaceRect(atlas, slot, face, &x0, &y0, &size);
+	px = x0 + (int)(((-left / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+	py = y0 + (int)(((up / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+	FBO_Bind(tr.rtShadowFbo[atlas]);
+	qglReadPixels(px, py, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &got);
+	FBO_Bind(NULL);
+	d = got * 2.0f - 1.0f;
+	return 2.0f * f * n / ((f + n) - d * (f - n));
+}
+
+static void R_RtShadowProbeAllStep(void)
+{
+	int i;
+
+	if (!rt_probeAll) {
+		return;
+	}
+	rt_probeAll = 0;
+	for (i = 0; i < tr.rtNumActive; i++) {
+		const rtLight_t *l;
+		float            want, st = -1, dy = -1;
+
+		if (rt.active[i] < 0) {
+			continue;
+		}
+		l = &rt.lights[rt.active[i]];
+		if (Distance(l->origin, rt_probeAllPoint) > l->range) {
+			continue;
+		}
+		if (l->staticSlot >= 0) {
+			st = R_RtProbeTexel(l, 0, l->staticSlot, rt_probeAllPoint, &want);
+		}
+		if (l->dynamicSlot > 0) {
+			dy = R_RtProbeTexel(l, 1, l->dynamicSlot - 1, rt_probeAllPoint, &want);
+		}
+		R_RtProbeTexel(l, 0, 0, rt_probeAllPoint, &want);
+		ri.Printf(PRINT_ALL, "probeall %d (%.0f %.0f %.0f): point %.1f static %.1f%s moving %.1f%s\n", rt.active[i],
+			l->origin[0], l->origin[1], l->origin[2], want, st, st >= 0 && st < want - 0.5f ? " SHADOWED" : "",
+			dy, dy >= 0 && dy < want - 0.5f ? " SHADOWED" : "");
+	}
 }
 
 static void R_RtShadowProbeStep(void)
@@ -4400,8 +4484,16 @@ static void R_RtShadowProbeStep(void)
 	y0   = ((slot * 6 + face) / RT_ATLAS_TILES) * tile;
 	px   = x0 + (int)((-left / fwd * 0.5f + 0.5f) * tile);
 	py   = y0 + (int)((up / fwd * 0.5f + 0.5f) * tile);
+	if (rt_probeLive) {
+		int size;
+
+		R_RtFaceRect(0, l->staticSlot, face, &x0, &y0, &size);
+		px = x0 + (int)(((-left / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+		py = y0 + (int)(((up / fwd) * 0.5f * R_RtFaceScale(size) + 0.5f) * size);
+		ri.Printf(PRINT_ALL, "live static slot %d, tile %d at %d %d, texel %d %d\n", l->staticSlot, size, x0, y0, px, py);
+	}
 	Com_Memset(got, 0, sizeof(got));
-	FBO_Bind(tr.rtShadowFbo[2]);
+	FBO_Bind(tr.rtShadowFbo[rt_probeLive ? 0 : 2]);
 	qglReadPixels(Q_max(px - 2, x0), Q_max(py - 2, y0), 5, 5, GL_DEPTH_COMPONENT, GL_FLOAT, got);
 	FBO_Bind(NULL);
 	ri.Printf(PRINT_ALL, "light %d at %.0f %.0f %.0f to %.0f %.0f %.0f: face %d uv %.3f %.3f, fwd %.1f, depth %.6f\n", rt_probeLight, l->origin[0], l->origin[1],
@@ -5714,16 +5806,27 @@ static qboolean R_RtPointInView(const vec3_t p, const cplane_t frustum[5], float
 
 /*
 Whether a light's light is in the view: its bulbs, or its pool, or the view
-well inside its reach (a lamp overhead lights the floor ahead). Its reach
-alone takes in the view from most of the map: a lamp of the map gives a
-little light a long way.
+well inside its reach (a lamp overhead lights the floor ahead), or what the
+view sees well inside it (R_RtViewSpots: a lamp over the wall beside the view
+lights the wall across the lane). Its reach alone takes in the view from most
+of the map: a lamp of the map gives a little light a long way.
 */
 static qboolean R_RtInView(const rtLight_t *l, float reach, const vec3_t vieworg, const cplane_t frustum[5])
 {
+	int s;
+
 	if (DistanceSquared(l->origin, vieworg) < Square(reach * 0.5f)) {
 		return qtrue;
 	}
-	return (R_RtPointInView(l->origin, frustum, RT_VIEW_MARGIN) || R_RtPointInView(l->pool, frustum, RT_VIEW_MARGIN)) ? qtrue : qfalse;
+	if (R_RtPointInView(l->origin, frustum, RT_VIEW_MARGIN) || R_RtPointInView(l->pool, frustum, RT_VIEW_MARGIN)) {
+		return qtrue;
+	}
+	for (s = 0; s < rt.numViewSpots; s++) {
+		if (DistanceSquared(rt.viewSpots[s], l->origin) < Square(reach * 0.5f)) {
+			return qtrue;
+		}
+	}
+	return qfalse;
 }
 
 // Whether a line from the view gets to p
@@ -5742,11 +5845,65 @@ may be seen from the view's cluster, which out of doors is most of the map,
 the lamps in every house round about. Looked at again every few frames, a
 few lights a frame.
 */
-static qboolean R_RtViewSees(rtLight_t *l, int index, const vec3_t vieworg)
+/*
+Where the view's lines across the screen first meet the world, a 3 by 3 grid
+of them, every few frames: a lamp whose light falls there is seen though its
+bulb and pool are not. Each is pulled back off what it hit, so that a line
+from it to a lamp does not start in the wall.
+*/
+static void R_RtViewSpots(const refdef_t *fd)
+{
+	const float tx = tan(fd->fov_x / 360.0f * M_PI) * 0.7f;
+	const float ty = tan(fd->fov_y / 360.0f * M_PI) * 0.7f;
+	vec3_t      zero = {0, 0, 0};
+	int         x, y;
+
+	if (rt.numViewSpots && rt.frame - rt.viewSpotsFrame < RT_SEEN_EVERY) {
+		return;
+	}
+	rt.viewSpotsFrame = rt.frame;
+	rt.numViewSpots   = 0;
+	for (y = -1; y <= 1; y++) {
+		for (x = -1; x <= 1; x++) {
+			trace_t trace;
+			vec3_t  dir, end;
+
+			VectorCopy(fd->viewaxis[0], dir);
+			VectorMA(dir, -x * tx, fd->viewaxis[1], dir);
+			VectorMA(dir, -y * ty, fd->viewaxis[2], dir);
+			VectorNormalize(dir);
+			VectorMA(fd->vieworg, 8192.0f, dir, end);
+			ri.CM_BoxTrace(&trace, fd->vieworg, end, zero, zero, 0, CONTENTS_SOLID, qfalse);
+			if (trace.startsolid || trace.fraction >= 1.0f) {
+				continue;
+			}
+			VectorMA(trace.endpos, -4.0f, dir, rt.viewSpots[rt.numViewSpots]);
+			rt.numViewSpots++;
+		}
+	}
+}
+
+/*
+Whether the view sees a light: its bulbs, its pool, or its light on what the
+view sees (R_RtViewSpots). A lamp over the wall beside the view lights the
+wall across the lane, with the shadows of what stands between; going up to
+the near wall hid its bulb and its pool, so it went to the back of those to
+be lit, out of the few lit live, and its shadows went with it.
+*/
+static qboolean R_RtViewSees(rtLight_t *l, int index, const vec3_t vieworg, float reach)
 {
 	if (!l->seenTested || rt.frame - l->seenTested >= RT_SEEN_EVERY * 4
 		|| (rt.frame + index) % RT_SEEN_EVERY == 0) {
 		l->seenByView = (R_RtClearTo(vieworg, l->origin) || R_RtClearTo(vieworg, l->pool)) ? qtrue : qfalse;
+		if (!l->seenByView && reach > 0.0f) {
+			int s;
+
+			for (s = 0; s < rt.numViewSpots && !l->seenByView; s++) {
+				if (DistanceSquared(rt.viewSpots[s], l->origin) < Square(reach * 0.5f) && R_RtClearTo(rt.viewSpots[s], l->origin)) {
+					l->seenByView = qtrue;
+				}
+			}
+		}
 		l->seenTested = rt.frame;
 	}
 	return l->seenByView;
@@ -5929,6 +6086,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	// the view take what room is left, so that one just off the screen is
 	// most often lit already as the view turns to it.
 	seen = R_RtMarkSeenLights(fd->vieworg);
+	R_RtViewSpots(fd);
 	for (i = 0; i < rt.numLights && numSorted < 1024; i++) {
 		rtLight_t *l = &rt.lights[i];
 		vec4_t     colorRange;
@@ -5964,7 +6122,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 				l->enteredView = rt.frame;
 			}
 			l->inViewFrame = rt.frame;
-			if (!R_RtViewSees(l, i, fd->vieworg)) {
+			if (!R_RtViewSees(l, i, fd->vieworg, lightReach)) {
 				sorted[numSorted][1] += RT_HIDDEN;
 			}
 		}
@@ -6328,6 +6486,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtBounceStep(bake, ease);
 	rt_bake.scale = scale;
 	R_RtShadowProbeStep();
+	R_RtShadowProbeAllStep();
 	// the lamps lit live last frame and no longer: their bake put back
 	R_RtLiveSweep();
 	R_RtBakeLamps(ease);
@@ -6998,6 +7157,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
 		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
 		ri.Cmd_AddCommand("r_rtShadowProbe", R_RtShadowProbe_f);
+		ri.Cmd_AddCommand("r_rtShadowProbeAll", R_RtShadowProbeAll_f);
 	} else {
 		ri.Cmd_RemoveCommand("r_rtTestMove");
 		ri.Cmd_RemoveCommand("r_rtTestBody");
@@ -7005,6 +7165,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_RemoveCommand("r_rtProbeTest");
 		ri.Cmd_RemoveCommand("r_rtBakeAt");
 		ri.Cmd_RemoveCommand("r_rtShadowProbe");
+		ri.Cmd_RemoveCommand("r_rtShadowProbeAll");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
 		Com_Memset(&rt_testBody, 0, sizeof(rt_testBody));
 	}

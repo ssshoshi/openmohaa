@@ -45,7 +45,7 @@ All the exchange is files under the live install's home path,
   hit, and the camera comes back if it dies. B again returns to the body,
   `orch_ghost here` brings the body to the camera, F11 freezes the world
   without leaving the camera, and B from frozen lets it run again.
-- **MOUSE3** (wheel click): screenshot. It records what is under the crosshair
+- **HOME**: screenshot. It records what is under the crosshair
   and the player's position, takes a clean and an outlined screenshot, and in
   single player saves the game as `orch_<id>`.
 - Say **"mute"** / **"unmute"** to stop and start listening, **"cancel that"**

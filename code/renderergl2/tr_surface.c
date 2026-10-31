@@ -1488,6 +1488,8 @@ void RB_DrawTerrainTris(srfTerrain_t* p) {
 	// handle to it. The per-sample normals live there.
 	const cTerraPatchUnpacked_t *patch = (const cTerraPatchUnpacked_t *)p;
 
+	tess.terrain = qtrue;
+
 	// ends a batch the VAO cache started, see RB_SurfaceVaoCached
 	RB_CheckVao(tess.vao);
 	RB_CHECKOVERFLOW(p->nVerts, p->nTris * 3);
