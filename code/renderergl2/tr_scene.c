@@ -544,6 +544,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 	// Added in OPM: r_rtTestMove's piece
 	if ( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
 		R_RtAddTestEntity();
+		// and the rain's cover, the first frame it rains
+		R_RainFrame();
 	}
 	GLimp_LogComment( "====== RE_RenderScene =====\n" );
 

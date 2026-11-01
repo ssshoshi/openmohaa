@@ -63,12 +63,18 @@ uniform int       u_AlphaTest;
 // back the sun as a small hard highlight and the sky most at a glancing look.
 // The film dries first: under the mark is a band that is dark but no longer
 // shines.
-uniform vec4      u_Wet;    // how wet, the mark's height, 0, 0
+uniform vec4      u_Wet;    // how wet, the mark's height; the rain: how wet, what is drawn (1 the world, 2 the view's hands and weapon)
 uniform vec4      u_WetSky; // the sky it gives back
 uniform vec4      u_WetSun; // towards the sun, and how bright it is
 uniform vec3      u_ViewOrigin;
 varying vec3      var_WetPos;
 varying vec3      var_WetNormal;
+// Added in OPM: the rain (tr_water.c's R_RainBuildCover): the highest of the
+// world at each place, from above; the grid's corner and one over its size;
+// the time, its texel, how much ground holds puddles, how much beads show
+uniform sampler2D u_RainCoverMap;
+uniform vec4      u_RainCover;
+uniform vec4      u_RainParams;
 
 float WetNoise(vec2 p)
 {
@@ -82,28 +88,123 @@ float WetNoise(vec2 p)
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// How wet it is here (x: the water in it; y: the film on it) and which way
-// the surface itself faces (zw unused)
-vec2 WetAmount(out vec3 surfN)
+// Out in the rain: nothing over it. A wall reads the grid a little way out
+// from its face, where the rain falls past it; the ground at its own place,
+// where the grid holds its own height (or a little more, on a slope).
+float RainExposed(vec3 p, vec3 n)
+{
+	vec2 at = p.xy + n.xy * u_RainParams.y * 1.6;
+	vec2 uv = (at - u_RainCover.xy) * u_RainCover.zw;
+	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)
+		return 1.0;
+	float top  = texture2D(u_RainCoverMap, uv).r;
+	float give = u_RainParams.y + 6.0;
+	return smoothstep(top - give - 10.0, top - give, p.z);
+}
+
+// How wet it is here (x: the water in it; y: the film on it; z: a puddle
+// standing on it) and which way the surface itself faces
+vec3 WetAmount(out vec3 surfN)
 {
 	// faces' winding as the rest of this file has it: the front is the back
 	surfN = normalize(!gl_FrontFacing ? var_WetNormal : -var_WetNormal);
-	if (u_Wet.x <= 0.0)
-		return vec2(0.0);
+	vec3 wet = vec3(0.0);
 
-	// up to the mark, which is not a ruled line; the film a little below it
-	float mark = u_Wet.y + (WetNoise(var_WetPos.xy / 70.0 + var_WetPos.z / 50.0) - 0.5) * 16.0;
-	float soak = u_Wet.x * (1.0 - smoothstep(mark - 8.0, mark + 2.0, var_WetPos.z));
-	float film = u_Wet.x * (1.0 - smoothstep(mark - 22.0, mark - 8.0, var_WetPos.z));
+	// the beach: up to the tide's mark, which is not a ruled line; the film
+	// a little below it
+	if (u_Wet.x > 0.0)
+	{
+		float mark = u_Wet.y + (WetNoise(var_WetPos.xy / 70.0 + var_WetPos.z / 50.0) - 0.5) * 16.0;
+		float soak = u_Wet.x * (1.0 - smoothstep(mark - 8.0, mark + 2.0, var_WetPos.z));
+		float film = u_Wet.x * (1.0 - smoothstep(mark - 22.0, mark - 8.0, var_WetPos.z));
 
-	// the ground is the wet beach's (beach_fp.glsl): only what stands up
-	float up = 1.0 - 0.85 * smoothstep(0.75, 0.95, surfN.z);
+		// the ground is the wet beach's (beach_fp.glsl): only what stands up
+		float up = 1.0 - 0.85 * smoothstep(0.75, 0.95, surfN.z);
 
-	// the film runs down what stands up in streaks, here thick, there thin
-	float runs = smoothstep(0.25, 0.85, WetNoise(vec2(dot(var_WetPos.xy, vec2(0.11, 0.08)), var_WetPos.z * 0.03)));
-	film *= mix(1.0, mix(0.45, 1.0, runs), 1.0 - abs(surfN.z));
+		// the film runs down what stands up in streaks, here thick, there thin
+		float runs = smoothstep(0.25, 0.85, WetNoise(vec2(dot(var_WetPos.xy, vec2(0.11, 0.08)), var_WetPos.z * 0.03)));
+		film *= mix(1.0, mix(0.45, 1.0, runs), 1.0 - abs(surfN.z));
 
-	return vec2(soak, film) * up;
+		wet.xy = vec2(soak, film) * up;
+	}
+
+	// the rain: what is out under the sky soaked through, with a film on it
+	// thick where it faces up and in runs down what stands up; nothing on
+	// the undersides it never reaches; puddles on the open ground
+	if (u_Wet.z > 0.0)
+	{
+		float open  = RainExposed(var_WetPos, surfN) * u_Wet.z;
+		float under = smoothstep(-0.75, -0.3, surfN.z);
+		float runs  = smoothstep(0.2, 0.8, WetNoise(vec2(dot(var_WetPos.xy, vec2(0.11, 0.08)), var_WetPos.z * 0.03)));
+		float film  = mix(mix(0.3, 0.75, runs), 0.8, smoothstep(0.1, 0.7, surfN.z));
+
+		wet.x = max(wet.x, open * under);
+		wet.y = max(wet.y, open * under * film);
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && surfN.z > 0.9)
+		{
+			float n   = WetNoise(var_WetPos.xy / 110.0) * 0.6 + WetNoise(var_WetPos.xy / 27.0) * 0.3 + WetNoise(var_WetPos.xy / 7.0) * 0.1;
+			float lim = 1.0 - 0.75 * u_RainParams.z;
+			wet.z = open * smoothstep(lim, lim + 0.08, n) * smoothstep(0.9, 0.97, surfN.z) * step(0.001, u_RainParams.z);
+		}
+	}
+	return wet;
+}
+
+// The rain falling in a puddle: rings spreading from where each drop lands,
+// the tilt they give the water's face, along the ground
+vec2 RainRipples(vec2 p, float t)
+{
+	vec2 sum = vec2(0.0);
+	for (int k = 0; k < 2; k++)
+	{
+		vec2 q    = p / 16.0 + float(k) * vec2(0.37, 0.71);
+		vec2 cell = floor(q);
+		for (int j = -1; j <= 1; j++)
+		for (int i = -1; i <= 1; i++)
+		{
+			vec2  c      = cell + vec2(float(i), float(j));
+			float h      = fract(sin(dot(c, vec2(12.9898, 78.233)) + float(k) * 1.7) * 43758.5453);
+			vec2  centre = c + vec2(fract(h * 13.7), fract(h * 7.3));
+			float phase  = fract(t * (0.8 + 0.4 * fract(h * 3.1)) + h);
+			vec2  d      = q - centre;
+			float r      = length(d);
+			float w      = r - phase * 0.9;
+			float amp    = (1.0 - phase) * (1.0 - phase) * (1.0 - smoothstep(0.0, 0.1, abs(w)));
+			sum += amp * sin(w * 60.0) * d / max(r, 0.001);
+		}
+	}
+	return sum * 0.25;
+}
+
+// Drops beaded on the hands and the weapon in view, held on its surface (in
+// its texture's frame): whether one is here, and the slope of its dome
+float RainBeads(vec2 uv, out vec2 slope)
+{
+	float bead = 0.0;
+	slope = vec2(0.0);
+	for (int k = 0; k < 2; k++)
+	{
+		vec2  q = uv * (k == 0 ? 70.0 : 150.0) + float(k) * 0.5;
+		vec2  c = floor(q);
+		vec2  f = fract(q) - 0.5;
+		float h = fract(sin(dot(c, vec2(41.3, 289.1)) + float(k) * 3.3) * 43758.5453);
+		if (h > (k == 0 ? 0.22 : 0.35))
+			continue;
+		vec2  o   = (vec2(fract(h * 17.3), fract(h * 31.7)) - 0.5) * 0.45;
+		float rad = mix(0.14, 0.32, fract(h * 7.1));
+		vec2  d   = (f - o) / rad;
+		float r2  = dot(d, d);
+		if (r2 < 1.0)
+		{
+			float b = 1.0 - smoothstep(0.75, 1.0, r2);
+			if (b > bead)
+			{
+				bead  = b;
+				slope = d * 0.9;
+			}
+		}
+	}
+	return bead;
 }
 
 // How porous a surface is, by how rough and how metallic it looks: rough
@@ -624,7 +725,7 @@ void main()
 	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
 	// how much sky it sees
 	vec3 wetSurfN;
-	vec2 wet       = WetAmount(wetSurfN);
+	vec3 wet       = WetAmount(wetSurfN);
 	vec3 wetLight  = lightColor;
 	// Added in OPM: the reflection of what is on the screen (SsrTrace)
 	vec4 ssr       = vec4(0.0);
@@ -754,9 +855,44 @@ void main()
 		// what drinks the water holds less of it on top
 		float porosity = WetPorosity(roughness, specular.rgb);
 		wet.y *= mix(1.0, 0.5, porosity);
-		WetMaterial(wet, porosity, diffuse.rgb, roughness);
+		WetMaterial(wet.xy, porosity, diffuse.rgb, roughness);
 		specular.rgb = mix(specular.rgb, max(specular.rgb, vec3(0.02)), wet.y);
 		N  = normalize(mix(N, surfNormal, 0.8 * wet.y));
+
+		// a puddle: still water over it, darker under, rung by the rain
+		if (wet.z > 0.0)
+		{
+			vec2 ring = RainRipples(var_WetPos.xy, u_RainParams.x);
+			diffuse.rgb *= mix(1.0, 0.4, wet.z);
+			roughness    = mix(roughness, 0.08, wet.z);
+			specular.rgb = mix(specular.rgb, vec3(0.02), wet.z);
+			N = normalize(mix(N, normalize(wetSurfN + vec3(ring, 0.0)), wet.z));
+		}
+
+		// beads on the hands and the weapon in view
+		if (abs(mod(u_Wet.w, 10.0) - 2.0) < 0.5 && u_RainParams.w > 0.0)
+		{
+			vec2  slope;
+			float bead = RainBeads(var_TexCoords.xy, slope) * wet.x * u_RainParams.w;
+
+			if (bead > 0.0)
+			{
+				// the texture's frame on the surface, from how both change
+				// across the screen
+				vec3  dp1 = dFdx(var_WetPos), dp2 = dFdy(var_WetPos);
+				vec2  du1 = dFdx(var_TexCoords.xy), du2 = dFdy(var_TexCoords.xy);
+				vec3  p2  = cross(dp2, wetSurfN), p1 = cross(wetSurfN, dp1);
+				vec3  T   = p2 * du1.x + p1 * du2.x;
+				vec3  B   = p2 * du1.y + p1 * du2.y;
+				float inv = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
+
+				diffuse.rgb *= mix(1.0, 0.9, bead);
+				roughness    = mix(roughness, 0.16, bead);
+				specular.rgb = mix(specular.rgb, max(specular.rgb, vec3(0.03)), bead);
+				N = normalize(mix(N, normalize(N - (T * slope.x + B * slope.y) * inv), bead));
+			}
+		}
+
 		NL = clamp(dot(N, L), 0.0, 1.0);
 		NE = clamp(dot(N, E), 0.0, 1.0);
 		NH = clamp(dot(N, H), 0.0, 1.0);
@@ -890,16 +1026,42 @@ void main()
 		vec3  F0       = vec3(0.02);
 
 		wet.y *= 0.65;
-		WetMaterial(wet, 0.7, diffuse.rgb, wetRough);
+		WetMaterial(wet.xy, 0.7, diffuse.rgb, wetRough);
+		vec3 wetN = wetSurfN;
+		// a puddle: still water, darker under, rung by the rain
+		if (wet.z > 0.0)
+		{
+			wet.y    = max(wet.y, wet.z);
+			wetRough = mix(wetRough, 0.08, wet.z);
+			diffuse.rgb *= mix(1.0, 0.4, wet.z);
+			wetN = normalize(wetSurfN + vec3(RainRipples(var_WetPos.xy, u_RainParams.x), 0.0) * wet.z);
+		}
 		gl_FragColor.rgb  = diffuse.rgb * lightColor;
-		gl_FragColor.rgb += wet.y * WetSky(wetSurfN, Ew, wetRough, F0, wetLight);
-		gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(wetSurfN, u_WetSun.xyz), 0.0, 1.0)
-			* CalcSpecular(F0, clamp(dot(wetSurfN, Hs), 0.0, 1.0), clamp(dot(Ew, Hs), 0.0, 1.0), wetRough);
+		gl_FragColor.rgb += wet.y * WetSky(wetN, Ew, wetRough, F0, wetLight);
+		gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(wetN, u_WetSun.xyz), 0.0, 1.0)
+			* CalcSpecular(F0, clamp(dot(wetN, Hs), 0.0, 1.0), clamp(dot(Ew, Hs), 0.0, 1.0), wetRough);
 	}
 	else
 		gl_FragColor.rgb = diffuse.rgb * lightColor;
 
 #endif
+
+	// Added in OPM: a puddle mirrors the sky over it, the more the lower it is
+	// seen, its face tilted by the rings of the rain falling in it
+	if (wet.z > 0.0)
+	{
+		vec3  Ep  = normalize(u_ViewOrigin - var_WetPos);
+		vec3  Np  = normalize(wetSurfN + vec3(RainRipples(var_WetPos.xy, u_RainParams.x), 0.0));
+		float F   = 0.03 + 0.97 * pow(1.0 - clamp(dot(Np, Ep), 0.0, 1.0), 5.0);
+		vec3  R   = reflect(-Ep, Np);
+		vec3  sky = u_WetSky.rgb * mix(0.55, 1.15, smoothstep(0.0, 0.6, R.z));
+
+		gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, clamp(0.04 + F * 1.4, 0.0, 0.75) * wet.z);
+	}
+
+	// Added in OPM: r_rainDebug: red how wet, green a puddle
+	if (u_Wet.w > 9.5)
+		gl_FragColor.rgb = vec3(wet.x, wet.z, 0.0);
 
 	gl_FragColor.a = alpha;
 

@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 cvar_t *cg_lens;
 static cvar_t *cg_lens_test;
 static cvar_t *cg_lens_debug;
+static cvar_t *cg_lens_rain;
 
 #define LENS_MAX 32 // as many as the renderer takes (WATER_MAX_SPOTS)
 
@@ -65,6 +66,9 @@ void CG_InitLens(void)
     cg_lens      = cgi.Cvar_Get("cg_lens", "1", CVAR_ARCHIVE);
     cg_lens_test = cgi.Cvar_Get("cg_lens_test", "0", CVAR_CHEAT);
     cg_lens_debug = cgi.Cvar_Get("cg_lens_debug", "0", 0);
+    cg_lens_rain  = cgi.Cvar_Get("cg_lens_rain", "1", CVAR_ARCHIVE);
+    // a new map is dry until it rains (CG_LensRain)
+    cgi.Cvar_Set("r_rainWet", "0");
     memset(cg_lensSpots, 0, sizeof(cg_lensSpots));
     cg_lensTime = 0;
     cg_lensSent = 0;
@@ -266,6 +270,57 @@ void CG_LensBlast(const vec3_t at, int kind, qboolean inWater)
     }
 }
 
+/*
+The rain. Once it has rained on a map, what is out under the sky is wet for
+the rest of it (the renderer's r_rainWet, tr_water.c): the map's weather
+script turns the rain down indoors, and the world does not dry as a man goes
+in. Out under the sky in the rain, a drop lands on the lens now and then, the
+more the higher he looks.
+*/
+static void CG_LensRain(float dt)
+{
+    static int      lastLook;
+    static qboolean open;
+    float           up, rate;
+
+    if (cg.rain.density <= 0.0f) {
+        return;
+    }
+    if (cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
+        cgi.Cvar_Set("r_rainWet", "1");
+    }
+    if (!CG_LensOn() || !cg_lens_rain->value || dt <= 0.0f || !cg.snap) {
+        return;
+    }
+
+    // nothing over him but the sky
+    if (cg.time - lastLook > 250 || cg.time < lastLook) {
+        trace_t tr;
+        vec3_t  end;
+
+        lastLook = cg.time;
+        VectorCopy(cg.refdef.vieworg, end);
+        end[2] += 4096.0f;
+        CG_Trace(&tr, cg.refdef.vieworg, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SOLID, qfalse, qtrue, "lens rain");
+        open = (tr.fraction >= 1.0f || (tr.surfaceFlags & SURF_SKY)) ? qtrue : qfalse;
+    }
+    if (!open) {
+        return;
+    }
+
+    // drops a second: a few looking ahead, many looking up, hardly any down
+    up   = cg.refdef.viewaxis[0][2];
+    rate = cg_lens_rain->value * (0.15f + 3.0f * Square(Q_max(0.0f, up + 0.25f)));
+    if (random() < rate * dt) {
+        cgLensSpot_t *s = CG_LensNew(
+            LENS_WATER, 0.05f + random() * 0.9f, 0.1f + random() * 0.85f, 0.007f + random() * random() * 0.02f,
+            2200 + (int)(random() * 2500), 0.75f + 0.25f * random()
+        );
+
+        s->slide = s->size > 0.016f ? 0.02f + random() * 0.06f : 0.0f;
+    }
+}
+
 void CG_LensFrame(void)
 {
     float out[LENS_MAX][8];
@@ -278,6 +333,7 @@ void CG_LensFrame(void)
         dt = 0.0f;
     }
 
+    CG_LensRain(dt);
     if (!CG_LensOn()) {
         return;
     }

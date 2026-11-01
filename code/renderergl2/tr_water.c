@@ -75,6 +75,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 cvar_t        *r_water;
 cvar_t        *r_waterRipples;
 cvar_t        *r_waterWet;
+cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map has rained (cg_lens.cpp)
+cvar_t        *r_rainPuddles;
+cvar_t        *r_rainBeads;
+cvar_t        *r_rainDebug;
 cvar_t        *r_waterReflect;
 static cvar_t *r_waterBlood;
 
@@ -143,6 +147,13 @@ void R_WaterRegisterCvars(void)
     r_waterBlood = ri.Cvar_Get("r_waterBlood", "1", CVAR_ARCHIVE);
     r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterWet = ri.Cvar_Get("r_waterWet", "1", CVAR_ARCHIVE);
+    r_rainWet     = ri.Cvar_Get("r_rainWet", "0", CVAR_TEMP);
+    r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
+    r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
+    r_rainDebug   = ri.Cvar_Get("r_rainDebug", "0", CVAR_CHEAT);
+    ri.Cvar_SetDescription(r_rainWet, "How wet the rain has made what is out under the sky, 0 to 1 (the game sets it on a map with rain; r_waterWet 0 turns it off)");
+    ri.Cvar_SetDescription(r_rainPuddles, "In the rain, how much of the open ground holds puddles, with the rain ringing them: 0 none, 1 most of it");
+    ri.Cvar_SetDescription(r_rainBeads, "In the rain, drops beaded on the hands and the weapon in view: 0 none, 1 as many as hold");
     r_waterReflect = ri.Cvar_Get("r_waterReflect", "1", CVAR_ARCHIVE);
     ri.Cvar_SetDescription(r_waterReflect, "Water mirrors the world from under its surface, a second view drawn first: 0 only what is on the screen, 1 at half the screen's size, 2 at all of it (the size needs vid_restart), 3 as 1 and shows it in a corner");
     ri.Cvar_SetDescription(r_waterWet, "What stands in the water or on a beach below the tide's mark looks wet: darker, glossy, with the sky in it");
@@ -721,9 +732,227 @@ static void R_WaterBuildBeach(void)
     beachGround.on = qtrue;
 }
 
+/*
+===============
+R_RainBuildCover
+
+Added in OPM
+  What keeps the rain off: the world's surfaces and its terrain, all but the
+  sky, what is not drawn and what is see-through, drawn from above into a
+  grid of the highest of them at each place (tr.rainCoverImage). Out in the
+  rain is at or above it (lightall_fp.glsl's RainExposed); a wall reads it a
+  little way out from its face, where the rain falls past it.
+  Built the first frame it rains on a map, from the front end.
+===============
+*/
+#define RAIN_COVER_SIZE 2048
+#define RAIN_COVER_NONE -1.0e9f
+
+static struct {
+    float   *height;
+    int      width, rows;
+    float    x0, y0, texel;
+    vec2_t   mins, maxs;
+    qboolean on, tried;
+} rainCover;
+
+static qboolean R_RainCovers(const shader_t *sh)
+{
+    return sh && !sh->isSky && !(sh->surfaceFlags & (SURF_SKY | SURF_NODRAW)) && !(sh->contentFlags & CONTENTS_WATER)
+             && sh->sort < SS_BLEND0
+         ? qtrue
+         : qfalse;
+}
+
+static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean draw)
+{
+    float area, minx, maxx, miny, maxy;
+    int   x0, x1, y0, y1, x, y;
+
+    minx = Q_min(a[0], Q_min(b[0], c[0]));
+    maxx = Q_max(a[0], Q_max(b[0], c[0]));
+    miny = Q_min(a[1], Q_min(b[1], c[1]));
+    maxy = Q_max(a[1], Q_max(b[1], c[1]));
+    if (!draw) {
+        rainCover.mins[0] = Q_min(rainCover.mins[0], minx);
+        rainCover.mins[1] = Q_min(rainCover.mins[1], miny);
+        rainCover.maxs[0] = Q_max(rainCover.maxs[0], maxx);
+        rainCover.maxs[1] = Q_max(rainCover.maxs[1], maxy);
+        return;
+    }
+
+    area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    x0   = Q_max(0, (int)floor((minx - rainCover.x0) / rainCover.texel));
+    x1   = Q_min(rainCover.width - 1, (int)floor((maxx - rainCover.x0) / rainCover.texel));
+    y0   = Q_max(0, (int)floor((miny - rainCover.y0) / rainCover.texel));
+    y1   = Q_min(rainCover.rows - 1, (int)floor((maxy - rainCover.y0) / rainCover.texel));
+
+    if (fabs(area) < 0.001f) {
+        // edge on from above (a wall): its top along the texels it crosses,
+        // as a thin wall would be lost between their middles
+        const float top = Q_max(a[2], Q_max(b[2], c[2]));
+
+        for (y = y0; y <= y1; y++) {
+            for (x = x0; x <= x1; x++) {
+                const float px = rainCover.x0 + (x + 0.5f) * rainCover.texel;
+                const float py = rainCover.y0 + (y + 0.5f) * rainCover.texel;
+                vec2_t      d  = {maxx - minx, maxy - miny};
+                const float len = sqrt(d[0] * d[0] + d[1] * d[1]);
+                float       off;
+
+                if (len < 0.001f) {
+                    continue;
+                }
+                // how far the texel's middle is off the line from a to the far end
+                {
+                    const float *p0 = a, *p1 = (Distance(a, b) > Distance(a, c)) ? b : c;
+                    const float  ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+                    const float  l  = sqrt(ex * ex + ey * ey);
+
+                    if (l < 0.001f) {
+                        continue;
+                    }
+                    off = fabs((px - p0[0]) * ey - (py - p0[1]) * ex) / l;
+                }
+                if (off <= rainCover.texel * 0.71f) {
+                    float *h = &rainCover.height[y * rainCover.width + x];
+                    *h       = Q_max(*h, top);
+                }
+            }
+        }
+        return;
+    }
+
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            const float px = rainCover.x0 + (x + 0.5f) * rainCover.texel;
+            const float py = rainCover.y0 + (y + 0.5f) * rainCover.texel;
+            const float wa = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) / area;
+            const float wb = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
+            const float wc = 1.0f - wa - wb;
+            float      *h  = &rainCover.height[y * rainCover.width + x];
+
+            if (wa < -0.001f || wb < -0.001f || wc < -0.001f) {
+                continue;
+            }
+            *h = Q_max(*h, wa * a[2] + wb * b[2] + wc * c[2]);
+        }
+    }
+}
+
+static void R_RainCoverSurfaces(qboolean draw)
+{
+    int i, k, x, y;
+
+    for (i = 0; i < tr.world->numsurfaces; i++) {
+        const msurface_t      *surf = &tr.world->surfaces[i];
+        const srfBspSurface_t *bsp;
+
+        if (!R_RainCovers(surf->shader) || !surf->data) {
+            continue;
+        }
+        if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
+            continue;
+        }
+        bsp = (const srfBspSurface_t *)surf->data;
+        for (k = 0; k + 2 < bsp->numIndexes; k += 3) {
+            R_RainTri(bsp->verts[bsp->indexes[k]].xyz, bsp->verts[bsp->indexes[k + 1]].xyz,
+                bsp->verts[bsp->indexes[k + 2]].xyz, draw);
+        }
+    }
+
+    for (i = 0; i < tr.world->numTerraPatches; i++) {
+        const cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
+
+        if (!R_RainCovers(patch->shader)) {
+            continue;
+        }
+        for (y = 0; y < 8; y++) {
+            for (x = 0; x < 8; x++) {
+                vec3_t p[4];
+
+                for (k = 0; k < 4; k++) {
+                    const int xi = x + (k & 1), yi = y + (k >> 1);
+
+                    VectorSet(p[k], patch->x0 + xi * 64.0f, patch->y0 + yi * 64.0f,
+                        patch->heightmap[yi * 9 + xi] * 2.0f + patch->z0);
+                }
+                R_RainTri(p[0], p[1], p[3], draw);
+                R_RainTri(p[0], p[3], p[2], draw);
+            }
+        }
+    }
+}
+
+static void R_RainBuildCover(void)
+{
+    float extent;
+    int   i, start = ri.Milliseconds();
+
+    rainCover.tried = qtrue;
+    if (!tr.world) {
+        return;
+    }
+
+    VectorSet2(rainCover.mins, 1e9f, 1e9f);
+    VectorSet2(rainCover.maxs, -1e9f, -1e9f);
+    R_RainCoverSurfaces(qfalse);
+    if (rainCover.maxs[0] <= rainCover.mins[0] || rainCover.maxs[1] <= rainCover.mins[1]) {
+        return;
+    }
+
+    extent          = Q_max(rainCover.maxs[0] - rainCover.mins[0], rainCover.maxs[1] - rainCover.mins[1]);
+    rainCover.texel = Q_max(extent / RAIN_COVER_SIZE, 6.0f);
+    rainCover.x0    = rainCover.mins[0] - rainCover.texel;
+    rainCover.y0    = rainCover.mins[1] - rainCover.texel;
+    rainCover.width = Q_min(RAIN_COVER_SIZE, (int)ceil((rainCover.maxs[0] - rainCover.mins[0]) / rainCover.texel) + 2);
+    rainCover.rows  = Q_min(RAIN_COVER_SIZE, (int)ceil((rainCover.maxs[1] - rainCover.mins[1]) / rainCover.texel) + 2);
+
+    rainCover.height = ri.Malloc(rainCover.width * rainCover.rows * sizeof(float));
+    for (i = 0; i < rainCover.width * rainCover.rows; i++) {
+        rainCover.height[i] = RAIN_COVER_NONE;
+    }
+    R_RainCoverSurfaces(qtrue);
+
+    tr.rainCoverImage = R_CreateImage("*rainCover", NULL, rainCover.width, rainCover.rows, IMGTYPE_COLORALPHA,
+        IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+    qglTextureSubImage2DEXT(tr.rainCoverImage->texnum, GL_TEXTURE_2D, 0, 0, 0, rainCover.width, rainCover.rows, GL_RED,
+        GL_FLOAT, rainCover.height);
+    qglTextureParameteriEXT(tr.rainCoverImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    qglTextureParameteriEXT(tr.rainCoverImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    rainCover.on = qtrue;
+    ri.Printf(PRINT_DEVELOPER, "rain: cover %dx%d, %.1f units a texel, in %d ms\n", rainCover.width, rainCover.rows,
+        rainCover.texel, ri.Milliseconds() - start);
+}
+
+static void R_RainFreeCover(void)
+{
+    if (rainCover.height) {
+        ri.Free(rainCover.height);
+    }
+    memset(&rainCover, 0, sizeof(rainCover));
+    // the last map's grid is one of its images, which the next map frees
+    tr.rainCoverImage = NULL;
+}
+
+// Once a scene, in the front end: the cover, the first time it rains
+void R_RainFrame(void)
+{
+    if (!rainCover.tried && r_rainWet->value > 0.0f && r_waterWet->integer && tr.world) {
+        R_RainBuildCover();
+    }
+}
+
+static float R_RainAmount(void)
+{
+    return rainCover.on ? Com_Clamp(0.0f, 1.0f, r_rainWet->value) : 0.0f;
+}
+
 void R_WaterLoadWorld(const char *mapName)
 {
     int i;
+
+    R_RainFreeCover();
 
     R_WaterReadFile(mapName);
     // a shore's own texture swapped for the beach's (m3l1a's painted
@@ -1452,16 +1681,49 @@ void R_WaterSetDry(shaderProgram_t *sp)
 
 void R_WaterSetWet(shaderProgram_t *sp)
 {
-    vec4_t v;
+    vec4_t      v;
+    qboolean    beach;
+    float       rain;
 
-    if (!r_waterWet->integer || !water.beachSet || !water.shoreSet || !tr.world
-        || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+    if (!r_waterWet->integer || !tr.world || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+        R_WaterSetDry(sp);
+        return;
+    }
+    beach = water.beachSet && water.shoreSet;
+    rain  = R_RainAmount();
+    if (!beach && rain <= 0.0f) {
         R_WaterSetDry(sp);
         return;
     }
 
-    VectorSet4(v, 1.0f, water.beachTop + 24.0f, 0.0f, 0.0f);
+    // the beach: how wet, its mark; the rain: how wet, and what is drawn (1
+    // the world's own surfaces, which hold puddles; 2 the hands and the
+    // weapon in view, which hold beads of it)
+    VectorSet4(v, beach ? 1.0f : 0.0f, beach ? water.beachTop + 24.0f : 0.0f, rain, 0.0f);
+    if (rain > 0.0f) {
+        const trRefEntity_t *ent = backEnd.currentEntity;
+
+        if (ent == &tr.worldEntity && !backEnd.currentStaticModel) {
+            v[3] = 1.0f;
+        } else if (ent && ent != &tr.worldEntity && (ent->e.renderfx & RF_FIRST_PERSON)) {
+            v[3] = 2.0f;
+        }
+        // shown as how wet and the puddles, in place of the colour
+        if (r_rainDebug->integer) {
+            v[3] += 10.0f;
+        }
+    }
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
+
+    if (rain > 0.0f) {
+        VectorSet4(v, rainCover.x0, rainCover.y0, 1.0f / (rainCover.width * rainCover.texel),
+            1.0f / (rainCover.rows * rainCover.texel));
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINCOVER, v);
+        VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
+            Com_Clamp(0.0f, 1.0f, r_rainPuddles->value), Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINPARAMS, v);
+        GL_BindToTMU(tr.rainCoverImage, TMU_RAINCOVER);
+    }
 
     R_WaterSky(v);
     GLSL_SetUniformVec4(sp, UNIFORM_WETSKY, v);

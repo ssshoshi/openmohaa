@@ -534,7 +534,8 @@ enum
 #define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
 #define TMU_SSRDEPTH         26 // and this frame's depth
 #define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
-#define NUM_TEXTURE_UNITS    28
+#define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
+#define NUM_TEXTURE_UNITS    29
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -1121,6 +1122,9 @@ typedef enum
 	UNIFORM_SSRPREVVIEWPROJ, // and to the last frame's
 	UNIFORM_SSRPARAMS,      // strength (0: off), reach, near, far
 	UNIFORM_WETSUN,
+	UNIFORM_RAINCOVER,      // Added in OPM: the rain's cover grid: its corner, one over its size
+	UNIFORM_RAINPARAMS,     // the time, the grid's texel, how much ground holds puddles, how much the beads show
+	UNIFORM_RAINCOVERMAP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2634,6 +2638,7 @@ typedef struct {
 	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
 	image_t					*waterReflectDepthImage; // and its depth, for the air in it (tr_froxel.c)
 	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
+	image_t					*rainCoverImage;   // Added in OPM: the highest of the world at each place, from above: what keeps the rain off (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
@@ -4110,6 +4115,7 @@ void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp);
+void R_RainFrame(void);
 void R_WaterSetDry(shaderProgram_t *sp);
 void RB_WaterSawSky(const shader_t *sh);
 

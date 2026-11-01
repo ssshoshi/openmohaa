@@ -293,7 +293,10 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SsrViewProj",     GLSL_MAT16 },
 	{ "u_SsrPrevViewProj", GLSL_MAT16 },
 	{ "u_SsrParams",       GLSL_VEC4 },
-	{ "u_WetSun",          GLSL_VEC4 }
+	{ "u_WetSun",          GLSL_VEC4 },
+	{ "u_RainCover",       GLSL_VEC4 },
+	{ "u_RainParams",      GLSL_VEC4 },
+	{ "u_RainCoverMap",    GLSL_INT }
 };
 
 typedef enum
@@ -2348,6 +2351,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRCOLORMAP,     TMU_SSRCOLOR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRDEPTHMAP,     TMU_SSRDEPTH);
 
@@ -2472,6 +2476,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTAOMAP,         TMU_RTAO);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
