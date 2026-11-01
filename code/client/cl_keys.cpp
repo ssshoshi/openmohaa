@@ -1163,9 +1163,8 @@ void CL_KeyEvent(int key, qboolean down, unsigned time)
             qboolean wasup;
 
             // Added in OPM
-            //  Escape closes the cvar or model browser, not the game.
-            if (UI_CvarBrowserOpen() || UI_ModelBrowserOpen()) {
-                UI_CloseModelBrowser();
+            //  Escape closes the cvar browser (and its Models tab), not the game.
+            if (UI_CvarBrowserOpen()) {
                 UI_CloseCvarBrowser();
                 return;
             }

@@ -196,9 +196,9 @@ pak goes in the install's home (`zzzzzzzzzzzz-orch-remaster.pk3`); it holds
 game data, so it is never committed, and `reset` leaves it alone. With
 `--compare` each original stands on the left and its remaster on its right.
 
-In game, HOME (bound on the first run; `modelbrowser`, or the Models button in
-the F7 cvar browser) opens a window with every model, filtered by name; it has
-the mouse and keyboard without the console, and HOME or Escape closes it.
+In game, the Models tab of the F7 cvar browser (or `modelbrowser`) lists every
+model, filtered by name; it has the mouse and keyboard without the console, and
+F7 or Escape closes it.
 "Remastered" lists only those with a remaster. Spawn original (or a double-click), Spawn remaster and Spawn both
 (the remaster on the original's right) close the window and put the model where
 you look; the remaster buttons are dimmed for a model without one. Clear

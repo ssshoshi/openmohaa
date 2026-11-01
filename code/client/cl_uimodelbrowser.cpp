@@ -22,7 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 // Added in OPM
 // DESCRIPTION:
-// The model browser (modelbrowser, or the Models button in the cvar browser):
+// The model browser, the Models tab of the cvar browser (F7; modelbrowser):
 // every model (.tik) the game can load, filtered by name. Spawn original puts
 // the selected one where the player looks, Spawn remaster its remaster
 // (models/remaster/..., the pak orch.py remaster-pak builds), and Spawn both
@@ -326,15 +326,15 @@ static str MDB_Weapon(const char *path)
 }
 
 static Event W_ModelBrowser_ChildSizeChanged(
-    "modelbrowser_childsizechanged", EV_DEFAULT, NULL, NULL, "Signal that the child area of the model browser changed size"
+    "modelbrowser_childsizechanged", EV_DEFAULT, NULL, NULL, "Signal that the model browser changed size"
 );
 
 class UIModelBrowser;
-static UIModelBrowser *mdb_window;
+static UIModelBrowser *mdb_window; // the Models tab, while the cvar browser has one
 static str             mdb_selected; // kept between openings
 static int             mdb_view;
 
-class UIModelBrowser : public UIFloatingWindow
+class UIModelBrowser : public UIWidget
 {
 public:
     CLASS_PROTOTYPE(UIModelBrowser);
@@ -344,7 +344,7 @@ public:
     UIField     *filter;
     UILabel     *filterLabel, *countLabel, *selectedLabel;
     UIButton    *views[MDB_NUM_VIEWS];
-    UIButton    *spawnButton, *remasterButton, *compareButton, *clearButton, *cvarsButton;
+    UIButton    *spawnButton, *remasterButton, *compareButton, *clearButton;
     // The Soldiers view's own row.
     UIButton    *aiButton, *attackButton, *weaponButton, *soldierButton;
     UILabel     *healthLabel;
@@ -367,7 +367,7 @@ public:
     UIButton *MakeButton(const char *title, const char *command)
     {
         UIButton *b = new UIButton();
-        b->InitFrame(getChildSpace(), 0, 0, 80, 22, border_outline, "verdana-12");
+        b->InitFrame(this, 0, 0, 80, 22, border_outline, "verdana-12");
         b->setTitle(title);
         b->setBackgroundColor(UColor(0.12f, 0.16f, 0.24f, 1.0f), true);
         b->setForegroundColor(UHudColor);
@@ -378,7 +378,7 @@ public:
     UILabel *MakeLabel(const char *text)
     {
         UILabel *l = new UILabel();
-        l->InitFrame(getChildSpace(), 0, 0, 80, 22, 0, "verdana-12");
+        l->InitFrame(this, 0, 0, 80, 22, 0, "verdana-12");
         l->SetLabel(text);
         l->setBackgroundColor(UColor(0.0f, 0.0f, 0.0f, 0.0f), true);
         l->setForegroundColor(UHudColor);
@@ -390,7 +390,7 @@ public:
         filterLabel = MakeLabel("Filter");
 
         filter = new UIField();
-        filter->InitFrame(getChildSpace(), 0, 0, 200, 22, border_indent, "verdana-14");
+        filter->InitFrame(this, 0, 0, 200, 22, border_indent, "verdana-14");
         filter->setBackgroundColor(UColor(0.0f, 0.0f, 0.0f, 1.0f), true);
         filter->setForegroundColor(UWhite);
         filter->LinkCvar("ui_mdb_filter");
@@ -401,7 +401,7 @@ public:
         countLabel = MakeLabel("");
 
         list = new UIModelList();
-        list->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
+        list->InitFrame(this, 0, 0, 100, 100, 0, "verdana-14");
         list->setBackgroundColor(UColor(0.02f, 0.05f, 0.03f), true);
         list->setForegroundColor(UHudColor);
         list->setHeaderFont("verdana-12");
@@ -413,34 +413,33 @@ public:
         list->SetDontLocalize();
 
         info = new UIModelInfo();
-        info->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
+        info->InitFrame(this, 0, 0, 100, 100, 0, "verdana-14");
 
         selectedLabel = MakeLabel("");
         spawnButton    = MakeButton("Spawn original", "modelbrowser_spawn");
         remasterButton = MakeButton("Spawn remaster", "modelbrowser_spawn remaster");
         compareButton  = MakeButton("Spawn both", "modelbrowser_spawn both");
         clearButton   = MakeButton("Clear", "spawnmodel -clear");
-        cvarsButton   = MakeButton("Cvars", "modelbrowser; cvarbrowser");
 
         aiButton      = MakeButton("", "toggle ui_mdb_noai");
         attackButton  = MakeButton("", "toggle ui_mdb_noattack");
         weaponButton  = MakeButton("", "modelbrowser_weapon");
         healthLabel   = MakeLabel("Health");
         health        = new UIField();
-        health->InitFrame(getChildSpace(), 0, 0, 60, 22, border_indent, "verdana-14");
+        health->InitFrame(this, 0, 0, 60, 22, border_indent, "verdana-14");
         health->setBackgroundColor(UColor(0.0f, 0.0f, 0.0f, 1.0f), true);
         health->setForegroundColor(UWhite);
         health->LinkCvar("ui_mdb_health");
         soldierButton = MakeButton("Spawn soldier", "modelbrowser_spawn soldier");
 
-        getChildSpace()->Connect(this, W_SizeChanged, W_ModelBrowser_ChildSizeChanged);
+        Connect(this, W_SizeChanged, W_ModelBrowser_ChildSizeChanged);
         Layout();
         Refill();
     }
 
     void Layout(void)
     {
-        const UISize2D s     = getChildSpace()->getSize();
+        const UISize2D s     = getSize();
         const float    pad   = 6.0f;
         const float    rowH  = 22.0f;
         const float    infoH = 92.0f;
@@ -487,8 +486,7 @@ public:
         health->setFrame(UIRect2D(x, editTop, 64, rowH));
         x += 70;
         soldierButton->setFrame(UIRect2D(x, editTop, 110, rowH));
-        clearButton->setFrame(UIRect2D(s.width - pad - 148, editTop, 70, rowH));
-        cvarsButton->setFrame(UIRect2D(s.width - pad - 74, editTop, 70, rowH));
+        clearButton->setFrame(UIRect2D(s.width - pad - 74, editTop, 70, rowH));
     }
 
     void OnChildSizeChanged(Event *ev) { Layout(); }
@@ -579,7 +577,7 @@ public:
         const str needle = Cvar_VariableString("ui_mdb_filter");
         const bool remaster = mdb_selected.length() && MDB_HasRemaster(mdb_selected);
 
-        UIFloatingWindow::Draw();
+        UIWidget::Draw();
 
         if (needle != lastFilter) {
             Refill();
@@ -640,7 +638,7 @@ public:
     }
 };
 
-CLASS_DECLARATION(UIFloatingWindow, UIModelBrowser, NULL) {
+CLASS_DECLARATION(UIWidget, UIModelBrowser, NULL) {
     {&EV_UIListBase_ItemSelected,      &UIModelBrowser::OnItemSelected     },
     {&EV_UIListBase_ItemDoubleClicked, &UIModelBrowser::OnItemDoubleClicked},
     {&W_ModelBrowser_ChildSizeChanged, &UIModelBrowser::OnChildSizeChanged },
@@ -651,29 +649,23 @@ CLASS_DECLARATION(UIFloatingWindow, UIModelBrowser, NULL) {
 // Commands
 //=============================================================
 
-qboolean UI_ModelBrowserOpen(void)
+// The Models tab, for the cvar browser to show (cl_uicvarbrowser.cpp).
+UIWidget *UI_CreateModelPanel(UIWidget *parent)
 {
-    return mdb_window ? qtrue : qfalse;
+    UIModelBrowser *panel = new UIModelBrowser();
+
+    panel->InitFrame(parent, 0, 0, 100, 100, 0, "verdana-14");
+    panel->setBackgroundColor(UColor(0.1f, 0.13f, 0.19f), true);
+    panel->setForegroundColor(UHudColor);
+    mdb_window = panel;
+    panel->Build();
+    return panel;
 }
 
+// Spawning closes the window, so what was spawned can be seen.
 static void MDB_Close(void)
 {
-    if (mdb_window) {
-        mdb_window->PostEvent(EV_Remove, 0);
-        mdb_window = NULL;
-    }
-    if (clc.state == CA_ACTIVE && !UI_MenuActive()) {
-        UI_ActivateView3D();
-        // The mouse back to looking around, unless the console still has it.
-        if (!UI_ConsoleIsVisible()) {
-            IN_MouseOff();
-        }
-    }
-}
-
-void UI_CloseModelBrowser(void)
-{
-    MDB_Close();
+    UI_CloseCvarBrowser();
 }
 
 // The listed model a name means: a path (models/ and .tik optional), or a
@@ -704,8 +696,8 @@ static str MDB_Find(const char *name)
     return "";
 }
 
-// modelbrowser [model]: opens the window, or closes it when open. With a
-// model, opens it on that one, selected.
+// modelbrowser [model]: the cvar browser on its Models tab, or closed when it
+// is there already. With a model, on that one, selected.
 void UI_ModelBrowser_f(void)
 {
     const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "";
@@ -719,27 +711,17 @@ void UI_ModelBrowser_f(void)
         }
         mdb_selected = found;
         Cvar_Set("ui_mdb_filter", strrchr(found.c_str(), '/') + 1);
+        UI_CvarBrowserShowTab("models");
         if (mdb_window) {
             mdb_window->Refill();
-            return;
         }
-    } else if (mdb_window) {
+        return;
+    }
+    if (UI_CvarBrowserOnTab("models")) {
         MDB_Close();
         return;
     }
-
-    const float w = Q_min(900.0f, uid.vidWidth * 0.9f);
-    const float h = Q_min(700.0f, uid.vidHeight * 0.9f);
-
-    mdb_window = new UIModelBrowser();
-    mdb_window->Create(
-        NULL, UIRect2D((uid.vidWidth - w) / 2, (uid.vidHeight - h) / 2, w, h), "Models", UColor(0.1f, 0.13f, 0.19f), UHudColor
-    );
-    mdb_window->Build();
-    uWinMan.ActivateControl(mdb_window);
-    // A cursor for it, as a menu has: opened from a key in game, the mouse
-    // would still turn the view.
-    IN_MouseOn();
+    UI_CvarBrowserShowTab("models");
 }
 
 // modelbrowser_view <all|remastered>
@@ -829,10 +811,8 @@ void UI_InitModelBrowser(void)
 
 void UI_ShutdownModelBrowser(void)
 {
-    if (mdb_window) {
-        delete mdb_window;
-        mdb_window = NULL;
-    }
+    // the cvar browser's window, which holds it, goes first (CL_ShutdownUI)
+    mdb_window = NULL;
 
     Cmd_RemoveCommand("modelbrowser");
     Cmd_RemoveCommand("modelbrowser_view");

@@ -27,6 +27,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // description. Hovering over a row shows its description large at the
 // bottom; clicking one selects it for editing. A changed value that only takes
 // effect after a restart lights the Restart Video / Restart Sound button.
+// The Models tab is the model browser (cl_uimodelbrowser.cpp): spawning
+// props and soldiers.
 //
 // The descriptions and the ranges the code does not declare come from
 // help/cvars.txt and help/cheats.txt (data/opm-cvarhelp, written with
@@ -500,10 +502,13 @@ enum {
     CVB_VIEW_ALL,
     CVB_VIEW_CHANGED,
     CVB_VIEW_LATCHED,
-    CVB_VIEW_CHEATS
+    CVB_VIEW_CHEATS,
+    CVB_VIEW_MODELS,
+    CVB_NUM_VIEWS
 };
 
-static const char *cvb_viewNames[] = {"all", "changed", "latched", "cheats"};
+static const char *cvb_viewNames[] = {"all", "changed", "latched", "cheats", "models"};
+static int         cvb_lastView; // the tab it opens on: the last one shown
 
 // The child space resized: a window's own W_SizeChanged is taken.
 static Event W_CvarBrowser_ChildSizeChanged(
@@ -522,8 +527,9 @@ public:
     UICvarInfo *info;
     UIField    *filter, *value;
     UILabel    *filterLabel, *valueLabel, *countLabel, *selectedLabel;
-    UIButton   *views[4];
-    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton, *modelsButton;
+    UIButton   *views[CVB_NUM_VIEWS];
+    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton;
+    UIWidget   *models; // the Models tab, made when first shown
 
     int view;
     str lastFilter;
@@ -534,6 +540,7 @@ public:
     UICvarBrowser()
         : list(NULL)
         , info(NULL)
+        , models(NULL)
         , view(CVB_VIEW_ALL)
         , selectedCheat(0)
         , lastCount(-1)
@@ -578,12 +585,11 @@ public:
         filter->setForegroundColor(UWhite);
         filter->LinkCvar("ui_cvb_filter");
 
-        for (int i = 0; i < 4; i++) {
-            static const char *titles[] = {"All", "Changed", "Latched", "Cheats"};
+        for (int i = 0; i < CVB_NUM_VIEWS; i++) {
+            static const char *titles[] = {"All", "Changed", "Latched", "Cheats", "Models"};
             views[i] = MakeButton(titles[i], va("cvarbrowser_view %s", cvb_viewNames[i]));
         }
-        countLabel   = MakeLabel("");
-        modelsButton = MakeButton("Models", "cvarbrowser; modelbrowser");
+        countLabel = MakeLabel("");
 
         list = new UICvarList();
         list->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
@@ -622,7 +628,7 @@ public:
 
         getChildSpace()->Connect(this, W_SizeChanged, W_CvarBrowser_ChildSizeChanged);
         Layout();
-        Refill();
+        SetView(cvb_lastView);
     }
 
     void Layout(void)
@@ -633,18 +639,23 @@ public:
         float          x    = pad;
         const float    infoH = Q_max(110.0f, s.height * 0.24f);
 
+        // the tabs first, then what the cvar tabs filter by
+        for (int i = 0; i < CVB_NUM_VIEWS; i++) {
+            views[i]->setFrame(UIRect2D(x, pad, 74, rowH));
+            x += 78;
+        }
+        x += 10;
         filterLabel->setFrame(UIRect2D(x, pad, 40, rowH));
         x += 44;
         filter->setFrame(UIRect2D(x, pad, 220, rowH));
         x += 228;
-        for (int i = 0; i < 4; i++) {
-            views[i]->setFrame(UIRect2D(x, pad, 74, rowH));
-            x += 78;
-        }
-        countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 92, rowH));
-        modelsButton->setFrame(UIRect2D(s.width - pad - 74, pad, 74, rowH));
+        countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 12, rowH));
 
         const float listTop = pad * 2 + rowH;
+
+        if (models) {
+            models->setFrame(UIRect2D(0, listTop, s.width, s.height - listTop));
+        }
         const float editTop = s.height - pad - rowH;
         const float infoTop = editTop - pad - infoH;
 
@@ -722,21 +733,40 @@ public:
 
     void SetView(int v)
     {
-        view = v;
-        Refill();
+        const bool onModels = v == CVB_VIEW_MODELS;
+        UIWidget  *cvarParts[] = {filterLabel, filter, countLabel, list, info, selectedLabel, valueLabel, value,
+                                  setButton, resetButton, runButton, vidButton, sndButton};
+
+        view         = v;
+        cvb_lastView = v;
+        if (onModels && !models) {
+            models = UI_CreateModelPanel(getChildSpace());
+            Layout();
+        }
+        for (size_t i = 0; i < ARRAY_LEN(cvarParts); i++) {
+            cvarParts[i]->setShow(!onModels);
+        }
+        if (models) {
+            models->setShow(onModels);
+        }
+        if (!onModels) {
+            Refill();
+        }
     }
 
     // Filtered to a name and that row selected, as cvarbrowser <name> asks.
     void Select(const char *name)
     {
+        int v = CVB_VIEW_ALL;
+
         Cvar_Set("ui_cvb_filter", name);
-        view = CVB_VIEW_ALL;
+        CVB_LoadHelp();
         for (size_t i = 0; i < cvb_cheats.size(); i++) {
             if (!Q_stricmp(cvb_cheats[i].name.c_str(), name)) {
-                view = CVB_VIEW_CHEATS;
+                v = CVB_VIEW_CHEATS;
             }
         }
-        Refill();
+        SetView(v);
 
         for (int i = 1; i <= list->getNumItems(); i++) {
             CvarBrowserItem *item = (CvarBrowserItem *)list->GetItem(i);
@@ -842,6 +872,15 @@ public:
 
         UIFloatingWindow::Draw();
 
+        for (int i = 0; i < CVB_NUM_VIEWS; i++) {
+            views[i]->setBackgroundColor(
+                i == view ? UColor(0.25f, 0.32f, 0.45f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true
+            );
+        }
+        if (view == CVB_VIEW_MODELS) {
+            return;
+        }
+
         if (needle != lastFilter) {
             Refill();
         }
@@ -866,12 +905,6 @@ public:
         // Lit when something waits on them.
         vidButton->setBackgroundColor(pendVid ? UColor(0.6f, 0.35f, 0.05f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true);
         sndButton->setBackgroundColor(pendSnd ? UColor(0.6f, 0.35f, 0.05f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true);
-
-        for (int i = 0; i < 4; i++) {
-            views[i]->setBackgroundColor(
-                i == view ? UColor(0.25f, 0.32f, 0.45f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true
-            );
-        }
 
         selectedLabel->SetLabel(selected.length() ? str(selectedCheat ? "Cheat: " : "Editing: ") + selected : str("Click a row to edit it"));
         runButton->setShow(selectedCheat != 0);
@@ -916,6 +949,26 @@ void UI_CloseCvarBrowser(void)
     CVB_Close();
 }
 
+static void CVB_Open(void)
+{
+    const float w = Q_min(1100.0f, uid.vidWidth * 0.9f);
+    const float h = Q_min(760.0f, uid.vidHeight * 0.9f);
+
+    cvb_window = new UICvarBrowser();
+    cvb_window->Create(
+        NULL,
+        UIRect2D((uid.vidWidth - w) / 2, (uid.vidHeight - h) / 2, w, h),
+        "Cvars, cheats and models (F7)",
+        UColor(0.1f, 0.13f, 0.19f),
+        UHudColor
+    );
+    cvb_window->Build();
+    uWinMan.ActivateControl(cvb_window);
+    // A cursor for it, as a menu has: opened from a key in game, the mouse
+    // would still turn the view.
+    IN_MouseOn();
+}
+
 // cvarbrowser [name]: opens the window, or closes it when open. With a name,
 // opens it on that cvar or cheat.
 void UI_CvarBrowser_f(void)
@@ -931,30 +984,41 @@ void UI_CvarBrowser_f(void)
         return;
     }
 
-    const float w = Q_min(1100.0f, uid.vidWidth * 0.9f);
-    const float h = Q_min(760.0f, uid.vidHeight * 0.9f);
-
-    cvb_window = new UICvarBrowser();
-    cvb_window->Create(
-        NULL, UIRect2D((uid.vidWidth - w) / 2, (uid.vidHeight - h) / 2, w, h), "Cvars and cheats (F7)", UColor(0.1f, 0.13f, 0.19f), UHudColor
-    );
-    cvb_window->Build();
+    CVB_Open();
     if (name[0]) {
         cvb_window->Select(name);
     }
-    uWinMan.ActivateControl(cvb_window);
-    // A cursor for it, as a menu has: opened from a key in game, the mouse
-    // would still turn the view.
-    IN_MouseOn();
 }
 
-// cvarbrowser_view <all|changed|latched|cheats>
+// The window open on a tab (opened if closed), as the model browser's
+// commands ask.
+void UI_CvarBrowserShowTab(const char *tab)
+{
+    if (!cvb_window) {
+        CVB_Open();
+    }
+    for (int i = 0; cvb_window && i < CVB_NUM_VIEWS; i++) {
+        if (!Q_stricmp(tab, cvb_viewNames[i]) && cvb_window->view != i) {
+            cvb_window->SetView(i);
+        }
+    }
+}
+
+// Whether the window is open on that tab.
+qboolean UI_CvarBrowserOnTab(const char *tab)
+{
+    return cvb_window && cvb_window->view >= 0 && cvb_window->view < CVB_NUM_VIEWS && !Q_stricmp(tab, cvb_viewNames[cvb_window->view])
+             ? qtrue
+             : qfalse;
+}
+
+// cvarbrowser_view <all|changed|latched|cheats|models>
 static void UI_CvarBrowserView_f(void)
 {
     if (!cvb_window) {
         return;
     }
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < CVB_NUM_VIEWS; i++) {
         if (!Q_stricmp(Cmd_Argv(1), cvb_viewNames[i])) {
             cvb_window->SetView(i);
         }

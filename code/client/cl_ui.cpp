@@ -1698,21 +1698,13 @@ UI_KeyEvent
 void UI_KeyEvent(int key, unsigned int time)
 {
     // Added in OPM
-    //  The key that opened the cvar browser (or the model browser) closes it again, although the
-    //  window has the keyboard.
+    //  The key that opened the cvar browser (or its Models tab) closes it
+    //  again, although the window has the keyboard.
     if (UI_CvarBrowserOpen()) {
         const char *binding = Key_GetBinding(key);
 
-        if (binding && !Q_stricmp(binding, "cvarbrowser")) {
+        if (binding && (!Q_stricmp(binding, "cvarbrowser") || !Q_stricmp(binding, "modelbrowser"))) {
             UI_CloseCvarBrowser();
-            return;
-        }
-    }
-    if (UI_ModelBrowserOpen()) {
-        const char *binding = Key_GetBinding(key);
-
-        if (binding && !Q_stricmp(binding, "modelbrowser")) {
-            UI_CloseModelBrowser();
             return;
         }
     }

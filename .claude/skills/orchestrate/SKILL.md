@@ -28,7 +28,7 @@ Tools live in `tools/orchestrator/` (README.md there has the details):
   `spawn --compare <name>` an original beside its remaster (after `remaster-pak`
   and a relaunch); `spawn --clear`. `orch.py soldier <name> [--noai]
   [--noattack] [--health N] [--weapon W]` spawns a soldier. The user has both in game:
-  HOME opens the model browser (also the Models button in the F7 cvar browser)
+  the Models tab of the F7 cvar browser is the model browser (`modelbrowser` opens it there)
 - `sidecar.py` (Windows Python): voice in/out, shots, turn grouping
 
 Paths:
