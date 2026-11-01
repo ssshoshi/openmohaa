@@ -1190,7 +1190,7 @@ Added in OPM
 ===============
 */
 #define RAIN_SPLASH_RANGE 900.0f
-#define RAIN_SPLASH_DROPS 10
+#define RAIN_SPLASH_DROPS 6
 
 static float R_RainHash(float x)
 {
@@ -1212,7 +1212,7 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
         for (k = 0; k < 2; k++) {
             const float phase = time * (3.2f + 2.0f * seed + 0.7f * k) + seed * 17.0f + k * 0.5f;
             const float f     = phase - floor(phase);
-            const float w     = (8.0f + 11.0f * sqrt(f)) * (0.75f + 0.5f * R_RainHash(floor(phase) + seed)) * (0.6f + 0.5f * flow);
+            const float w     = (5.0f + 7.0f * sqrt(f)) * (0.75f + 0.5f * R_RainHash(floor(phase) + seed)) * (0.6f + 0.5f * flow);
             const float h     = w * (0.9f + 0.5f * (1.0f - f));
             const int   flip  = ((int)floor(phase) + k) & 1;
 
@@ -1223,7 +1223,7 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
             VectorMA(br, h, up, trc);
             st[0][0] = st[3][0] = flip ? 1.0f : 0.0f;
             st[1][0] = st[2][0] = flip ? 0.0f : 1.0f;
-            R_RainQuad(rainCover.crownShader, tl, trc, br, bl, st, grey, Q_min(1.0f, a * 1.3f) * (1.0f - f) * 0.85f, Q_min(1.0f, a * 1.3f) * (1.0f - f));
+            R_RainQuad(rainCover.crownShader, tl, trc, br, bl, st, grey, a * (1.0f - f) * 0.8f, a * (1.0f - f));
         }
     }
 
@@ -1261,8 +1261,8 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
             if (VectorNormalize(sd) < 0.01f) {
                 VectorCopy(side, sd);
             }
-            w   = 0.7f + 0.6f * R_RainHash(n + 6.0f);
-            len = w + len * 0.03f;
+            w   = 0.45f + 0.35f * R_RainHash(n + 6.0f);
+            len = w + len * 0.018f;
 
             VectorMA(pos, len, ax, c);
             VectorMA(c, -w, sd, tl);
@@ -1279,8 +1279,8 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
         for (k = 0; k < 2; k++) {
             const float phase = time * (0.45f + 0.2f * k) + seed * 5.0f + k * 0.5f;
             const float f     = phase - floor(phase);
-            const float size  = (12.0f + 20.0f * f) * (0.8f + 0.4f * seed);
-            const float ma    = Q_min(1.0f, a * 0.65f * sin(f * M_PI) * (0.5f + 0.5f * flow));
+            const float size  = (8.0f + 16.0f * f) * (0.8f + 0.4f * seed);
+            const float ma    = a * 0.4f * sin(f * M_PI) * (0.5f + 0.5f * flow);
 
             VectorMA(base, (k ? 0.45f : -0.45f) * half, along, c);
             c[2] += 2.0f + size * 0.5f + 6.0f * f;
