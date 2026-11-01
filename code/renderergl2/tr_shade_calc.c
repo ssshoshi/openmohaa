@@ -445,6 +445,11 @@ static void AutospriteDeform( void ) {
 		VectorCopy( backEnd.viewParms.ori.axis[1], leftDir );
 		VectorCopy( backEnd.viewParms.ori.axis[2], upDir );
 	}
+	// Added in OPM: the right way up in the world (R_VIEW_UPSIDE_DOWN)
+	if ( R_VIEW_UPSIDE_DOWN() ) {
+		VectorNegate( leftDir, leftDir );
+		VectorNegate( upDir, upDir );
+	}
 
 	for ( i = 0 ; i < oldVerts ; i+=4 ) {
 		vec4_t color;

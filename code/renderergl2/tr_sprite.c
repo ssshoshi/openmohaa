@@ -165,6 +165,14 @@ void RB_DrawSprite( const refSprite_t *spr ) {
 		break;
 	}
 
+	// Added in OPM: those on the view's axes, the right way up in the world
+	// (R_VIEW_UPSIDE_DOWN)
+	if (R_VIEW_UPSIDE_DOWN() && (model->d.sprite->shader->sprite.type == SPRITE_PARALLEL
+		|| model->d.sprite->shader->sprite.type == SPRITE_PARALLEL_ORIENTED)) {
+		VectorNegate(up, up);
+		VectorNegate(right, right);
+	}
+
 	org_x = model->d.sprite->origin_x * scale;
 	org_y = model->d.sprite->origin_y * scale;
 

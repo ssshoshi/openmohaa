@@ -3257,6 +3257,14 @@ enum {
 	RT_STAGE_PARTICLE,  // translucent dust or smoke: as RT_STAGE_LIT_BAKED, lit at its corners from every side
 	RT_STAGE_PARTICLE_LIT // the same, as RT_STAGE_LIT
 };
+
+// Added in OPM: in the view water and puddles mirror (VPF_WATERREFLECT) the
+// eye's up is the world's down: a billboard built on the view's axes stood
+// on its head in the world, and so came out the right way up in the mirror
+// (a fire in a puddle). Turned half round, it still faces the eye, and the
+// mirror turns it over.
+#define R_VIEW_UPSIDE_DOWN() ((backEnd.viewParms.flags & VPF_WATERREFLECT) != 0)
+
 qboolean R_RtActive(void);
 int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);

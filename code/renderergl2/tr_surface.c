@@ -267,6 +267,11 @@ static void RB_SurfaceSprite( void ) {
 	if ( backEnd.viewParms.isMirror ) {
 		VectorSubtract( vec3_origin, left, left );
 	}
+	// Added in OPM: standing the right way up in the world (R_VIEW_UPSIDE_DOWN)
+	if ( R_VIEW_UPSIDE_DOWN() ) {
+		VectorNegate( left, left );
+		VectorNegate( up, up );
+	}
 
 	VectorScale4(ent->e.shaderRGBA, 1.0f / 255.0f, colors);
 
