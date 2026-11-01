@@ -300,7 +300,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RainReflect",     GLSL_VEC4 },
 	{ "u_RainReflectMvp",  GLSL_MAT16 },
 	{ "u_RainReflectMap",  GLSL_INT },
-	{ "u_RainFlash",       GLSL_VEC4 }
+	{ "u_RainFlash",       GLSL_VEC4 },
+	{ "u_RainMist",        GLSL_VEC4 }
 };
 
 typedef enum
@@ -2930,6 +2931,8 @@ void GLSL_InitGPUShaders(void)
 
 			GLSL_InitUniforms(sp);
 			GLSL_SetUniformInt(sp, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			// Added in OPM: the rain's cover, for its mist (R_RainMistParams)
+			GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP, TMU_RAINCOVER);
 			// the light pass's tile depths off TB_LIGHTMAP, which is the
 			// sun's third cascade (TB_SHADOWMAP3) there
 			GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP, i == 0 ? TB_NORMALMAP : TB_LIGHTMAP);

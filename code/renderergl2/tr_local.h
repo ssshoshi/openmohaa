@@ -1130,6 +1130,7 @@ typedef enum
 	UNIFORM_RAINREFLECTMVP, // how it was seen
 	UNIFORM_RAINREFLECTMAP,
 	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
+	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -4131,6 +4132,7 @@ void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int
 void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp);
 void R_RainFrame(const refdef_t *fd);
+qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale);
 void R_WaterSetDry(shaderProgram_t *sp);
 void RB_WaterSawSky(const shader_t *sh);
 

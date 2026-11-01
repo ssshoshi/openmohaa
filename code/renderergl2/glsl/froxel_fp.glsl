@@ -17,7 +17,8 @@
 // What is in the air: the haze (r_volumetricDensity, everywhere, taking
 // nothing out) and the map's fog banks (fog/<map>.txt, tr_froxel.c), boxes
 // soft at their edges that take light out as they scatter it, and have a
-// light of their own where neither the sun nor a lamp reaches.
+// light of their own where neither the sun nor a lamp reaches; in the rain,
+// its mist and haze out under the sky (R_RainMistParams).
 //
 // Each frame the light is taken at another place in each cell (u_FroxelJitter)
 // and mixed with what the cell had last frame, found where it was then
@@ -53,6 +54,12 @@ uniform vec4   u_FroxelJitter;      // where in each cell the light is taken thi
 uniform vec4   u_SmokeBlobs[SMOKE_MAX_BLOBS * 3]; // three a puff: middle and radius, albedo and density at the middle, the light its sprite had (the light grid's)
 uniform vec4   u_SmokeParams;       // puffs, the noise's scale, its drift, how far it eats into them
 uniform sampler3D u_SmokeNoise;     // billows, tiling
+// Added in OPM: the rain's mist (R_RainMistParams): its density low down, how
+// high it thins to a third of that, the time, the rain's haze; where it is
+// out under the sky, the rain's cover grid (its corner, one over its size)
+uniform vec4      u_RainMist;
+uniform vec4      u_RainCover;
+uniform sampler2D u_RainCoverMap;
 
 #if __VERSION__ >= 130
 #define SmokeNoise(p) texture(u_SmokeNoise, p).r
@@ -248,6 +255,32 @@ vec4 Media(vec3 P, out vec3 fog, out vec3 smoke, out vec3 smokeLit)
 		m.rgb += d * c;
 		m.a   += d;
 		fog   += d * c;
+	}
+
+	// Added in OPM: the rain's mist, low over what is out under the sky,
+	// thinning as it rises, in drifting billows, and the haze of the rain
+	// further up; none under a roof, nor indoors
+	if (u_RainMist.x > 0.0)
+	{
+		vec2 uv = (P.xy - u_RainCover.xy) * u_RainCover.zw;
+		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
+		{
+			float above = P.z - texture2D(u_RainCoverMap, uv).r;
+			if (above > -4.0)
+			{
+				float t     = u_RainMist.z;
+				float drift = SmokeNoise(vec3(P.xy / 260.0 + vec2(t * 0.020, t * 0.008), P.z / 180.0 - t * 0.01));
+				float fine  = SmokeNoise(vec3(P.xy / 90.0 - vec2(t * 0.035, t * 0.015), P.z / 70.0));
+				float patch = drift * 0.7 + fine * 0.3;
+				float low   = exp(-max(above, 0.0) / u_RainMist.y) * 2.2 * patch * patch;
+				float haze  = 1.0 - smoothstep(250.0, 900.0, above);
+				float d     = u_RainMist.x * low + u_RainMist.w * haze;
+				vec3  c     = vec3(0.15, 0.155, 0.165);
+				m.rgb += d * c;
+				m.a   += d;
+				fog   += d * c;
+			}
+		}
 	}
 
 	// the puffs of smoke: thickest at the middle, none at the edge, the

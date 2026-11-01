@@ -80,6 +80,7 @@ cvar_t        *r_rainPuddles;
 static cvar_t *r_rainPuddleShaders;
 static cvar_t *r_rainFlash;
 static cvar_t *r_rainRunoff;
+static cvar_t *r_rainMist;
 cvar_t        *r_rainBeads;
 cvar_t        *r_rainDebug;
 cvar_t        *r_waterReflect;
@@ -156,6 +157,8 @@ void R_WaterRegisterCvars(void)
     r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
     r_rainFlash = ri.Cvar_Get("r_rainFlash", "1", CVAR_ARCHIVE);
     r_rainRunoff = ri.Cvar_Get("r_rainRunoff", "1", CVAR_ARCHIVE);
+    r_rainMist = ri.Cvar_Get("r_rainMist", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainMist, "In the rain, the mist lying low over what is out under the sky, drifting, and the haze of the rain further up (r_volumetric 2): 0 none, 1 as it is, more for thicker");
     ri.Cvar_SetDescription(r_rainRunoff, "In the rain, water pours off the eaves of roofs and splashes where it lands: 0 none, 1 as it is, more for more of it");
     ri.Cvar_SetDescription(r_rainFlash, "In the rain, how brightly lightning lights what is out under the sky: 0 not at all");
     ri.Cvar_SetDescription(r_rainPuddleShaders, "In the rain, the textures puddles gather on: names or parts of names, separated by spaces or commas (empty: all open ground)");
@@ -2426,4 +2429,29 @@ void R_WaterSetWet(shaderProgram_t *sp)
         v[3] = Com_Clamp(0.0f, 1.0f, most) * 0.6f;
         GLSL_SetUniformVec4(sp, UNIFORM_WETSUN, v);
     }
+}
+
+/*
+===============
+R_RainMistParams
+
+Added in OPM
+  The rain's mist for the light in the air (tr_froxel.c, froxel_fp.glsl):
+  mist the density of the lowest of it, how high it thins to a third of
+  that, the drift's time, the rain's haze further up; cover the cover's
+  grid (as UNIFORM_RAINCOVER), which says what is out under the sky. False
+  with no rain, or none of it wanted.
+===============
+*/
+qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale)
+{
+    const float amount = R_RainAmount() * Q_max(0.0f, r_rainMist->value);
+
+    if (amount <= 0.0f || !tr.rainCoverImage) {
+        return qfalse;
+    }
+    VectorSet4(mist, 5.0f * amount * densityScale, 50.0f, backEnd.refdef.floatTime, 0.12f * amount * densityScale);
+    VectorSet4(cover, rainCover.x0, rainCover.y0, 1.0f / (rainCover.width * rainCover.texel),
+        1.0f / (rainCover.rows * rainCover.texel));
+    return qtrue;
 }
