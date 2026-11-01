@@ -1050,6 +1050,7 @@ typedef struct rainEave_s {
     float  bottom; // where it lands
     float  seed;
     vec2_t out;    // the way off the roof, flat
+    vec3_t ground; // which way what it lands on faces
 } rainEave_t;
 
 #define RAIN_MAX_EAVES 8192
@@ -1125,6 +1126,19 @@ static void R_RainFindEaves(void)
                 VectorSet(e->top, px, py, h - 1.0f);
                 e->bottom = n;
                 VectorSet2(e->out, dx / len, dy / len);
+                // the slope of what it lands on, from the grid about the
+                // place: a neighbour far off its height (a wall, a step) is
+                // not the same surface, and stands in as level
+                {
+                    const int   lx = x + dx, ly = y + dy;
+                    const float hl = g[ly * W + lx - 1], hr = g[ly * W + lx + 1];
+                    const float hd = g[(ly - 1) * W + lx], hu = g[(ly + 1) * W + lx];
+                    const float gx = (fabs(hr - n) < 24.0f ? hr : n) - (fabs(hl - n) < 24.0f ? hl : n);
+                    const float gy = (fabs(hu - n) < 24.0f ? hu : n) - (fabs(hd - n) < 24.0f ? hd : n);
+
+                    VectorSet(e->ground, -gx / (2.0f * t), -gy / (2.0f * t), 1.0f);
+                    VectorNormalize(e->ground);
+                }
                 e->seed   = (float)((x * 73856093u) ^ (y * 19349663u)) / 4294967296.0f;
                 if (e->seed < 0.0f) {
                     e->seed = -e->seed;
@@ -1187,6 +1201,8 @@ Added in OPM
   (opm/rain_drop); and the fine mist rising off it in two puffs that grow
   and thin (opm/rain_mist). Turned to the eye about the upright, but at
   different places and heights, so it has depth as the eye goes round it.
+  All of it stands on what it lands on, at its slope, its foot a little
+  into it so its edge is not seen; the drops leave the slope and fall.
 ===============
 */
 #define RAIN_SPLASH_RANGE 900.0f
@@ -1199,13 +1215,25 @@ static float R_RainHash(float x)
     return h - floor(h);
 }
 
-static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t side, float half, float seed, float flow,
-    float a, byte grey, float time)
+static void R_RainSplash(const vec3_t base, const vec3_t ground, const vec3_t edge, const vec3_t eye, float half,
+    float seed, float flow, float a, byte grey, float time)
 {
-    const vec3_t up = {0.0f, 0.0f, 1.0f};
-    float        st[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
-    vec3_t       c, tl, trc, br, bl;
-    int          k;
+    float  st[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    vec3_t c, tl, trc, br, bl, up, along, side;
+    int    k;
+
+    // stood on what it lands on: its face's way out is up, and the edge
+    // and the way across to the eye lie in it
+    VectorCopy(ground, up);
+    VectorMA(edge, -DotProduct(edge, up), up, along);
+    if (VectorNormalize(along) < 0.01f) {
+        VectorCopy(edge, along);
+    }
+    VectorMA(eye, -DotProduct(eye, up), up, side);
+    if (VectorNormalize(side) < 0.01f) {
+        CrossProduct(up, along, side);
+        VectorNormalize(side);
+    }
 
     // the crowns
     if (rainCover.crownShader) {
@@ -1217,6 +1245,8 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
             const int   flip  = ((int)floor(phase) + k) & 1;
 
             VectorMA(base, (k ? -0.3f : 0.3f) * half + (seed - 0.5f) * 4.0f, along, c);
+            // its foot a little into the ground, so its edge is not seen
+            VectorMA(c, -(1.5f + 0.22f * h), up, c);
             VectorMA(c, -w, side, bl);
             VectorMA(c, w, side, br);
             VectorMA(bl, h, up, tl);
@@ -1241,7 +1271,8 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
             const float vz    = 50.0f + 70.0f * R_RainHash(n + 2.0f);
             const float vh    = 15.0f + 45.0f * R_RainHash(n + 3.0f);
             const float ang   = R_RainHash(n + 4.0f) * 2.0f * M_PI;
-            const float life  = 2.0f * vz / 500.0f;
+            // back down to the slope it leaves, under gravity
+            const float life  = vz / (250.0f * Q_max(0.3f, up[2]));
             const float t     = f * life;
             vec3_t      dir, vel, pos, ax, sd, toEye;
             float       len, w;
@@ -1250,13 +1281,15 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
             VectorMA(dir, sin(ang), side, dir);
             VectorMA(base, (R_RainHash(n + 5.0f) - 0.5f) * 2.0f * half, along, pos);
             VectorMA(pos, vh * t, dir, pos);
-            pos[2] += vz * t - 250.0f * t * t;
+            VectorMA(pos, vz * t, up, pos);
+            pos[2] -= 250.0f * t * t;
 
             VectorScale(dir, vh, vel);
-            vel[2] = vz - 500.0f * t;
+            VectorMA(vel, vz, up, vel);
+            vel[2] -= 500.0f * t;
             len    = VectorNormalize2(vel, ax);
             // drawn out along its flight, across it to the eye
-            VectorSet(toEye, -side[1], side[0], 0.0f);
+            CrossProduct(side, up, toEye);
             CrossProduct(ax, toEye, sd);
             if (VectorNormalize(sd) < 0.01f) {
                 VectorCopy(side, sd);
@@ -1283,7 +1316,8 @@ static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t sid
             const float ma    = a * 0.4f * sin(f * M_PI) * (0.5f + 0.5f * flow);
 
             VectorMA(base, (k ? 0.45f : -0.45f) * half, along, c);
-            c[2] += 2.0f + size * 0.5f + 6.0f * f;
+            // a third of it in the ground: its lower edge is never seen
+            VectorMA(c, size * 0.35f + 6.0f * f, up, c);
             VectorMA(c, -size, side, tl);
             VectorMA(tl, size, up, tl);
             VectorMA(c, size, side, trc);
@@ -1377,6 +1411,8 @@ static void R_RainRunoff(const refdef_t *fd)
         VectorMA(mid, lean * 0.59f, out, mid);
         VectorSet(bot, e->top[0], e->top[1], e->bottom);
         VectorMA(bot, lean, out, bot);
+        // on a slope, the ground as far out as it lands
+        bot[2] -= lean * (e->ground[0] * out[0] + e->ground[1] * out[1]) / Q_max(0.3f, e->ground[2]);
 
         VectorMA(e->top, -half, along, tl);
         VectorMA(e->top, half, along, trc);
@@ -1421,7 +1457,7 @@ static void R_RainRunoff(const refdef_t *fd)
 
         // the splash where it lands, near enough to see (R_RainSplash)
         if (dist < RAIN_SPLASH_RANGE) {
-            R_RainSplash(bot, along, side, half, e->seed, flow, a, grey, time);
+            R_RainSplash(bot, e->ground, along, side, half, e->seed, flow, a, grey, time);
         }
         drawn++;
     }
