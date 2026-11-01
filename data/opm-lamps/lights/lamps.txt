@@ -1,0 +1,414 @@
+// The game's lamps: where their bulbs are, and the light they give.
+//
+// The renderer's live lights (r_realtimeLighting, tr_rtlight.c) come from the
+// bulbs here: the map's lights near a lamp give it their light, and a lamp
+// the map gave no light of its own gets the one below. Made with
+// tools/lamps/lamps.py (suggest finds bulbs from the mesh, sheet draws them).
+//
+//     <model>
+//     {
+//         kind shaded        // bulb, shaded (in a shade or globe), candle, lantern
+//                            // (a flame: it flickers), off (a lamp that is not lit), or
+//                            // searchlight (an entity the level's script aims: its
+//                            // light from its first bulb, the lens, the way spot points,
+//                            // standing in for the game's lights where its beam falls)
+//         color 1 0.86 0.68  // its light's colour, where the map gave it none
+//         intensity 120      // as a map light's "light" key, where the map gave it none
+//         bulb x y z         // one a bulb, in the model's frame as drawn
+//                            // (its TIKI scale, not the map's)
+//         glass 1 0.93 0.7   // its glass's colour, remodelled (tools/lamps/remodel.py): the
+//                            // texture made for it (tools/lamps/glass.py) in place of the frame's
+//         glassmode keep     // remodelled: its glass keeps its own texture, drawn as lit from
+//                            // inside (stained glass); none: no glass (a candle's wax); the
+//                            // glass is the surfaces named for it, else the texture's
+//                            // islands with their middle near a bulb:
+//         glassreach 10      // that near, in units
+//         glow 0.12 0.1 0.07 // the glow over its glass (a fabric shade glows less than glass)
+//         glassbright 0.5    // its glass drawn this bright, not whole (a fabric shade)
+//         shade 0 0 1 0.8    // the way its shade closes it off, in its frame, and
+//                            // how much of its light it stops that way (a bell
+//                            // shade: the ceiling over it takes a fifth); with
+//                            // ring after it, a lampshade open at both ends round
+//                            // that axis, which stops what leaves by its sides
+//         spot x y z 60      // a lamp that shines one way: that way in its
+//                            // frame, and the cone's whole angle
+//     }
+
+// ---------------------------------------------------------------- shaded lamps
+
+models/lights/ceilinglamp1.tik
+{
+	kind shaded
+	intensity 150
+	shade 0 0 1 0.9
+	glass 1 0.94 0.9
+	glassreach 9
+	bulb -0.1 0.1 3.1
+}
+
+models/lights/chandalier.tik
+{
+	kind shaded
+	intensity 220
+	shade 0 0 1 0.6
+	glass 1 0.93 0.9
+	bulb -6.3 -11.7 22.0
+	bulb -6.1 13.0 22.0
+	bulb 15.2 0.5 22.0
+	bulb 13.8 8.5 10.3
+	bulb 1.2 15.6 10.3
+	bulb -12.0 8.3 10.3
+	bulb -12.0 -6.8 10.3
+	bulb 1.2 -14.4 10.3
+	bulb 14.1 -6.8 10.3
+}
+
+models/lights/fattablelamp.tik
+{
+	kind shaded
+	intensity 100
+	shade 0 0 1 0.6 ring
+	glass 1 0.86 0.62
+	glow 0.12 0.1 0.07
+	glassreach 17
+	glassbright 0.5
+	bulb 0 0 36
+}
+
+models/lights/glasslamp.tik
+{
+	kind shaded
+	intensity 90
+	shade 0 0 1 0.4 ring
+	glass 1 0.9 0.75
+	glow 0.2 0.18 0.15
+	glassreach 16
+	bulb 0 0 29.7
+}
+
+models/lights/hang3lamp.tik
+{
+	kind shaded
+	intensity 320
+	shade 0 0 1 0.85
+	glass 1 0.93 0.88
+	bulb 0.9 14.0 8.9
+	bulb -12.8 -5.3 8.9
+	bulb 11.6 -8.3 8.9
+}
+
+models/lights/hang5lamp.tik
+{
+	kind shaded
+	intensity 400
+	shade 0 0 1 0.85
+	glass 1 0.93 0.7
+	glassreach 8
+	bulb 0.3 -13.8 9.3
+	bulb 0.3 0.1 3.8
+	bulb 0.3 14.0 9.3
+	bulb -13.5 0.1 9.3
+	bulb 14.2 0.1 9.3
+}
+
+models/lights/hanglamp.tik
+{
+	kind shaded
+	intensity 150
+	shade 0 0 -1 0.6
+	glass 1 0.93 0.88
+	glassreach 14
+	bulb -0.2 0.1 5.8
+}
+
+models/lights/tablelamp.tik
+{
+	kind shaded
+	intensity 100
+	shade 0 0 1 0.6 ring
+	glass 1 0.86 0.62
+	glow 0.12 0.1 0.07
+	glassreach 20
+	glassbright 0.5
+	bulb 0.4 0.2 30
+}
+
+models/lights/tiffanylamp.tik
+{
+	kind shaded
+	color 1 0.78 0.5
+	intensity 80
+	shade 0 0 1 0.85
+	glass 1 0.88 0.6
+	glassmode keep
+	glassreach 14
+	bulb 0 0 25
+}
+
+models/lights/wallsconce-cutglass.tik
+{
+	kind shaded
+	intensity 90
+	shade -0.5 0 -0.85 0.6
+	glass 1 0.92 0.88
+	glassreach 7
+	bulb 1.0 -5.3 12.7
+	bulb 1.0 5.6 12.7
+}
+
+models/lights/wallsconce-frosted.tik
+{
+	kind shaded
+	intensity 90
+	shade -0.5 0 -0.85 0.6
+	glass 1 0.97 0.9
+	glassreach 7
+	bulb 1.5 -5.9 8.0
+	bulb 1.5 6.0 8.0
+}
+
+models/lights/wallsconce-single.tik
+{
+	kind shaded
+	intensity 70
+	shade -0.45 0 0.9 0.85
+	glass 1 0.92 0.8
+	bulb 1.0 0.4 5.0
+}
+
+models/static/lightbulb_covered_nowire.tik
+{
+	kind shaded
+	intensity 150
+	shade 0 0 1 0.9
+	glass 1 0.93 0.81
+	bulb 0 0 0
+}
+
+models/static/lightbulb_covered_on_wire.tik
+{
+	kind shaded
+	intensity 150
+	shade 0 0 1 0.9
+	glass 1 0.95 0.9
+	bulb 0 0 1.5
+}
+
+models/static/lightbulb_covered_on_wire_short.tik
+{
+	kind shaded
+	intensity 150
+	shade 0 0 1 0.9
+	glass 1 0.95 0.9
+	bulb 0 0 1.5
+}
+
+models/static/lightpost_globe.tik
+{
+	kind shaded
+	intensity 250
+	glass 1 0.97 0.92
+	bulb 0 -0.2 125.1
+}
+
+models/static/lightpost_globe_winter.tik
+{
+	kind shaded
+	intensity 250
+	glass 1 0.97 0.92
+	bulb 0 -0.2 125.1
+}
+
+models/static/lightpost_sidemounted.tik
+{
+	kind shaded
+	intensity 220
+	glass 1 0.9 0.8
+	bulb -0.5 7.8 9.9
+}
+
+models/static/lightpost_sidemounted_winter.tik
+{
+	kind shaded
+	intensity 220
+	glass 1 0.9 0.82
+	bulb -0.5 7.8 9.9
+}
+
+models/static/lightpost_triple.tik
+{
+	kind shaded
+	intensity 300
+	glass 1 0.9 0.8
+	bulb 0.3 -24.9 124.7
+	bulb -21.6 12.0 124.7
+	bulb 21.0 12.8 124.5
+}
+
+models/static/lightpost_tripler_winter.tik
+{
+	kind shaded
+	intensity 300
+	glass 1 0.95 0.9
+	bulb 0.3 -24.9 124.7
+	bulb -21.6 12.0 124.7
+	bulb 21.0 12.8 124.5
+}
+
+models/static/static_domelight.tik
+{
+	kind shaded
+	intensity 150
+	shade 0 0 1 0.85
+	glass 1 0.97 0.92
+	bulb 0 0 5
+}
+
+models/static/lightbulb_desertcage.tik
+{
+	kind shaded
+	intensity 120
+	shade 0 0 1 0.8
+	glass 1 0.85 0.6
+	bulb 2.4 0 7
+}
+
+// ---------------------------------------------------------------- bare bulbs
+
+models/lights/lightbulb_caged.tik
+{
+	kind bulb
+	intensity 150
+	shade -1 0 0 0.7
+	bulb 0.9 0.3 4.4
+}
+
+models/static/lightbulb_caged.tik
+{
+	kind bulb
+	intensity 150
+	shade -1 0 0 0.7
+	bulb 0.9 0.3 4.4
+}
+
+models/static/static_cagelight.tik
+{
+	kind bulb
+	intensity 150
+	shade -1 0 0 0.7
+	bulb 3.6 0 0.6
+}
+
+models/lights/lightbulb_caged_red-lit.tik
+{
+	kind bulb
+	color 1 0.12 0.06
+	intensity 120
+	shade -1 0 0 0.7
+	bulb 0.9 0.3 4.4
+}
+
+models/lights/lightbulb_caged_red.tik
+{
+	kind off
+	bulb 0.9 0.3 4.4
+}
+
+models/static/lightbulb_nowire.tik
+{
+	kind bulb
+	intensity 120
+	bulb 0.1 0 1.2
+}
+
+models/static/lightbulb_on_wire.tik
+{
+	kind bulb
+	intensity 120
+	bulb 0 0 1.5
+}
+
+models/static/lightbulb_on_wire_s_ns.tik
+{
+	kind bulb
+	intensity 120
+	bulb 0 0 1.5
+}
+
+models/static/lightbulb_on_wire_short.tik
+{
+	kind bulb
+	intensity 120
+	bulb 0 0 1.5
+}
+
+models/static/worklamp.tik
+{
+	kind bulb
+	intensity 150
+	bulb 0 0 68
+}
+
+// ---------------------------------------------------------------- lamps that shine one way
+
+models/static/static_6lamp.tik
+{
+	kind bulb
+	intensity 300
+	bulb 18.5 1.4 13.1
+	spot 1 0 0 120
+}
+
+models/static/static_e-light.tik
+{
+	kind bulb
+	intensity 250
+	bulb 2.5 -0.5 10.6
+	spot 1 0 0 70
+}
+
+// ---------------------------------------------------------------- flames
+
+models/lights/wallsconce-candle.tik
+{
+	kind candle
+	intensity 45
+	bulb 1.1 -5.6 21.5
+	bulb 1.1 5.6 21.5
+}
+
+models/lights/swinging_lantern.tik
+{
+	kind lantern
+	intensity 90
+	glass 1 0.9 0.75
+	bulb 0 0 -15
+}
+
+models/static/german_lantern.tik
+{
+	kind lantern
+	intensity 90
+	glass 1 0.9 0.75
+	glassreach 6
+	bulb 0 0 9.5
+}
+
+// ---------------------------------------------------------------- searchlights
+
+// entities global/spotlight.scr turns: the light from the lens, down its beam
+// (the model's -x, its beam's long cone); the base is no lamp, but in the light
+models/miscobj/searchlight.tik
+{
+	kind searchlight
+	color 1 0.97 0.9
+	intensity 40000
+	bulb -18 0 0
+	spot -1 0 0 22
+}
+
+models/miscobj/searchlightbase.tik
+{
+	kind off
+	bulb 0 0 20
+}

@@ -420,6 +420,12 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_OPM_EARTH_BAZOOKA:
             szEffectModel = "models/fx/opm_earth_bazooka.tik";
             break;
+        case SFX_OPM_WATER_SPLASH_SMALL:
+            szEffectModel = "models/fx/opm_splash_small.tik";
+            break;
+        case SFX_OPM_WATER_SPLASH_LARGE:
+            szEffectModel = "models/fx/opm_splash_large.tik";
+            break;
         default:
             szEffectModel = "models/fx/bh_stone_hard.tik";
             break;

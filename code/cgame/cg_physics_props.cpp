@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_physics_local.h"
 #include "cg_props.h"
+#include "cg_water.h"
 
 #include <vector>
 
@@ -51,35 +52,41 @@ typedef struct {
     float       friction;
     float       restitution;
     physSoundMat_t sound; // what it sounds like striking things (phys_impact.cpp)
+    // In water (CG_PhysicsPropsWater): what it is held up by all under, over
+    // its weight. Over 1 it floats, riding with 1/buoyancy of it under; under
+    // 1 it sinks, what it displaces still holding some of it up, and the water
+    // slowing it to a sink (PP_WATER_FORM).
+    float       buoyancy;
 } physMaterial_t;
 
 static const physMaterial_t phys_materials[] = {
     {"glass",
      {"bottle", "jug", "pitcher", "glass", "jar", "vase", NULL},
-     1.5f, 0.4f, 0.3f, PHYS_SND_GLASS},
+     1.5f, 0.4f, 0.3f, PHYS_SND_GLASS, 0.4f},
     {"metal",
      {"helmet", NULL},
-     3.0f, 0.5f, 0.2f, PHYS_SND_HELMET},
+     3.0f, 0.5f, 0.2f, PHYS_SND_HELMET, 0.3f},
     {"metal",
      {"mg42", "rifle", "kar98", "pistol", "gun", NULL},
-     3.0f, 0.5f, 0.2f, PHYS_SND_WEAPON},
+     3.0f, 0.5f, 0.2f, PHYS_SND_WEAPON, 0.15f},
     {"metal",
      {"bucket", "can", "shell", "pot", "stove", "radio", "ammo", "valve", "switch", "microphone", "filter",
       "canteen", "radar", "lantern", NULL},
-     3.0f, 0.5f, 0.2f, PHYS_SND_METAL},
+     3.0f, 0.5f, 0.2f, PHYS_SND_METAL, 0.3f},
     {"paper",
      {"paper", "card", "book", "map", "sack", "bag", "cloth", "blanket", "pillow", NULL},
-     0.8f, 0.8f, 0.05f, PHYS_SND_PAPER},
+     0.8f, 0.8f, 0.05f, PHYS_SND_PAPER, 1.15f}, // soaked, it floats low
     {"stone",
      {"sandbag", "brick", "stone", "rock", "concrete", NULL},
-     25.0f, 0.8f, 0.05f, PHYS_SND_STONE},
+     25.0f, 0.8f, 0.05f, PHYS_SND_STONE, 0.45f},
     {"wood",
      {"chair", "stool", "crate", "table", "trunk", "box", "bench", "lid", "cot", "basket", "desk", "shelf", "barrel",
       NULL},
-     4.0f, 0.6f, 0.15f, PHYS_SND_WOOD},
+     4.0f, 0.6f, 0.15f, PHYS_SND_WOOD, 2.2f},
 };
 
-static const physMaterial_t phys_defaultMaterial = {"default", {NULL}, 3.0f, 0.5f, 0.15f, PHYS_SND_DEFAULT};
+// not known by its name: it sinks
+static const physMaterial_t phys_defaultMaterial = {"default", {NULL}, 3.0f, 0.5f, 0.15f, PHYS_SND_DEFAULT, 0.35f};
 
 static const physMaterial_t *CG_PhysicsMaterial(const char *name)
 {
@@ -130,13 +137,81 @@ typedef struct {
     JPH::RVec3  prevPos, curPos;
     JPH::Quat   prevRot, curRot;
     qboolean    moving; // moved since it was last drawn where it was placed
+    float       buoyancy; // its material's (CG_PhysicsPropsWater)
+    float       form;     // the water's drag on it going through, over speed squared (PP_WATER_FORM)
+    float       wet;      // how much of it was under in the step before
 } physProp_t;
+
+// How fast a prop comes to go with the water round it: a share of the
+// difference a second, all under. Slower through it than PP_WAKE_SPEED, it
+// leaves no wake.
+#define PP_WATER_DRAG  2.5f
+#define PP_WAKE_SPEED  12.0f
+// And for what sinks, the drag that grows with the square of the speed, as
+// water's does, for how much face a prop turns to the water for its mass:
+// half water's density (kg/m3) by a drag coefficient (0.4) by a sixth of its
+// box's area. A helmet settles, a sandbag drops: glass sinks at ~0.7 m/s,
+// metal ~1, stone ~2.2. Never more than PP_WATER_FORM_MOST of its speed a
+// second, so it is slowed, not stopped; not on what floats, which plunges in
+// and bobs up; and not on what the grabber holds, which a hand moves freely.
+#define PP_WATER_FORM      (0.5f * 1000.0f * 0.4f / 6.0f)
+#define PP_WATER_FORM_MOST 15.0f
+// The points of its box the water holds it up and slows it at, this far out
+// from its middle to its corners
+#define PP_WATER_INSET 0.7f
 
 static std::vector<physProp_t> pp_props;
 static std::vector<JPH::BodyID> pp_static;
 // what each hanging lamp hangs from (CG_PropHangs)
 static std::vector<JPH::Ref<JPH::Constraint>> pp_hangs;
 static char                    pp_map[MAX_QPATH];
+
+// A lamp on a cord (cgProp_t.corded): the cord is a rope of a few points, its
+// ends held at the anchor and at the lamp, which falls and swings under them
+// and so sags when the lamp is knocked up into it, and lags as it swings.
+#define PP_CORD_POINTS 40
+#define PP_CORD_SMOOTH 4  // drawn pieces between two of its points, along a curve through them
+#define PP_CORD_WIDTH  0.35f // half its thickness
+#define PP_CORD_VIEW   3072.0f
+#define PP_CORD_SHADER "opm/lampcord"
+
+typedef struct {
+    int      prop;
+    vec3_t   p[PP_CORD_POINTS + 1];
+    vec3_t   old[PP_CORD_POINTS + 1];
+    int      lastTime;
+    qboolean live;
+} ppCord_t;
+
+static std::vector<ppCord_t> pp_cords;
+
+// Where the renderer is to draw a prop. A lamp on a cord drawn as its lamp
+// without a wire (CG_PhysicsDrawCords) has its own model, wire and all, shrunk
+// to a speck at the lamp's middle: it shows nothing, and the realtime light of
+// the fixture, which follows it, stays in the lamp, its spot light turned as
+// the lamp is (the axes keep their directions, scaled down).
+#define PP_CORD_HIDDEN_SCALE 0.0001f
+static void CG_PhysicsAxisFromQuat(JPH::QuatArg q, vec3_t axis[3]);
+
+static void CG_PhysicsSendPose(const cgProp_t *p, const vec3_t origin, const vec3_t axis[3])
+{
+    if (p->corded && p->cordModel) {
+        vec3_t light, none[3];
+        int    k;
+
+        VectorCopy(origin, light);
+        for (k = 0; k < 3; k++) {
+            VectorMA(light, p->cordLight[k], axis[k], light);
+        }
+        VectorScale(axis[0], PP_CORD_HIDDEN_SCALE, none[0]);
+        VectorScale(axis[1], PP_CORD_HIDDEN_SCALE, none[1]);
+        VectorScale(axis[2], PP_CORD_HIDDEN_SCALE, none[2]);
+        cgi.R_SetStaticModelTransform(p->staticIndex, light, none);
+        return;
+    }
+    cgi.R_SetStaticModelTransform(p->staticIndex, origin, axis);
+}
+
 static qboolean                pp_loaded;
 
 static JPH::Quat CG_PhysicsQuatFromAxis(const vec3_t axis[3])
@@ -192,6 +267,28 @@ static JPH::ShapeRefC CG_PhysicsHangingShape(const cgProp_t *p)
     // the inner settings are held by reference, and so must not be on the stack
     JPH::Ref<JPH::BoxShapeSettings>     box = new JPH::BoxShapeSettings(extent, Q_min(JPH::cDefaultConvexRadius, extent.ReduceMin() * 0.5f));
     JPH::RotatedTranslatedShapeSettings placed(PhysToJolt(centre), JPH::Quat::sIdentity(), box);
+    JPH::ShapeSettings::ShapeResult     result = placed.Create();
+
+    return result.HasError() ? JPH::ShapeRefC() : result.Get();
+}
+
+// Added in OPM
+//  A box from mins to maxs in a prop's own frame.
+static JPH::ShapeRefC CG_PhysicsBoxShape(const vec3_t mins, const vec3_t maxs)
+{
+    vec3_t    half, centre;
+    JPH::Vec3 extent;
+    int       k;
+
+    for (k = 0; k < 3; k++) {
+        half[k]   = Q_max(1.0f, (maxs[k] - mins[k]) * 0.5f);
+        centre[k] = (maxs[k] + mins[k]) * 0.5f;
+    }
+    extent = PhysToJolt(half);
+
+    // the inner settings are held by reference, and so must not be on the stack
+    JPH::Ref<JPH::BoxShapeSettings>     inner = new JPH::BoxShapeSettings(extent, Q_min(JPH::cDefaultConvexRadius, extent.ReduceMin() * 0.5f));
+    JPH::RotatedTranslatedShapeSettings placed(PhysToJolt(centre), JPH::Quat::sIdentity(), inner);
     JPH::ShapeSettings::ShapeResult     result = placed.Create();
 
     return result.HasError() ? JPH::ShapeRefC() : result.Get();
@@ -259,6 +356,7 @@ void CG_PhysicsUnloadProps(void)
     }
 
     pp_hangs.clear();
+    pp_cords.clear();
     pp_props.clear();
     pp_static.clear();
     pp_loaded = qfalse;
@@ -302,7 +400,8 @@ void CG_PhysicsLoadProps(void)
             continue;
         }
 
-        shape = moves && p->hangs ? CG_PhysicsHangingShape(p) : CG_PhysicsPropShape(p);
+        shape = moves && p->corded ? CG_PhysicsBoxShape(p->cordMins, p->cordMaxs)
+              : moves && p->hangs ? CG_PhysicsHangingShape(p) : CG_PhysicsPropShape(p);
         if (!shape) {
             failed++;
             continue;
@@ -352,8 +451,30 @@ void CG_PhysicsLoadProps(void)
             continue;
         }
 
+        // on its cord: never farther than its length from where it hangs, and
+        // free to come nearer, the cord going slack
+        if (moves && p->corded) {
+            JPH::DistanceConstraintSettings cord;
+            vec3_t                          top;
+
+            VectorCopy(p->origin, top);
+            for (k = 0; k < 3; k++) {
+                VectorMA(top, p->cordTop[k], p->axis[k], top);
+            }
+            cord.mSpace       = JPH::EConstraintSpace::WorldSpace;
+            cord.mPoint1      = JPH::RVec3(PhysToJolt(p->cordAnchor));
+            cord.mPoint2      = JPH::RVec3(PhysToJolt(top));
+            cord.mMinDistance = 0.0f;
+            cord.mMaxDistance = p->cordLength * PHYS_UNITS_TO_METRES;
+
+            JPH::Constraint *c = bodies.CreateConstraint(&cord, JPH::BodyID(), id);
+            if (c) {
+                phys_system->AddConstraint(c);
+                pp_hangs.push_back(c);
+            }
+        }
         // tied where it hangs
-        if (moves && p->hangs) {
+        else if (moves && p->hangs) {
             JPH::PointConstraintSettings tie;
             vec3_t                       point;
 
@@ -380,8 +501,25 @@ void CG_PhysicsLoadProps(void)
             pp.curRot  = pp.prevRot = settings.mRotation;
             pp.moving  = qfalse;
             pp.everMoved = qfalse;
+            pp.buoyancy  = material->buoyancy;
+            {
+                const JPH::Vec3 box  = PhysToJolt(p->maxs) - PhysToJolt(p->mins);
+                const float     area = 2.0f * (box.GetX() * box.GetY() + box.GetY() * box.GetZ() + box.GetZ() * box.GetX());
+
+                pp.form = PP_WATER_FORM * area / Q_max(settings.mMassPropertiesOverride.mMass, 0.1f);
+            }
+            pp.wet       = 0.0f;
             p->body    = (int)pp_props.size();
             pp_props.push_back(pp);
+
+            if (p->corded) {
+                ppCord_t cord;
+
+                memset(&cord, 0, sizeof(cord));
+                cord.prop = i;
+                pp_cords.push_back(cord);
+                CG_PhysicsSendPose(p, p->origin, p->axis);
+            }
             dynamic++;
         } else {
             pp_static.push_back(id);
@@ -405,6 +543,127 @@ void CG_PhysicsLoadProps(void)
             : canMove              ? ""
                                    : " (this engine cannot move static models, so none move)"
         );
+    }
+}
+
+// Before each step: the props in water (cg_water.cpp). The water holds each
+// up at eight points through its box, by its material (a crate floats, a
+// helmet sinks), each by how far under it is, eased in over half the box's
+// height so that one going under is no sudden push; and slows each point as
+// it goes through the water, which also stops it spinning and rocking, and
+// carries it along. Going through it, it leaves a wake; falling in, splashes.
+// Only props awake: one asleep where it came to rest stays so until something
+// wakes it.
+void CG_PhysicsPropsWater(float dt)
+{
+    JPH::BodyInterface &bodies = phys_system->GetBodyInterfaceNoLock();
+    const float         g      = -phys_system->GetGravity().GetZ();
+    JPH::BodyID         held;
+
+    if (!cg_water_float->integer) {
+        return;
+    }
+    if (!CG_PhysicsGrabbedBody(&held)) {
+        held = JPH::BodyID();
+    }
+
+    for (size_t i = 0; i < pp_props.size(); i++) {
+        physProp_t     *pp = &pp_props[i];
+        const cgProp_t *p  = &cg_props[pp->prop];
+        cgWaterSample_t water;
+        vec3_t          centre, axis[3], mid, corner, points[8], flow, v;
+        float           zmin, zmax, band, share, mass, size, tops[8];
+        int             k, c;
+
+        if (!bodies.IsActive(pp->id) || p->hangs || p->corded) {
+            continue;
+        }
+
+        PhysFromJolt(JPH::Vec3(bodies.GetPosition(pp->id)), centre);
+        CG_PhysicsAxisFromQuat(bodies.GetRotation(pp->id), axis);
+
+        // the middle of its box, and how low and high the box reaches
+        VectorCopy(centre, mid);
+        for (k = 0; k < 3; k++) {
+            VectorMA(mid, 0.5f * (p->mins[k] + p->maxs[k]), axis[k], mid);
+        }
+        zmin = 1e9f;
+        zmax = -1e9f;
+        for (c = 0; c < 8; c++) {
+            VectorCopy(mid, corner);
+            VectorCopy(mid, points[c]);
+            for (k = 0; k < 3; k++) {
+                const float half = 0.5f * (p->maxs[k] - p->mins[k]) * ((c & (1 << k)) ? 1.0f : -1.0f);
+
+                VectorMA(corner, half, axis[k], corner);
+                VectorMA(points[c], half * PP_WATER_INSET, axis[k], points[c]);
+            }
+            zmin = Q_min(zmin, corner[2]);
+            zmax = Q_max(zmax, corner[2]);
+        }
+
+        VectorSet(corner, mid[0], mid[1], zmin + 1.0f);
+        if (!CG_WaterSample(corner, &water)) {
+            pp->wet = 0.0f;
+            continue;
+        }
+
+        // how far under each point is, eased over half the box's height
+        band  = Q_max((zmax - zmin) * 0.5f, 2.0f);
+        share = 0.0f;
+        for (c = 0; c < 8; c++) {
+            tops[c] = Com_Clamp(0.0f, 1.0f, 0.5f + (water.surface + CG_WaterSwell(points[c]) - points[c][2]) / band);
+            share += tops[c] / 8.0f;
+        }
+        if (share <= 0.0f) {
+            pp->wet = 0.0f;
+            continue;
+        }
+
+        mass = CG_PhysicsBodyMass(pp->id);
+        CG_WaterFlow(mid, water.depth, flow);
+        PhysFromJolt(bodies.GetLinearVelocity(pp->id), v);
+
+        // a prop that goes in falling splashes, by how big and how fast
+        size = Q_max(p->maxs[0] - p->mins[0], p->maxs[1] - p->mins[1]);
+        if (pp->wet <= 0.0f && v[2] < -60.0f) {
+            vec3_t at;
+
+            VectorSet(at, mid[0], mid[1], water.surface);
+            CG_WaterSplash(at, Com_Clamp(4.0f, 30.0f, size * 0.6f), -v[2]);
+            CG_WaterSplashEffect(at, size, -v[2]);
+        }
+        pp->wet = share;
+
+        for (c = 0; c < 8; c++) {
+            const JPH::RVec3 point(PhysToJolt(points[c]));
+            JPH::Vec3        force;
+
+            if (tops[c] <= 0.0f) {
+                continue;
+            }
+            const JPH::Vec3 rel  = PhysToJolt(flow) - bodies.GetPointVelocity(pp->id, point);
+            const float     drag = PP_WATER_DRAG
+                             + (pp->buoyancy < 1.0f && pp->id != held ? Q_min(pp->form * rel.Length(), PP_WATER_FORM_MOST) : 0.0f);
+
+            force = rel * (mass * drag * tops[c] / 8.0f) + JPH::Vec3(0.0f, 0.0f, mass * g * pp->buoyancy * tops[c] / 8.0f);
+            bodies.AddForce(pp->id, force, point);
+        }
+
+        // going through it: a wake from where it meets the water
+        {
+            const float speed = sqrt(Square(v[0] - flow[0]) + Square(v[1] - flow[1]));
+
+            if (speed > PP_WAKE_SPEED && zmax > water.surface) {
+                const float push = Q_min(share * 2.0f, 1.0f);
+                vec3_t      at;
+
+                VectorSet(at, mid[0] + (v[0] - flow[0]) / speed * size * 0.4f,
+                    mid[1] + (v[1] - flow[1]) / speed * size * 0.4f, water.surface);
+                CG_WaterRipple(at, Com_Clamp(6.0f, 40.0f, size * 0.8f), Q_min(speed, 300.0f) * 0.035f * push * dt,
+                    Q_min(speed, 300.0f) / 150.0f * 0.6f * push * dt);
+            }
+        }
     }
 }
 
@@ -516,13 +775,225 @@ void CG_PhysicsDrawProps(float frac)
             CG_PhysicsAxisFromQuat(rot, axis);
         }
 
-        cgi.R_SetStaticModelTransform(cg_props[pp->prop].staticIndex, origin, axis);
+        CG_PhysicsSendPose(&cg_props[pp->prop], origin, axis);
 
         // Settled: drawn where it came to rest, and left alone after.
         if (pp->prevPos == pp->curPos && pp->prevRot == pp->curRot
             && !phys_system->GetBodyInterfaceNoLock().IsActive(pp->id)) {
             pp->moving = qfalse;
         }
+    }
+}
+
+
+//=============================================================
+// Lamps on cords
+//=============================================================
+
+static void CG_PhysicsCordStep(ppCord_t *c, const cgProp_t *p, const vec3_t top)
+{
+    const float rest = p->cordLength / PP_CORD_POINTS;
+    float       dt, g;
+    int         i, n;
+
+    if (!c->live) {
+        for (i = 0; i <= PP_CORD_POINTS; i++) {
+            const float t = (float)i / PP_CORD_POINTS;
+
+            VectorScale(p->cordAnchor, 1.0f - t, c->p[i]);
+            VectorMA(c->p[i], t, top, c->p[i]);
+            VectorCopy(c->p[i], c->old[i]);
+        }
+        c->lastTime = cg.time;
+        c->live     = qtrue;
+    }
+
+    dt          = Q_clamp_float((cg.time - c->lastTime) * 0.001f, 0.0f, 0.05f);
+    c->lastTime = cg.time;
+    g           = cg.snap && cg.snap->ps.gravity ? (float)cg.snap->ps.gravity : 800.0f;
+
+    // falling, a little slowed by the air
+    for (i = 1; i < PP_CORD_POINTS; i++) {
+        vec3_t v;
+
+        VectorSubtract(c->p[i], c->old[i], v);
+        VectorCopy(c->p[i], c->old[i]);
+        VectorMA(c->p[i], 0.98f, v, c->p[i]);
+        c->p[i][2] -= g * dt * dt;
+    }
+
+    // held at both ends, each length as long as it is
+    VectorCopy(p->cordAnchor, c->p[0]);
+    VectorCopy(top, c->p[PP_CORD_POINTS]);
+    // both ways in turn, so that a pull at one end reaches the other
+    for (n = 0; n < 40; n++) {
+        for (int j = 0; j < PP_CORD_POINTS; j++) {
+            const int i = (n & 1) ? PP_CORD_POINTS - 1 - j : j;
+            vec3_t    d;
+            float     len, share;
+
+            VectorSubtract(c->p[i + 1], c->p[i], d);
+            len = VectorLength(d);
+            if (len < 0.0001f) {
+                continue;
+            }
+            // a cord pulls but does not push: shorter, it folds and droops
+            if (len <= rest) {
+                continue;
+            }
+            share = (len - rest) / len;
+            if (i == 0) {
+                VectorMA(c->p[i + 1], -share, d, c->p[i + 1]);
+            } else if (i + 1 == PP_CORD_POINTS) {
+                VectorMA(c->p[i], share, d, c->p[i]);
+            } else {
+                VectorMA(c->p[i], 0.5f * share, d, c->p[i]);
+                VectorMA(c->p[i + 1], -0.5f * share, d, c->p[i + 1]);
+            }
+        }
+        VectorCopy(p->cordAnchor, c->p[0]);
+        VectorCopy(top, c->p[PP_CORD_POINTS]);
+    }
+}
+
+// The point t of the way from c->p[i] to c->p[i + 1], on a curve through the
+// points around them (Catmull-Rom), so that the cord bends smoothly between
+// its points rather than in straight pieces.
+static void CG_PhysicsCordCurve(const ppCord_t *c, int i, float t, vec3_t out)
+{
+    const float *p0 = c->p[Q_max(i - 1, 0)];
+    const float *p1 = c->p[i];
+    const float *p2 = c->p[i + 1];
+    const float *p3 = c->p[Q_min(i + 2, PP_CORD_POINTS)];
+    const float  t2 = t * t, t3 = t2 * t;
+    int          k;
+
+    for (k = 0; k < 3; k++) {
+        out[k] = 0.5f * (2.0f * p1[k] + (p2[k] - p0[k]) * t + (2.0f * p0[k] - 5.0f * p1[k] + 4.0f * p2[k] - p3[k]) * t2
+                         + (3.0f * p1[k] - p0[k] - 3.0f * p2[k] + p3[k]) * t3);
+    }
+}
+
+// A strip along the cord, face on to the eye wherever it is, as the grabber's
+// beam is drawn (CG_RagdollDrawGrabBeam).
+static void CG_PhysicsCordDraw(const ppCord_t *c, qhandle_t shader)
+{
+    const int  n = PP_CORD_POINTS * PP_CORD_SMOOTH;
+    polyVert_t quad[4];
+    vec3_t     points[PP_CORD_POINTS * PP_CORD_SMOOTH + 1];
+    vec3_t     side, prevSide;
+    int        i, k;
+
+    for (i = 0; i < n; i++) {
+        CG_PhysicsCordCurve(c, i / PP_CORD_SMOOTH, (float)(i % PP_CORD_SMOOTH) / PP_CORD_SMOOTH, points[i]);
+    }
+    VectorCopy(c->p[PP_CORD_POINTS], points[n]);
+
+    for (i = 0; i <= n; i++) {
+        vec3_t tangent, toEye;
+
+        VectorSubtract(points[Q_min(i + 1, n)], points[Q_max(i - 1, 0)], tangent);
+        VectorSubtract(cg.refdef.vieworg, points[i], toEye);
+        CrossProduct(tangent, toEye, side);
+        if (VectorNormalize(side) < 0.0001f) {
+            VectorCopy(cg.refdef.viewaxis[1], side);
+        }
+        VectorScale(side, PP_CORD_WIDTH, side);
+
+        if (i) {
+            VectorAdd(points[i - 1], prevSide, quad[0].xyz);
+            VectorSubtract(points[i - 1], prevSide, quad[1].xyz);
+            VectorSubtract(points[i], side, quad[2].xyz);
+            VectorAdd(points[i], side, quad[3].xyz);
+            for (k = 0; k < 4; k++) {
+                quad[k].st[0]       = (k == 0 || k == 1) ? (float)(i - 1) / n : (float)i / n;
+                quad[k].st[1]       = (k == 1 || k == 2) ? 1.0f : 0.0f;
+                quad[k].modulate[0] = quad[k].modulate[1] = quad[k].modulate[2] = quad[k].modulate[3] = 255;
+            }
+            cgi.R_AddPolyToScene(shader, 4, quad, 0);
+        }
+        VectorCopy(side, prevSide);
+    }
+}
+
+// Every frame: the lamps on cords near the view, their lamps (when drawn
+// without their wire) and their cords.
+void CG_PhysicsDrawCords(float frac)
+{
+    static qhandle_t shader;
+
+    if (pp_cords.empty()) {
+        return;
+    }
+    if (!shader) {
+        shader = cgi.R_RegisterShader(PP_CORD_SHADER);
+    }
+
+    for (size_t i = 0; i < pp_cords.size(); i++) {
+        ppCord_t         *c  = &pp_cords[i];
+        const cgProp_t   *p  = &cg_props[c->prop];
+        const physProp_t *pp = &pp_props[p->body];
+        vec3_t            origin, axis[3], top;
+        int               k;
+
+        {
+            const JPH::Vec3 pos = JPH::Vec3(pp->prevPos) + (JPH::Vec3(pp->curPos) - JPH::Vec3(pp->prevPos)) * frac;
+            const JPH::Quat rot = pp->prevRot.SLERP(pp->curRot, frac).Normalized();
+
+            PhysFromJolt(pos, origin);
+            CG_PhysicsAxisFromQuat(rot, axis);
+        }
+
+        // after a vid_restart the renderer has the model where the map put it
+        CG_PhysicsSendPose(p, origin, axis);
+
+        // the glows at its bulb go with it
+        for (int n = 0; n < p->numCordCoronas; n++) {
+            const cgCorona_t *corona = &cg_coronas[p->cordCoronas[n]];
+            vec3_t            at;
+
+            VectorCopy(origin, at);
+            for (k = 0; k < 3; k++) {
+                VectorMA(at, p->cordCoronaLocal[n][k], axis[k], at);
+            }
+            cgi.R_SetStaticModelTransform(corona->staticIndex, at, corona->axis);
+        }
+
+        if (DistanceSquared(cg.refdef.vieworg, p->cordAnchor) > Square(PP_CORD_VIEW)) {
+            c->live = qfalse;
+            continue;
+        }
+
+        if (p->cordModel) {
+            refEntity_t ent;
+
+            memset(&ent, 0, sizeof(ent));
+            ent.reType              = RT_MODEL;
+            ent.hModel              = p->cordModel;
+            ent.tiki                = cgi.R_Model_GetHandle(p->cordModel);
+            ent.scale               = p->cordScale;
+            ent.entityNumber        = ENTITYNUM_NONE;
+            ent.frameInfo[0].weight = 1.0f;
+            ent.actionWeight        = 1.0f;
+            // its own light is inside it
+            ent.renderfx            = RF_NOSHADOW;
+            VectorCopy(origin, ent.origin);
+            VectorCopy(origin, ent.lightingOrigin);
+            for (k = 0; k < 3; k++) {
+                VectorMA(ent.origin, p->cordOffset[k], axis[k], ent.origin);
+                VectorMA(ent.lightingOrigin, p->cordLight[k], axis[k], ent.lightingOrigin);
+            }
+            VectorCopy(ent.origin, ent.oldorigin);
+            AxisCopy(axis, ent.axis);
+            cgi.R_AddRefEntityToScene(&ent, ENTITYNUM_NONE);
+        }
+
+        VectorCopy(origin, top);
+        for (k = 0; k < 3; k++) {
+            VectorMA(top, p->cordTop[k], axis[k], top);
+        }
+        CG_PhysicsCordStep(c, p, top);
+        CG_PhysicsCordDraw(c, shader);
     }
 }
 

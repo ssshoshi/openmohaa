@@ -68,6 +68,24 @@ extern "C" {
         //  from where it hangs (in its own frame), and is never dropped.
         qboolean hangs;
         vec3_t   hangPoint;
+        // Added in OPM
+        //  A lamp on a cord (CG_PropCorded): drawn as cordModel (the same lamp
+        //  with no wire, 0 for its own model) at cordOffset and cordScale in its
+        //  frame, and held by a cord of cordLength from cordAnchor in the world
+        //  to cordTop in its frame, which goes slack when the lamp is knocked up.
+        qboolean  corded;
+        qhandle_t cordModel;
+        vec3_t    cordOffset;
+        float     cordScale;
+        vec3_t    cordMins, cordMaxs; // the lamp, without its wire, in its frame
+        vec3_t    cordTop;
+        vec3_t    cordLight;          // its middle, where its light is
+        vec3_t    cordAnchor;
+        float     cordLength;
+#define CG_PROP_MAX_CORONAS 4
+        int       cordCoronas[CG_PROP_MAX_CORONAS];      // the glows at its bulb (cg_coronas), carried with it
+        vec3_t    cordCoronaLocal[CG_PROP_MAX_CORONAS];  // where each is in its frame
+        int       numCordCoronas;
         int      clipped; // the map's invisible clip brushes that stand in for it
         int      standIns[CG_PROP_MAX_STANDINS]; // their brush numbers
         int      numStandIns;
@@ -82,6 +100,19 @@ extern "C" {
 
     extern cgProp_t cg_props[CG_MAX_PROPS];
     extern int      cg_numProps;
+
+    // Added in OPM
+    //  The map's coronas (static/corona_util.tik): the glow the maps put at
+    //  a lamp's bulb, a sprite and no prop, which a lamp on a cord carries.
+#define CG_MAX_CORONAS 1024
+    typedef struct {
+        int    staticIndex;
+        vec3_t origin;
+        vec3_t axis[3];
+    } cgCorona_t;
+
+    extern cgCorona_t cg_coronas[CG_MAX_CORONAS];
+    extern int        cg_numCoronas;
 
     // Reads the current map's props, once a map.
     void CG_PropsLoad(void);

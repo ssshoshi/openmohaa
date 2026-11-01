@@ -30,6 +30,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_parsemsg.h"
 #include "cg_specialfx.h"
 #include "cg_radar.h"
+#include "cg_water.h"
+#include "cg_lens.h"
 
 #include "../corepp/str.h"
 
@@ -701,6 +703,8 @@ static void CG_MakeBulletTracerInternal(
                             } else if ((trace.contents & CONTENTS_FLUID) || (trace.surfaceFlags & SURF_PUDDLE)) {
                                 VectorCopy(trace.endpos, vTrailStart);
                                 bInWater = qtrue;
+                                // Added in OPM: rings spread from where it went in
+                                CG_WaterSplash(trace.endpos, iLarge ? 6.0f : 4.5f, 1500.0f);
                             }
 
                             VectorMA(trace.endpos, 2.0, vDir, vTraceStart);
@@ -1097,6 +1101,8 @@ void CG_AddBulletImpacts()
             VectorCopy(flesh_impact_norm[i], vDir);
         }
         CG_GoreNoteHit(flesh_impact_pos[i], vDir, flesh_impact_large[i]);
+        // Added in OPM: close in front, his blood on the lens
+        CG_LensFleshHit(flesh_impact_pos[i]);
     }
 
     if (flesh_impact_count) {
@@ -1172,9 +1178,8 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
     // an explosion: there is no flesh impact for one, so without this the only
     // push a grenade gave a ragdoll was the entity's own velocity, the same for
     // every particle, which lifts a body without turning it over.
+    int iBlastKind = 0; // grenade, unless it is one of the bigger ones
     {
-        int iBlastKind = 0; // grenade
-
         if (cg_protocol >= protocol_e::PROTOCOL_MOHTA_MIN) {
             switch (iType) {
             case CGM_EXPLOSION_EFFECT_2:
@@ -1198,9 +1203,35 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
         CG_PhysicsNoteExplosion(vPos, iBlastKind);
     }
 
+    // Added in OPM: a blast in the water, or just over it, heaves it; and
+    // close by, it throws dirt or water on the lens
+    {
+        cgWaterSample_t water;
+        qboolean        wet = qfalse;
+
+        if (CG_WaterSample(vPos, &water) && vPos[2] - water.surface < 32.0f) {
+            vec3_t at;
+
+            VectorSet(at, vPos[0], vPos[1], water.surface);
+            CG_WaterSplash(at, 70.0f, 900.0f);
+            wet = qtrue;
+        }
+        CG_LensBlast(vPos, iBlastKind, wet);
+    }
+
     if ((CG_PointContents(vPos, 0)) & MASK_WATER) {
+        cgWaterSample_t water;
+        vec3_t          at;
+
+        // Changed in OPM: up at the surface over it. A grenade sinks and goes
+        // off on the bottom, and its plume came up from there, half of it
+        // under the water.
+        VectorCopy(vPos, at);
+        if (CG_WaterSample(vPos, &water) && water.surface > at[2]) {
+            at[2] = water.surface;
+        }
         iBaseEffect = SFX_EXP_GREN_PUDDLE;
-        sfxManager.MakeEffect_Normal(iBaseEffect, vPos, Vector(0, 0, 1));
+        sfxManager.MakeEffect_Normal(iBaseEffect, at, Vector(0, 0, 1));
         return;
     }
 

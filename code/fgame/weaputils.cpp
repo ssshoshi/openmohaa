@@ -2444,7 +2444,15 @@ float BulletAttack(
                 if (trace.fraction < 1.0f) {
                     if (trace.surfaceFlags & (SURF_FOLIAGE | SURF_GLASS | SURF_PUDDLE | SURF_PAPER)
                         || trace.contents & (CONTENTS_CLAYPIDGEON | CONTENTS_WATER)
-                        || (g_protocol < protocol_e::PROTOCOL_MOHTA && trace.startsolid)
+                        // Fixed in OPM: not where it started in water. Gone
+                        //  through the surface, every trace after started in
+                        //  the water, so the bottom it hit counted as where
+                        //  it started: it went on through the ground and out
+                        //  of the world, and the end the clients drew it to
+                        //  was far under the map (its impact at the
+                        //  shooter's feet). Nor more than a few times.
+                        || (g_protocol < protocol_e::PROTOCOL_MOHTA && trace.startsolid
+                            && !(gi.pointcontents(vTraceStart, 0) & MASK_WATER) && iContinueCount < 10)
                         || (bulletlarge && trace.ent
                             && (g_protocol < protocol_e::PROTOCOL_MOHTA || (trace.ent->r.contents & CONTENTS_BBOX))
                             && !trace.ent->r.bmodel && trace.ent->entity->takedamage)

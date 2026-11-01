@@ -33,8 +33,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // (RB_Light_Real, RB_CalcLightGridColor). Nothing of it is skinned or copied
 // on the CPU but the indexes the level of detail keeps.
 //
+// A face that moves (morphs) is moved there too: each vertex's morphs, the
+// offset each target puts it at and which target, go to the card with the
+// surface (tr.skelMorphImage), and each draw the model's targets' weights.
+//
 // What the program cannot do exactly as the CPU does is left to it: a vertex
-// with more than eight weights, a model whose face moves (morphs), shaders that
+// with more than eight weights, a face with more than SKEL_GPU_MAX_MORPHS
+// targets or one there is no more room on the card for, shaders that
 // are not one lightall stage after another or that the CPU deforms or lights
 // per vertex, fog, the debug views.
 
@@ -50,7 +55,7 @@ typedef struct {
     vec4_t weights[SKEL_GPU_WEIGHTS]; // where it is by each bone, how much of it the bone has
     float  bones[SKEL_GPU_WEIGHTS];   // the model's bones, the normal's first
     vec3_t normal;                    // as the first bone holds it
-    vec2_t st;
+    vec4_t st;                        // and its morphs: the first in tr.skelMorphImage, how many
     vec4_t tangent;                   // as the first bone holds it; w the bitangent's side
 } skelGpuVert_t;
 
@@ -59,6 +64,8 @@ typedef struct {
     const skelSurfaceGame_t *sf;
     qboolean                 ok;        // the vertex program can pose it
     qboolean                 hasMorphs; // a vertex of it moves with the face
+    qboolean                 morphsOk;  // and its morphs are on the card
+    int                      numTargets; // the highest target a morph of it names, and one
     const char              *why;       // not ok: why not
     int                      maxWeights;
     vao_t                    vao;
@@ -89,6 +96,38 @@ static int skelNumRefused;
 
 static skelGpuMesh_t *skelGpuMeshes[SKEL_GPU_MESHES];
 static int            skelGpuNumMeshes;
+
+// the morphs on the card: how many texels of tr.skelMorphImage are taken, and
+// where each surface's are. A head is one surface whatever body it is put on,
+// and every model it is on would have sent its morphs again: they are sent
+// once a surface.
+static int skelMorphsUsed;
+
+#define SKEL_GPU_MORPH_SURFS 1024 // a power of two
+static struct {
+    const skelSurfaceGame_t *sf;
+    int                      first;
+} skelMorphSurfs[SKEL_GPU_MORPH_SURFS];
+
+static int *R_SkelGpuMorphFirst(const skelSurfaceGame_t *sf)
+{
+    unsigned int h = (unsigned int)((uintptr_t)sf >> 4) * 2654435761u;
+    int          i;
+
+    for (i = 0; i < SKEL_GPU_MORPH_SURFS; i++) {
+        const int k = (h + i) & (SKEL_GPU_MORPH_SURFS - 1);
+
+        if (!skelMorphSurfs[k].sf) {
+            skelMorphSurfs[k].sf    = sf;
+            skelMorphSurfs[k].first = -1;
+            return &skelMorphSurfs[k].first;
+        }
+        if (skelMorphSurfs[k].sf == sf) {
+            return &skelMorphSurfs[k].first;
+        }
+    }
+    return NULL;
+}
 
 // the bones on the card: up to which of them, for which scene
 static int skelBonesSent;
@@ -129,6 +168,31 @@ void R_SkelGpuInitImage(void)
     );
     qglTextureParameterfEXT(tr.skelBoneImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     qglTextureParameterfEXT(tr.skelBoneImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // the surfaces' morphs: a texel each, the offset and which target
+    tr.skelMorphImage = R_CreateImage(
+        "*skelmorphs", NULL, SKEL_GPU_BONE_ROW, SKEL_GPU_MORPH_ROWS, IMGTYPE_COLORALPHA,
+        (imgFlags_t)(IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE), GL_RGBA32F
+    );
+    qglTextureParameterfEXT(tr.skelMorphImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    qglTextureParameterfEXT(tr.skelMorphImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    skelMorphsUsed = 0;
+    Com_Memset(skelMorphSurfs, 0, sizeof(skelMorphSurfs));
+}
+
+// count texels of morphs to the card, from t0 on, row by row
+static void R_SkelGpuSendMorphs(const vec4_t *texels, int t0, int count)
+{
+    while (count > 0) {
+        const int row = t0 / SKEL_GPU_BONE_ROW;
+        const int x   = t0 - row * SKEL_GPU_BONE_ROW;
+        const int w   = Q_min(SKEL_GPU_BONE_ROW - x, count);
+
+        qglTextureSubImage2DEXT(tr.skelMorphImage->texnum, GL_TEXTURE_2D, 0, x, row, w, 1, GL_RGBA, GL_FLOAT, texels);
+        texels += w;
+        t0 += w;
+        count -= w;
+    }
 }
 
 // The bones up to end on the card, those of the scene the front end posed
@@ -298,6 +362,8 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
 {
     skelGpuVert_t    *verts;
     skeletorVertex_t *v = sf->pVerts;
+    vec4_t           *morphs;
+    int               numMorphs;
     vao_t            *vao = &m->vao;
     int               i, k;
 
@@ -310,6 +376,20 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     verts = (skelGpuVert_t *)ri.Malloc(sf->numVerts * sizeof(skelGpuVert_t));
     Com_Memset(verts, 0, sf->numVerts * sizeof(skelGpuVert_t));
 
+    // the morphs, as many as there are
+    {
+        const skeletorVertex_t *c = sf->pVerts;
+
+        numMorphs = 0;
+        for (i = 0; i < sf->numVerts; i++) {
+            numMorphs += c->numMorphs;
+            c = (const skeletorVertex_t *)((const byte *)c + sizeof(skeletorVertex_t) + sizeof(skeletorMorph_t) * c->numMorphs
+                                           + sizeof(skelWeight_t) * c->numWeights);
+        }
+        morphs = numMorphs ? (vec4_t *)ri.Malloc(numMorphs * sizeof(vec4_t)) : NULL;
+        numMorphs = 0;
+    }
+
     for (i = 0; i < sf->numVerts; i++) {
         skelGpuVert_t      *out    = &verts[i];
         const skelWeight_t *weight = (const skelWeight_t *)((byte *)v + sizeof(skeletorVertex_t) + sizeof(skeletorMorph_t) * v->numMorphs);
@@ -318,10 +398,23 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
         if (v->numWeights < 1 || v->numWeights > SKEL_GPU_WEIGHTS) {
             m->why = v->numWeights < 1 ? "a vertex with no weights" : "a vertex with more than eight weights";
             ri.Free(verts);
+            if (morphs) {
+                ri.Free(morphs);
+            }
             return;
         }
         if (v->numMorphs) {
+            const skeletorMorph_t *morph = (const skeletorMorph_t *)((byte *)v + sizeof(skeletorVertex_t));
+
             m->hasMorphs = qtrue;
+            out->st[2]   = numMorphs; // first, as an offset into this surface's for now
+            out->st[3]   = v->numMorphs;
+            for (k = 0; k < v->numMorphs; k++) {
+                VectorCopy(morph[k].offset, morphs[numMorphs]);
+                morphs[numMorphs][3] = morph[k].morphIndex;
+                m->numTargets        = Q_max(m->numTargets, morph[k].morphIndex + 1);
+                numMorphs++;
+            }
         }
 
         for (k = 0; k < v->numWeights; k++) {
@@ -332,6 +425,9 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
                 if (bone < 0 || bone >= skelmodel->numBones) {
                     m->why = "a bone past the mesh's";
                     ri.Free(verts);
+                    if (morphs) {
+                        ri.Free(morphs);
+                    }
                     return;
                 }
                 bone = ri.TIKI_GetLocalChannel(tiki, skelmodel->pBones[bone].channel);
@@ -339,6 +435,9 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
             if (bone < 0 || bone >= numBones) {
                 m->why = "a bone the model does not have";
                 ri.Free(verts);
+                if (morphs) {
+                    ri.Free(morphs);
+                }
                 return;
             }
             VectorCopy(weight[k].offset, out->weights[k]);
@@ -357,6 +456,36 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     }
 
     R_SkelGpuTangents(verts, sf, bones);
+
+    // the morphs to the card, after those of the surfaces before; a face with
+    // more targets than the program takes, or no room left, stays the CPU's
+    // while it moves
+    if (numMorphs) {
+        const int room  = SKEL_GPU_BONE_ROW * SKEL_GPU_MORPH_ROWS;
+        int      *first = tr.skelMorphImage && m->numTargets <= SKEL_GPU_MAX_MORPHS ? R_SkelGpuMorphFirst(sf) : NULL;
+
+        // this surface's, sent for another model already, or sent now
+        if (first && *first < 0 && skelMorphsUsed + numMorphs <= room) {
+            R_SkelGpuSendMorphs(morphs, skelMorphsUsed, numMorphs);
+            *first = skelMorphsUsed;
+            skelMorphsUsed += numMorphs;
+        }
+        if (first && *first >= 0) {
+            for (i = 0; i < sf->numVerts; i++) {
+                if (verts[i].st[3] > 0) {
+                    verts[i].st[2] += *first;
+                }
+            }
+            m->morphsOk = qtrue;
+        } else {
+            for (i = 0; i < sf->numVerts; i++) {
+                verts[i].st[2] = verts[i].st[3] = 0;
+            }
+        }
+    }
+    if (morphs) {
+        ri.Free(morphs);
+    }
 
     Q_strncpyz(vao->name, "skelGpu_VAO", sizeof(vao->name));
     qglGenVertexArrays(1, &vao->vao);
@@ -381,7 +510,7 @@ static void R_SkelGpuBuild(skelGpuMesh_t *m, dtiki_t *tiki, skelSurfaceGame_t *s
     R_SkelGpuAttrib(vao, ATTR_INDEX_BONE_INDEXES, 4, offsetof(skelGpuVert_t, bones[0]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_BONE_WEIGHTS, 4, offsetof(skelGpuVert_t, bones[4]));
     R_SkelGpuAttrib(vao, ATTR_INDEX_NORMAL, 3, offsetof(skelGpuVert_t, normal));
-    R_SkelGpuAttrib(vao, ATTR_INDEX_TEXCOORD, 2, offsetof(skelGpuVert_t, st));
+    R_SkelGpuAttrib(vao, ATTR_INDEX_TEXCOORD, 4, offsetof(skelGpuVert_t, st));
     R_SkelGpuAttrib(vao, ATTR_INDEX_TANGENT, 4, offsetof(skelGpuVert_t, tangent));
     Vao_SetVertexPointers(vao);
     GL_CheckErrors();
@@ -412,6 +541,8 @@ void R_SkelGpuFree(void)
     }
     skelGpuNumMeshes = 0;
     skelBonesScene   = -1;
+    skelMorphsUsed   = 0;
+    Com_Memset(skelMorphSurfs, 0, sizeof(skelMorphSurfs));
     skelNumRefused   = 0;
 }
 
@@ -593,9 +724,24 @@ void *RB_SkelGpuUsable(dtiki_t *tiki, skelSurfaceGame_t *sf, int mesh, skelHeade
         backEnd.pc.c_skelGpuCpu[SKEL_CPU_MESH]++;
         return NULL;
     }
+    // a face moving: its targets' weights for the program, or the CPU's
+    tess.skelGpu.numMorphs = 0;
     if (ent->e.hasMorph && m->hasMorphs) {
-        backEnd.pc.c_skelGpuCpu[SKEL_CPU_MORPHS]++;
-        return NULL;
+        const int *w = &skeletorMorphCache[ent->e.morphstart];
+        float     *out = &tess.skelGpu.morphs[0][0];
+        int        k;
+
+        if (!m->morphsOk) {
+            backEnd.pc.c_skelGpuCpu[SKEL_CPU_MORPHS]++;
+            return NULL;
+        }
+        for (k = 0; k < m->numTargets; k++) {
+            out[k] = (float)w[k];
+        }
+        for (; k < ((m->numTargets + 3) & ~3); k++) {
+            out[k] = 0.0f;
+        }
+        tess.skelGpu.numMorphs = m->numTargets;
     }
 
     if (!RB_SkelGpuLighting()) {
@@ -650,6 +796,9 @@ void RB_SkelGpuBind(void)
     m->vao.indexesIBO = buffer;
 
     GL_BindToTMU(tr.skelBoneImage, TMU_SKELBONES);
+    if (tess.skelGpu.numMorphs > 0) {
+        GL_BindToTMU(tr.skelMorphImage, TMU_SKELMORPHS);
+    }
 
     tess.streamVao        = &m->vao;
     tess.streamBaseVertex = 0;
@@ -700,6 +849,11 @@ void R_SkelGpuInfo_f(void)
         }
         if (m->ok) {
             ok++;
+            if (m->hasMorphs && !m->morphsOk) {
+                ri.Printf(PRINT_ALL, "  surface %s of %s: its face moves on the CPU (%d morph targets, at most %d; %d of %d morph texels used)\n",
+                    m->sf->name, m->tiki->name ? m->tiki->name : "?", m->numTargets, SKEL_GPU_MAX_MORPHS, skelMorphsUsed,
+                    SKEL_GPU_BONE_ROW * SKEL_GPU_MORPH_ROWS);
+            }
             continue;
         }
         refused++;

@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 QGL_1_1_PROCS;
 QGL_DESKTOP_1_1_PROCS;
 QGL_1_3_PROCS;
+QGL_TEXTURE3D_PROCS;
 QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;
@@ -104,6 +105,8 @@ typedef struct cubemap_s {
 	vec3_t origin;
 	float parallaxRadius;
 	image_t *image;
+	int area;    // Added in OPM: the BSP area it is in, -1 not known (R_CubemapForPoint)
+	int cluster; // and its PVS cluster
 } cubemap_t;
 
 typedef struct dlight_s {
@@ -167,6 +170,11 @@ typedef struct {
     int			poseId;
     vec3_t		boneCentre; // the bounds of its bones, in its own space
     float		boneRadius;
+
+    // Added in OPM
+    //  Too small in the main view to be worth the depth prepass
+    //  (r_prepassFarModels): drawn by the main pass alone.
+    qboolean	prepassSkip;
 } trRefEntity_t;
 
 #define RT_CASTS_MOVING   1 // with what moves, every frame
@@ -516,14 +524,38 @@ enum
 #define TMU_RTSHADOW_DYNAMIC 8
 #define TMU_RTSUNSHADOW      9
 #define TMU_RTSHADOW_BAKED   10
-#define NUM_TEXTURE_UNITS    16
+#define TMU_RTDIRECT         19 // Added in OPM: the baked lamps' light (R_RtBakeLamps)
+#define TMU_RTDIRECTDIR      20 // and the way it comes from
+#define TMU_RTBOUNCELAMP     21 // the lamps' light bounced (R_RtBounce)
+#define TMU_RTLIVE           22 // the baked lamps lit live, taken out of their bake (R_RtLiveIn)
+#define TMU_RTLIVEDIR        23 // and the way it came from
+#define TMU_RTAO             24 // Added in OPM: the view's ambient occlusion (r_gtao)
+#define GTAO_DEPTH_MIPS      4  // and the smaller copies of the depth it reads (gtao_fp.glsl's)
+#define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
+#define TMU_SSRDEPTH         26 // and this frame's depth
+#define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
+#define NUM_TEXTURE_UNITS    28
 
-#define RT_MAX_LIGHTS   48 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
+// Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
+// FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
+// out FROXEL_TILES slices a row of a 2D image
+#define FROXEL_PIXELS  16
+#define FROXEL_SLICES  64
+#define FROXEL_TILES   8
+#define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
 #define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
 #define RT_CULL_MARGIN  8.0f // past a surface's bounds a light is still counted in, for vertexes they miss
-#define RT_ATLAS_TILES  16 // a side, so 256 faces: 42 lights
+#define RT_ATLAS_TILES  16 // a side, so 256 faces
+#define RT_SLOTS_BIG    32 // lights with whole tiles for faces; the tiles past theirs are cut in four,
+                          // a quarter tile a face for the lights further off (R_RtFaceRect)
+#define RT_SMALL_FIRST  (RT_SLOTS_BIG * 6) // the first tile cut in four: a row's first
+#define RT_BAKED_TILE   128 // r_realtimeLighting 2: the faces of the world alone, for the baked lamps (R_RtBakeLamps)
+#define RT_SMALL_CODE   4096 // a light's first tile, sent to the shaders, at or past this: quarter tiles
 #define RT_ZNEAR        1.0f // the near plane of a light's shadow faces
+#define RT_FACE_GUARD   4 // r_rtShadowGuard's default: texels a face's tile is drawn past its 90 degrees on
+                          // each side, so the taps of a point at the face's edge read what is there, not
+                          // a clamp (r_rtShadowSoft 4 reaches 3: two half texels and the filter's own)
 #define RT_MAX_CAPSULES 2048 // bodies and their parts, as the lights see them (duplicated per light)
 #define RT_MAX_RUN      1023 // of those, for one light
 #define TMU_RTCAPSULES  11
@@ -533,9 +565,14 @@ enum
 #define RT_SKY_DIRS     16 // Added in OPM: the directions the sky lights from, RT_SKY_TILES squared
 #define RT_SKY_TILES    4
 #define TMU_RTSKYLM     15 // Added in OPM: the sky each lightmap texel sees (tr_rtlight.c)
+#define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
+#define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
+#define TMU_RTBOUNCE    18 // Added in OPM: the light bounced onto each lightmap texel (tr_rtlight.c)
 #define SKEL_GPU_MAX_LIGHTS 16 // Added in OPM: the lights a posed model takes in the vertex program
 #define SKEL_GPU_BONE_ROW 1024 // Added in OPM: texels in a row of tr.skelBoneImage
 #define SKEL_GPU_MAX_DENTS MAX_GORE_DENTS // Added in OPM: the gore dents a posed model takes in the vertex program
+#define SKEL_GPU_MAX_MORPHS 64 // Added in OPM: the morph targets (a face) a posed model takes in the vertex program
+#define SKEL_GPU_MORPH_ROWS 512 // Added in OPM: rows of tr.skelMorphImage, SKEL_GPU_BONE_ROW texels each
 
 typedef enum
 {
@@ -657,6 +694,7 @@ typedef struct shader_s {
 	qboolean	entityMergable;			// merge across entites optimizable (smoke, blood)
 
 	qboolean	isSky;
+	qboolean	emissive;	// Added in OPM: a lamp's bulb, flame or glass, which glows (r_bloomEmissive)
 	skyParms_t	sky;
 	fogParms_t	fogParms;
 
@@ -698,6 +736,9 @@ typedef struct shader_s {
     // Added in OPM: drawn as sprites (spriteGen, or a .spr model's), which the
     // realtime lights light at the corners (RT_STAGE_PARTICLE)
     qboolean rtParticle;
+    // Added in OPM: gives light of its own (q3map_surfacelight: a lit window),
+    // which the compiler put in its lightmap: kept there by the realtime lights
+    qboolean rtEmissive;
     // Set when any stage uses rgbGen lightinggrid or lightingspherical, so the
     // backend knows which of MOH:AA's two entity lighting models to set up.
     int needsLGrid;
@@ -711,6 +752,10 @@ typedef struct shader_s {
     // on a sprite starts when the sprite was spawned, not at an arbitrary
     // point in the level's clock.
     qboolean animMapFromSpawn;
+    // Added in OPM: water drawn by the water program (tr_water.c), and the
+    // texture of its first stage, which the program takes its ripples from
+    qboolean isWater;
+    image_t *waterImage;
 } shader_t;
 
 enum
@@ -846,8 +891,16 @@ enum
 	GLSL_VEC4_RTLIST,   // Added in OPM: the ones a draw may take, by index, RT_MAX_LIGHTS / 4 vec4s
 	GLSL_VEC4_RTSKY,    // Added in OPM: the sky's directions, RT_SKY_DIRS * 4 vec4s (tr.rtSkyRows)
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
-	GLSL_VEC4_SKELDENTS   // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
+	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
+	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
+	GLSL_VEC4_WATERSPOTS, // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 3 vec4s (tr_froxel.c)
 };
+
+#define SMOKE_MAX_BLOBS 96 // Added in OPM: the most puffs of smoke the air's grid takes a frame (tr_froxel.c)
+
+#define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
+#define WATER_RIPPLE_SIZE 1024 // Added in OPM: the water's ripples, a grid this many texels across (tr_water.c)
 
 typedef enum
 {
@@ -970,6 +1023,7 @@ typedef enum
 	// Added in OPM: the realtime lights (tr_rtlight.c)
 	UNIFORM_RTLIGHTS,
 	UNIFORM_RTPARAMS,
+	UNIFORM_LINEAR, // Added in OPM: r_linearLighting, read the colours as light (GLSL_BindProgram)
 	UNIFORM_RTSUNDIR,
 	UNIFORM_RTSUNCOLOR,
 	UNIFORM_RTAMBIENT,
@@ -977,6 +1031,8 @@ typedef enum
 	UNIFORM_RTSHADOWSTATIC,
 	UNIFORM_RTSHADOWDYNAMIC,
 	UNIFORM_RTSUNSHADOW,
+	UNIFORM_RTSUNCASCADE,
+	UNIFORM_RTSUNCASCADEMVP,
 	UNIFORM_RTSHADOWBAKED,
 	UNIFORM_RTCAPSULES,
 	UNIFORM_RTLIST,
@@ -985,6 +1041,38 @@ typedef enum
 	UNIFORM_RTSKYMAP,
 	UNIFORM_RTSURFACE,
 	UNIFORM_RTSKYLIGHTMAP,
+	UNIFORM_RTBOUNCE,     // Added in OPM: the bounce of the light lit live (R_RtBounce): its scale, w on
+	UNIFORM_RTBOUNCEMAP,
+	UNIFORM_RTAO,     // Added in OPM: r_gtao: x on, the view's ambient occlusion in u_RtAOMap
+	UNIFORM_RTAOMAP,
+	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
+	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
+	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
+	UNIFORM_FROXEL,       // Added in OPM: r_volumetric 2 (froxel_fp.glsl): the grid's cells across, up, slices, its depth curve
+	UNIFORM_FOGVOLUMES,   // the map's fog banks, three vec4s each (tr_froxel.c)
+	UNIFORM_FOGPARAMS,    // how many
+	UNIFORM_FOGAMBIENT,   // their own light
+	UNIFORM_FROXELPREVORIGIN,  // last frame's eye, w how much of last frame each cell keeps
+	UNIFORM_FROXELPREVFORWARD, // its axes, left and up over the view's half width and height
+	UNIFORM_FROXELPREVLEFT,
+	UNIFORM_FROXELPREVUP,
+	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
+	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, albedo and density, the light their sprites had
+	UNIFORM_SMOKEPARAMS,  // how many, the noise's scale, its drift (time), how much it eats into them
+	UNIFORM_SMOKENOISE,   // the smoke's 3D noise
+	UNIFORM_FROXELFOG,     // Added in OPM: the air for what is drawn after it (USE_FROXEL_FOG): how, slices, depth curve
+	UNIFORM_FROXELFOGVIEW, // zfar / znear, zfar, one over the view's size
+	UNIFORM_FROXELFOGGRID, // cells across, up, the view's corner
+	UNIFORM_FROXELFOGMAP,
+	UNIFORM_RTBOUNCELAMPMAP,
+	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
+	UNIFORM_RTDIRECTMAP,
+	UNIFORM_RTDIRECTDIR,
+	UNIFORM_RTLIVEMAP,    // Added in OPM: the baked light of the lamps lit live, taken back out of it (R_RtLiveIn)
+	UNIFORM_RTLIVEDIR,
+	UNIFORM_RTPROBER,     // Added in OPM: the bounce at a model, for each colour: the way it is brightest, its mean
+	UNIFORM_RTPROBEG,
+	UNIFORM_RTPROBEB,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
@@ -993,6 +1081,46 @@ typedef enum
 	UNIFORM_SKELLIGHTS,
 	UNIFORM_SKELNUMDENTS,
 	UNIFORM_SKELDENTS,
+	UNIFORM_SKELMORPHMAP,  // Added in OPM: the morphs of the models the vertex program poses
+	UNIFORM_SKELNUMMORPHS,
+	UNIFORM_SKELMORPHS,
+	UNIFORM_WATERCOLOR,   // Added in OPM: the water program (tr_water.c)
+	UNIFORM_WATERBLOOD,
+	UNIFORM_WATERWAVES,
+	UNIFORM_WATERSHORE,
+	UNIFORM_WATERSKY,
+	UNIFORM_WATERLOOK,
+	UNIFORM_WATEROCEAN,    // the open sea's waves (tr_water.c, ocean): one over their scale, height, drag, octaves
+	UNIFORM_WATERBLOODZONE,
+	UNIFORM_WATERSPOTS,
+	UNIFORM_BEACHWET,
+	UNIFORM_SANDSTAINS,
+	UNIFORM_WORLDVIEWPROJECTION, // what the world is projected by, for a ray to be followed through the view
+	UNIFORM_WATERVIEW,           // the view's box on the screen: x, y, the far x, the far y
+	UNIFORM_BEACHSWASH,
+	UNIFORM_BEACHGROUND,   // where the beach's ground lies (tr_water.c, R_WaterBuildBeach): its corner, one over its size, whether
+	UNIFORM_RIPPLESIM,     // the water's ripples (tr_water.c, glsl/ripple_fp.glsl)
+	UNIFORM_RIPPLEDECAY,
+	UNIFORM_RIPPLESOURCES,
+	UNIFORM_RIPPLEFOAM,
+	UNIFORM_WATERRIPPLES,  // where the ripples' grid lies, for the water
+	UNIFORM_WATERREFLECT,  // the view the water mirrors: whether, -, its share of the image
+	UNIFORM_WATERREFLECTPLANE, // the plane of the water it was seen from
+	UNIFORM_WATERREFLECTMVP,
+	UNIFORM_WATERREFLECTMAP,
+	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
+	UNIFORM_LENSSPOTS,
+	UNIFORM_LENSLOOK,
+	UNIFORM_BLOOMPARAMS,   // Added in OPM: the bloom (RB_Bloom, glsl/bloom_fp.glsl)
+	UNIFORM_BLOOMTEXEL,
+	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
+	UNIFORM_WETSKY,
+	UNIFORM_SSRCOLORMAP,    // Added in OPM: r_ssr (lightall's SsrTrace)
+	UNIFORM_SSRDEPTHMAP,
+	UNIFORM_SSRVIEWPROJ,    // the world to this frame's clip space
+	UNIFORM_SSRPREVVIEWPROJ, // and to the last frame's
+	UNIFORM_SSRPARAMS,      // strength (0: off), reach, near, far
+	UNIFORM_WETSUN,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1169,7 +1297,11 @@ typedef enum {
 	VPF_RTBAKED         = 0x400,
 	// Added in OPM
 	//  The sky's depth from one of its directions, once a map (tr_rtlight.c).
-	VPF_RTSKY           = 0x800
+	VPF_RTSKY           = 0x800,
+	// Added in OPM
+	//  The view water mirrors, under its surface (tr_water.c): a portal
+	//  view that draws the entities and sprites the main view does.
+	VPF_WATERREFLECT    = 0x1000
 } viewParmFlags_t;
 
 typedef struct {
@@ -1209,6 +1341,13 @@ typedef struct {
 	// Which sun shadow cascade this view is rendering, 0-3, or -1 when it is
 	// not one. Only used to attribute GPU time per cascade (r_gpuTimers).
 	int			sunCascade;
+
+	// Added in OPM: the view its water mirrors was drawn first, into
+	// tr.waterReflectImage (R_WaterReflectView): at this height, seen so
+	int			waterReflect;
+	vec4_t		waterReflectPlane; // normal, distance
+	vec2_t		waterReflectShare; // of the image across and up
+	mat4_t		waterReflectMvp;
 } viewParms_t;
 
 
@@ -1641,6 +1780,20 @@ typedef struct cStaticModelUnpacked_s {
     int rtCaster; // once moved, RT_CASTS_*
     uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
+    int rtProbeState; // its bounce (R_RtStaticModelProbe): 0 not yet, 1 worked out, 2 no probe sees it
+    vec4_t rtProbe[3];
+
+    // Added in OPM
+    //  The map's light for it, a colour a vertex, is for another model than the
+    //  one loaded under its name (a remodelled prop, or a mod's): it is lit by
+    //  the light grid instead (RB_SurfaceStaticModel).
+    qboolean noVertexData;
+
+    // Added in OPM
+    //  Its surfaces for the draw lists, one for each of its meshes' surfaces,
+    //  made when the map loads: they are the same for every view, and a frame
+    //  draws many (the sun cascades, the lights' shadows, the cubemaps).
+    staticSurface_t *surfaces;
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
@@ -1653,6 +1806,8 @@ typedef struct refSprite_s {
     byte shaderRGBA[4];
     int renderfx;
     float shaderTime;
+    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke (R_FroxelTakesSprite)
+    byte     froxelAlpha; // and its alpha before its sprite gave the grid its share
 } refSprite_t;
 
 //=========================
@@ -1992,7 +2147,10 @@ void		R_Modellist_f (void);
 
 //====================================================
 
-#define	MAX_DRAWIMAGES			2048
+// OPM: was 2048; the old map's images go only once the new one is registered
+//  (R_FreeUnusedImages), and with the material maps one SP map holds ~1250
+#define BLOOM_LEVELS 6 // Added in OPM: half the view's size down to a 64th (RB_Bloom)
+#define	MAX_DRAWIMAGES			4096
 #define	MAX_SKINS				1024
 
 
@@ -2148,12 +2306,19 @@ typedef enum {
 	GPUTIMER_MAIN3D,
 	GPUTIMER_POSTPROCESS,
 	GPUTIMER_PRESENT,
+	GPUTIMER_FLARES,   // Added in OPM: flares and lens flares, after a view
+	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
+	GPUTIMER_AO,       // Added in OPM: r_gtao
+	GPUTIMER_VOLUME,   // Added in OPM: r_volumetric
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
 
 typedef struct {
 	float		msec[GPUTIMER_COUNT];
+	// Added in OPM: the frame's untimed time ("other"), by the pass it came
+	// before; the frame's own slot is what came after the last pass
+	float		gapBefore[GPUTIMER_COUNT];
 	qboolean	valid;
 	int			overflowed;
 	int			numMarks;
@@ -2350,6 +2515,12 @@ typedef struct {
 	qboolean	skyRenderedThisView;	// flag for drawing sun
 
 	qboolean	projection2D;	// if qtrue, drawstretchpic doesn't need to change modes
+	qboolean	screenOverlay;	// Added in OPM: lens flares, quads on the screen that no light reaches
+	// Added in OPM: with MSAA, the resolved image the post process left, which
+	// the rest of the frame (2D, any later scene) draws on and is presented
+	// from, rather than copied back into the multisampled one and resolved
+	// again (RB_TargetFbo); NULL until then
+	FBO_t		*postFbo;
 	byte		color2D[4];
 	qboolean	vertexes2D;		// shader needs to be finished
 	trRefEntity_t	entity2D;	// currentEntity will point at this when doing 2D rendering
@@ -2358,7 +2529,9 @@ typedef struct {
 	qboolean    colorMask[4];
 	qboolean    depthFill;
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
+	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
+	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
 	float       greyscale;
 
 	//
@@ -2438,13 +2611,30 @@ typedef struct {
 	image_t					*screenScratchImage;
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
+	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
 	image_t					*calcLevelsImage;
 	image_t					*targetLevelsImage;
 	image_t					*fixedLevelsImage;
 	image_t					*sunShadowDepthImage[4];
 	image_t                 *screenShadowImage;
 	image_t                 *screenSsaoImage;
+	image_t                 *ssrPrevImage; // Added in OPM: r_ssr
+	image_t                 *gtaoImage;     // Added in OPM: r_gtao, the view's ambient occlusion
+	image_t                 *gtaoBlurImage; // and half of its blur
+	image_t                 *gtaoDepthImage; // the depth at that size, read by both
+	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
+	image_t                 *volumeBlurImage; // and half of its blur
+	image_t                 *froxelLightImage[2]; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row), this frame's and last
+	image_t                 *froxelSumImage[2]; // and summed from the eye, in passes from one to the other
+	image_t                 *froxelDepthImage; // and each tile of the view's furthest depth
+	image_t                 *froxelDepthQuarterImage; // and each quarter tile's, on the way (raw depth)
 	image_t					*hdrDepthImage;
+	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
+	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
+	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
+	image_t					*waterReflectDepthImage; // and its depth, for the air in it (tr_froxel.c)
+	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
+	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
 	image_t					*textureDepthImage;
@@ -2457,12 +2647,28 @@ typedef struct {
 	FBO_t					*screenScratchFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
+	FBO_t                   *bloomFbo[BLOOM_LEVELS];
 	FBO_t					*calcLevelsFbo;
 	FBO_t					*targetLevelsFbo;
 	FBO_t					*sunShadowFbo[4];
 	FBO_t					*screenShadowFbo;
 	FBO_t					*screenSsaoFbo;
+	FBO_t					*ssrPrevFbo;  // Added in OPM: r_ssr, the last frame before its tone map
+	float                   ssrPrevViewProj[16]; // and the world to its clip space
+	int                     ssrPrevFrame; // the frame it is from (0: none yet)
+	FBO_t					*gtaoFbo;
+	FBO_t					*gtaoBlurFbo;
+	FBO_t					*gtaoDepthFbo;
+	FBO_t					*volumeFbo;
+	FBO_t					*volumeBlurFbo;
+	FBO_t					*froxelLightFbo[2];
+	FBO_t					*froxelSumFbo[2];
+	FBO_t					*froxelDepthFbo;
+	FBO_t					*froxelDepthQuarterFbo;
 	FBO_t					*hdrDepthFbo;
+	FBO_t					*waterSceneFbo;
+	FBO_t					*waterReflectFbo;
+	FBO_t					*waterRippleFbo[2]; // Added in OPM: the ripples' grid, this step and the last
 	FBO_t                   *renderCubeFbo;
 
 	shader_t				*defaultShader;
@@ -2494,8 +2700,11 @@ typedef struct {
 	// GPU shader programs
 	//
 	shaderProgram_t genericShader[GENERICDEF_COUNT];
+	shaderProgram_t genericSlimShader[GENERICDEF_COUNT]; // Added in OPM: without the realtime lights' per-pixel loop (GLSL_InitGenericShader)
 	shaderProgram_t textureColorShader;
 	shaderProgram_t rtSkyBakeShader; // Added in OPM: the sky a lightmap texel sees (tr_rtlight.c)
+	shaderProgram_t rtLampBakeShader; // Added in OPM: a lamp's light on the lightmaps (R_RtBakeLamps)
+	shaderProgram_t rtBakeFillShader; // Added in OPM: and its texels no surface covers filled (R_RtLivePass)
 	shaderProgram_t fogShader[FOGDEF_COUNT];
 	shaderProgram_t dlightShader[DLIGHTDEF_COUNT];
 	shaderProgram_t lightallShader[LIGHTDEF_COUNT];
@@ -2506,10 +2715,18 @@ typedef struct {
 	shaderProgram_t tonemapShader;
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
+	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
+	shaderProgram_t froxelShader[4];  // Added in OPM: r_volumetric 2 (froxel_fp.glsl): FROXEL_LIGHT, FROXEL_INTEGRATE, FROXEL_APPLY, FROXEL_DEPTH
 	shaderProgram_t ssaoShader;
+	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];
 	shaderProgram_t testcubeShader;
 	shaderProgram_t greyscaleShader;
+	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
+	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
+	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
+	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
+	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
 
 	// -----------------------------------------
@@ -2625,8 +2842,12 @@ typedef struct {
     int      rtNumSkyLightmaps;
     vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction
     vec4_t   rtSkyColor;       // the sky's light; w: how far it has come in, 0 none
+    image_t *rtBounceImage;    // the light bounced onto each texel of the lightmaps' first page (R_RtBounce), NULL until worked out
+    image_t *rtBounceLampImage; // and the lamps' light bounced, apart from the daylight's (RT_BOUNCE_LAMPS)
+    vec4_t   rtBounce;         // its scale out under the sky (x), deep in a room (y), the probes' (z); w: how far it has come in, 0 none
     int      rtSkyGeneration;  // a new one each time rtSkyRows is written
     image_t *skelBoneImage;    // Added in OPM: the frame's bones, four texels each (tr_skelgpu.c)
+    image_t *skelMorphImage;   // Added in OPM: each posed surface's vertexes' morphs: offset, which target (tr_skelgpu.c)
     int rendererhandle;
     qboolean shadersParsed;
     int frame_skel_index;
@@ -2636,7 +2857,11 @@ typedef struct {
 } trGlobals_t;
 
 extern backEndState_t	backEnd;
+
 extern trGlobals_t	tr;
+
+// Added in OPM: where the frame draws now (backEndState_t.postFbo)
+static ID_INLINE FBO_t *RB_TargetFbo(void) { return backEnd.postFbo ? backEnd.postFbo : tr.renderFbo; }
 extern glstate_t	glState;		// outside of TR since it shouldn't be cleared during ref re-init
 extern glRefConfig_t glRefConfig;
 
@@ -2742,6 +2967,14 @@ extern  cvar_t  *r_forceToneMapMax;
 
 extern  cvar_t  *r_autoExposure;
 extern  cvar_t  *r_forceAutoExposure;
+extern  cvar_t  *r_autoExposureKey;
+extern  cvar_t  *r_autoExposureStrength;
+extern  cvar_t  *r_autoExposureMinEV;
+extern  cvar_t  *r_autoExposureMaxEV;
+extern  cvar_t  *r_autoExposureDarkSpeed;
+extern  cvar_t  *r_autoExposureBrightSpeed;
+extern  cvar_t  *r_autoExposureDebug;
+void RB_EyeAdaptShutdown(void); // Added in OPM: eye adaptation's read back buffer (tr_postprocess.c)
 extern  cvar_t  *r_forceAutoExposureMin;
 extern  cvar_t  *r_forceAutoExposureMax;
 
@@ -2750,6 +2983,18 @@ extern  cvar_t  *r_cameraExposure;
 extern  cvar_t  *r_depthPrepass;
 extern  cvar_t  *r_earlyZ;
 extern  cvar_t  *r_ssao;
+extern  cvar_t  *r_ssr;
+extern  cvar_t  *r_ssrStrength;
+extern  cvar_t  *r_ssrDistance;
+extern  cvar_t  *r_gtao;
+extern  cvar_t  *r_gtaoRadius;
+extern  cvar_t  *r_gtaoStrength;
+extern  cvar_t  *r_volumetric;
+extern  cvar_t  *r_volumetricDensity;
+extern  cvar_t  *r_volumetricAnisotropy;
+extern  cvar_t  *r_volumetricSun;
+extern  cvar_t  *r_volumetricLamps;
+extern  cvar_t  *r_volumetricRange;
 
 extern  cvar_t  *r_normalMapping;
 extern  cvar_t  *r_specularMapping;
@@ -2759,6 +3004,7 @@ extern  cvar_t  *r_parallaxMapOffset;
 extern  cvar_t  *r_parallaxMapShadows;
 extern  cvar_t  *r_cubeMapping;
 extern  cvar_t  *r_cubemapSize;
+extern  cvar_t  *r_cubemapStrength;
 extern  cvar_t  *r_deluxeSpecular;
 extern  cvar_t  *r_pbr;
 extern  cvar_t  *r_baseNormalX;
@@ -2801,7 +3047,12 @@ extern  cvar_t  *r_rtDebug;
 extern  cvar_t  *r_sunShadowScale;
 extern  cvar_t  *r_shadowFilter;
 extern  cvar_t  *r_shadowBlur;
+extern  cvar_t  *r_contactShadows;
+extern  cvar_t  *r_contactShadowLength;
+extern  cvar_t  *r_contactShadowThickness;
 extern  cvar_t  *r_shadowMapSize;
+extern  cvar_t  *r_sunShadowFarSize;
+extern  cvar_t  *r_sunShadowStable;
 extern  cvar_t  *r_shadowCascadeZNear;
 extern  cvar_t  *r_shadowCascadeZFar;
 extern  cvar_t  *r_shadowCascadeZBias;
@@ -2809,8 +3060,10 @@ extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
 extern  cvar_t  *r_skelCull;
+extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
 extern  cvar_t  *r_softParticles;
+extern  cvar_t  *r_alphaToCoverage;
 extern  cvar_t  *r_ignoreDstAlpha;
 
 extern	cvar_t	*r_greyscale;
@@ -2994,7 +3247,12 @@ enum {
 	RT_STAGE_PARTICLE_LIT // the same, as RT_STAGE_LIT
 };
 qboolean R_RtActive(void);
+int      R_RtBakedTile(void);
+void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
+qboolean R_RtLinear(void);
+extern cvar_t *r_linearExposure;
+qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
 void R_RtFreeWorld(void);
@@ -3002,6 +3260,7 @@ void R_RtRenderShadows(const refdef_t *fd);
 void R_RtStandingChanged(const vec3_t mins, const vec3_t maxs);
 void R_RtSetUniforms(shaderProgram_t *sp, int stage, image_t *lightmap, qboolean lightmapped);
 uint64_t R_RtViewMask(void);
+qboolean R_RtSplitBatch(uint64_t surfMask);
 uint64_t R_RtSphereMask(const vec3_t centre, float radius, uint64_t candidates);
 uint64_t R_RtBoxMask(const vec3_t mins, const vec3_t maxs, uint64_t candidates);
 uint64_t R_RtPlaneMask(const cplane_t *plane, uint64_t candidates, uint64_t *back);
@@ -3009,11 +3268,15 @@ int  R_RtStageKind(const shader_t *shader, const shaderStage_t *pStage, qboolean
 qboolean R_RtVertexParticles(void);
 qboolean R_RtIsFoliage(const shader_t *shader);
 qboolean R_RtVertexSky(void);
+qboolean R_RtProbesLive(void);
+#define RT_POLY_BATCH 96 // how far apart the polygons of a batch the probes light may be
 qboolean R_RtIsCharacter(const refEntity_t *ent);
 int R_RtCharacterCapsules(refEntity_t *ent, vec4_t *out, int max);
 void R_RtAddTestEntity(void);
 void R_RtTestCommands(qboolean add);
 void R_RtBindTextures(void);
+void R_SsrSetUniforms(shaderProgram_t *sp);
+void R_RtSetVolumeUniforms(shaderProgram_t *sp);
 void R_RtFreeSkyLightmaps(void);
 void R_RenderPshadowMaps(const refdef_t *fd);
 void R_RenderSunShadowMaps(const refdef_t *fd, int level);
@@ -3182,6 +3445,7 @@ int R_DistanceCullLocalPointAndRadius(float fDist, const vec3_t pt, float radius
 int R_DistanceCullPointAndRadius(float fDist, const vec3_t pt, float radius);
 qboolean R_ImageExists(const char* name);
 void R_FreeImage(image_t *image);
+int R_SunShadowFarSize(void);
 void R_MarkImagesPermanent( void );
 void R_FreeUnusedImages( void );
 int R_CountTextureMemory();
@@ -3223,6 +3487,10 @@ IMPLEMENTATION SPECIFIC FUNCTIONS
 */
 
 void		GLimp_InitExtraExtensions( void );
+// Added in OPM: whether the shaders are built with the bounce of the realtime lights (r_rtBounce at their build)
+qboolean R_RtBounceCompiled(void);
+// Added in OPM: glGetTexImage, to read a texture back (the realtime lights' colours of what they bounce off)
+extern void (APIENTRY *qglGetTexImageOPM)(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
 
 /*
 ====================================================================
@@ -3299,6 +3567,10 @@ typedef struct shaderCommands_s
 	qboolean    groundCover;
 	vec4_t      groundCoverParams;
 
+	// Added in OPM: the batch is polygons (marks, decals): the realtime
+	// bounce lights them from the probes where they are (R_RtSetUniforms)
+	qboolean    polys;
+
 	// Added in OPM: the batch is a skeletal surface the vertex program poses
 	// from the frame's bones (tr_skelgpu.c); tess holds its indexes alone
 	struct {
@@ -3309,6 +3581,8 @@ typedef struct shaderCommands_s
 		vec4_t   lights[SKEL_GPU_MAX_LIGHTS * 3];
 		int      numDents;     // R_GoreDentsGpu
 		vec4_t   dents[SKEL_GPU_MAX_DENTS * 2];
+		int      numMorphs;    // the face's morph targets' weights, 0 for none
+		vec4_t   morphs[SKEL_GPU_MAX_MORPHS / 4];
 		int      numBones;     // the model's, from params[0]
 	} skelGpu;
 
@@ -3394,6 +3668,9 @@ void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
 int R_CubemapForPoint( vec3_t point );
+void R_PlaceEnvProbes( const lump_t *entityLump );
+int R_ViewCubemapForPoint( const vec3_t point );
+void R_ReflectionInfo_f( void );
 
 /*
 ============================================================
@@ -3531,8 +3808,11 @@ void GLSL_SetUniformRtList(shaderProgram_t *program, int uniformNum, const vec4_
 void GLSL_SetUniformRtSky(shaderProgram_t *program, int uniformNum, const vec4_t *v, int generation);
 void GLSL_SetUniformSkelLights(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void GLSL_SetUniformSkelDents(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformSkelMorphs(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 
 shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
+shaderProgram_t *GLSL_GetGenericSlimShader(const shaderProgram_t *generic);
 
 /*
 ============================================================
@@ -3779,7 +4059,9 @@ GROUND COVER (tr_groundcover.c)
 void R_GroundCoverRegisterCvars(void);
 // tr_image.c: an image file's pixels, without making a texture of it
 void R_LoadImage(const char *name, byte **pic, int *width, int *height, GLenum *picFormat, int *numMips);
+qboolean R_ImageFileSize( const char *name, int *width, int *height );
 void R_LoadImageUncompressed(const char *name, byte **pic, int *width, int *height, GLenum *picFormat);
+void R_LightScaleTexture(byte *in, int inwidth, int inheight, qboolean only_gamma);
 void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header);
 void R_GroundCoverFree(void);
 void R_AddGroundCoverSurfaces(void);
@@ -3788,6 +4070,63 @@ void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
 void RB_GroundCoverBindVao(void);
 void RB_GroundCoverDrawElements(void);
+
+/*
+=============================================================
+WATER (tr_water.c)
+=============================================================
+*/
+extern cvar_t *r_water;
+extern cvar_t *r_waterReflect;
+extern cvar_t *r_waterRipples;
+void R_WaterRegisterCvars(void);
+void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs);
+void R_PlaneForSurface(surfaceType_t *surfType, cplane_t *plane);
+void R_WaterLoadWorld(const char *mapName);
+
+// Added in OPM: tr_froxel.c, r_volumetric 2 and the maps' fog banks
+extern cvar_t *r_volumetricFog;
+extern cvar_t *r_volumetricTemporal;
+void R_FroxelInit(void);
+void R_FroxelShutdown(void);
+void R_FogLoadWorld(const char *mapName);
+qboolean R_FroxelFogOn(void);
+extern cvar_t *r_volumetricSmoke;
+qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
+qboolean R_FroxelSpriteToo(const refSprite_t *sprite);
+qboolean R_FroxelHasWork(void);
+void RB_FroxelOpaqueDone(void);
+void RB_FroxelBeginView(void);
+void R_FroxelSetFog(shaderProgram_t *sp, int stateBits);
+void RB_FroxelFogDepth(float depth);
+qboolean R_FroxelOn(void);
+void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qboolean mainView);
+void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
+qboolean RB_WaterDraw(shaderCommands_t *input);
+void RB_BeachDraw(void);
+void R_WaterInfo_f(void);
+void R_WaterReload_f(void);
+void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
+void RE_AddWaterRipples(const float *ripples, int numRipples);
+void R_WaterSetWet(shaderProgram_t *sp);
+void R_WaterSetDry(shaderProgram_t *sp);
+void RB_WaterSawSky(const shader_t *sh);
+
+// Added in OPM: what is on the lens (tr_lens.c)
+extern cvar_t *r_lens;
+// Added in OPM: the bloom (tr_postprocess.c)
+extern cvar_t *r_bloom;
+extern cvar_t *r_bloomThreshold;
+extern cvar_t *r_bloomKnee;
+extern cvar_t *r_bloomEmissive;
+void R_BloomRegisterCvars(void);
+void RB_Bloom(FBO_t *fbo, ivec4_t box);
+qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox);
+extern cvar_t *r_sharpen;
+void R_LensRegisterCvars(void);
+void RE_SetLensSpots(const float *spots, int num);
+void RB_LensDraw(FBO_t *fbo, ivec4_t box);
 
 // tr_skelgpu.c (Added in OPM): skeletal models posed by the vertex program
 struct skelSurfaceGame_s;
@@ -3851,7 +4190,6 @@ void R_InfoWorldTris_f(void);
 void R_PrintInfoWorldtris(void);
 void R_DebugSkeleton(void);
 
-extern int g_nStaticSurfaces;
 extern qboolean g_bInfostaticmodels;
 extern qboolean g_bInfoworldtris;
 

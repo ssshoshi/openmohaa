@@ -31,6 +31,9 @@ cvar_t *cg_showtempmodels;
 cvar_t *cg_max_tempmodels;
 cvar_t *cg_reserve_tempmodels;
 cvar_t *cg_detail;
+// Added in OPM: the sprites that are puffs of smoke, dust or spray with a
+// volume, whatever effect throws them (T2_SMOKEVOLUME)
+cvar_t *cg_smokeVolumeSprites;
 cvar_t *cg_effectdetail;
 cvar_t *cg_effect_physicsrate;
 
@@ -226,10 +229,68 @@ void ClientGameCommandManager::InitializeTempModels(void)
     m_tempmodels[numtempmodels - 1].next = NULL;
 }
 
+/*
+===============
+CG_SmokeVolumeSprite
+
+Added in OPM: whether a temp model's sprite is one cg_smokeVolumeSprites
+names (its file's name, without folder or .spr): smoke, dust and spray the
+renderer may draw in the air with a volume (r_volumetric 2), lit and
+shadowed, whatever effect throws it. The emitter keyword smokevolume marks
+any other.
+===============
+*/
+static qboolean CG_SmokeVolumeSprite(const char *model)
+{
+    static int  modified = -1;
+    static char names[64][MAX_QPATH];
+    static int  numNames;
+    char        base[MAX_QPATH];
+    const char *slash;
+    int         i;
+
+    if (!cg_smokeVolumeSprites) {
+        return qfalse;
+    }
+    if (modified != cg_smokeVolumeSprites->modificationCount) {
+        const char *text = cg_smokeVolumeSprites->string;
+        const char *token;
+
+        modified = cg_smokeVolumeSprites->modificationCount;
+        numNames = 0;
+        for (token = COM_Parse((char **)&text); token[0] && numNames < 64; token = COM_Parse((char **)&text)) {
+            Q_strncpyz(names[numNames++], token, MAX_QPATH);
+        }
+    }
+    if (!numNames) {
+        return qfalse;
+    }
+
+    slash = strrchr(model, '/');
+    Q_strncpyz(base, slash ? slash + 1 : model, sizeof(base));
+    COM_StripExtension(base, base, sizeof(base));
+    if (Q_stricmp(model + strlen(model) - Q_min(strlen(model), 4), ".spr")) {
+        return qfalse;
+    }
+    for (i = 0; i < numNames; i++) {
+        if (!Q_stricmp(base, names[i])) {
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
 void ClientGameCommandManager::InitializeTempModelCvars(void)
 {
     cg_showtempmodels = cgi.Cvar_Get("cg_showtempmodels", "0", 0);
     cg_detail         = cgi.Cvar_Get("detail", "1", CVAR_ARCHIVE);
+    // Added in OPM
+    cg_smokeVolumeSprites = cgi.Cvar_Get(
+        "cg_smokeVolumeSprites",
+        "vsssource vsssource2 explsmoke smokegrenade_german dustdrop dirtplume bh_snow_puff oceanspray opm_oceanspray "
+        "opm_ocean_plume opm_waterplume",
+        CVAR_ARCHIVE
+    );
 
     cg_effectdetail = cgi.Cvar_Get("cg_effectdetail", "1.0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_effectdetail, 0.2, 1.0, qfalse);
@@ -882,6 +943,39 @@ void CG_AddTempModels(void)
 //===============
 #define TOO_MUCH_TIME_PASSED 500
 
+/*
+===============
+CG_MuzzleLight
+
+Added in OPM: a muzzle flash's light (T2_MUZZLEFLASH). The game's models hold
+a dim one for all of its life (0.11 s, a colour of a quarter, so it hardly
+shows); this is brightest on the shot and gone by its end, reaches further,
+and is not quite the same from one shot to the next. cg_muzzleLight scales it
+(0 is the game's own).
+===============
+*/
+static void CG_MuzzleLight(const ctempmodel_t *p, float *intensity, vec3_t color)
+{
+    static cvar_t *cg_muzzleLight;
+    float          gain, age, shot, fade;
+
+    if (!cg_muzzleLight) {
+        cg_muzzleLight = cgi.Cvar_Get("cg_muzzleLight", "1", CVAR_ARCHIVE);
+    }
+    gain = cg_muzzleLight->value;
+    if (gain <= 0 || p->cgd.life <= 0) {
+        return;
+    }
+
+    age  = Q_clamp_float((float)(cg.time - p->cgd.createTime) / (float)p->cgd.life, 0, 1);
+    fade = (1.0f - age) * (1.0f - age);
+    // the same shot keeps its own strength from frame to frame
+    shot = 0.8f + 0.4f * (float)((unsigned)(p->cgd.createTime * 2654435761u) >> 16 & 0xFF) / 255.0f;
+
+    *intensity *= 1.0f + 0.6f * gain;
+    VectorScale(color, 3.0f * gain * shot * fade, color);
+}
+
 void ClientGameCommandManager::AddTempModels(void)
 {
     ctempmodel_t *p, *next;
@@ -1047,6 +1141,14 @@ void ClientGameCommandManager::AddTempModels(void)
 
         // Animate and do trails (swipes)
         newEnt.renderfx   = p->ent.renderfx;
+        // Added in OPM: a puff of smoke the renderer may draw in the air
+        if (p->cgd.flags2 & T2_SMOKEVOLUME) {
+            newEnt.renderfx |= RF_VOLUME_SMOKE;
+            // its colour has the light grid's in it (OtherTempModelEffects)
+            if (p->cgd.flags & T_COLLISION) {
+                newEnt.renderfx |= RF_SMOKE_GRIDLIT;
+            }
+        }
         newEnt.hModel     = p->ent.hModel;
         newEnt.reType     = p->ent.reType;
         newEnt.shaderTime = p->ent.shaderTime;
@@ -1070,14 +1172,15 @@ void ClientGameCommandManager::AddTempModels(void)
         // Add to the ref
         if (p->cgd.flags & T_DLIGHT) {
             // Tempmodel is a Dynamic Light
-            cgi.R_AddLightToScene(
-                p->cgd.origin,
-                p->cgd.lightIntensity * scale,
-                p->cgd.color[0],
-                p->cgd.color[1],
-                p->cgd.color[2],
-                p->cgd.lightType
-            );
+            float  intensity = p->cgd.lightIntensity * scale;
+            vec3_t color;
+
+            VectorCopy(p->cgd.color, color);
+            // Added in OPM: a muzzle flash lights up as a flash does
+            if (p->cgd.flags2 & T2_MUZZLEFLASH) {
+                CG_MuzzleLight(p, &intensity, color);
+            }
+            cgi.R_AddLightToScene(p->cgd.origin, intensity, color[0], color[1], color[2], p->cgd.lightType);
         } else if (p->ent.reType == RT_SPRITE) {
             vec3_t vTestAngles;
             cgi.R_AddRefSpriteToScene(&newEnt); // Sprite
@@ -1303,6 +1406,11 @@ void ClientGameCommandManager::SpawnTempModel(int mcount)
 
         p->addedOnce    = qfalse;
         p->lastEntValid = qfalse;
+
+        // Added in OPM: smoke, dust or spray with a volume, whatever throws it
+        if (p->modelname.length() && CG_SmokeVolumeSprite(p->modelname.c_str())) {
+            p->cgd.flags2 |= T2_SMOKEVOLUME;
+        }
 
         if (p->modelname.length()) {
             ent.hModel = cgi.R_RegisterModel(p->modelname.c_str());

@@ -40,6 +40,12 @@ extern "C" {
     // Once a frame: advances the simulation to cg.time.
     void CG_PhysicsFrame(void);
 
+    // How many steps the simulation has taken, and how far past the last one
+    // its clock was left, 0 to 1: drawn, what the simulation moves goes that
+    // far from where the step before left it to where the last one did.
+    int   CG_PhysicsStepSerial(void);
+    float CG_PhysicsLerp(void);
+
     // A round's traced path, and an explosion (kind as for the ragdolls):
     // props in the way are knocked about.
     void CG_PhysicsNoteBullet(const vec3_t start, const vec3_t end, int large);

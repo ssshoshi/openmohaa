@@ -67,12 +67,19 @@ UNLIT_BLENDS = {
 #   f0:     specular reflectance at normal incidence (also darkens the diffuse
 #           by 1 - f0 in lightall, so keep dielectrics near 0.04)
 #   gloss:  gloss range, crevices at the low end and exposed surfaces at the
-#           high end (r_glossType 0: roughness = exp2(-3 * gloss))
+#           high end, as smoothness (r_glossType 1, the default:
+#           roughness = 1 - gloss)
 #   bump:   normal strength multiplier
 #   depth:  parallax depth, as a fraction of r_baseParallax; presets without
 #           one get a plain normal map even with --parallax (see PARALLAX)
+#   metalness, metal_gloss: bare metal's specular takes the texture's own
+#           colour (and its diffuse gives way to it, lightall darkens the
+#           diffuse by 1 - specular), up to this share, and its gloss this
+#           range; per texel, as bare metal is grey where rust and the wood
+#           of a rifle's stock are warm and saturated (see metal_weight)
 PRESETS = {
-    "metal":   dict(f0=0.12, gloss=(0.35, 0.65), bump=0.8, depth=0.5),
+    "metal":   dict(f0=0.12, gloss=(0.35, 0.65), bump=0.8, depth=0.5,
+                    metalness=0.55, metal_gloss=(0.45, 0.80)),
     "painted": dict(f0=0.05, gloss=(0.30, 0.55), bump=0.7),
     # MOH:AA's "glass" textures are mostly whole windows, frames included
     "glass":   dict(f0=0.06, gloss=(0.45, 0.75), bump=0.5),
@@ -465,6 +472,19 @@ def deepbump_relief(grey, clamp, mode, size, p, strength):
     return normal, height, ph, capped
 
 
+def metal_weight(rgb):
+    """How bare-metal a texel looks, 0 to 1: grey (steel, iron, tin) is,
+    warm and saturated (rust, brown paint, a rifle's wooden stock) is not.
+    Brass and copper are warm too but bright, so brightness gives some back."""
+    mx = rgb.max(axis=-1)
+    mn = rgb.min(axis=-1)
+    sat = (mx - mn) / np.maximum(mx, 1e-4)
+    warm = np.clip((rgb[..., 0] - rgb[..., 2]) * 4.0, 0.0, 1.0)
+    grey = 1.0 - np.clip((sat - 0.12) / 0.25, 0.0, 1.0)
+    shiny_warm = np.clip((mx - 0.55) / 0.3, 0.0, 1.0) * warm
+    return np.clip(np.maximum(grey, shiny_warm), 0.0, 1.0)
+
+
 def gen_maps(img, preset, clamp, strength, max_size, spec_scale):
     """Return (nh RGBA image, s LA image, preview planes)."""
     w, h = img.size
@@ -510,11 +530,26 @@ def gen_maps(img, preset, clamp, strength, max_size, spec_scale):
     cavity = ndimage.gaussian_filter(height, 1.0, mode=mode) + 0.5
     lo, hi = p["gloss"]
     gloss = lo + (hi - lo) * np.clip(cavity, 0.0, 1.0)
-    f0 = p["f0"] * (0.6 + 0.4 * np.clip(cavity * 2.0, 0.0, 1.0))
-    spec = np.empty((h, w, 2), dtype=np.uint8)
-    spec[..., 0] = np.clip(f0 * 255.0 + 0.5, 0, 255)
-    spec[..., 1] = np.clip(gloss * 255.0 + 0.5, 0, 255)
-    s_img = Image.fromarray(spec, "LA")
+    occlusion = 0.6 + 0.4 * np.clip(cavity * 2.0, 0.0, 1.0)
+    f0 = p["f0"] * occlusion
+    if "metalness" in p:
+        # bare metal: the specular is the texture's own colour (in the
+        # lightmap space lightall shades in), and glossier
+        m = p["metalness"] * metal_weight(rgb)
+        mlo, mhi = p["metal_gloss"]
+        gloss = gloss + m / max(p["metalness"], 1e-4) * (
+            mlo + (mhi - mlo) * np.clip(cavity, 0.0, 1.0) - gloss)
+        f0rgb = (f0[..., None] * (1.0 - m[..., None])
+                 + rgb * (m * occlusion)[..., None])
+        spec = np.empty((h, w, 4), dtype=np.uint8)
+        spec[..., :3] = np.clip(f0rgb * 255.0 + 0.5, 0, 255)
+        spec[..., 3] = np.clip(gloss * 255.0 + 0.5, 0, 255)
+        s_img = Image.fromarray(spec, "RGBA")
+    else:
+        spec = np.empty((h, w, 2), dtype=np.uint8)
+        spec[..., 0] = np.clip(f0 * 255.0 + 0.5, 0, 255)
+        spec[..., 1] = np.clip(gloss * 255.0 + 0.5, 0, 255)
+        s_img = Image.fromarray(spec, "LA")
     if spec_scale < 1.0:
         sw = max(1, round(w * spec_scale))
         sh = max(1, round(h * spec_scale))
@@ -656,7 +691,7 @@ def write_preview(vfs, jobs, args, path):
     rng = random.Random(1)
     pick = rng.sample(jobs, min(args.preview, len(jobs)))
     cell = 192
-    sheet = Image.new("RGB", (cell * 4, cell * len(pick)), (32, 32, 32))
+    sheet = Image.new("RGB", (cell * 5, cell * len(pick)), (32, 32, 32))
     for row, (base, entry, preset, clamp, _, _) in enumerate(pick):
         img = load_rgba(vfs.read(entry))
         _, _, (diffuse, nh, spec) = gen_maps(
@@ -665,14 +700,21 @@ def write_preview(vfs, jobs, args, path):
             diffuse.convert("RGB"),
             Image.fromarray(nh[..., :3], "RGB"),
             Image.fromarray(nh[..., 3], "L").convert("RGB"),
-            Image.fromarray(spec[..., 1], "L").convert("RGB"),
+            Image.fromarray(spec[..., -1], "L").convert("RGB"),
+            # the specular colour, x4 to be seen (grey for all but metal)
+            Image.fromarray(np.clip(spec[..., :-1].astype(np.float32) * 4.0,
+                                    0, 255).astype(np.uint8)[..., :3]
+                            if spec.shape[-1] == 4 else
+                            np.repeat(np.clip(spec[..., :1].astype(np.float32) * 4.0,
+                                              0, 255).astype(np.uint8), 3, axis=-1),
+                            "RGB"),
         ]
         for col, plane in enumerate(planes):
             sheet.paste(plane.resize((cell, cell), Image.BILINEAR),
                         (col * cell, row * cell))
         print("  preview %2d: %s [%s]" % (row, base, preset))
     sheet.save(path)
-    print("wrote preview %s (diffuse | normal | height | gloss)" % path)
+    print("wrote preview %s (diffuse | normal | height | gloss | specular x4)" % path)
 
 
 def selftest():

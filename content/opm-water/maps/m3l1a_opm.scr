@@ -1,0 +1,42 @@
+//=============================================================================
+// maps/m3l1a_opm.scr - OpenMoHAA add-on for m3l1a (Omaha Beach)
+//
+// The men of the first waves who never got out of the water: bodies in the
+// surf along the beach, which the waves lift and roll and wash up against the
+// sand. The cgame floats corpses in water and bleeds them into it
+// (cg_water.cpp); the surf and the blood in it are in water/m3l1a.txt.
+//
+// Runs next to the map's own script (Level::StartMapAddon), at level start and
+// again whenever a save is loaded. The bodies are spawned once; a save keeps
+// them.
+//=============================================================================
+
+	if (level.opm_shore_bodies != NIL)
+		end
+	level.opm_shore_bodies = 1
+
+	local.models[1] = "models/human/dday_29th_private.tik"
+	local.models[2] = "models/human/2nd-ranger_private.tik"
+	local.models[3] = "models/human/dday_engineer.tik"
+	local.models[4] = "models/human/2nd-ranger_sergeant.tik"
+	local.models[5] = "models/human/dday_29th_private_patient.tik"
+
+	// Strung along the beach, a few hundred units apart, out in the surf
+	// where it is from a foot to three deep (the waterline is at y -770).
+	local.count = 12
+	for (local.i = 1; local.i <= local.count; local.i++)
+	{
+		local.x = -2300 + local.i * 380 + randomfloat 200 - 100
+		local.y = -1320 + randomfloat 440
+		// the water's top there (its brushes slope up the beach), and a little
+		local.z = -456 + 0.029 * local.y + 6
+
+		local.name = "opm_shore_body" + local.i
+		spawn local.models[(local.i % 5) + 1] targetname local.name
+		local.body = $(local.name)
+		local.body.origin = (local.x local.y local.z)
+		local.body.angles = (0 (randomfloat 360) 0)
+		local.body kill
+	}
+
+end

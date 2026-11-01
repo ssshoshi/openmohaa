@@ -1948,6 +1948,13 @@ typedef struct usercmd_s {
 // a skeletal model: refEntity_t gore_dents holds dents to push into it
 // (goreDent_t), and triangles a cut part has folded to nothing are left out.
 #define RF_GORE_DENTS			(1<<27)
+// OPM: set by cgame only, never sent by a server. A sprite that is a puff of
+// smoke with a volume: with r_volumetric 2 the renderer puts it in the air's
+// grid (tr_froxel.c) and draws no sprite for it, nearer than the grid's depth.
+#define RF_VOLUME_SMOKE			(1<<30)
+// OPM: set by cgame only, never sent by a server. Such a sprite's colour has
+// the light grid's light in it already (R_GetLightingForSmoke).
+#define RF_SMOKE_GRIDLIT		(1<<6)
 //
 // use this mask when propagating renderfx from one entity to another
 //

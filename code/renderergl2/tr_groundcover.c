@@ -188,6 +188,7 @@ static struct {
     qboolean    gpu;
 
     qboolean    gpuShader; // the shader is one the vertex program can sway (GC_CheckGpuShader)
+    const char *gpuWhyNot; // and why not, when it isn't
     GLuint      indexBuffer; // the tufts' indexes, the same in every cell
     gcChunk_t  *chunks[GC_MAX_CHUNKS];
     int         numChunks;
@@ -207,6 +208,17 @@ static struct {
     int              drawsFrame;
 } gc;
 
+// the grass's material maps, while the card draws it without them (GC_UseCard)
+static struct {
+    qboolean        saved;
+    textureBundle_t normal, specular, deluxe;
+    int             index;
+    vec4_t          normalScale, specularScale;
+} gcMaterial;
+
+static void GC_StripMaterialMaps(void);
+static void GC_RestoreMaterialMaps(void);
+static void GC_UseCard(qboolean card);
 static void GC_CheckGpuShader(void);
 
 // why the samples of the cells made so far were dropped (groundcoverinfo)
@@ -297,9 +309,14 @@ static void GC_FreeCell(gcCell_t *cell)
     cell->built    = qfalse;
 }
 
+static void GC_AbandonBuild(void);
+
 static void GC_FreeAllCells(void)
 {
     gcCell_t *cell;
+
+    // a cell part sampled is of the cells about to go
+    GC_AbandonBuild();
 
     for (cell = gc.builtList; cell; cell = cell->nextBuilt) {
         GC_FreeCell(cell);
@@ -547,6 +564,8 @@ From the BSP as it is in the file, before the renderer has packed its
 lightmaps into atlases.
 ================
 */
+static void GC_LoadShaderMask(int slot);
+
 void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
 {
     const lump_t     *shaderLump  = Q_GetLumpByVersion(header, LUMP_SHADERS);
@@ -577,7 +596,12 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     }
 
     GC_MeasureGrassAlbedo();
+    // whether the card could draw it without its material maps; it keeps them
+    // until it does (GC_UseCard)
+    Com_Memset(&gcMaterial, 0, sizeof(gcMaterial));
+    GC_StripMaterialMaps();
     GC_CheckGpuShader();
+    GC_RestoreMaterialMaps();
 
     dshaders       = (const dshader_t *)(fileBase + shaderLump->fileofs);
     gc.numShaders  = shaderLump->filelen / sizeof(dshader_t);
@@ -731,6 +755,29 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
 
     GC_BinSources();
 
+    // Added in OPM
+    //  Each grass shader's mask: made from its ground texture decoded on the
+    //  CPU, a tenth of a second for a 2048 one. Left to the first cell that
+    //  needed it, it was a hitch each time new ground came into view, so the
+    //  masks of every shader this map grows grass on are made with the map.
+    if (r_groundCoverMask->integer) {
+        byte *used = ri.Malloc(gc.numGrassShaders);
+
+        Com_Memset(used, 0, gc.numGrassShaders);
+        for (i = 0; i < gc.numTris; i++) {
+            used[gc.tris[i].shader] = 1;
+        }
+        for (i = 0; i < gc.numTerrain; i++) {
+            used[gc.terrain[i].shader] = 1;
+        }
+        for (i = 0; i < gc.numGrassShaders; i++) {
+            if (used[i] && !gc.shaders[i].loaded) {
+                GC_LoadShaderMask(i);
+            }
+        }
+        ri.Free(used);
+    }
+
     gc.active = qtrue;
     ri.Printf(PRINT_DEVELOPER, "Ground cover: %d grass shaders, %d triangles, %d terrain patches, %dx%d cells\n",
         gc.numGrassShaders, gc.numTris, gc.numTerrain, gc.cellsX, gc.cellsY);
@@ -744,30 +791,105 @@ On the card
 =============================================================================
 */
 
+// The tufts drawn from the card take no material maps: their tangent and
+// lightmap arrays carry where each stands and how it sways (GC_SetAttrib).
+// matgen's pak gives every texture GL2 loads a normal and a specular map
+// (zzzzzzzzzz-opm-materials-2.pk3), this one's too, and with them the card
+// couldn't draw the tufts (GC_CheckGpuShader): every tuft was swayed on the
+// CPU and copied, each frame, 5 ms of a frame in the tech demo's field. So
+// the grass's are let go while the card draws it, and given back to the CPU's
+// tufts (r_groundCoverGPU 0), whose turned over faces they keep lit.
+static void GC_StripMaterialMaps(void)
+{
+    shaderStage_t *stage = gc.shader->stages[0];
+
+    if (!stage || stage->glslShaderGroup != tr.lightallShader) {
+        return;
+    }
+    if (!gcMaterial.saved) {
+        gcMaterial.saved    = qtrue;
+        gcMaterial.normal   = stage->bundle[TB_NORMALMAP];
+        gcMaterial.specular = stage->bundle[TB_SPECULARMAP];
+        gcMaterial.deluxe   = stage->bundle[TB_DELUXEMAP];
+        gcMaterial.index    = stage->glslShaderIndex;
+        VectorCopy4(stage->normalScale, gcMaterial.normalScale);
+        VectorCopy4(stage->specularScale, gcMaterial.specularScale);
+    }
+    stage->bundle[TB_NORMALMAP].image[0]   = NULL;
+    stage->bundle[TB_SPECULARMAP].image[0] = NULL;
+    stage->bundle[TB_DELUXEMAP].image[0]   = NULL;
+    stage->glslShaderIndex &= ~(LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP);
+    // and the scales as they are without them (ParseStage): the specular map's
+    // left white specular, all of the diffuse given to it, and black grass
+    VectorSet4(stage->normalScale, 0.0f, 0.0f, 0.0f, 0.0f);
+    if (r_pbr->integer) {
+        stage->specularScale[0] = r_baseGloss->value;
+    } else {
+        stage->specularScale[0] = stage->specularScale[1] = stage->specularScale[2] = r_baseSpecular->value;
+        stage->specularScale[3] = r_baseGloss->value;
+    }
+}
+
+// The grass's own material maps, for the CPU's tufts
+static void GC_RestoreMaterialMaps(void)
+{
+    shaderStage_t *stage = gc.shader->stages[0];
+
+    if (!stage || !gcMaterial.saved) {
+        return;
+    }
+    stage->bundle[TB_NORMALMAP]   = gcMaterial.normal;
+    stage->bundle[TB_SPECULARMAP] = gcMaterial.specular;
+    stage->bundle[TB_DELUXEMAP]   = gcMaterial.deluxe;
+    stage->glslShaderIndex        = gcMaterial.index;
+    VectorCopy4(gcMaterial.normalScale, stage->normalScale);
+    VectorCopy4(gcMaterial.specularScale, stage->specularScale);
+}
+
+// Drawn from the card or not: the grass's material maps let go or given back
+static void GC_UseCard(qboolean card)
+{
+    if (card) {
+        GC_StripMaterialMaps();
+    } else {
+        GC_RestoreMaterialMaps();
+    }
+}
+
 // Whether the vertex program that sways the tufts can draw the shader: one
 // lightall stage with nothing worked out per vertex on the CPU, and none of
 // the arrays the tufts use for where they stand (tangents, lightmap
-// coordinates, light directions).
+// coordinates). r_realtimeLighting 2 makes the grass's "rgbGen exactVertex"
+// lit by its vertexes, and that kept the card from drawing it, every tuft
+// swayed on the CPU with all of the light live.
 static void GC_CheckGpuShader(void)
 {
     const shaderStage_t *stage = gc.shader->stages[0];
     int                  index, lightType;
 
     gc.gpuShader = qfalse;
+    gc.gpuWhyNot = "not one lightall stage";
     if (!stage || gc.shader->stages[1] || stage->glslShaderGroup != tr.lightallShader) {
         return;
     }
+    gc.gpuWhyNot = "deforms or colours worked out on the CPU";
     if (gc.shader->numDeforms || gc.shader->needsCPUVertexAlpha || gc.shader->needsLGrid || gc.shader->needsLSpherical) {
         return;
     }
     index     = stage->glslShaderIndex;
     lightType = index & LIGHTDEF_LIGHTTYPE_MASK;
-    if (lightType == LIGHTDEF_USE_LIGHTMAP || lightType == LIGHTDEF_USE_LIGHT_VERTEX) {
+    // (lit by its vertexes it may be: with all of the light live its colour
+    // gives way to the ambient, and the tufts bring no light direction, as on
+    // the CPU, where theirs is none; lightall_vp.glsl)
+    gc.gpuWhyNot = "lit by a lightmap";
+    if (lightType == LIGHTDEF_USE_LIGHTMAP) {
         return;
     }
+    gc.gpuWhyNot = "material maps";
     if (index & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_USE_PARALLAXMAP)) {
         return;
     }
+    gc.gpuWhyNot  = NULL;
     gc.gpuShader = qtrue;
 }
 
@@ -1151,11 +1273,13 @@ static qboolean GC_Clear(vec3_t xyz, float below, float above)
     // drawn as triangles of its heightmap, not the smooth surface sampled
     // here, so it gets a tolerance and the tuft goes where the ground is: a
     // little up, more down, as a road laid over terrain is a few units up
-    // and the terrain under it unlit.
+    // and the terrain under it unlit. What it lands on has to be grass too: a
+    // floor laid just over the grass (a house built on the field) is not.
     VectorSet(start, xyz[0], xyz[1], xyz[2] + 64);
     VectorSet(end, xyz[0], xyz[1], xyz[2] - below - 4);
     ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
-    if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f || trace.endpos[2] > xyz[2] + above || trace.endpos[2] < xyz[2] - below) {
+    if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f || trace.endpos[2] > xyz[2] + above || trace.endpos[2] < xyz[2] - below
+        || !(trace.surfaceFlags & SURF_GRASS)) {
         return qfalse;
     }
     xyz[2] = trace.endpos[2];
@@ -1305,63 +1429,121 @@ static void GC_SetVert(srfVert_t *v, const vec3_t xyz, float s, float t, const v
     v->color[3] = 65535;
 }
 
-static void GC_BuildCell(gcCell_t *cell, int cellIndex)
+// Added in OPM
+//  The cell being sampled. A cell is hundreds of tufts, each tried with a
+//  trace through the world, and on a heavy map one cell took a tenth of a
+//  second and more: the per frame budget was looked at only between cells.
+//  So a cell is sampled a slice at a time, its place in the sampling kept
+//  here between frames, and finished when all of its ground has been
+//  tried. The random numbers come in the same order however it is sliced,
+//  so the cell is the same as if it had been built at once.
+static struct {
+    gcCell_t      *cell;      // NULL: none under way
+    int            cellIndex;
+    int            r, n, attempts;
+    int            type, index;
+    unsigned int   rnd, pick;
+    float          x0, y0, x1, y1;
+    int            numTufts, numAccepted;
+    gcBuildTuft_t *tufts;     // GC_MAX_TUFTS_CELL
+} gcBuild;
+
+static void GC_AbandonBuild(void)
+{
+    gcBuild.cell = NULL;
+    if (gcBuild.tufts) {
+        ri.Free(gcBuild.tufts);
+        gcBuild.tufts = NULL;
+    }
+}
+
+// Sample the cell under way until the budget, from buildStart, runs out.
+// qtrue when it is done and built.
+static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
 {
     const float   density  = Com_Clamp(0, 8, r_groundCoverDensity->value) / (32.0f * 32.0f);
     const float   scale    = Com_Clamp(0.25f, 4, r_groundCoverHeight->value);
     const float   bright   = Com_Clamp(0, 4, r_groundCoverBrightness->value);
     float         cx0      = gc.originX + (cellIndex % gc.cellsX) * GC_CELL_SIZE;
     float         cy0      = gc.originY + (cellIndex / gc.cellsX) * GC_CELL_SIZE;
-    gcBuildTuft_t tufts[GC_MAX_TUFTS_CELL];
-    int           numTufts = 0;
-    int           r, n, attempts;
-    int           numAccepted = 0;
-    unsigned int  pick = GC_Hash(cellIndex * 2654435761u + 7u);
+    gcBuildTuft_t *tufts;
+    int           numTufts, n;
 
-    cell->built     = qtrue;
-    cell->nextBuilt = gc.builtList;
-    gc.builtList    = cell;
-    gc.numBuilt++;
+    // a new cell: from the start
+    if (gcBuild.cell != cell) {
+        if (!gcBuild.tufts) {
+            gcBuild.tufts = ri.Malloc(GC_MAX_TUFTS_CELL * sizeof(gcBuildTuft_t));
+        }
+        gcBuild.cell        = cell;
+        gcBuild.cellIndex   = cellIndex;
+        gcBuild.r           = -1;
+        gcBuild.n           = 0;
+        gcBuild.attempts    = 0;
+        gcBuild.numTufts    = 0;
+        gcBuild.numAccepted = 0;
+        gcBuild.pick        = GC_Hash(cellIndex * 2654435761u + 7u);
+    }
+    tufts = gcBuild.tufts;
 
-    for (r = 0; r < cell->numRefs; r++) {
-        int          ref  = gc.refs[cell->firstRef + r];
-        int          type = ref >> 28;
-        int          index = ref & 0x0fffffff;
-        unsigned int rnd   = GC_Hash(cellIndex * 7919u + ref * 104729u + 1u);
-        vec3_t       mins, maxs;
-        float        x0, y0, x1, y1, w;
+    for (;;) {
+        // the next source in the cell
+        if (gcBuild.n >= gcBuild.attempts) {
+            int    ref;
+            vec3_t mins, maxs;
+            float  w;
 
-        // sample the part of the source in this cell, as seen from above
-        GC_SourceBounds(ref, mins, maxs);
-        x0 = MAX(mins[0], cx0);
-        y0 = MAX(mins[1], cy0);
-        x1 = MIN(maxs[0], cx0 + GC_CELL_SIZE);
-        y1 = MIN(maxs[1], cy0 + GC_CELL_SIZE);
-        if (x1 <= x0 || y1 <= y0) {
+            if (++gcBuild.r >= cell->numRefs) {
+                break;
+            }
+            ref           = gc.refs[cell->firstRef + gcBuild.r];
+            gcBuild.type  = ref >> 28;
+            gcBuild.index = ref & 0x0fffffff;
+            gcBuild.rnd   = GC_Hash(cellIndex * 7919u + ref * 104729u + 1u);
+            gcBuild.n     = 0;
+            gcBuild.attempts = 0;
+
+            // sample the part of the source in this cell, as seen from above
+            GC_SourceBounds(ref, mins, maxs);
+            gcBuild.x0 = MAX(mins[0], cx0);
+            gcBuild.y0 = MAX(mins[1], cy0);
+            gcBuild.x1 = MIN(maxs[0], cx0 + GC_CELL_SIZE);
+            gcBuild.y1 = MIN(maxs[1], cy0 + GC_CELL_SIZE);
+            if (gcBuild.x1 <= gcBuild.x0 || gcBuild.y1 <= gcBuild.y0) {
+                continue;
+            }
+
+            // the patches keep about half
+            w                = (gcBuild.x1 - gcBuild.x0) * (gcBuild.y1 - gcBuild.y0) * density * 2.0f;
+            gcBuild.attempts = (int)w + (GC_Rand(&gcBuild.rnd) < w - (int)w ? 1 : 0);
             continue;
         }
 
-        // the patches keep about half
-        w        = (x1 - x0) * (y1 - y0) * density * 2.0f;
-        attempts = (int)w + (GC_Rand(&rnd) < w - (int)w ? 1 : 0);
+        // out of time: on from here next frame
+        if (!(gcBuild.n & 15) && R_MicroSeconds() - buildStart > GC_BUILD_BUDGET_US) {
+            return qfalse;
+        }
 
-        for (n = 0; n < attempts; n++) {
+        {
+            const int      type = gcBuild.type, index = gcBuild.index;
+            unsigned int  *rnd  = &gcBuild.rnd;
             gcSample_t     sample;
             gcBuildTuft_t *bt;
             gcTuft_t      *tuft;
-            float      x = x0 + GC_Rand(&rnd) * (x1 - x0);
-            float      y = y0 + GC_Rand(&rnd) * (y1 - y0);
-            qboolean   ok;
+            float          x = gcBuild.x0 + GC_Rand(rnd) * (gcBuild.x1 - gcBuild.x0);
+            float          y = gcBuild.y0 + GC_Rand(rnd) * (gcBuild.y1 - gcBuild.y0);
+            qboolean       ok;
+
+            gcBuild.n++;
 
             if (type == GC_SRC_TRI) {
-                ok = GC_SampleTri(&gc.tris[index], x, y, &sample, &rnd);
+                ok = GC_SampleTri(&gc.tris[index], x, y, &sample, rnd);
             } else {
-                ok = GC_SampleTerrain(&gc.terrain[index], x, y, &sample, &rnd);
+                ok = GC_SampleTerrain(&gc.terrain[index], x, y, &sample, rnd);
             }
             if (!ok) {
                 continue;
             }
-            if (GC_Patchiness(x, y) <= GC_Rand(&rnd)) {
+            if (GC_Patchiness(x, y) <= GC_Rand(rnd)) {
                 continue;
             }
             if (!GC_Clear(sample.xyz, type == GC_SRC_TERRAIN ? 16.0f : 3.0f, type == GC_SRC_TERRAIN ? 5.0f : 3.0f)) {
@@ -1373,11 +1555,11 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
             // A cell holds GC_MAX_TUFTS_CELL. Past that, each tuft that
             // stands replaces a kept one by chance, so every source keeps
             // its share however many come before it.
-            numAccepted++;
-            if (numTufts < GC_MAX_TUFTS_CELL) {
-                bt = &tufts[numTufts++];
+            gcBuild.numAccepted++;
+            if (gcBuild.numTufts < GC_MAX_TUFTS_CELL) {
+                bt = &tufts[gcBuild.numTufts++];
             } else {
-                int slot = (int)(GC_Rand(&pick) * numAccepted);
+                int slot = (int)(GC_Rand(&gcBuild.pick) * gcBuild.numAccepted);
                 if (slot >= GC_MAX_TUFTS_CELL) {
                     continue;
                 }
@@ -1387,23 +1569,32 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
             VectorCopy(sample.xyz, tuft->root);
             tuft->root[2] -= 1.5f; // into the ground, so no gap shows on a slope
             // most tufts are gone by half the distance, a few go on to it
-            tuft->fadeEnd = 0.25f + 0.75f * GC_Rand(&rnd) * GC_Rand(&rnd);
-            tuft->phase   = GC_Rand(&rnd) * 2.0f * M_PI;
-            tuft->flex    = 0.6f + 0.6f * GC_Rand(&rnd);
+            tuft->fadeEnd = 0.25f + 0.75f * GC_Rand(rnd) * GC_Rand(rnd);
+            tuft->phase   = GC_Rand(rnd) * 2.0f * M_PI;
+            tuft->flex    = 0.6f + 0.6f * GC_Rand(rnd);
 
-            VectorScale(sample.light, bright * (0.85f + 0.25f * GC_Rand(&rnd)), bt->color);
+            VectorScale(sample.light, bright * (0.85f + 0.25f * GC_Rand(rnd)), bt->color);
             bt->color[0] *= sample.tint[0];
             bt->color[1] *= sample.tint[1];
             bt->color[2] *= sample.tint[2];
         }
     }
 
+    // all of it tried: the cell is built
+    numTufts     = gcBuild.numTufts;
+    gcBuild.cell = NULL;
+
+    cell->built     = qtrue;
+    cell->nextBuilt = gc.builtList;
+    gc.builtList    = cell;
+    gc.numBuilt++;
+
     // the farthest reaching first, so a far cell draws a prefix of them
     qsort(tufts, numTufts, sizeof(gcBuildTuft_t), GC_CompareTufts);
 
     cell->numTufts = numTufts;
     if (!numTufts) {
-        return;
+        return qtrue;
     }
 
     cell->tufts   = ri.Malloc(numTufts * sizeof(gcTuft_t));
@@ -1459,6 +1650,7 @@ static void GC_BuildCell(gcCell_t *cell, int cellIndex)
     if (gc.gpu) {
         GC_UploadCell(cell);
     }
+    return qtrue;
 }
 
 /*
@@ -1544,6 +1736,7 @@ void R_AddGroundCoverSurfaces(void)
         gc.brightness = r_groundCoverBrightness->value;
         gc.mask    = r_groundCoverMask->integer;
         gc.gpu     = GC_GpuAvailable();
+        GC_UseCard(gc.gpu);
     }
 
     // world space; the static models added before this leave theirs set
@@ -1570,6 +1763,18 @@ void R_AddGroundCoverSurfaces(void)
     rtCandidates = R_RtViewMask();
     firstDraw    = gc.numDraws;
 
+    // the cell under way first, wherever it is now: not in range any more,
+    // it is dropped and taken up again from the start when it is
+    if (gcBuild.cell) {
+        gcCell_t *cell = gcBuild.cell;
+
+        if (GC_DistanceToBounds(origin, cell->bounds) >= range) {
+            gcBuild.cell = NULL;
+        } else {
+            GC_BuildCell(cell, gcBuild.cellIndex, buildStart);
+        }
+    }
+
     for (y = range4[1]; y <= range4[3]; y++) {
         for (x = range4[0]; x <= range4[2]; x++) {
             int               cellIndex = y * gc.cellsX + x;
@@ -1590,11 +1795,14 @@ void R_AddGroundCoverSurfaces(void)
             }
 
             if (!cell->built) {
-                // a few a frame; the rest come in over the next frames
-                if (R_MicroSeconds() - buildStart > GC_BUILD_BUDGET_US) {
+                // a slice of a cell at a time, one cell at a time (gcBuild):
+                // the rest come in over the next frames
+                if ((gcBuild.cell && gcBuild.cell != cell) || R_MicroSeconds() - buildStart > GC_BUILD_BUDGET_US) {
                     continue;
                 }
-                GC_BuildCell(cell, cellIndex);
+                if (!GC_BuildCell(cell, cellIndex, buildStart)) {
+                    continue;
+                }
             }
             cell->lastFrame = tr.frameCount;
 
@@ -1774,7 +1982,8 @@ void R_GroundCoverInfo_f(void)
     ri.Printf(PRINT_ALL, "  %d of %d cells made, %d tufts, %d KB; %d cells added last frame\n",
         built, gc.cellsX * gc.cellsY, tufts, bytes / 1024, gc.numDraws);
     ri.Printf(PRINT_ALL, "  on the card: %s, %d cells; %d buffers of %d MB, %d%% used\n",
-        gc.gpu ? "yes" : (r_groundCoverGPU->integer ? "no (needs buffer storage and a shader it can sway)" : "no (r_groundCoverGPU 0)"),
+        gc.gpu ? "yes" : !r_groundCoverGPU->integer ? "no (r_groundCoverGPU 0)"
+            : !gc.gpuShader ? va("no (the grass shader: %s)", gc.gpuWhyNot ? gc.gpuWhyNot : "-") : "no (needs buffer storage and vertex arrays)",
         onCard, gc.numChunks, (int)(GC_CHUNK_PAGES * GC_PAGE_VERTS * sizeof(gcGpuVert_t) / (1024 * 1024)),
         gc.numChunks ? pages * 100 / (gc.numChunks * GC_CHUNK_PAGES) : 0);
     ri.Printf(PRINT_ALL, "  samples: %d kept; dropped %d outside, %d steep, %d bare texture, %d covered\n",

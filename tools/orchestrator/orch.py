@@ -17,6 +17,8 @@ what is written to home\\main\\orch\\say.
   orch.py seed                       copy the user's config, physics.txt and saves in
   orch.py launch [--save X|--map Y]  start the game (detached)
   orch.py cmd "viewpos; orch_state"  run console commands, print their output
+  orch.py cam x y z [--pitch p --yaw y]  freeze, and hold the camera's eye exactly
+                                     there (A/B shots of one view); --release
   orch.py say "text"                 speak it and show it in the game's panel
   orch.py heard "text"               show what the player said, as understood
   orch.py state                      where the player is and what they look at
@@ -220,8 +222,12 @@ def cmd_launch(args):
     if os.path.isfile(pid_file):
         os.remove(pid_file)
     # Commands left over from the last run would fire at start.
+    # The sidecar may clear the same files at the same moment.
     for stale in glob.glob(os.path.join(CMD_DIR, "*")):
-        os.remove(stale)
+        try:
+            os.remove(stale)
+        except FileNotFoundError:
+            pass
 
     start = []
     if args.save:
@@ -728,7 +734,7 @@ def cmd_swap(args):
         if running:
             out = run_commands("cl_renderer", timeout=3.0) or ""
             m = __import__("re").search(r'is:"(\w+)"', out)
-            renderer = m.group(1) if m else renderer
+            renderer = m.group(1).lower() if m else renderer
         if args.renderer:
             renderer = args.renderer
     target = {"cgame": "cgame", "game": "game", "renderer": f"renderer_{renderer}"}[module]
@@ -922,6 +928,24 @@ def cmd_view(args):
         yaw = args.yaw if args.yaw is not None else state.get("view_angles", [0, 0])[1]
         args.code, args.file, args.label, args.timeout = [f"$player.viewangles = ( {pitch} {yaw} 0 )"], None, None, 5.0
         cmd_script(args)
+    time.sleep(0.3)
+    cmd_state(argparse.Namespace(timeout=5.0))
+
+
+def cmd_cam(args):
+    """Freezes the world and holds the camera's eye exactly at x y z, facing
+    pitch/yaw (orch_campos): for A/B shots of one view, where view's teleport
+    lands a few units off and the mouse turns it. --release lets it go (still
+    frozen); orch_freeze resumes the game."""
+    if args.release:
+        out = run_commands("orch_campos", 5.0)
+    else:
+        if len(args.pos) != 3:
+            sys.exit("cam takes x y z (the eye), or --release")
+        x, y, z = args.pos
+        out = run_commands(f"orch_campos {x} {y} {z} {args.pitch} {args.yaw}", 5.0)
+    if out is None:
+        sys.exit("the game didn't take the command (not running, or still loading?)")
     time.sleep(0.3)
     cmd_state(argparse.Namespace(timeout=5.0))
 
@@ -1411,6 +1435,13 @@ def main():
     p.add_argument("--pitch", type=float)
     p.add_argument("--yaw", type=float)
     p.set_defaults(fn=cmd_view)
+
+    p = sub.add_parser("cam", help="freeze, and hold the camera's eye exactly at x y z")
+    p.add_argument("pos", nargs="*", type=float)
+    p.add_argument("--pitch", type=float, default=0.0)
+    p.add_argument("--yaw", type=float, default=0.0)
+    p.add_argument("--release", action="store_true")
+    p.set_defaults(fn=cmd_cam)
 
     p = sub.add_parser("frames", help="timed screenshots on one contact sheet")
     p.add_argument("count", type=int, nargs="?", default=4)

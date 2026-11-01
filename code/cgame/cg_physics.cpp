@@ -47,6 +47,7 @@ cvar_t *cg_physics_clipped;
 
 static int   phys_lastTime;
 static float phys_accum;
+static int   phys_serial; // steps taken since the world was made, for CG_PhysicsStepSerial
 
 // For cg_physics_log: what the simulation costs, reported every few seconds.
 static double phys_stepUs, phys_worstStepUs;
@@ -151,6 +152,28 @@ void CG_ShutdownPhysics(void)
     phys_temp   = NULL;
 }
 
+int CG_PhysicsStepSerial(void)
+{
+    return phys_serial;
+}
+
+float CG_PhysicsLerp(void)
+{
+    float a;
+
+    if (!phys_lastTime) {
+        return 1.0f;
+    }
+    // CG_PhysicsFrame runs after the entities: what they read now is where
+    // last frame's steps left the bodies, and the time past the last step,
+    // then, is what was left over. Drawn that far from the step before toward
+    // the last, a body is a step behind the simulation, evenly, every frame.
+    // (Counting this frame's time too ran past the last step on most frames,
+    // and they were drawn at it, in jumps again.)
+    a = phys_accum * PHYS_STEP_HZ;
+    return a < 0.0f ? 0.0f : a > 1.0f ? 1.0f : a;
+}
+
 void CG_PhysicsFrame(void)
 {
     if (!phys_system || !cg_physics->integer || !cg.snap) {
@@ -198,6 +221,7 @@ void CG_PhysicsFrame(void)
             CG_PhysicsMoveMovers((float)(steps + 1) / total, dt);
             CG_PhysicsGrabStep(dt);
             CG_JoltRagdollsStep(dt);
+            CG_PhysicsPropsWater(dt);
             phys_system->Update(dt, 1, phys_temp, phys_jobs);
             CG_PhysicsPropsStepped();
             CG_PhysicsFurnitureStepped();
@@ -210,18 +234,43 @@ void CG_PhysicsFrame(void)
             }
 
             phys_accum -= dt;
+            phys_serial++;
             steps++;
         }
 
         if (cg_physics_log->integer && cg.time - phys_reportTime >= 5000) {
             if (phys_steps) {
+                // what is awake, by whose it is: kinematic (moved each step)
+                // and free
+                JPH::BodyIDVector         awake;
+                const JPH::BodyInterface &bi = phys_system->GetBodyInterfaceNoLock();
+                int                       kin[5] = {0}, dyn[5] = {0};
+
+                phys_system->GetActiveBodies(JPH::EBodyType::RigidBody, awake);
+                for (const JPH::BodyID &id : awake) {
+                    const JPH::uint64 u    = bi.GetUserData(id);
+                    const int         kind = u >= PHYS_USERDATA_RAGDOLL_BASE     ? 4
+                                           : u >= PHYS_USERDATA_FURNITURE_BASE ? 3
+                                           : u >= PHYS_USERDATA_ENTITY_BASE    ? 2
+                                           : u >= PHYS_USERDATA_PROP_BASE      ? 1
+                                                                               : 0;
+                    (bi.GetMotionType(id) == JPH::EMotionType::Dynamic ? dyn : kin)[kind]++;
+                }
+
+                int used, floating, asleep;
+
+                CG_JoltRagdollCounts(&used, &floating, &asleep);
                 cgi.Printf(
-                    "physics: %d steps in the last %.1f s, %.0f us each, worst %.0f us; %d bodies awake\n",
+                    "physics: %d steps in the last %.1f s, %.0f us each, worst %.0f us; %d bodies awake"
+                    " (free/kinematic: world %d/%d props %d/%d entities %d/%d furniture %d/%d ragdolls %d/%d);"
+                    " %d ragdolls, %d afloat, %d of them asleep far off\n",
                     phys_steps,
                     (cg.time - phys_reportTime) * 0.001f,
                     phys_stepUs / phys_steps,
                     phys_worstStepUs,
-                    (int)phys_system->GetNumActiveBodies(JPH::EBodyType::RigidBody)
+                    (int)awake.size(),
+                    dyn[0], kin[0], dyn[1], kin[1], dyn[2], kin[2], dyn[3], kin[3], dyn[4], kin[4],
+                    used, floating, asleep
                 );
             }
             phys_reportTime   = cg.time;
@@ -234,6 +283,7 @@ void CG_PhysicsFrame(void)
         CG_PhysicsPlayImpacts();
         CG_PhysicsPlayScrapes();
         CG_PhysicsDrawProps(phys_accum / dt);
+        CG_PhysicsDrawCords(phys_accum / dt);
         CG_PhysicsDrawFurniture(phys_accum / dt);
     }
 

@@ -1,0 +1,330 @@
+<title>Prop Remaster Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: an inspection board. A sticky tally bar on top, then one wide card per model:
+   the before/after sheet on the left, the verdict on the right. */
+:root {
+  --bg: #eef0ea;
+  --panel: #fbfcf8;
+  --ink: #1f241c;
+  --muted: #5d6656;
+  --line: #d5d9cc;
+  --accent: #56692f;       /* olive drab */
+  --accent-ink: #ffffff;
+  --new: #2f7a4a;
+  --orig: #7a5a2f;
+  --again: #8a3d6b;
+  --sheet-bg: #2a2a2a;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161a14; --panel: #1f241c; --ink: #e6e9df; --muted: #9aa391; --line: #343b2e;
+  --accent: #9bb35c; --accent-ink: #141810; --new: #5fbf80; --orig: #d1a15e; --again: #d47fb2;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #161a14; --panel: #1f241c; --ink: #e6e9df; --muted: #9aa391; --line: #343b2e;
+  --accent: #9bb35c; --accent-ink: #141810; --new: #5fbf80; --orig: #d1a15e; --again: #d47fb2;
+  color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); padding-inline: 16px; padding-block: 0 48px }
+.wrap { max-width: 1280px; margin: 0 auto }
+h1 { font: 700 2rem/1.1 var(--display); letter-spacing: .02em; text-transform: uppercase; margin: 0; text-wrap: balance }
+.lede { color: var(--muted); max-width: 68ch; margin: .4rem 0 0 }
+header.top { padding-block: 24px 12px }
+
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg);
+  border-bottom: 1px solid var(--line); padding-block: 10px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px }
+.tab { font: 600 .95rem var(--display); letter-spacing: .04em; text-transform: uppercase; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); padding: 4px 10px; border-radius: 3px; cursor: pointer }
+.tab[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.tab .n { font: 500 .8rem var(--mono); margin-left: 4px; opacity: .8 }
+.meter { flex: 1 1 200px; min-width: 0; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; display: flex }
+.meter i { display: block; height: 100% }
+.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap }
+.tools input[type=search] { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 3px; background: var(--panel); color: var(--ink); width: 14em; max-width: 100% }
+.status { font: .8rem var(--mono); color: var(--muted) }
+.btn { font: 600 .9rem var(--body); border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 4px 10px; border-radius: 3px; cursor: pointer }
+.btn:focus-visible, .tab:focus-visible, .choice:focus-visible, .chip:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.confirm { display: flex; gap: 6px; align-items: center; font-size: .9rem }
+
+.list { display: grid; gap: 14px; padding-block: 16px }
+.card { background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--line); border-radius: 3px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 0; scroll-margin-top: 90px }
+.card[data-choice="new"] { border-left-color: var(--new) }
+.card[data-choice="original"] { border-left-color: var(--orig) }
+.card[data-choice="again"] { border-left-color: var(--again) }
+.card.focus { box-shadow: 0 0 0 2px var(--accent) }
+.sheet { background: var(--sheet-bg); position: relative; cursor: zoom-in; min-width: 0 }
+.sheet img { display: block; width: 100%; height: auto; aspect-ratio: 2 / 1 }
+.sheet .lbl { position: absolute; left: 8px; font: 600 .75rem var(--display); letter-spacing: .08em; text-transform: uppercase;
+  color: #d8dccf; background: rgba(0,0,0,.45); padding: 1px 6px; border-radius: 2px }
+.sheet .lbl.b { top: 8px } .sheet .lbl.a { top: calc(50% + 8px) }
+.side { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0 }
+.name { font: 600 1.3rem/1.15 var(--display); letter-spacing: .02em; word-break: break-word; margin: 0 }
+.path { font: .75rem var(--mono); color: var(--muted); word-break: break-all }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font: .8rem var(--mono); margin: 0 }
+.facts dt { color: var(--muted) } .facts dd { margin: 0; font-variant-numeric: tabular-nums }
+.warn { font-size: .82rem; color: var(--orig) }
+.surf { font-size: .82rem; color: var(--muted); margin: 0; padding-left: 1.1em }
+.choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px }
+.choice { font: 600 .9rem var(--display); letter-spacing: .04em; text-transform: uppercase; padding: 7px 4px; border-radius: 3px;
+  border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer }
+.choice kbd { font: 500 .7rem var(--mono); opacity: .7; margin-left: 3px }
+.choice[data-v="new"][aria-pressed="true"] { background: var(--new); border-color: var(--new); color: var(--panel) }
+.choice[data-v="original"][aria-pressed="true"] { background: var(--orig); border-color: var(--orig); color: var(--panel) }
+.choice[data-v="again"][aria-pressed="true"] { background: var(--again); border-color: var(--again); color: var(--panel) }
+.again { display: grid; gap: 6px }
+.chips { display: flex; flex-wrap: wrap; gap: 4px }
+.chip { font: .78rem var(--body); border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; background: transparent; color: var(--ink); cursor: pointer }
+.chip[aria-pressed="true"] { border-color: var(--again); color: var(--again) }
+textarea { font: .9rem var(--body); width: 100%; min-height: 4.2em; resize: vertical; border: 1px solid var(--line); border-radius: 3px; padding: 6px; background: var(--bg); color: var(--ink) }
+.empty, .unchanged { color: var(--muted); padding-block: 24px }
+.unchanged summary { cursor: pointer; font: 600 1rem var(--display); text-transform: uppercase; letter-spacing: .04em }
+.unchanged ul { font: .8rem var(--mono); columns: 2 22em; padding-left: 1.2em }
+.keys { font-size: .82rem; color: var(--muted) }
+.keys kbd { font: .75rem var(--mono); border: 1px solid var(--line); border-radius: 2px; padding: 0 4px }
+.lightbox { position: fixed; inset: 0; background: rgba(10,12,9,.92); z-index: 20; display: grid; place-items: center; padding: 16px; cursor: zoom-out }
+.lightbox img { max-width: 100%; max-height: 100%; }
+@media (max-width: 760px) { .card { grid-template-columns: minmax(0, 1fr) } }
+@media (prefers-reduced-motion: no-preference) { .card { transition: box-shadow .15s } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Prop Remaster Review</h1>
+    <p class="lede">Every static and furniture model the subdivide pass rounded. Each sheet shows four views: the original on top, the remastered model below. Pick <b>New</b> to ship it, <b>Original</b> to keep the stock model, or <b>Again</b> with a note for another pass. Choices save as you click.</p>
+    <p class="keys"><kbd>J</kbd>/<kbd>K</kbd> next/previous &nbsp; <kbd>1</kbd> new &nbsp; <kbd>2</kbd> original &nbsp; <kbd>3</kbd> again &nbsp; <kbd>Space</kbd> enlarge</p>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Filter and progress">
+    <div class="tabs" id="tabs"></div>
+    <div class="meter" id="meter" aria-hidden="true"></div>
+    <div class="tools">
+      <input type="search" id="q" placeholder="Filter by name" aria-label="Filter by name">
+      <span id="bulk"></span>
+      <span class="status" id="status">Loading…</span>
+    </div>
+  </div>
+
+  <main class="list" id="list"><p class="empty">Loading the models…</p></main>
+  <details class="unchanged" id="unchanged" hidden><summary></summary><ul></ul></details>
+</div>
+<div class="lightbox" id="lightbox" hidden><img alt=""></div>
+
+<script>
+const CHIPS = ["Too round", "Not round enough", "Bulges", "Shading looks wrong", "Texture slid", "Gaps or holes", "Leave edges sharp"];
+const FILTERS = [["todo", "To review"], ["new", "New"], ["original", "Original"], ["again", "Again"], ["all", "All"]];
+const state = { models: [], decisions: {}, filter: "todo", q: "", focus: 0, canWrite: true, db: null, confirmBulk: false };
+const $ = (s, el = document) => el.querySelector(s);
+
+function choiceOf(m) { return state.decisions[m.key]?.choice || "" }
+function visible() {
+  const q = state.q.toLowerCase();
+  return state.models.filter(m => {
+    const c = choiceOf(m);
+    if (state.filter === "todo" && c) return false;
+    if (["new", "original", "again"].includes(state.filter) && c !== state.filter) return false;
+    return !q || m.model.toLowerCase().includes(q);
+  });
+}
+
+function renderBar() {
+  const counts = { todo: 0, new: 0, original: 0, again: 0, all: state.models.length };
+  for (const m of state.models) { const c = choiceOf(m); counts[c || "todo"]++ }
+  const tabs = $("#tabs"); tabs.textContent = "";
+  for (const [k, label] of FILTERS) {
+    const b = document.createElement("button");
+    b.className = "tab"; b.setAttribute("aria-pressed", state.filter === k);
+    b.innerHTML = label + '<span class="n"></span>'; b.querySelector(".n").textContent = counts[k];
+    b.onclick = () => { state.filter = k; state.focus = 0; renderList() ; renderBar() };
+    tabs.append(b);
+  }
+  const meter = $("#meter"); meter.textContent = "";
+  for (const [k, v] of [["new", "--new"], ["original", "--orig"], ["again", "--again"]]) {
+    const i = document.createElement("i"); i.style.width = (100 * counts[k] / Math.max(counts.all, 1)) + "%"; i.style.background = `var(${v})`; meter.append(i);
+  }
+  const bulk = $("#bulk"); bulk.textContent = "";
+  if (state.canWrite && counts.todo) {
+    if (!state.confirmBulk) {
+      const b = document.createElement("button"); b.className = "btn"; b.textContent = `Mark ${counts.todo} unreviewed as New`;
+      b.onclick = () => { state.confirmBulk = true; renderBar() }; bulk.append(b);
+    } else {
+      const w = document.createElement("span"); w.className = "confirm";
+      w.innerHTML = `<span>Mark all ${counts.todo}?</span>`;
+      const yes = document.createElement("button"); yes.className = "btn"; yes.textContent = "Yes, mark them";
+      yes.onclick = markRemaining; const no = document.createElement("button"); no.className = "btn"; no.textContent = "Cancel";
+      no.onclick = () => { state.confirmBulk = false; renderBar() }; w.append(yes, no); bulk.append(w);
+    }
+  }
+}
+
+function card(m, idx) {
+  const d = state.decisions[m.key] || {};
+  const el = document.createElement("article");
+  el.className = "card"; el.dataset.key = m.key; el.dataset.choice = d.choice || ""; el.tabIndex = -1;
+  if (idx === state.focus) el.classList.add("focus");
+  const stem = m.model.split("/").pop().replace(/\.tik$/, "");
+  el.innerHTML = `
+    <div class="sheet"><img loading="lazy" alt=""><span class="lbl b">Original</span><span class="lbl a">Remastered</span></div>
+    <div class="side">
+      <div><h2 class="name"></h2><div class="path"></div></div>
+      <dl class="facts"><dt>Triangles</dt><dd class="t"></dd><dt>Deviation</dt><dd class="dv"></dd></dl>
+      <div class="choices">
+        <button class="choice" data-v="new">New<kbd>1</kbd></button>
+        <button class="choice" data-v="original">Original<kbd>2</kbd></button>
+        <button class="choice" data-v="again">Again<kbd>3</kbd></button>
+      </div>
+      <div class="again" hidden><div class="chips"></div><textarea aria-label="What should the next pass change?" placeholder="What should the next pass change?"></textarea></div>
+    </div>`;
+  const img = $("img", el); img.src = "sheets/" + encodeURIComponent(m.key) + ".jpg"; img.alt = stem + ": original above, remastered below";
+  $(".sheet", el).onclick = () => openLightbox(img.src, img.alt);
+  $(".name", el).textContent = stem; $(".path", el).textContent = m.model;
+  $(".t", el).textContent = `${m.tris_before.toLocaleString()} → ${m.tris_after.toLocaleString()}`;
+  $(".dv", el).textContent = (m.deviation * 100).toFixed(1) + "% of size";
+  const side = $(".side", el);
+  const kept = m.surfaces.filter(s => s.result === "original");
+  if (kept.length) {
+    const ul = document.createElement("ul"); ul.className = "surf";
+    for (const s of kept) { const li = document.createElement("li"); li.textContent = `${s.name} kept as it was: ${s.reason}`; ul.append(li) }
+    side.insertBefore(ul, $(".choices", el));
+  }
+  if (m.shares_with.length) {
+    const w = document.createElement("div"); w.className = "warn";
+    w.textContent = "Shares its mesh with " + m.shares_with.map(p => p.split("/").pop()).join(", ") + ": one choice applies to all of them.";
+    side.insertBefore(w, $(".choices", el));
+  }
+  for (const b of el.querySelectorAll(".choice")) {
+    b.setAttribute("aria-pressed", d.choice === b.dataset.v);
+    b.disabled = !state.canWrite;
+    b.onclick = () => decide(m, b.dataset.v);
+  }
+  const again = $(".again", el); again.hidden = d.choice !== "again";
+  const chips = $(".chips", el); const tags = new Set(d.tags || []);
+  for (const t of CHIPS) {
+    const c = document.createElement("button"); c.className = "chip"; c.textContent = t; c.setAttribute("aria-pressed", tags.has(t)); c.disabled = !state.canWrite;
+    c.onclick = () => { tags.has(t) ? tags.delete(t) : tags.add(t); save(m, { choice: "again", tags: [...tags], note: $("textarea", el).value }) };
+    chips.append(c);
+  }
+  const ta = $("textarea", el); ta.value = d.note || ""; ta.id = "note-" + m.key; ta.disabled = !state.canWrite;
+  let timer; ta.oninput = () => { clearTimeout(timer); timer = setTimeout(() => save(m, { choice: "again", tags: [...tags], note: ta.value }), 700) };
+  el.onclick = e => { if (!e.target.closest("button, textarea, .sheet")) setFocus(idx) };
+  return el;
+}
+
+function renderList() {
+  const list = $("#list"); list.textContent = "";
+  const vis = visible();
+  if (!state.models.length) { list.innerHTML = '<p class="empty">No remastered models found.</p>'; return }
+  if (!vis.length) { list.innerHTML = '<p class="empty">Nothing here. Pick another tab above.</p>'; return }
+  state.focus = Math.min(state.focus, vis.length - 1);
+  vis.forEach((m, i) => list.append(card(m, i)));
+}
+
+function updateCard(m) {
+  const el = document.querySelector(`.card[data-key="${CSS.escape(m.key)}"]`);
+  if (!el) return;
+  const d = state.decisions[m.key] || {};
+  el.dataset.choice = d.choice || "";
+  for (const b of el.querySelectorAll(".choice")) b.setAttribute("aria-pressed", d.choice === b.dataset.v);
+  $(".again", el).hidden = d.choice !== "again";
+  const tags = new Set(d.tags || []);
+  for (const c of el.querySelectorAll(".chip")) c.setAttribute("aria-pressed", tags.has(c.textContent));
+  const ta = $("textarea", el); if (document.activeElement !== ta) ta.value = d.note || "";
+}
+
+const pending = {};
+async function save(m, body) {
+  state.decisions[m.key] = { ...body, model: m.model };
+  updateCard(m); renderBar();
+  if (!state.db) { setStatus("Not saved: this view can't reach the decision store."); return }
+  // one write at a time per model; the latest body wins
+  pending[m.key] = state.decisions[m.key];
+  if (pending[m.key + ":busy"]) return;
+  pending[m.key + ":busy"] = true;
+  try {
+    while (pending[m.key]) {
+      const b = pending[m.key]; delete pending[m.key];
+      await state.db.collection("decisions").doc(m.key).set({ ...b, at: new Date().toISOString() });
+    }
+    setStatus("Saved");
+  } catch (e) {
+    if (e?.code === "invalid_argument") { state.canWrite = false; renderList(); renderBar(); setStatus("You can view these choices but not change them.") }
+    else setStatus("Couldn't save (" + (e?.code || "error") + "). Click again to retry.");
+  } finally { pending[m.key + ":busy"] = false }
+}
+
+function decide(m, v) {
+  const d = state.decisions[m.key] || {};
+  if (v === "again") save(m, { choice: "again", tags: d.tags || [], note: d.note || "" });
+  else save(m, { choice: v });
+  if (v !== "again" && state.filter === "todo") {
+    // let the click register, then move on to the next model to review
+    setTimeout(() => { renderList(); renderBar(); scrollToFocus() }, 250);
+  }
+}
+
+async function markRemaining() {
+  state.confirmBulk = false;
+  const todo = state.models.filter(m => !choiceOf(m));
+  setStatus(`Saving ${todo.length}…`);
+  for (const m of todo) await save(m, { choice: "new" });
+  renderList(); renderBar();
+}
+
+function setStatus(t) { $("#status").textContent = t }
+function setFocus(i) {
+  const cards = document.querySelectorAll(".card"); if (!cards.length) return;
+  state.focus = Math.max(0, Math.min(i, cards.length - 1));
+  cards.forEach((c, k) => c.classList.toggle("focus", k === state.focus));
+}
+function scrollToFocus() { document.querySelectorAll(".card")[state.focus]?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }) }
+function openLightbox(src, alt) { const lb = $("#lightbox"); $("img", lb).src = src; $("img", lb).alt = alt; lb.hidden = false }
+$("#lightbox").onclick = () => { $("#lightbox").hidden = true };
+
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea")) return;
+  if (!$("#lightbox").hidden) { if (e.key === "Escape" || e.key === " ") { e.preventDefault(); $("#lightbox").hidden = true } return }
+  const vis = visible(); const m = vis[state.focus];
+  if (e.key === "j") { setFocus(state.focus + 1); scrollToFocus() }
+  else if (e.key === "k") { setFocus(state.focus - 1); scrollToFocus() }
+  else if (m && state.canWrite && ["1", "2", "3"].includes(e.key)) {
+    decide(m, { 1: "new", 2: "original", 3: "again" }[e.key]);
+    if (e.key === "3") setTimeout(() => document.querySelectorAll(".card")[state.focus]?.querySelector("textarea")?.focus(), 50);
+    else if (state.filter !== "todo") { setFocus(state.focus + 1); scrollToFocus() }
+  }
+  else if (e.key === " " && m) { e.preventDefault(); openLightbox("sheets/" + encodeURIComponent(m.key) + ".jpg", m.model) }
+});
+$("#q").oninput = e => { state.q = e.target.value; state.focus = 0; renderList() };
+
+async function start() {
+  try {
+    const r = await fetch("models.json"); const data = await r.json();
+    state.models = data.models;
+    if (data.unchanged.length) {
+      const u = $("#unchanged"); u.hidden = false;
+      $("summary", u).textContent = `${data.unchanged.length} models left unchanged`;
+      for (const x of data.unchanged) { const li = document.createElement("li"); li.textContent = x.model.replace(/^models\//, "") + (x.reason ? " — " + x.reason : ""); $("ul", u).append(li) }
+    }
+  } catch { $("#list").innerHTML = '<p class="empty">The model list didn\'t load. Reload the page.</p>'; return }
+  renderList(); renderBar(); setStatus("Connecting to the decision store…");
+  const db = window.claude ? await window.claude.use("db") : null;
+  const user = window.claude ? await window.claude.use("user") : null;
+  if (user && (await user.can("data.write")) === false) state.canWrite = false;
+  if (!db) { setStatus("Choices can't be saved in this view."); state.canWrite = false; renderList(); renderBar(); return }
+  state.db = db;
+  db.collection("decisions").onSnapshot(snap => {
+    for (const ch of snap.docChanges()) {
+      if (ch.type === "removed") delete state.decisions[ch.doc.id];
+      else if (!pending[ch.doc.id]) state.decisions[ch.doc.id] = ch.doc.data();
+    }
+    if (snap.docChanges().length === snap.size) renderList(); else state.models.forEach(updateCard);
+    renderBar(); setStatus(state.canWrite ? "Choices save as you click" : "View only");
+  }, e => setStatus("Lost the decision store (" + e.code + "). Reload to reconnect."));
+}
+start();
+</script>

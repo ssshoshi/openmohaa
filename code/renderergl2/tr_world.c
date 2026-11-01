@@ -752,11 +752,16 @@ Mark the leaves and nodes that are in the PVS for the current
 cluster
 ===============
 */
+// Added in OPM: a cluster's marks for a realtime light's shadow, which take no
+// doors, apart from a view's (R_MarkLeaves)
+#define RT_VISKEY(cluster) ((cluster) + 0x40000000)
+
 static void R_MarkLeaves (void) {
 	const byte	*vis;
 	mnode_t	*leaf, *parent;
 	int		i;
-	int		cluster;
+	int		cluster, key;
+	qboolean	rtShadow;
 
 	// lockpvs lets designers walk around to determine the
 	// extent of the current pvs
@@ -767,6 +772,15 @@ static void R_MarkLeaves (void) {
 	// current viewcluster
 	leaf = R_PointInLeaf( tr.viewParms.pvsOrigin );
 	cluster = leaf->cluster;
+
+	// Added in OPM
+	//  A realtime light's shadow of the world has all of it its leaf sees,
+	//  whatever doors the player's view has shut: an upstairs lamp's floor
+	//  was left out when the room was out of the player's areas (as it was
+	//  when the lamps were baked), and its light came down through it. Kept
+	//  apart from the views' marks, which do follow the doors.
+	rtShadow = (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY)) ? qtrue : qfalse;
+	key      = rtShadow ? RT_VISKEY(cluster) : cluster;
 
 	// if the cluster is the same and the area visibility matrix
 	// hasn't changed, we don't need to mark everything again
@@ -779,7 +793,7 @@ static void R_MarkLeaves (void) {
 		{
 			tr.visClusters[i] = -2;
 		}
-		else if(tr.visClusters[i] == cluster)
+		else if(tr.visClusters[i] == key)
 		{
 			if(tr.visClusters[i] != tr.visClusters[tr.visIndex] && r_showcluster->integer)
 			{
@@ -792,7 +806,7 @@ static void R_MarkLeaves (void) {
 
 	tr.visIndex = (tr.visIndex + 1) % MAX_VISCOUNTS;
 	tr.visCounts[tr.visIndex]++;
-	tr.visClusters[tr.visIndex] = cluster;
+	tr.visClusters[tr.visIndex] = key;
 
 	if ( r_showcluster->modified || r_showcluster->integer ) {
 		r_showcluster->modified = qfalse;
@@ -801,7 +815,7 @@ static void R_MarkLeaves (void) {
 		}
 	}
 
-	vis = R_ClusterPVS(tr.visClusters[tr.visIndex]);
+	vis = R_ClusterPVS(cluster);
 	
 	for (i=0,leaf=tr.world->nodes ; i<tr.world->numnodes ; i++, leaf++) {
 		cluster = leaf->cluster;
@@ -815,7 +829,7 @@ static void R_MarkLeaves (void) {
 		}
 
 		// check for door connection
-		if ( (tr.refdef.areamask[leaf->area>>3] & (1<<(leaf->area&7)) ) ) {
+		if ( !rtShadow && (tr.refdef.areamask[leaf->area>>3] & (1<<(leaf->area&7)) ) ) {
 			continue;		// not visible
 		}
 

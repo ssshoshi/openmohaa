@@ -1553,6 +1553,12 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 		return;
 	}
 
+	// Added in OPM
+	//  The view water mirrors has none in it (tr_water.c).
+	if ((tr.viewParms.flags & VPF_WATERREFLECT) && shader->waterImage) {
+		return;
+	}
+
 	// instead of checking for overflow, we just mask the index
 	// so it wraps around
 	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
@@ -1635,6 +1641,10 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs,
 		return;
 	}
 
+	// Added in OPM
+	//  What the view's water mirrors, drawn before it (tr_water.c).
+	R_WaterReflectView( drawSurfs, numDrawSurfs );
+
 	// check for any pass through drawing, which
 	// may cause another view to be rendered first
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
@@ -1707,7 +1717,8 @@ static void R_AddEntitySurface (int entityNum)
 		return;
 	}
 
-	if (tr.viewParms.isPortal) {
+	// (the view water mirrors is a portal that sees what the main view does)
+	if (tr.viewParms.isPortal && !(tr.viewParms.flags & VPF_WATERREFLECT)) {
 		if (!(ent->e.renderfx & (RF_WRAP_FRAMES | RF_SHADOW_PLANE))) {
 			return;
 		}
@@ -1829,13 +1840,20 @@ void R_AddEntitySurfaces (void) {
 R_GenerateDrawSurfs
 ====================
 */
+// Added in OPM: where a scene's view went, ms, for com_hitchLog
+int r_viewMs[6]; // world, polygons, entities, sprites, sort, other views
+
 void R_GenerateDrawSurfs( void ) {
+	int at = ri.Milliseconds(), now;
+
 	R_AddWorldSurfaces ();
+	now = ri.Milliseconds(); r_viewMs[0] += now - at; at = now;
 
 	// Added in OPM
 	//  A realtime light's shadow of what stands still has the world alone.
 	if (!(tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)))
 		R_AddPolygonSurfaces();
+	now = ri.Milliseconds(); r_viewMs[1] += now - at; at = now;
 
 	// set the projection matrix with the minimum zfar
 	// now that we have the world bounded
@@ -1857,6 +1875,7 @@ void R_GenerateDrawSurfs( void ) {
 		return;
 
 	R_AddEntitySurfaces ();
+	now = ri.Milliseconds(); r_viewMs[2] += now - at; at = now;
 
 	if (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC))
 		return;
@@ -1866,6 +1885,7 @@ void R_GenerateDrawSurfs( void ) {
     //=========================
     R_AddSpriteSurfaces();
 	//=========================
+	r_viewMs[3] += ri.Milliseconds() - at;
 }
 
 /*
@@ -2209,9 +2229,14 @@ void R_RenderView (viewParms_t *parms) {
 		numDrawSurfs = MAX_DRAWSURFS;
 	}
 
-	R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf,
-        tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf
-	);
+	{
+		const int at = ri.Milliseconds();
+
+		R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf,
+			tr.refdef.spriteSurfs + firstSpriteSurf, tr.refdef.numSpriteSurfs - firstSpriteSurf
+		);
+		r_viewMs[4] += ri.Milliseconds() - at;
+	}
 
 	// draw main system development information (surface outlines, etc)
 	R_DebugGraphics();
@@ -2748,7 +2773,9 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 	float splitZNear, splitZFar, splitBias;
 	float viewZNear, viewZFar;
 	vec3_t lightviewBounds[2];
-	qboolean lightViewIndependentOfCameraView = qfalse;
+	// Added in OPM: r_sunShadowStable fits the view cascades to a sphere, turned
+	// with the world and snapped to texels (below), as the original code meant to
+	qboolean lightViewIndependentOfCameraView = level != 3 && r_sunShadowStable->integer;
 
 	if (r_forceSun->integer == 2)
 	{
@@ -2818,11 +2845,10 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 	// Make up a projection
 	VectorScale(lightDir, -1.0f, lightViewAxis[0]);
 
-	// Added in OPM: the models whose shadows can fall in the slice (the last
-	// cascade is the whole level's, not the view's)
+	// Added in OPM: the models whose shadows can fall where the view reads
+	// this cascade (set once its box is known, below; the last cascade is
+	// the whole level's, not the view's)
 	sunCaster.active = qfalse;
-	if (level != 3)
-		R_SetSunCasterSlice(fd, lightViewAxis[0], splitZNear, splitZFar);
 
 	if (level == 3 || lightViewIndependentOfCameraView)
 	{
@@ -2881,7 +2907,43 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 
 		ClearBounds(lightviewBounds[0], lightviewBounds[1]);
 
-		if (level != 3)
+		if (level != 3 && lightViewIndependentOfCameraView)
+		{
+			// Added in OPM: the slice's corners lie on two circles round the
+			// view axis, a at the near plane and b at the far. The smallest
+			// sphere through all of them has its centre on that axis, where it
+			// is as far from the one circle as from the other. Its size is the
+			// same however the view turns, so the cascade's texels keep their
+			// size, and a texel-snapped centre keeps them in place.
+			const float tx = tan(fd->fov_x * M_PI / 360.0f), ty = tan(fd->fov_y * M_PI / 360.0f);
+			const float a2 = splitZNear * splitZNear * (tx * tx + ty * ty);
+			const float b2 = splitZFar * splitZFar * (tx * tx + ty * ty);
+			float       z, radius, texel;
+			vec3_t      centre;
+			int         i;
+
+			z = ((splitZFar * splitZFar - splitZNear * splitZNear) + (b2 - a2)) / (2.0f * (splitZFar - splitZNear));
+			z = CLAMP(z, splitZNear, splitZFar);
+			radius = sqrt(MAX((z - splitZNear) * (z - splitZNear) + a2, (splitZFar - z) * (splitZFar - z) + b2));
+			// a texel over each side, so the snap never leaves a corner
+			// outside: the square is then exactly width texels of this size
+			texel = 2.0f * radius / (tr.sunShadowFbo[level]->width - 2);
+			radius += texel;
+			VectorMA(fd->vieworg, z, fd->viewaxis[0], centre);
+
+			// Snapped where the light's axes meet the world, not the eye: the
+			// eye is the light view's origin and moves every frame.
+			for (i = 0; i < 3; i++)
+			{
+				const float abs = DotProduct(centre, lightViewAxis[i]);
+				const float org = DotProduct(lightOrigin, lightViewAxis[i]);
+				const float c = (i == 0 ? abs : floor(abs / texel) * texel) - org;
+
+				lightviewBounds[0][i] = c - radius;
+				lightviewBounds[1][i] = c + radius;
+			}
+		}
+		else if (level != 3)
 		{
 			// add view near plane
 			lx = splitZNear * tan(fd->fov_x * M_PI / 360.0f);
@@ -2996,29 +3058,37 @@ void R_RenderSunShadowMaps(const refdef_t *fd, int level)
 		if (!glRefConfig.depthClamp)
 			lightviewBounds[0][0] = lightviewBounds[1][0] - 8192;
 
-		// Moving the Light in Texel-Sized Increments
-		// from http://msdn.microsoft.com/en-us/library/windows/desktop/ee416324%28v=vs.85%29.aspx
-		//
-		if (lightViewIndependentOfCameraView)
+		// (OPM: ioq3's texel snapping of these bounds was here, never run:
+		// they are relative to the eye, which moves, so snapping them did
+		// not hold the texels still. The view cascades snap their sphere's
+		// centre above, where the light's axes meet the world.)
+
+		// Added in OPM: the shadow mask reads a point from the first cascade
+		// whose box holds it (shadowmask_fp.glsl), and the box, square
+		// to the sun round a pyramid's slice, goes well past the slice.
+		// Casters were kept only for the slice, so a wall past
+		// it, read from this cascade, lost the shadow of a tree that was past
+		// it too, and the shadow came and went as the view moved. The slice
+		// the casters are kept for runs as far as the box's corners do.
+		if (level != 3)
 		{
-			float cascadeBound, worldUnitsPerTexel, invWorldUnitsPerTexel;
+			float boxNear = splitZNear, boxFar = splitZFar;
+			int   i;
 
-			cascadeBound = MAX(lightviewBounds[1][0] - lightviewBounds[0][0], lightviewBounds[1][1] - lightviewBounds[0][1]);
-			cascadeBound = MAX(cascadeBound, lightviewBounds[1][2] - lightviewBounds[0][2]);
-			worldUnitsPerTexel = cascadeBound / tr.sunShadowFbo[level]->width;
-			invWorldUnitsPerTexel = 1.0f / worldUnitsPerTexel;
+			for (i = 0; i < 8; i++)
+			{
+				vec3_t corner;
+				float  z;
 
-			VectorScale(lightviewBounds[0], invWorldUnitsPerTexel, lightviewBounds[0]);
-			lightviewBounds[0][0] = floor(lightviewBounds[0][0]);
-			lightviewBounds[0][1] = floor(lightviewBounds[0][1]);
-			lightviewBounds[0][2] = floor(lightviewBounds[0][2]);
-			VectorScale(lightviewBounds[0], worldUnitsPerTexel, lightviewBounds[0]);
-
-			VectorScale(lightviewBounds[1], invWorldUnitsPerTexel, lightviewBounds[1]);
-			lightviewBounds[1][0] = floor(lightviewBounds[1][0]);
-			lightviewBounds[1][1] = floor(lightviewBounds[1][1]);
-			lightviewBounds[1][2] = floor(lightviewBounds[1][2]);
-			VectorScale(lightviewBounds[1], worldUnitsPerTexel, lightviewBounds[1]);
+				VectorCopy(lightOrigin, corner);
+				VectorMA(corner, lightviewBounds[i & 1][0], lightViewAxis[0], corner);
+				VectorMA(corner, lightviewBounds[(i >> 1) & 1][1], lightViewAxis[1], corner);
+				VectorMA(corner, lightviewBounds[(i >> 2) & 1][2], lightViewAxis[2], corner);
+				z = DotProduct(corner, fd->viewaxis[0]) - DotProduct(fd->vieworg, fd->viewaxis[0]);
+				boxNear = MIN(boxNear, z);
+				boxFar = MAX(boxFar, z);
+			}
+			R_SetSunCasterSlice(fd, lightViewAxis[0], boxNear, boxFar);
 		}
 
 		//ri.Printf(PRINT_ALL, "level %d znear %f zfar %f\n", level, lightviewBounds[0][0], lightviewBounds[1][0]);		
@@ -3270,7 +3340,14 @@ void R_AddSpriteSurf(surfaceType_t* surface, shader_t* shader, float zDistance)
 		zDistance = MAX_SPRITE_DIST_SQUARED;
 	}
 
-	index = tr.refdef.numSpriteSurfs % MAX_SPRITES;
+	// every view of the frame (the water reflection among them) adds its sprites after
+	// the last view's, so the list can outgrow MAX_SPRITES; wrapping the index left the
+	// view's range pointing at unwritten entries with no surface
+	if (tr.refdef.numSpriteSurfs >= MAX_SPRITESURFS) {
+		return;
+	}
+
+	index = tr.refdef.numSpriteSurfs;
     tr.refdef.spriteSurfs[index].sort = (int)(MAX_SPRITE_DIST_SQUARED - zDistance) | (shader->sortedIndex << QSORT_SHADERNUM_SHIFT);
     tr.refdef.spriteSurfs[index].surface = surface;
     tr.refdef.spriteSurfs[index].rtMask = RT_MASK_ALL;
@@ -3300,7 +3377,7 @@ void R_AddSpriteSurfaces()
 			}
 		}
         
-		if (tr.viewParms.isPortal) {
+		if (tr.viewParms.isPortal && !(tr.viewParms.flags & VPF_WATERREFLECT)) {
 			if (!(sprite->renderfx & (RF_SHADOW_PLANE | RF_WRAP_FRAMES))) {
 				continue;
 			}
@@ -3319,6 +3396,10 @@ void R_AddSpriteSurfaces()
 		}
 
 		if (tr.currentModel->type != MOD_SPRITE) {
+			continue;
+		}
+		// Added in OPM: a puff of smoke the air's grid draws (tr_froxel.c)
+		if ((sprite->renderfx & RF_VOLUME_SMOKE) && R_FroxelTakesSprite(sprite) && !R_FroxelSpriteToo(sprite)) {
 			continue;
 		}
 

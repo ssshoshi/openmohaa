@@ -435,11 +435,104 @@ void FBO_Init(void)
 		}
 	}
 
+	// Added in OPM: the bloom's levels (RB_Bloom)
+	if (tr.bloomImage[0])
+	{
+		for (i = 0; i < BLOOM_LEVELS; i++)
+		{
+			tr.bloomFbo[i] = FBO_Create(va("_bloom%d", i), tr.bloomImage[i]->width, tr.bloomImage[i]->height);
+			FBO_AttachImage(tr.bloomFbo[i], tr.bloomImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.bloomFbo[i]);
+		}
+	}
+
 	if (tr.hdrDepthImage)
 	{
 		tr.hdrDepthFbo = FBO_Create("_hdrDepth", tr.hdrDepthImage->width, tr.hdrDepthImage->height);
 		FBO_AttachImage(tr.hdrDepthFbo, tr.hdrDepthImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.hdrDepthFbo);
+	}
+
+	if (tr.waterRippleImage[0] && tr.waterRippleImage[1])
+	{
+		tr.waterRippleFbo[0] = FBO_Create("_waterRipple0", WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+		FBO_AttachImage(tr.waterRippleFbo[0], tr.waterRippleImage[0], GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterRippleFbo[0]);
+		tr.waterRippleFbo[1] = FBO_Create("_waterRipple1", WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE);
+		FBO_AttachImage(tr.waterRippleFbo[1], tr.waterRippleImage[1], GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterRippleFbo[1]);
+	}
+
+	if (tr.waterSceneImage)
+	{
+		tr.waterSceneFbo = FBO_Create("_waterScene", tr.waterSceneImage->width, tr.waterSceneImage->height);
+		FBO_AttachImage(tr.waterSceneFbo, tr.waterSceneImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.waterSceneFbo);
+	}
+
+	if (tr.waterReflectImage)
+	{
+		tr.waterReflectFbo = FBO_Create("_waterReflect", tr.waterReflectImage->width, tr.waterReflectImage->height);
+		FBO_AttachImage(tr.waterReflectFbo, tr.waterReflectImage, GL_COLOR_ATTACHMENT0, 0);
+		if (tr.waterReflectDepthImage)
+			FBO_AttachImage(tr.waterReflectFbo, tr.waterReflectDepthImage, GL_DEPTH_ATTACHMENT, 0);
+		else
+			FBO_CreateBuffer(tr.waterReflectFbo, GL_DEPTH_COMPONENT24_ARB, 0, 0);
+		R_CheckFBO(tr.waterReflectFbo);
+	}
+
+	// Added in OPM: r_ssr
+	if (tr.ssrPrevImage)
+	{
+		tr.ssrPrevFbo = FBO_Create("_ssrprev", tr.ssrPrevImage->width, tr.ssrPrevImage->height);
+		FBO_AttachImage(tr.ssrPrevFbo, tr.ssrPrevImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.ssrPrevFbo);
+	}
+
+	// Added in OPM: r_gtao
+	if (tr.gtaoImage && tr.gtaoBlurImage && tr.gtaoDepthImage && tr.hdrDepthFbo)
+	{
+		tr.gtaoDepthFbo = FBO_Create("_gtaodepth", tr.gtaoDepthImage->width, tr.gtaoDepthImage->height);
+		FBO_AttachImage(tr.gtaoDepthFbo, tr.gtaoDepthImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.gtaoDepthFbo);
+		tr.gtaoFbo = FBO_Create("_gtao", tr.gtaoImage->width, tr.gtaoImage->height);
+		FBO_AttachImage(tr.gtaoFbo, tr.gtaoImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.gtaoFbo);
+		tr.gtaoBlurFbo = FBO_Create("_gtaoblur", tr.gtaoBlurImage->width, tr.gtaoBlurImage->height);
+		FBO_AttachImage(tr.gtaoBlurFbo, tr.gtaoBlurImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.gtaoBlurFbo);
+	}
+
+	// Added in OPM: r_volumetric
+	if (tr.volumeImage && tr.volumeBlurImage)
+	{
+		tr.volumeFbo = FBO_Create("_volume", tr.volumeImage->width, tr.volumeImage->height);
+		FBO_AttachImage(tr.volumeFbo, tr.volumeImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.volumeFbo);
+		tr.volumeBlurFbo = FBO_Create("_volumeblur", tr.volumeBlurImage->width, tr.volumeBlurImage->height);
+		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.volumeBlurFbo);
+	}
+	if (tr.froxelLightImage[0] && tr.froxelLightImage[1] && tr.froxelSumImage[0] && tr.froxelSumImage[1] && tr.froxelDepthImage && tr.froxelDepthQuarterImage)
+	{
+		tr.froxelDepthQuarterFbo = FBO_Create("_froxeldepthquarter", tr.froxelDepthQuarterImage->width, tr.froxelDepthQuarterImage->height);
+		FBO_AttachImage(tr.froxelDepthQuarterFbo, tr.froxelDepthQuarterImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.froxelDepthQuarterFbo);
+		tr.froxelDepthFbo = FBO_Create("_froxeldepth", tr.froxelDepthImage->width, tr.froxelDepthImage->height);
+		FBO_AttachImage(tr.froxelDepthFbo, tr.froxelDepthImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.froxelDepthFbo);
+		for (i = 0; i < 2; i++)
+		{
+			tr.froxelLightFbo[i] = FBO_Create(va("_froxellight%d", i), tr.froxelLightImage[i]->width, tr.froxelLightImage[i]->height);
+			FBO_AttachImage(tr.froxelLightFbo[i], tr.froxelLightImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.froxelLightFbo[i]);
+		}
+		for (i = 0; i < 2; i++)
+		{
+			tr.froxelSumFbo[i] = FBO_Create(va("_froxelsum%d", i), tr.froxelSumImage[i]->width, tr.froxelSumImage[i]->height);
+			FBO_AttachImage(tr.froxelSumFbo[i], tr.froxelSumImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.froxelSumFbo[i]);
+		}
 	}
 
 	if (tr.screenSsaoImage)

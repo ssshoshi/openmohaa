@@ -244,6 +244,7 @@ typedef struct {
     refEntity_t ref;
     qboolean    dead;
     qboolean    noDraw; // in the scene for hits only (the player's own body seen from inside)
+    qboolean    spared; // a living ally: hits stop on him and are kept for his death, but leave nothing
 } goreDrawn_t;
 
 typedef struct {
@@ -574,7 +575,7 @@ static goreBody_t *CG_GoreBodyFor(int key, refEntity_t *model, qboolean dead)
     return body;
 }
 
-static void CG_GoreAddEntityKey(int key, const refEntity_t *model, qboolean dead)
+static void CG_GoreAddEntityKey(int key, const refEntity_t *model, qboolean dead, qboolean spared)
 {
     goreDrawn_t *drawn;
 
@@ -586,6 +587,7 @@ static void CG_GoreAddEntityKey(int key, const refEntity_t *model, qboolean dead
     drawn->entityNum = key;
     drawn->ref       = *model;
     drawn->dead      = dead;
+    drawn->spared    = spared;
     drawn->noDraw    = (model->renderfx & RF_THIRD_PERSON) && !cg.renderingThirdPerson ? qtrue : qfalse;
 
     CG_GoreBodyFor(key, &drawn->ref, dead);
@@ -601,7 +603,12 @@ void CG_GoreAddEntity(centity_t *cent, const refEntity_t *model, qboolean dead)
         return;
     }
 
-    CG_GoreAddEntityKey(cent->currentState.number, model, dead);
+    CG_GoreAddEntityKey(
+        cent->currentState.number,
+        model,
+        dead,
+        !dead && (cent->currentState.eFlags & EF_ALLIES) && cent->currentState.number != cg.snap->ps.clientNum
+    );
 }
 
 //=============================================================
@@ -1490,21 +1497,24 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
     body       = CG_GoreBody(best);
     body->dead = best->dead;
 
-    CG_GoreLay(body, lay, GK_ENTRY, entry, tr.entryNormal, NULL, tr.entryTri, tr.entryBary, (hit->large ? 4.2f : 3.6f) * scale, 0);
-    if (!body->decals.empty() && body->decals.back().kind == GK_ENTRY && body->decals.back().born == cg.time) {
-        CG_GoreBleed(body, &best->ref, tr.entryTri, GK_ENTRY);
-        if (random() < (body->dead ? 0.4f : 0.7f)) {
-            CG_GoreLayRun(body, lay, entry, tr.entryNormal, tr.entryTri, tr.entryBary, 4.2f * scale);
+    // A living ally is left whole: what hit him only counts if it kills him.
+    if (!best->spared) {
+        CG_GoreLay(body, lay, GK_ENTRY, entry, tr.entryNormal, NULL, tr.entryTri, tr.entryBary, (hit->large ? 4.2f : 3.6f) * scale, 0);
+        if (!body->decals.empty() && body->decals.back().kind == GK_ENTRY && body->decals.back().born == cg.time) {
+            CG_GoreBleed(body, &best->ref, tr.entryTri, GK_ENTRY);
+            if (random() < (body->dead ? 0.4f : 0.7f)) {
+                CG_GoreLayRun(body, lay, entry, tr.entryNormal, tr.entryTri, tr.entryBary, 4.2f * scale);
+            }
         }
-    }
 
-    if (tr.exitTri >= 0 && random() < (hit->large ? 0.9f : 0.45f)) {
-        VectorMA(ray, tr.tExit, hit->dir, exitPos);
-        CG_GoreLay(body, lay, GK_EXIT, exitPos, tr.exitNormal, NULL, tr.exitTri, tr.exitBary, (hit->large ? 7.0f : 5.5f) * scale, 0);
-        if (!body->decals.empty() && body->decals.back().kind == GK_EXIT && body->decals.back().born == cg.time) {
-            CG_GoreBleed(body, &best->ref, tr.exitTri, GK_EXIT);
-            if (random() < (body->dead ? 0.4f : 0.9f)) {
-                CG_GoreLayRun(body, lay, exitPos, tr.exitNormal, tr.exitTri, tr.exitBary, 6.0f * scale);
+        if (tr.exitTri >= 0 && random() < (hit->large ? 0.9f : 0.45f)) {
+            VectorMA(ray, tr.tExit, hit->dir, exitPos);
+            CG_GoreLay(body, lay, GK_EXIT, exitPos, tr.exitNormal, NULL, tr.exitTri, tr.exitBary, (hit->large ? 7.0f : 5.5f) * scale, 0);
+            if (!body->decals.empty() && body->decals.back().kind == GK_EXIT && body->decals.back().born == cg.time) {
+                CG_GoreBleed(body, &best->ref, tr.exitTri, GK_EXIT);
+                if (random() < (body->dead ? 0.4f : 0.9f)) {
+                    CG_GoreLayRun(body, lay, exitPos, tr.exitNormal, tr.exitTri, tr.exitBary, 6.0f * scale);
+                }
             }
         }
     }
@@ -1524,7 +1534,7 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
             VectorMA(ray, tr.tExit, hit->dir, body->lastHitExitPos);
         }
 
-        if (!body->gib) {
+        if (!body->gib && !best->spared) {
             refEntity_t ref = best->ref;
 
             // Every round into a head breaks it, alive or dead.
@@ -2835,7 +2845,7 @@ static void CG_GoreAddGibs(void)
         }
 
         cgi.R_AddRefEntityToScene(&gib->ref, ENTITYNUM_NONE);
-        CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue);
+        CG_GoreAddEntityKey(gib->key, &gib->ref, qtrue, qfalse);
     }
 }
 
@@ -3860,6 +3870,9 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
                 CG_GoreBlastBody(body);
                 body->blastTime = cg.time; // for which way the parts fly
             }
+        }
+        if (d->spared) {
+            continue;
         }
 
         frags = (int)((1.0f - dist / range) * 7.0f + random());

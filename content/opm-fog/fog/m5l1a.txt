@@ -1,0 +1,14 @@
+// m5l1a's fog banks (r_volumetric 2, tr_froxel.c): a line a bank
+//   box x0 y0 z0  x1 y1 z1  density  soft  r g b
+// density 1: a thousand units of it take two thirds of the light out;
+// soft: how far in from its faces it reaches all of its density (units);
+// r g b: how much of the light on it it gives back (the sun and the sky
+// light it as they light smoke, so a grey mist is well under 1)
+
+// ground fog over the start, lying in the hollows up to z 110
+box 0 -12000 -600  12000 0 110  6  80  0.15 0.155 0.165
+// a thicker bank by the house and its gate
+box 5200 -4900 -200  5900 -4300 260  14  150  0.16 0.16 0.16
+
+// the banks' own light where no sun or lamp reaches them
+ambient 0.12 0.13 0.15

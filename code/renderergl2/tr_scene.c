@@ -395,6 +395,13 @@ void RE_BeginScene(const refdef_t *fd)
 		tr.refdef.autoExposureMinMax[0] = r_forceAutoExposureMin->value;
 		tr.refdef.autoExposureMinMax[1] = r_forceAutoExposureMax->value;
 	}
+	else if (r_autoExposure->integer)
+	{
+		// Added in OPM: eye adaptation sets the level itself, clamped
+		// (RB_EyeAdapt): the tone map is not to clamp it again
+		tr.refdef.autoExposureMinMax[0] = -10.0f;
+		tr.refdef.autoExposureMinMax[1] = 10.0f;
+	}
 	else
 	{
 		tr.refdef.autoExposureMinMax[0] = tr.autoExposureMinMax[0];
@@ -545,6 +552,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 	}
 
 	startTime = ri.Milliseconds();
+	{
+		extern int r_viewMs[6];
+		Com_Memset(r_viewMs, 0, sizeof(r_viewMs));
+	}
 
 	if (!tr.world && !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
 		ri.Error (ERR_DROP, "R_RenderScene: NULL worldmodel");
@@ -738,7 +749,28 @@ void RE_RenderScene( const refdef_t *fd ) {
 	}
 	//=========================
 
-	R_RenderView( &parms );
+	{
+		// Added in OPM: a scene that took long to set out (com_hitchLog, ms):
+		// how long before the view (shadow maps and the like), the view, and
+		// the front end's own timers for the frame so far
+		static cvar_t *com_hitchLog;
+		const int      viewAt = ri.Milliseconds();
+
+		R_RenderView( &parms );
+
+		if (!com_hitchLog) {
+			com_hitchLog = ri.Cvar_Get("com_hitchLog", "0", 0);
+		}
+		if (com_hitchLog->integer > 0 && ri.Milliseconds() - startTime >= com_hitchLog->integer / 2) {
+			extern int r_viewMs[6];
+			ri.Printf(PRINT_ALL, "hitch renderscene %d ms = before the view %d, the view %d (all views: world %d polygons %d entities %d sprites %d sort %d) | shadowpasses %.1f terrprep %.1f markleaves %.1f worldnode %.1f surfscan %.1f terrsurf %.1f statmodels %.1f groundcover %.1f entities %.1f (%d)\n",
+				ri.Milliseconds() - startTime, viewAt - startTime, ri.Milliseconds() - viewAt,
+				r_viewMs[0], r_viewMs[1], r_viewMs[2], r_viewMs[3], r_viewMs[4],
+				tr.pc.t_shadowFrontend / 1000.0, tr.pc.t_terrainPrepare / 1000.0, tr.pc.t_markLeaves / 1000.0,
+				tr.pc.t_worldNode / 1000.0, tr.pc.t_surfaceScan / 1000.0, tr.pc.t_terrainSurfaces / 1000.0,
+				tr.pc.t_staticModels / 1000.0, tr.pc.t_groundCover / 1000.0, tr.pc.t_entitySurfaces / 1000.0, tr.pc.c_entitySubmissions);
+		}
+	}
 
 	if(!( fd->rdflags & RDF_NOWORLDMODEL ))
 		R_AddPostProcessCmd();
@@ -810,6 +842,7 @@ void RE_AddRefSpriteToScene(const refEntity_t* ent) {
     spr->scale = ent->scale;
     spr->renderfx = ent->renderfx;
     spr->shaderTime = ent->shaderTime;
+    spr->froxelTaken = qfalse;
 	AxisCopy(ent->axis, spr->axis);
 
 	for (i = 0; i < 4; ++i) {

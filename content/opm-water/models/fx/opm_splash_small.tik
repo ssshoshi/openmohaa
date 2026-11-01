@@ -1,0 +1,80 @@
+TIKI
+// OPM (content/opm-water): something small going into water, a helmet, a
+// grenade, a limb (CG_WaterSplashEffect): a thin column thrown up and falling
+// back, a crown of drops, a little mist. The rings are the water's own.
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy2.skd
+}
+
+init
+{
+	client
+	{
+		cache opm_ocean_plume.spr
+		cache models/fx/water_splash_drop.tik
+
+		sfx sound snd_bh_puddle
+
+		sfx originspawn
+		(
+			model opm_ocean_plume.spr
+			alpha 0.8
+			angles 0 0 0
+			offset 0 0 4
+			count 1
+			life 0.3
+			scale 0.22
+			scalerate 1.5
+			fade
+		)
+
+		sfx originspawn
+		(
+			model models/fx/water_splash_drop.tik
+			spawnrange 4096
+			angles 270 0 0
+			alpha 0.75
+			offsetalongaxis random 4 crandom 2 crandom 2
+			offset 0 0 2
+			count 12
+			alignstretch 0.9
+			velocity 180
+			randvelaxis random 160 crandom 12 crandom 12
+			accel 0 0 -900
+			life 0.6 0.2
+			scalemin 1.0
+			scalemax 1.7
+			scalerate -0.6
+			fade
+			fadedelay 0.35
+		)
+
+		sfx originspawn
+		(
+			model models/fx/water_splash_drop.tik
+			spawnrange 4096
+			angles 270 0 0
+			alpha 0.55
+			offset 0 0 2
+			count 14
+			alignstretch 0.6
+			velocity 60
+			randvelaxis random 60 crandom 80 crandom 80
+			accel 0 0 -850
+			life 0.4 0.15
+			scalemin 0.8
+			scalemax 1.4
+			scalerate -1.0
+			fade
+			fadedelay 0.2
+		)
+	}
+}
+
+animations
+{
+	idle dummy2.skc
+}

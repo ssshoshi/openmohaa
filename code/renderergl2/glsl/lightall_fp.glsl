@@ -53,6 +53,190 @@ uniform vec4      u_CubeMapInfo;
 
 uniform int       u_AlphaTest;
 
+// Added in OPM: wet (tr_water.c). What has been in the sea or under the
+// spray, up to the mark the tide reached, is wet, after Lagarde's wet
+// surfaces in Remember Me: not a layer over the lit surface but the surface
+// changed before it is lit. Water filling a porous surface's pores darkens
+// it and deepens its colour (stone, wood, cloth; paint and metal hardly);
+// wet, any surface is smoother, and a film of water over it smoother still:
+// it flattens the bumps of its normal map, reflects as water does, and gives
+// back the sun as a small hard highlight and the sky most at a glancing look.
+// The film dries first: under the mark is a band that is dark but no longer
+// shines.
+uniform vec4      u_Wet;    // how wet, the mark's height, 0, 0
+uniform vec4      u_WetSky; // the sky it gives back
+uniform vec4      u_WetSun; // towards the sun, and how bright it is
+uniform vec3      u_ViewOrigin;
+varying vec3      var_WetPos;
+varying vec3      var_WetNormal;
+
+float WetNoise(vec2 p)
+{
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+	float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+	float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// How wet it is here (x: the water in it; y: the film on it) and which way
+// the surface itself faces (zw unused)
+vec2 WetAmount(out vec3 surfN)
+{
+	// faces' winding as the rest of this file has it: the front is the back
+	surfN = normalize(!gl_FrontFacing ? var_WetNormal : -var_WetNormal);
+	if (u_Wet.x <= 0.0)
+		return vec2(0.0);
+
+	// up to the mark, which is not a ruled line; the film a little below it
+	float mark = u_Wet.y + (WetNoise(var_WetPos.xy / 70.0 + var_WetPos.z / 50.0) - 0.5) * 16.0;
+	float soak = u_Wet.x * (1.0 - smoothstep(mark - 8.0, mark + 2.0, var_WetPos.z));
+	float film = u_Wet.x * (1.0 - smoothstep(mark - 22.0, mark - 8.0, var_WetPos.z));
+
+	// the ground is the wet beach's (beach_fp.glsl): only what stands up
+	float up = 1.0 - 0.85 * smoothstep(0.75, 0.95, surfN.z);
+
+	// the film runs down what stands up in streaks, here thick, there thin
+	float runs = smoothstep(0.25, 0.85, WetNoise(vec2(dot(var_WetPos.xy, vec2(0.11, 0.08)), var_WetPos.z * 0.03)));
+	film *= mix(1.0, mix(0.45, 1.0, runs), 1.0 - abs(surfN.z));
+
+	return vec2(soak, film) * up;
+}
+
+// How porous a surface is, by how rough and how metallic it looks: rough
+// and dull drinks the water, smooth or metallic sheds it
+float WetPorosity(float roughness, vec3 specular)
+{
+	float metal = smoothstep(0.08, 0.4, max(max(specular.r, specular.g), specular.b));
+	return smoothstep(0.25, 0.75, roughness) * (1.0 - metal);
+}
+
+// The water in it: darker, deeper in colour; smoother. Lagarde's factors.
+void WetMaterial(vec2 wet, float porosity, inout vec3 diffuse, inout float roughness)
+{
+	float factor = mix(1.0, 0.45, porosity);
+	float lum    = dot(diffuse, vec3(0.2125, 0.7154, 0.0721));
+
+	diffuse   = mix(vec3(lum), diffuse, 1.0 + 0.25 * wet.x * porosity);
+	diffuse   = max(diffuse, vec3(0.0)) * mix(1.0, factor, wet.x);
+	roughness = roughness * mix(1.0, factor, 0.5 * wet.x);
+	// the film: water's own smoothness
+	roughness = mix(roughness, 0.12, wet.y);
+}
+
+// What the film gives back with no cubemap: the sky above the horizon, the
+// dark beach and sea below it, with the fresnel of a surface this rough and
+// as much of the sky as the surface's light says it sees
+vec3 WetSky(vec3 N, vec3 E, float roughness, vec3 specular, vec3 light)
+{
+	float NE  = clamp(dot(N, E), 0.0, 1.0);
+	vec3  R   = reflect(-E, N);
+	vec3  sky = u_WetSky.rgb * mix(0.12, 1.0, smoothstep(-0.15, 0.35, R.z));
+	vec3  F   = specular + (max(vec3(1.0 - roughness), specular) - specular) * pow(1.0 - NE, 5.0);
+	float sees = clamp(dot(light, vec3(0.2125, 0.7154, 0.0721)) * 1.6, 0.25, 1.0);
+	// seen edge on, the film's own ripples hide what it gives back: at a
+	// model's outline, where its normal turns from the eye, the most of it
+	// was a bright line a pixel wide (a Higgins boat's side)
+	float edge = smoothstep(0.0, 0.25, dot(N, E));
+
+	return sky * F * sees * (1.0 - roughness) * edge;
+}
+
+#if defined(USE_SSR)
+// Added in OPM: reflections of what is on the screen (r_ssr). The reflected
+// ray marched through this frame's depth (its prepass), in steps that grow
+// with the distance, and the last frame's colour, before its glow and tone
+// map, where it hits; R_SsrSetUniforms. The cubemap's, or the wet film's
+// sky, stands in where the ray finds nothing on the screen.
+uniform sampler2D u_SsrColorMap;
+uniform sampler2D u_SsrDepthMap;
+uniform mat4      u_SsrViewProj;
+uniform mat4      u_SsrPrevViewProj;
+uniform vec4      u_SsrParams; // strength (0: off), how far, near, far
+
+#define SSR_STEPS    16
+#define SSR_REFINE   5
+// rougher than this, the reflection is too blurred to be one
+#define SSR_ROUGHEST 0.45
+
+float SsrSceneDepth(vec2 uv)
+{
+	float z = texture2D(u_SsrDepthMap, uv).r * 2.0 - 1.0;
+	float n = u_SsrParams.z, f = u_SsrParams.w;
+	return 2.0 * n * f / (f + n - z * (f - n));
+}
+
+// x y z the colour, w how much of it (0: none found)
+vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness)
+{
+	if (u_SsrParams.x <= 0.0 || roughness >= SSR_ROUGHEST)
+		return vec4(0.0);
+
+	vec3  R      = reflect(-E, N);
+	float reach  = u_SsrParams.y;
+	float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+	float prevT  = 0.0, t = 0.0;
+	bool  hit    = false;
+	vec4  c;
+
+	for (int i = 0; i < SSR_STEPS; i++)
+	{
+		float s = (float(i) + jitter) / float(SSR_STEPS);
+		t = 2.0 + reach * s * s;
+		c = u_SsrViewProj * vec4(P + R * t, 1.0);
+		if (c.w <= 1.0)
+			break;
+		vec2 uv = c.xy / c.w * 0.5 + 0.5;
+		if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+			break;
+		float behind = c.w - SsrSceneDepth(uv);
+		if (behind > 0.0)
+		{
+			// behind what is seen there, not by much: the ray meets it.
+			// Further behind, it passed behind something: what it would
+			// meet is hidden from the screen
+			if (behind < max(12.0, 1.5 * (t - prevT)))
+				hit = true;
+			break;
+		}
+		prevT = t;
+	}
+	if (!hit)
+		return vec4(0.0);
+
+	// where between the last two steps it meets it
+	{
+		float a = prevT, b = t;
+		for (int j = 0; j < SSR_REFINE; j++)
+		{
+			float m  = 0.5 * (a + b);
+			vec4  cm = u_SsrViewProj * vec4(P + R * m, 1.0);
+			if (cm.w - SsrSceneDepth(cm.xy / cm.w * 0.5 + 0.5) > 0.0)
+				b = m;
+			else
+				a = m;
+		}
+		t = b;
+	}
+
+	// there in the last frame
+	vec4 pc = u_SsrPrevViewProj * vec4(P + R * t, 1.0);
+	if (pc.w <= 1.0)
+		return vec4(0.0);
+	vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+	vec2 edge = min(puv, vec2(1.0) - puv);
+	float w = smoothstep(0.0, 0.08, min(edge.x, edge.y))
+		* (1.0 - smoothstep(0.6 * reach, reach, t))
+		* (1.0 - smoothstep(0.5 * SSR_ROUGHEST, SSR_ROUGHEST, roughness));
+	if (w <= 0.0)
+		return vec4(0.0);
+	return vec4(texture2D(u_SsrColorMap, puv).rgb, w * min(u_SsrParams.x, 1.0));
+}
+#endif
+
 #if defined(USE_RTLIGHT)
 varying vec3      var_RtPos;
 varying vec3      var_RtNormal;
@@ -60,6 +244,25 @@ varying vec3      var_RtNormal;
 
 uniform vec4      u_GlobalFogColor;
 uniform vec2      u_GlobalFogParams;
+
+// Added in OPM: r_linearLighting. The colours read as linear light (gamma
+// 2.2, as the display showed them), added up as light; the tone map shows the
+// frame (GLSL_BindProgram sets it, for the world's view alone)
+uniform float     u_Linear;
+
+vec3 Lin(vec3 c)
+{
+	return u_Linear > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c;
+}
+
+// The map's distance fog, mixed as it was shown (the mix of a colour shown and
+// the fog's): mixed as light, a dark wall took far more of a grey fog
+vec3 Fog(vec3 c, vec3 fog, float f)
+{
+	if (u_Linear > 0.5)
+		return Lin(mix(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), fog, f));
+	return mix(c, fog, f);
+}
 
 varying vec4      var_TexCoords;
 varying float     var_FogDist;
@@ -100,13 +303,32 @@ float SampleDepth(sampler2D normalMap, vec2 t)
   #endif
 }
 
-float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
+// Added in OPM: the depth read with the pixel's own gradients, so that a
+// search that stops at its hit (non-uniform flow, where implicit derivatives
+// are undefined) still reads the mip the pixel would
+#if __VERSION__ >= 130
+#define PARALLAX_GRAD
+float SampleDepthGrad(sampler2D normalMap, vec2 t, vec2 gx, vec2 gy)
+{
+  #if defined(SWIZZLE_NORMALMAP)
+	return 1.0 - textureGrad(normalMap, t, gx, gy).r;
+  #else
+	return 1.0 - textureGrad(normalMap, t, gx, gy).a;
+  #endif
+}
+#else
+#define SampleDepthGrad(m, t, gx, gy) SampleDepth(m, t)
+#endif
+
+// (OPM: steps, as many as the relief spans pixels, 16 at most; the search
+// stops at the first point inside, which was all it kept)
+float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, vec2 gy, float steps)
 {
 	const int linearSearchSteps = 16;
 	const int binarySearchSteps = 6;
 
 	// current size of search window
-	float size = 1.0 / float(linearSearchSteps);
+	float size = 1.0 / steps;
 
 	// adjust position if offset above surface
 	dp -= ds * r_parallaxMapOffset;
@@ -120,30 +342,35 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
 	// texture depth at best depth
 	float texDepth = 0.0;
 
-	float prevT = SampleDepth(normalMap, dp);
+	float prevT = SampleDepthGrad(normalMap, dp, gx, gy);
 	float prevTexDepth = prevT;
 
 	// search front to back for first point inside object
 	for(int i = 0; i < linearSearchSteps - 1; ++i)
 	{
+		if (float(i) >= steps - 1.0)
+			break;
+
 		depth += size;
 		
-		float t = SampleDepth(normalMap, dp + ds * depth);
+		float t = SampleDepthGrad(normalMap, dp + ds * depth, gx, gy);
 		
-		if(bestDepth > 0.996)		// if no depth found yet
-			if(depth >= t)
-			{
-				bestDepth = depth;	// store best depth
-				texDepth = t;
-				prevTexDepth = prevT;
-			}
+		if(depth >= t)
+		{
+			bestDepth = depth;	// store best depth
+			texDepth = t;
+			prevTexDepth = prevT;
+#if defined(PARALLAX_GRAD)
+			break;
+#endif
+		}
 		prevT = t;
 	}
 
 	depth = bestDepth;
 
 #if !defined (USE_RELIEFMAP)
-	float div = 1.0 / (1.0 + (prevTexDepth - texDepth) * float(linearSearchSteps));
+	float div = 1.0 / (1.0 + (prevTexDepth - texDepth) * steps);
 	bestDepth -= (depth - size - prevTexDepth) * div;
 #else
 	// recurse around first point (depth) for closest match
@@ -151,7 +378,7 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
 	{
 		size *= 0.5;
 
-		float t = SampleDepth(normalMap, dp + ds * depth);
+		float t = SampleDepthGrad(normalMap, dp + ds * depth, gx, gy);
 		
 		if(depth >= t)
 		{
@@ -166,7 +393,11 @@ float RayIntersectDisplaceMap(vec2 dp, vec2 ds, sampler2D normalMap)
 	return bestDepth - r_parallaxMapOffset;
 }
 
-float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
+// (OPM: gx, gy, the pixel's own texture gradients, as for the search: the ray
+// stops at its first hit and is only cast where parallax is on, both per
+// pixel, so the plain reads it made had undefined derivatives and could fetch
+// any mip, the noise the search had before it read with gradients)
+float LightRay(vec2 dp, vec2 ds, sampler2D normalMap, vec2 gx, vec2 gy)
 {
 	const int linearSearchSteps = 16;
 
@@ -176,7 +407,7 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 	// current height from initial texel depth
 	float height = 0.0;
 
-	float startDepth = SampleDepth(normalMap, dp);
+	float startDepth = SampleDepthGrad(normalMap, dp, gx, gy);
 
 	// find a collision or escape
 	for(int i = 0; i < linearSearchSteps - 1; ++i)
@@ -186,7 +417,7 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 		if (startDepth < height)
 			return 1.0;
 		
-		float t = SampleDepth(normalMap, dp + ds * height);
+		float t = SampleDepthGrad(normalMap, dp + ds * height, gx, gy);
 
 		if (startDepth > t + height)
 			return 0.0;
@@ -200,13 +431,13 @@ float LightRay(vec2 dp, vec2 ds, sampler2D normalMap)
 // shadow: dividing by z there made the ray NaN, and whatever that fetch read
 // put black blotches in every crevice. The shadow fades in over the first few
 // degrees above the plane, where the ray would stretch across the texture.
-float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap)
+float ParallaxShadow(vec3 lightDir, float scale, vec2 dp, sampler2D normalMap, vec2 gx, vec2 gy)
 {
 	float fade = smoothstep(0.0, 0.1, lightDir.z);
 	if (fade <= 0.0)
 		return 1.0;
 
-	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap), fade);
+	return mix(1.0, LightRay(dp, lightDir.xy * (scale / lightDir.z), normalMap, gx, gy), fade);
 }
 #endif
 
@@ -297,7 +528,14 @@ void main()
 	float NL, NH, NE, EH, attenuation;
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
+  #if defined(USE_GROUNDCOVER)
+	// Added in OPM: a tuft is lit from above as the ground it stands in is,
+	// whichever side of it shows (turned over, the tufts seen from behind
+	// went black in clumps)
+	vec3 surfNormal = var_Normal.xyz;
+  #else
 	vec3 surfNormal = (!gl_FrontFacing ? var_Normal : -var_Normal).xyz;
+  #endif
   #if defined(USE_TANGENT_FRAME)
 	mat3 tangentToWorld = mat3(var_Tangent.xyz, var_Bitangent.xyz, surfNormal);
 	viewDir = vec3(var_Normal.w, var_Tangent.w, var_Bitangent.w);
@@ -307,12 +545,12 @@ void main()
 	E = normalize(viewDir);
 #endif
 
-	lightColor = var_Color.rgb;
+	lightColor = Lin(var_Color.rgb);
 
 #if defined(USE_RTLIGHT) && defined(USE_LIGHT_VERTEX)
 	// all of it live: the baked vertex lighting gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = u_RtAmbient.rgb;
+		lightColor = u_RtAmbient.rgb * RtAmbientOcclusion();
 #endif
 
 #if defined(USE_LIGHTMAP)
@@ -323,12 +561,12 @@ void main()
   #if defined(USE_PBR) && !defined(USE_FAST_LIGHT)
 	lightmapColor.rgb *= lightmapColor.rgb;
   #endif
-	lightColor *= lightmapColor.rgb;
+	lightColor *= Lin(lightmapColor.rgb);
 
   #if defined(USE_RTLIGHT)
 	// all of it live: the lightmap gives way to the ambient
 	if (u_RtParams.y > 1.5)
-		lightColor = var_Color.rgb * u_RtAmbient.rgb;
+		lightColor = Lin(var_Color.rgb) * u_RtAmbient.rgb * RtAmbientOcclusion();
   #endif
 #endif
 
@@ -342,7 +580,15 @@ void main()
 	// it at 4x the depth, and fade it out where the surface is seen edge on.
 	offsetDir.xy *= -u_NormalScale.a * smoothstep(0.0, 0.25, offsetDir.z) / max(offsetDir.z, 0.25);
 
-	texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap);
+	// Added in OPM: how far the deepest of it moves on the screen. Under half
+	// a pixel (a wall across the room) it cannot be seen, and is not searched
+	// for, nor its shadows; above, a step a pixel, 4 to 16.
+	vec2  parallaxGx = dFdx(texCoords), parallaxGy = dFdy(texCoords);
+	float reliefPixels = length(offsetDir.xy) / max(max(length(parallaxGx), length(parallaxGy)), 1e-7);
+	bool  parallaxOn = reliefPixels >= 0.5;
+
+	if (parallaxOn)
+		texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap, parallaxGx, parallaxGy, clamp(ceil(reliefPixels), 4.0, 16.0));
 #endif
 
 	vec4 diffuse = texture2D(u_DiffuseMap, texCoords);
@@ -363,6 +609,25 @@ void main()
 		if (alpha < 0.5)
 			discard;
 	}
+	// Added in OPM: alpha to coverage (RB_AlphaToCoverage): the same cut, as a
+	// ramp a pixel wide that the samples it covers smooth
+	else if (u_AlphaTest == 4)
+	{
+		alpha = clamp((alpha - 0.5) / max(fwidth(alpha), 0.0001) + 0.5, 0.0, 1.0);
+		if (alpha <= 0.0)
+			discard;
+	}
+
+	// (r_linearLighting: the texture's colour as light; its alpha as it is)
+	diffuse.rgb = Lin(diffuse.rgb);
+
+	// Added in OPM: how wet (see WetAmount), and the light it had baked, for
+	// how much sky it sees
+	vec3 wetSurfN;
+	vec2 wet       = WetAmount(wetSurfN);
+	vec3 wetLight  = lightColor;
+	// Added in OPM: the reflection of what is on the screen (SsrTrace)
+	vec4 ssr       = vec4(0.0);
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	L = var_LightDir.xyz;
@@ -409,7 +674,7 @@ void main()
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	float parallaxShadow = ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
+	float parallaxShadow = parallaxOn ? ParallaxShadow(L * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap, parallaxGx, parallaxGy) : 1.0;
   #endif
 
 
@@ -428,7 +693,7 @@ void main()
 	// light is below the surface
 	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
   #else
-	ambientColor = var_ColorAmbient.rgb;
+	ambientColor = Lin(var_ColorAmbient.rgb);
   #endif
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
@@ -482,6 +747,25 @@ void main()
 	float roughness = pow(2.0 / (8190.0 * gloss + 2.0), 0.25);
   #endif
 
+	// Added in OPM: wet, the material before it is lit; the film flattens
+	// the normal map's bumps
+	if (wet.x > 0.0)
+	{
+		// what drinks the water holds less of it on top
+		float porosity = WetPorosity(roughness, specular.rgb);
+		wet.y *= mix(1.0, 0.5, porosity);
+		WetMaterial(wet, porosity, diffuse.rgb, roughness);
+		specular.rgb = mix(specular.rgb, max(specular.rgb, vec3(0.02)), wet.y);
+		N  = normalize(mix(N, surfNormal, 0.8 * wet.y));
+		NL = clamp(dot(N, L), 0.0, 1.0);
+		NE = clamp(dot(N, E), 0.0, 1.0);
+		NH = clamp(dot(N, H), 0.0, 1.0);
+	}
+
+  #if defined(USE_SSR)
+	ssr = SsrTrace(var_WetPos, N, E, roughness);
+  #endif
+
 	reflectance  = CalcDiffuse(diffuse.rgb, NH, EH, roughness);
 
   #if defined(r_deluxeSpecular)
@@ -517,13 +801,23 @@ void main()
 
     #if defined(USE_PBR)
 	cubeLightColor *= cubeLightColor;
+    #else
+	// Added in OPM: a cubemap holds what was shown, not light (r_linearLighting)
+	cubeLightColor = Lin(cubeLightColor);
     #endif
 
 	// multiply cubemap values by lighting
 	// not technically correct, but helps make reflections look less unnatural
 	//cubeLightColor *= lightColor * (attenuation * NL) + ambientColor;
 
+    #if defined(USE_SSR)
+	cubeLightColor = mix(cubeLightColor, ssr.rgb, ssr.a);
+    #endif
+
 	gl_FragColor.rgb += cubeLightColor * reflectance;
+  #elif defined(USE_SSR)
+	// Added in OPM: with no cubemap, the reflection where one was found
+	gl_FragColor.rgb += ssr.rgb * ssr.a * EnvironmentBRDF(roughness, NE, specular.rgb);
   #endif
 
   #if defined(USE_PRIMARY_LIGHT) || defined(SHADOWMAP_MODULATE)
@@ -548,7 +842,7 @@ void main()
 	reflectance += CalcDiffuse(diffuse.rgb, NH2, EH2, roughness);
     #endif
 
-	lightColor = u_PrimaryLightColor;
+	lightColor = Lin(u_PrimaryLightColor);
 
     #if defined(USE_SHADOWMAP)
 	lightColor *= shadowValue;
@@ -558,7 +852,8 @@ void main()
 	//lightColor *= CalcLightAttenuation(float(u_PrimaryLightDir.w > 0.0), u_PrimaryLightDir.w / sqrLightDist);
 
   #if defined(USE_PARALLAXMAP) && defined(USE_PARALLAXMAP_SHADOWS)
-	lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap);
+	if (parallaxOn)
+		lightColor *= ParallaxShadow(L2 * tangentToWorld, u_NormalScale.a, texCoords, u_NormalMap, parallaxGx, parallaxGy);
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;
@@ -568,26 +863,70 @@ void main()
 	gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
   #endif
 
+	// Added in OPM: what the wet film gives back (a cubemap's reflection is
+	// the surface's own), and the sun where no primary light pass draws it
+	if (wet.y > 0.0)
+	{
+    #if !defined(USE_CUBEMAP)
+		gl_FragColor.rgb += wet.y * (1.0 - ssr.a) * WetSky(N, E, roughness, specular.rgb, wetLight);
+    #endif
+    #if !defined(USE_PRIMARY_LIGHT) && !defined(SHADOWMAP_MODULATE)
+		{
+			vec3 Hs = normalize(u_WetSun.xyz + E);
+			gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(N, u_WetSun.xyz), 0.0, 1.0)
+				* CalcSpecular(specular.rgb, clamp(dot(N, Hs), 0.0, 1.0), clamp(dot(E, Hs), 0.0, 1.0), roughness);
+		}
+    #endif
+	}
+
 #else
 
-	gl_FragColor.rgb = diffuse.rgb * lightColor;
+	// Added in OPM: wet, with no material maps: a porous dull surface
+	if (wet.x > 0.0)
+	{
+		float wetRough = 0.6;
+		vec3  Ew       = normalize(u_ViewOrigin - var_WetPos);
+		vec3  Hs       = normalize(u_WetSun.xyz + Ew);
+		vec3  F0       = vec3(0.02);
+
+		wet.y *= 0.65;
+		WetMaterial(wet, 0.7, diffuse.rgb, wetRough);
+		gl_FragColor.rgb  = diffuse.rgb * lightColor;
+		gl_FragColor.rgb += wet.y * WetSky(wetSurfN, Ew, wetRough, F0, wetLight);
+		gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(wetSurfN, u_WetSun.xyz), 0.0, 1.0)
+			* CalcSpecular(F0, clamp(dot(wetSurfN, Hs), 0.0, 1.0), clamp(dot(Ew, Hs), 0.0, 1.0), wetRough);
+	}
+	else
+		gl_FragColor.rgb = diffuse.rgb * lightColor;
 
 #endif
 
 	gl_FragColor.a = alpha;
 
+
 #if defined(USE_RTLIGHT)
-	// Added in OPM: the realtime lights, on the surface's own colour
+	// Added in OPM: the realtime lights, on the surface's own colour; not on
+	// a glow added on top, nor on dust and smoke without a light of their own
+	// (R_RtStageKind), every pixel of a muzzle flash through every light
+	if (u_RtStage != RT_STAGE_NONE)
 	{
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 		vec3 rtNormal = N;
+		// the surface's own, which the baked lamps were worked out for, on
+		// the side the normal map's is
+		rt_geomN = normalize(var_RtNormal);
+		if (dot(rt_geomN, N) < 0.0) rt_geomN = -rt_geomN;
 
 		// the lights' and the sun's shine, with all of the light live
 		rt_specOn    = u_RtParams.y > 1.5 && u_RtSurface.z > 0.0;
 		rt_specView  = E;
 		rt_specRough = roughness;
   #else
-		vec3 rtNormal = normalize(gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+    #if defined(USE_GROUNDCOVER)
+		vec3 rtNormal = normalize(var_RtNormal);
+    #else
+		vec3 rtNormal = normalize(!gl_FrontFacing ? var_RtNormal : -var_RtNormal);
+    #endif
   #endif
   #if defined(USE_LIGHTMAP)
 		rt_skyLM = var_TexCoords.zw;
@@ -610,5 +949,10 @@ void main()
 	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer
 	// gets from fixed function GL_FOG.
 	float fogFactor = clamp((var_FogDist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
-	gl_FragColor.rgb = mix(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+	gl_FragColor.rgb = Fog(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+
+#if defined(USE_FROXEL_FOG)
+	// Added in OPM: the light in the air between it and the eye
+	gl_FragColor.rgb = FroxelFog(gl_FragColor.rgb, gl_FragColor.a);
+#endif
 }

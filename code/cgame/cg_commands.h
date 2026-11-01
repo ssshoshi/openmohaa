@@ -114,6 +114,11 @@ TIKI file, similar to ScriptMaster in the server game dll.
 #define T2_SPIN               (1 << 21)
 #define T2_RELATIVEANGLES     (1 << 22)
 #define T2_NOTAGAXIS          (1 << 23)
+// Added in OPM: a weapon's muzzle flash light (a brief tagdlight), shaped as one (CG_MuzzleLight)
+#define T2_MUZZLEFLASH        (1 << 24)
+// Added in OPM: puffs of smoke with a volume: with r_volumetric 2 the renderer
+// puts them in the air's grid, lit and shadowed, in place of their sprites
+#define T2_SMOKEVOLUME        (1 << 25)
 
 class spawnthing_t;
 class specialeffect_t;
@@ -882,6 +887,7 @@ private:
     void          SetDetail(Event *ev);
     void          SetWindAffect(Event *ev);
     void          SpriteGridLighting(Event *ev);
+    void          SmokeVolume(Event *ev); // Added in OPM
     void          SetWaterOnly(Event *ev);
     void          SetAlignStretch(Event *ev);
     void          SetClampVel(Event *ev);

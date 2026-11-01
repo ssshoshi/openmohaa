@@ -2548,6 +2548,75 @@ void R_LoadImageUncompressed( const char *name, byte **pic, int *width, int *hei
 }
 
 
+// Added in OPM
+//  The size of the file the game made an image for (a TGA, JPG or PNG), read
+//  from its header, never a DDS standing in for it: the texture upscale's are
+//  four times as wide, and a sprite's size in the world is its image's.
+static qboolean R_ImageHeaderSize( const char *name, int *width, int *height )
+{
+	fileHandle_t f;
+	byte         buf[4096];
+	const char   *ext = COM_GetExtension( name );
+	size_t       len;
+	qboolean     found = qfalse;
+
+	if ( ri.FS_OpenFile( name, &f, qtrue, qtrue ) <= 0 || !f ) {
+		return qfalse;
+	}
+	len = ri.FS_Read( buf, sizeof( buf ), f );
+
+	if ( !Q_stricmp( ext, "tga" ) && len >= 18 ) {
+		*width  = buf[12] | ( buf[13] << 8 );
+		*height = buf[14] | ( buf[15] << 8 );
+		found   = qtrue;
+	} else if ( !Q_stricmp( ext, "png" ) && len >= 24 ) {
+		*width  = ( buf[16] << 24 ) | ( buf[17] << 16 ) | ( buf[18] << 8 ) | buf[19];
+		*height = ( buf[20] << 24 ) | ( buf[21] << 16 ) | ( buf[22] << 8 ) | buf[23];
+		found   = qtrue;
+	} else if ( !Q_stricmp( ext, "jpg" ) && len >= 4 && buf[0] == 0xFF && buf[1] == 0xD8 ) {
+		// the start-of-frame marker, past the segments before it
+		size_t pos = 2;
+
+		while ( pos + 9 < len && buf[pos] == 0xFF ) {
+			const int marker = buf[pos + 1];
+			const int seg    = ( buf[pos + 2] << 8 ) | buf[pos + 3];
+
+			if ( marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC ) {
+				*height = ( buf[pos + 5] << 8 ) | buf[pos + 6];
+				*width  = ( buf[pos + 7] << 8 ) | buf[pos + 8];
+				found   = qtrue;
+				break;
+			}
+			pos += 2 + seg;
+		}
+	}
+
+	ri.FS_CloseFile( f );
+	return found && *width > 0 && *height > 0;
+}
+
+// Added in OPM
+//  As R_LoadImageFile looks for it without a DDS: a TGA's JPG first, then the
+//  name, then the other formats.
+qboolean R_ImageFileSize( const char *name, int *width, int *height )
+{
+	char        base[MAX_QPATH];
+	const char *ext = COM_GetExtension( name );
+
+	COM_StripExtension( name, base, sizeof( base ) );
+
+	if ( !Q_stricmp( ext, "tga" ) && R_ImageHeaderSize( va( "%s.jpg", base ), width, height ) ) {
+		return qtrue;
+	}
+	if ( *ext && Q_stricmp( ext, "dds" ) && R_ImageHeaderSize( name, width, height ) ) {
+		return qtrue;
+	}
+	return R_ImageHeaderSize( va( "%s.tga", base ), width, height )
+		|| R_ImageHeaderSize( va( "%s.jpg", base ), width, height )
+		|| R_ImageHeaderSize( va( "%s.png", base ), width, height );
+}
+
+
 /*
 ===============
 R_FindImageFile
@@ -2565,6 +2634,7 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	int picNumMips;
 	long	hash;
 	imgFlags_t checkFlagsTrue, checkFlagsFalse;
+	int		imgStartedAt, imgLoadedAt; // Added in OPM: tiki_loadlog 2
 
 	if (!name) {
 		return NULL;
@@ -2594,8 +2664,13 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	//
 	// load the pic from disk
 	//
+	imgStartedAt = ri.Milliseconds();
 	R_LoadImage( name, &pic, &width, &height, &picFormat, &picNumMips );
+	imgLoadedAt = ri.Milliseconds();
 	if ( pic == NULL ) {
+		if ( imgLoadedAt - imgStartedAt >= 3 && ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 ) {
+			ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms looking for image %s, not found\n", imgLoadedAt - imgStartedAt, name );
+		}
 		return NULL;
 	}
 
@@ -2725,6 +2800,10 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 
 	image = R_CreateImage2( ( char * ) name, pic, width, height, picFormat, picNumMips, type, flags, 0 );
 	ri.Free( pic );
+	if ( ri.Cvar_Get( "tiki_loadlog", "0", 0 )->integer > 1 && ri.Milliseconds() - imgStartedAt >= 3 ) {
+		ri.Printf( PRINT_ALL, "tiki_loadlog:     %d ms image %s (%dx%d, %d mips, format 0x%x): %d reading, %d the rest\n", ri.Milliseconds() - imgStartedAt, name,
+			width, height, picNumMips, picFormat, imgLoadedAt - imgStartedAt, ri.Milliseconds() - imgLoadedAt );
+	}
 	return image;
 }
 
@@ -2961,8 +3040,32 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenScratchImage = R_CreateImage("screenScratch", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
 
 		// Added in OPM: soft particles read the view's depth from it too
-		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0)
+		// and water, to see how deep it is (tr_water.c)
+		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer
+			|| (r_gtao->integer && r_realtimeLighting->integer == 2))
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+
+		// Added in OPM: the view before its water, which the water shows through (tr_water.c)
+		if (r_water->integer)
+			tr.waterSceneImage = R_CreateImage("*waterScene", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+
+		// Added in OPM: the view water mirrors (tr_water.c), at half the
+		// screen's size, or all of it at r_waterReflect 2
+		if (r_water->integer)
+		{
+			const int shift = r_waterReflect->integer == 2 ? 0 : 1;
+
+			tr.waterReflectImage = R_CreateImage("*waterReflect", NULL, width >> shift, height >> shift, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+			// its depth as an image the air's grid can read (r_volumetric 2)
+			tr.waterReflectDepthImage = R_CreateImage("*waterReflectDepth", NULL, width >> shift, height >> shift, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
+		}
+
+		// Added in OPM: the water's ripples (tr_water.c)
+		if (r_water->integer && r_waterRipples->integer)
+		{
+			tr.waterRippleImage[0] = R_CreateImage("*waterRipple0", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.waterRippleImage[1] = R_CreateImage("*waterRipple1", NULL, WATER_RIPPLE_SIZE, WATER_RIPPLE_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
 
 		if (r_drawSunRays->integer)
 			tr.sunRaysImage = R_CreateImage("*sunRays", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
@@ -2993,9 +3096,67 @@ void R_CreateBuiltinImages( void ) {
 			tr.quarterImage[x] = R_CreateImage(va("*quarter%d", x), NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
 		}
 
+		// Added in OPM: the bloom's levels (RB_Bloom), as bright as the view
+		// can be: only with r_hdr's float target is there more than white
+		if (r_hdr->integer && hdrFormat != GL_RGBA8)
+		{
+			for (x = 0; x < BLOOM_LEVELS; x++)
+			{
+				tr.bloomImage[x] = R_CreateImage(va("*bloom%d", x), NULL, Q_max(1, width >> (x + 1)), Q_max(1, height >> (x + 1)), IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			}
+		}
+
+		// Added in OPM: r_gtao's, at half the view's size
+		if (r_gtao->integer && r_realtimeLighting->integer == 2)
+		{
+			tr.gtaoImage     = R_CreateImage("*gtao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+			tr.gtaoBlurImage = R_CreateImage("*gtaoBlur", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+			// with smaller copies of itself: what is read further off is
+			// read from a smaller one, so still near in memory (SAO's)
+			// (not IMGFLAG_MIPMAP: that would scale an empty image up to a
+			// power of two)
+			tr.gtaoDepthImage = R_CreateImage("*gtaoDepth", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+			for (x = 1; x <= GTAO_DEPTH_MIPS; x++)
+				qglTextureImage2DEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, x, GL_R32F, MAX(1, (width / 2) >> x), MAX(1, (height / 2) >> x), 0, GL_RED, GL_FLOAT, NULL);
+			qglTextureParameteriEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+			qglTextureParameteriEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			qglTextureParameteriEXT(tr.gtaoDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GTAO_DEPTH_MIPS);
+		}
+
 		if (r_ssao->integer)
 		{
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+		}
+
+		// Added in OPM: r_ssr's copy of the last frame, before its glow and tone map
+		if (r_ssr->integer)
+		{
+			tr.ssrPrevImage = R_CreateImage("*ssrPrev", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+		}
+
+		// Added in OPM: r_volumetric's, at a quarter of the view's size
+		// across, brighter than white
+		if (r_volumetric->integer == 1 && r_realtimeLighting->integer == 2)
+		{
+			tr.volumeImage     = R_CreateImage("*volume", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.volumeBlurImage = R_CreateImage("*volumeBlur", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
+		// Added in OPM: r_volumetric 2's grid of the air, a cell FROXEL_PIXELS
+		// of the view a side, its slices FROXEL_TILES a row
+		else if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		{
+			const int cellsX = (width + FROXEL_PIXELS - 1) / FROXEL_PIXELS;
+			const int cellsY = (height + FROXEL_PIXELS - 1) / FROXEL_PIXELS;
+			const int atlasW = cellsX * FROXEL_TILES;
+			const int atlasH = cellsY * (FROXEL_SLICES / FROXEL_TILES);
+
+			tr.froxelLightImage[0] = R_CreateImage("*froxelLight0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelLightImage[1] = R_CreateImage("*froxelLight1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelSumImage[0] = R_CreateImage("*froxelSum0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelSumImage[1] = R_CreateImage("*froxelSum1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelDepthImage = R_CreateImage("*froxelDepth", NULL, cellsX, cellsY, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			// raw depth, which a half float cannot tell apart near 1
+			tr.froxelDepthQuarterImage = R_CreateImage("*froxelDepthQuarter", NULL, cellsX * 4, cellsY * 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 		}
 
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)
@@ -3019,9 +3180,13 @@ void R_CreateBuiltinImages( void ) {
 			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 			qglTextureParameterfEXT(tr.rtCapsuleImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-			for ( x = 0; x < (r_realtimeLighting->integer == 1 ? 3 : 2); x++)
+			// the third (the world alone) in small tiles with all of it live:
+			// for the lamps baked on the lightmaps (R_RtBakeLamps)
+			for ( x = 0; x < 3; x++)
 			{
-				tr.rtShadowImage[x] = R_CreateImage(va("*rtshadow%i", x), NULL, size, size, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
+				const int atlasSize = x == 2 ? R_RtBakedTile() * RT_ATLAS_TILES : size;
+
+				tr.rtShadowImage[x] = R_CreateImage(va("*rtshadow%i", x), NULL, atlasSize, atlasSize, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
 				qglTextureParameterfEXT(tr.rtShadowImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -3046,7 +3211,10 @@ void R_CreateBuiltinImages( void ) {
 		{
 			for ( x = 0; x < 4; x++)
 			{
-				tr.sunShadowDepthImage[x] = R_CreateImage(va("*sunshadowdepth%i", x), NULL, r_shadowMapSize->integer, r_shadowMapSize->integer, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
+				// (OPM: the last, the whole level's, at its own size)
+				const int size = x == 3 ? R_SunShadowFarSize() : r_shadowMapSize->integer;
+
+				tr.sunShadowDepthImage[x] = R_CreateImage(va("*sunshadowdepth%i", x), NULL, size, size, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
 				qglTextureParameterfEXT(tr.sunShadowDepthImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
 				qglTextureParameterfEXT(tr.sunShadowDepthImage[x]->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
 			}
@@ -3488,6 +3656,21 @@ void	R_SkinList_f( void ) {
 image_t* R_RefreshImageFile(const char* name, imgType_t type, imgFlags_t flags) {
 	// FIXME: unimplemented (GL2)
 	return NULL;
+}
+
+/*
+===============
+R_SunShadowFarSize
+
+Added in OPM: the size of the sun's whole-level cascade (r_sunShadowFarSize),
+no smaller than the others and no bigger than the card takes
+===============
+*/
+int R_SunShadowFarSize(void)
+{
+	int size = r_sunShadowFarSize->integer > 0 ? r_sunShadowFarSize->integer : r_shadowMapSize->integer;
+
+	return Com_Clamp(r_shadowMapSize->integer, glConfig.maxTextureSize, size);
 }
 
 /*

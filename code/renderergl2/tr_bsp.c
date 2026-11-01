@@ -559,8 +559,9 @@ static void R_FreeWorldImages( void )
 
 	R_IssuePendingRenderCommands();
 
-	// Added in OPM: the sky each of their texels sees
+	// Added in OPM: the sky each of their texels sees, and the lamps' light on them
 	R_RtFreeSkyLightmaps();
+	R_RtFreeBakedLamps();
 
 	if ( tr.lightmaps ) {
 		for ( i = 0; i < tr.numLightmaps; i++ ) {
@@ -2738,12 +2739,187 @@ void R_LoadCubemapEntities(char *cubemapEntityName)
 	}
 }
 
+/*
+=================
+R_PlaceEnvProbes
+
+Added in OPM: where a map has no cubemaps of its own (misc_cubemap or an
+env.json), put them where a player can be: at its path nodes and spawn
+points, a little over the floor. The most open of them first (the middle
+of a room or of a street), each one a probe unless one already there sees it
+from near enough: a room off a street has its own, and a street one so far
+along. Its parallax radius is how far its walls are.
+=================
+*/
+#define ENV_PROBES_MAX 96
+#define ENV_SPOTS_MAX  4096
+
+typedef struct {
+	vec3_t origin;
+	float  open;  // to the nearest wall, across
+	float  reach; // to the walls, all round
+} envSpot_t;
+
+static int R_EnvSpotCompare(const void *a, const void *b)
+{
+	const float fa = ((const envSpot_t *)a)->open, fb = ((const envSpot_t *)b)->open;
+	return fa < fb ? 1 : fa > fb ? -1 : 0;
+}
+
+static float R_EnvTrace(const vec3_t start, const vec3_t dir, float most)
+{
+	trace_t trace;
+	vec3_t  end;
+
+	VectorMA(start, most, dir, end);
+	ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+	if (trace.startsolid)
+		return -1.0f;
+	return trace.fraction * most;
+}
+
+static qboolean R_EnvSpot(const vec3_t at, envSpot_t *spot)
+{
+	static const vec3_t down = { 0, 0, -1 }, up = { 0, 0, 1 };
+	static const vec3_t sides[4] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 } };
+	vec3_t start;
+	float  below, above, height, round = 0.0f;
+	int    i;
+
+	VectorCopy(at, start);
+	start[2] += 16.0f;
+	below = R_EnvTrace(start, down, 512.0f);
+	if (below < 0.0f || below >= 512.0f)
+		return qfalse;
+	above  = Q_max(0.0f, R_EnvTrace(start, up, 1024.0f));
+	height = below + above;
+
+	// a little over the floor, or half way up a low room
+	VectorCopy(start, spot->origin);
+	spot->origin[2] += Q_min(64.0f, 0.5f * height) - below;
+
+	spot->open = 2048.0f;
+	for (i = 0; i < 4; i++)
+	{
+		const float d = R_EnvTrace(spot->origin, sides[i], 2048.0f);
+		if (d < 0.0f)
+			return qfalse;
+		spot->open = Q_min(spot->open, d);
+		round += d;
+	}
+	spot->reach = Q_max(128.0f, Q_min(0.2f * (0.5f * height + round), 1024.0f));
+	return qtrue;
+}
+
+// what R_PlaceEnvProbes found, for reflectioninfo: the places, and the
+// spots it could use of them
+int r_envPlaces, r_envSpots, r_envDrawMsec;
+
+void R_PlaceEnvProbes(const lump_t *entityLump)
+{
+	char      *text, *p, *token;
+	char       classname[MAX_QPATH];
+	vec3_t     origin;
+	qboolean   originSet = qfalse;
+	envSpot_t *spots;
+	cubemap_t  probes[ENV_PROBES_MAX];
+	int        numSpots = 0, numProbes = 0, i, j;
+
+	r_envPlaces = r_envSpots = 0;
+
+	// the map's entities, read from the file (the world keeps none of them)
+	if (!entityLump || entityLump->filelen <= 0)
+		return;
+	text = ri.Hunk_AllocateTempMemory(entityLump->filelen + 1);
+	Com_Memcpy(text, fileBase + entityLump->fileofs, entityLump->filelen);
+	text[entityLump->filelen] = 0;
+	spots = ri.Hunk_AllocateTempMemory(sizeof(*spots) * ENV_SPOTS_MAX);
+
+	classname[0] = 0;
+	for (p = text; ; )
+	{
+		token = COM_ParseExt(&p, qtrue);
+		if (!token[0])
+			break;
+		if (token[0] == '{')
+		{
+			classname[0] = 0;
+			originSet = qfalse;
+		}
+		else if (token[0] == '}')
+		{
+			if (originSet && (!Q_stricmp(classname, "info_pathnode") || !Q_stricmpn(classname, "info_player_", 12)))
+			{
+				r_envPlaces++;
+				if (numSpots < ENV_SPOTS_MAX && R_EnvSpot(origin, &spots[numSpots]))
+					numSpots++;
+			}
+		}
+		else
+		{
+			char key[MAX_TOKEN_CHARS];
+
+			Q_strncpyz(key, token, sizeof(key));
+			token = COM_ParseExt(&p, qtrue);
+			if (!Q_stricmp(key, "classname"))
+				Q_strncpyz(classname, token, sizeof(classname));
+			else if (!Q_stricmp(key, "origin"))
+				originSet = sscanf(token, "%f %f %f", &origin[0], &origin[1], &origin[2]) == 3;
+		}
+	}
+	r_envSpots = numSpots;
+	qsort(spots, numSpots, sizeof(*spots), R_EnvSpotCompare);
+
+	for (i = 0; i < numSpots && numProbes < ENV_PROBES_MAX; i++)
+	{
+		const envSpot_t *spot    = &spots[i];
+		const float      spacing = Q_max(384.0f, Q_min(spot->reach * 1.5f, 1536.0f));
+		qboolean         seen    = qfalse;
+
+		for (j = 0; j < numProbes && !seen; j++)
+		{
+			trace_t trace;
+
+			if (Distance(probes[j].origin, spot->origin) > spacing)
+				continue;
+			ri.CM_BoxTrace(&trace, spot->origin, probes[j].origin, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+			seen = trace.fraction == 1.0f && !trace.startsolid;
+		}
+		if (seen)
+			continue;
+
+		Com_Memset(&probes[numProbes], 0, sizeof(probes[numProbes]));
+		Com_sprintf(probes[numProbes].name, sizeof(probes[numProbes].name), "auto%d", numProbes);
+		VectorCopy(spot->origin, probes[numProbes].origin);
+		probes[numProbes].parallaxRadius = spot->reach;
+		numProbes++;
+	}
+	ri.Hunk_FreeTempMemory(spots);
+	ri.Hunk_FreeTempMemory(text);
+
+	if (!numProbes)
+		return;
+
+	tr.numCubemaps = numProbes;
+	tr.cubemaps = ri.Hunk_Alloc(numProbes * sizeof(*tr.cubemaps), h_low);
+	Com_Memcpy(tr.cubemaps, probes, numProbes * sizeof(*tr.cubemaps));
+	ri.Printf(PRINT_ALL, "reflections: %d probes placed at %d of the map's path nodes and spawns\n", numProbes, numSpots);
+}
+
 void R_AssignCubemapsToWorldSurfaces(void)
 {
 	world_t	*w;
 	int i;
 
 	w = &s_worldData;
+
+	// Added in OPM: the area each is in, for R_CubemapForPoint
+	for (i = 0; i < tr.numCubemaps; i++)
+	{
+		mnode_t *leaf = R_PointInLeaf(tr.cubemaps[i].origin);
+		tr.cubemaps[i].area    = leaf->cluster >= 0 ? leaf->area : -1;
+		tr.cubemaps[i].cluster = leaf->cluster;
+	}
 
 	for (i = 0; i < w->numsurfaces; i++)
 	{
@@ -2791,13 +2967,15 @@ void R_LoadCubemaps(void)
 
 void R_RenderMissingCubemaps(void)
 {
-	int i, j;
+	int i, j, rendered = 0;
+	const int start = ri.Milliseconds();
 	imgFlags_t flags = IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_MIPMAP | IMGFLAG_NOLIGHTSCALE | IMGFLAG_CUBEMAP;
 
 	for (i = 0; i < tr.numCubemaps; i++)
 	{
 		if (!tr.cubemaps[i].image)
 		{
+			rendered++;
 			tr.cubemaps[i].image = R_CreateImage(va("*cubeMap%d", i), NULL, r_cubemapSize->integer, r_cubemapSize->integer, IMGTYPE_COLORALPHA, flags, GL_RGBA8);
 
 			for (j = 0; j < 6; j++)
@@ -2808,6 +2986,15 @@ void R_RenderMissingCubemaps(void)
 				R_InitNextFrame();
 			}
 		}
+	}
+
+	// Added in OPM
+	if (rendered)
+	{
+		R_IssuePendingRenderCommands();
+		qglFinish();
+		r_envDrawMsec = ri.Milliseconds() - start;
+		ri.Printf(PRINT_ALL, "reflections: %d of %d probes drawn in %d ms\n", rendered, tr.numCubemaps, r_envDrawMsec);
 	}
 }
 
@@ -3941,16 +4128,8 @@ void RE_LoadWorldMap( const char *name ) {
 			R_LoadCubemapEntities("misc_cubemap");
 		}
 
-		if (!tr.numCubemaps)
-		{
-			// use deathmatch spawn points as cubemaps
-			R_LoadCubemapEntities("info_player_deathmatch");
-		}
-
-		if (tr.numCubemaps)
-		{
-			R_AssignCubemapsToWorldSurfaces();
-		}
+		// Removed in OPM: deathmatch spawn points as cubemaps, at the
+		// floor; they are among R_PlaceEnvProbes's places
 	}
 
 	s_worldData.dataSize = (byte *)ri.Hunk_Alloc(0, h_low) - startMarker;
@@ -3961,16 +4140,21 @@ void RE_LoadWorldMap( const char *name ) {
 	// make sure the VAO glState entry is safe
 	R_BindNullVao();
 
-	// Render or load all cubemaps
-	if (r_cubeMapping->integer && tr.numCubemaps && glRefConfig.framebufferObject)
+	// Added in OPM: a single player map has none of those: placed in its
+	// rooms (R_PlaceEnvProbes), and each surface takes one in its own room
+	if (r_cubeMapping->integer && glRefConfig.framebufferObject)
 	{
-		R_LoadCubemaps();
-		R_RenderMissingCubemaps();
+		if (!tr.numCubemaps)
+			R_PlaceEnvProbes(Q_GetLumpByVersion(header, LUMP_ENTITIES));
+		if (tr.numCubemaps)
+			R_AssignCubemapsToWorldSurfaces();
 	}
 
 	// Added in OPM
 	//  From the file as it is, before the lightmaps went into atlases.
 	R_GroundCoverLoadWorld(fileBase, header);
+	R_WaterLoadWorld(s_worldData.baseName);
+	R_FogLoadWorld(s_worldData.baseName);
 
     ri.FS_FreeFile( buffer.v );
 
@@ -3981,6 +4165,16 @@ void RE_LoadWorldMap( const char *name ) {
     R_InitTerrain();
     ri.UI_LoadResource("*113");
     R_InitStaticModels();
+
+	// Render or load all cubemaps
+	// Moved in OPM: after the terrain and the static models, which they
+	// show, and before the realtime lights: they hold the map's own light
+	if (r_cubeMapping->integer && tr.numCubemaps && glRefConfig.framebufferObject)
+	{
+		R_LoadCubemaps();
+		R_RenderMissingCubemaps();
+	}
+
     // Added in OPM
     //  After the sun (R_Sphere_InitLights) and the static models.
     R_RtLoadWorld();

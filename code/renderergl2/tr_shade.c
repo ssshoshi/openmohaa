@@ -326,6 +326,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.skin.valid = qfalse;
 	tess.skin.deferred = qfalse;
 	tess.groundCover = qfalse;
+	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 	tess.xstages = state->stages;
 	tess.numPasses = state->numUnfoggedPasses;
@@ -614,9 +615,11 @@ static void ProjectDlightTexture( void ) {
 		// where they aren't rendered
 		if ( dl->additive ) {
 			GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			R_FroxelSetFog(sp, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
 		}
 		else {
 			GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			R_FroxelSetFog(sp, GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE);
 		}
 
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 1);
@@ -1182,7 +1185,20 @@ static void ForwardDlight( void ) {
 
 			ComputeShaderColors(pStage, baseColor, vertColor, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
 
+			// Changed in OPM: the light is added on top, so it fades into black
+			// fog, adding nothing out in it. With the surface's own fog colour
+			// it added that colour, at full strength out where the fog is
+			// thick: a light near far terrain (m3l1a's bunker MG42s' muzzle
+			// flashes on the bluff behind) blinked it white.
 			RB_SetGlobalFogUniforms(sp, pStage);
+			// Added in OPM: the light in the air between it and the eye
+			R_FroxelSetFog(sp, pStage->stateBits);
+			if (backEnd.globalFogEnabled && !tess.no_global_fog && (pStage->stateBits & GLS_FOG_ENABLED))
+			{
+				const vec4_t black = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+				GLSL_SetUniformVec4(sp, UNIFORM_GLOBALFOGCOLOR, black);
+			}
 
 			GLSL_SetUniformVec4(sp, UNIFORM_BASECOLOR, baseColor);
 			GLSL_SetUniformVec4(sp, UNIFORM_VERTCOLOR, vertColor);
@@ -1216,6 +1232,9 @@ static void ForwardDlight( void ) {
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
+		// Added in OPM: the light's pass adds light only; the wet is in the
+		// surface's own pass
+		R_WaterSetDry(sp);
 
 		if (pStage->bundle[TB_DIFFUSEMAP].image[0])
 			R_BindAnimatedImageToTMU( &pStage->bundle[TB_DIFFUSEMAP], TB_DIFFUSEMAP);
@@ -1332,6 +1351,8 @@ static void ProjectPshadowVBOGLSL( void ) {
 		// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
 		// where they aren't rendered
 		GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL );
+		// Added in OPM: the light in the air between it and the eye
+		R_FroxelSetFog(sp, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 
 		GL_BindToTMU( tr.pshadowMaps[l], TB_DIFFUSEMAP );
@@ -1494,7 +1515,39 @@ static qboolean RB_DepthPrepassed( const shaderCommands_t *input )
 	if ( input->shader->sort != SS_OPAQUE && input->shader->sort != SS_PORTAL ) {
 		return qfalse;
 	}
+	// Added in OPM: a model left out of the prepass (r_prepassFarModels)
+	if ( backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity && backEnd.currentEntity->prepassSkip ) {
+		return qfalse;
+	}
 	return ( first->stateBits & GLS_DEPTHMASK_TRUE ) ? qtrue : qfalse;
+}
+
+/*
+** RB_AlphaToCoverage
+
+Added in OPM: a stage cut out by its alpha (alphaFunc GE128) and not blended,
+drawn into the multisampled view: its alpha becomes a pixel wide ramp at the
+cut (u_AlphaTest 4) that MSAA turns into how many samples it covers, so a
+leaf's edge is smoothed as a wall's is, not stair-stepped.
+*/
+static qboolean alphaToCoverageOn;
+
+static void RB_SetAlphaToCoverage( qboolean on )
+{
+	if ( on != alphaToCoverageOn ) {
+		if ( on )
+			qglEnable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+		else
+			qglDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+		alphaToCoverageOn = on;
+	}
+}
+
+static qboolean RB_AlphaToCoverage( const shaderStage_t *pStage )
+{
+	return r_alphaToCoverage->integer && tr.msaaResolveFbo && glState.currentFBO == tr.renderFbo
+		&& !backEnd.projection2D && (pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80
+		&& !(pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
 }
 
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
@@ -1518,6 +1571,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		shaderStage_t *pStage = input->xstages[stage];
 		shaderProgram_t *sp;
 		vec4_t texMatrix[8];
+		qboolean rtLit;
+		int rtKind;
 
 		if ( !pStage )
 		{
@@ -1643,17 +1698,29 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			backEnd.pc.c_genericDraws++;
 		}
 
-		GLSL_BindProgram(sp);
-
 		// Added in OPM: the realtime lights, in views of the world, and not
 		// in the depth prepass: it writes no colour, and every pixel of it
 		// went through all of the lights for nothing
+		rtLit  = R_RtActive() && !backEnd.projection2D && !backEnd.screenOverlay && !backEnd.depthFill
+			&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL);
+		rtKind = rtLit ? R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader) : -1;
+
+		// what does not run the lights' loop per pixel (dust and smoke, lit
+		// at their corners, and what the lights leave alone: muzzle flashes,
+		// fire, sparks) has a program without it, whose registers alone
+		// slowed every pixel of every layer of them
+		if (rtKind == RT_STAGE_NONE || rtKind == RT_STAGE_PARTICLE || rtKind == RT_STAGE_PARTICLE_LIT)
+		{
+			sp = GLSL_GetGenericSlimShader(sp);
+		}
+
+		GLSL_BindProgram(sp);
+
 		if (R_RtActive())
 		{
-			if (!backEnd.projection2D && !backEnd.depthFill && !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
-				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+			if (rtLit)
 			{
-				const int kind = R_RtStageKind(tess.shader, pStage, pStage->glslShaderGroup == tr.lightallShader);
+				const int kind = rtKind;
 
 				const qboolean lightallLightmap = pStage->glslShaderGroup == tr.lightallShader
 					&& (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP;
@@ -1721,6 +1788,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMDENTS, tess.skelGpu.numDents);
 			if (tess.skelGpu.numDents > 0)
 				GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, tess.skelGpu.dents, tess.skelGpu.numDents * 2);
+			GLSL_SetUniformInt(sp, UNIFORM_SKELNUMMORPHS, tess.skelGpu.numMorphs);
+			if (tess.skelGpu.numMorphs > 0)
+				GLSL_SetUniformSkelMorphs(sp, UNIFORM_SKELMORPHS, tess.skelGpu.morphs, (tess.skelGpu.numMorphs + 3) / 4);
 		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
@@ -1757,12 +1827,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 		else if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80)
 		{
-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 3);
+			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, RB_AlphaToCoverage(pStage) ? 4 : 3);
 		}
 		else
 		{
 			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 		}
+		RB_SetAlphaToCoverage(RB_AlphaToCoverage(pStage));
 
 
 		{
@@ -1770,6 +1841,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			vec4_t vertColor;
 
 			ComputeShaderColors(pStage, baseColor, vertColor, pStage->stateBits);
+
+			// Added in OPM: a lamp's light source, brighter than white (bloom)
+			if (input->shader->emissive && r_hdr->integer && r_bloom->value > 0 && r_bloomEmissive->value > 1.0f)
+			{
+				VectorScale(baseColor, r_bloomEmissive->value, baseColor);
+				VectorScale(vertColor, r_bloomEmissive->value, vertColor);
+			}
 
 			RB_SetGlobalFogUniforms(sp, pStage);
 
@@ -1866,6 +1944,10 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
+		// Added in OPM: wet below the tide's mark (lightall)
+		R_WaterSetWet(sp);
+		// Added in OPM: reflections of what is on the screen
+		R_SsrSetUniforms(sp);
 
 		GLSL_SetUniformVec4(sp, UNIFORM_NORMALSCALE, pStage->normalScale);
 
@@ -1993,7 +2075,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 						GL_BindToTMU( tr.whiteImage, TB_SPECULARMAP );
 				}
 
-				enableTextures[3] = (r_cubeMapping->integer && !(tr.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex) ? 1.0f : 0.0f;
+				enableTextures[3] = (r_cubeMapping->integer && !(backEnd.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex) ? r_cubemapStrength->value : 0.0f;
 			}
 
 			GLSL_SetUniformVec4(sp, UNIFORM_ENABLETEXTURES, enableTextures);
@@ -2011,7 +2093,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		//
 		// testing cube map
 		//
-		if (!(tr.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex && r_cubeMapping->integer)
+		if (!(backEnd.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex && r_cubeMapping->integer)
 		{
 			vec4_t vec;
 			cubemap_t *cubemap = &tr.cubemaps[input->cubemapIndex - 1];
@@ -2042,6 +2124,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		if (backEnd.depthFill)
 			break;
 	}
+
+	RB_SetAlphaToCoverage(qfalse);
 }
 
 
@@ -2542,7 +2626,9 @@ void RB_StageIteratorGeneric( void )
 	//
 	// call shader function
 	//
-	RB_IterateStagesGeneric( input );
+	// Added in OPM: water, by the water program if it can (tr_water.c)
+	if ( !input->shader->isWater || !RB_WaterDraw( input ) )
+		RB_IterateStagesGeneric( input );
 
 	//
 	// pshadows!
@@ -2654,6 +2740,7 @@ void RB_EndSurface( void ) {
 	tess.useCacheVao = qfalse;
 	tess.useInternalVao = qfalse;
 	tess.groundCover = qfalse;
+	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 
 	GLimp_LogComment( "----------\n" );

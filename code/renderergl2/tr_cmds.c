@@ -52,7 +52,7 @@ static void R_ReportGpuTimers( int interval )
 	gpuTimerResults_t avg;
 	int   numFrames = 0;
 	int   i;
-	char  line[256];
+	char  line[512];
 	float accounted = 0.0f;
 
 	if (!glRefConfig.timerQuery)
@@ -80,6 +80,15 @@ static void R_ReportGpuTimers( int interval )
 
 	ri.Printf( PRINT_ALL, "%s other %.2f  (avg of %i frames)\n",
 		line, avg.msec[GPUTIMER_FRAME] - accounted, numFrames );
+
+	// where "other" sits: the untimed time before each pass, and after the last
+	Com_sprintf( line, sizeof(line), "gpu other by place:" );
+	for (i = 0; i < GPUTIMER_COUNT; i++)
+	{
+		if (avg.gapBefore[i] >= 0.005f)
+			Q_strcat( line, sizeof(line), va(" %s%s %.2f", i == GPUTIMER_FRAME ? "after-last" : "before-", i == GPUTIMER_FRAME ? "" : gpuTimerNames[i], avg.gapBefore[i]) );
+	}
+	ri.Printf( PRINT_ALL, "%s\n", line );
 
 	// How many draw surfaces each cascade submitted last frame. If a cascade
 	// that should be cached still shows a count every frame, it is being
@@ -822,12 +831,6 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	}
 	
     tr.refdef.stereoFrame = stereoFrame;
-
-	//
-	// OPENMOHAA-specific stuff
-	//
-
-    g_nStaticSurfaces = 0;
 }
 
 

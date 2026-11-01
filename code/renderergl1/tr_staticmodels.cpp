@@ -96,6 +96,30 @@ void R_InitStaticModels(void)
 
         pSM->radius = ri.TIKI_GlobalRadius(pSM->tiki);
 
+        // Added in OPM
+        //  The map keeps a colour for each vertex of the model as it was when
+        //  the map was compiled, all its meshes' surfaces in a row. A model
+        //  since made again with another count would read another's colours,
+        //  or past the end of them.
+        {
+            int numVerts = 0;
+
+            for (j = 0; j < pSM->tiki->numMeshes; j++) {
+                const skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+                const skelSurfaceGame_t *surf;
+
+                for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext) {
+                    numVerts += surf->numVerts;
+                }
+            }
+            pSM->noVertexData = numVerts != pSM->numVertexData
+                             || pSM->firstVertexData / (int)sizeof(color4ub_t) + numVerts > tr.world->numStaticModelData;
+            if (pSM->noVertexData) {
+                ri.Printf(PRINT_DEVELOPER, "static model %s has %d vertexes, the map's light is for %d: lit by the grid\n",
+                    szTemp, numVerts, pSM->numVertexData);
+            }
+        }
+
         //
         // register shaders
         //
@@ -351,10 +375,14 @@ void R_AddStaticModelSurfaces(void)
             && (iRadiusCull != CULL_CLIP || R_CullStaticModel(SM->tiki, tiki_scale, tiki_localorigin) != CULL_OUT)) {
             dtikisurface_t *dsurf;
 
+            // Added in OPM: as big as the model's lod_scale makes it, which the
+            // trees set so the LOD leaves them whole (their far sprites are gone)
+            const float lodRadius = SM->cull_radius * tiki->lod_scale / SM->scale;
+
             if (tr.viewParms.isPortal) {
-                SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
+                SM->lodpercentage[1] = R_CalcLod(tiki_worldorigin, lodRadius);
             } else {
-                SM->lodpercentage[0] = R_CalcLod(tiki_worldorigin, SM->cull_radius / SM->scale);
+                SM->lodpercentage[0] = R_CalcLod(tiki_worldorigin, lodRadius);
             }
 
             //

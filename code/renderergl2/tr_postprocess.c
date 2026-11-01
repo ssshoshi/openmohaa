@@ -22,6 +22,119 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "tr_local.h"
 
+/*
+=============
+RB_EyeAdapt
+
+Added in OPM: eye adaptation (r_autoExposure). The view's average light is
+worked out on the card every few frames as ioq3 did (calclevels4x, down to a
+texel), read back a frame or two later without waiting for it (a pixel buffer
+and a fence), and the exposure eased toward what it asks for here, by the
+clock and not by the frame: an eye gets used to the dark slowly and to the
+light quicker, a part of the way, and so many stops at most. ioq3 blended 3% a
+frame toward it, both ways alike, twice as fast at 144 fps as at 72. The tone
+map reads the result as the level it always read (tr.calcLevelsImage), whose
+white does not move with it (tonemap_fp.glsl).
+=============
+*/
+static struct {
+	GLuint   pbo;
+	GLsync   fence;
+	qboolean pending, haveAvg;
+	float    logAvg; // the view's average light, log2, as light
+	float    ev;     // the exposure, stops off the fixed one
+	int      lastMs, printMs;
+} eye;
+
+static void RB_EyeAdapt(qboolean measured)
+{
+	const int now = ri.Milliseconds();
+	float     dt, target, rate, shift, level;
+	vec4_t    texel;
+
+	if (!eye.pbo)
+	{
+		qglGenBuffers(1, &eye.pbo);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, eye.pbo);
+		qglBufferData(GL_PIXEL_PACK_BUFFER, sizeof(vec4_t), NULL, GL_STREAM_READ);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+		eye.lastMs = now;
+	}
+
+	// a reading the card has done
+	if (eye.pending && qglClientWaitSync(eye.fence, 0, 0) != GL_TIMEOUT_EXPIRED)
+	{
+		const float *v;
+
+		qglDeleteSync(eye.fence);
+		eye.pending = qfalse;
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, eye.pbo);
+		v = qglMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sizeof(vec4_t), GL_MAP_READ_BIT);
+		if (v)
+		{
+			// calclevels4x_fp: log2 of the luminance, kept as 0.05 x + 0.5;
+			// a gamma frame's numbers are its light ^ 1 / 2.2
+			eye.logAvg = (v[1] - 0.5f) * 20.0f * (R_RtLinear() ? 1.0f : 2.2f);
+			qglUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+			if (!eye.haveAvg)
+			{
+				// the first look: as used to it already
+				eye.ev = Com_Clamp(r_autoExposureMinEV->value, r_autoExposureMaxEV->value,
+					r_autoExposureStrength->value * (r_autoExposureKey->value - eye.logAvg));
+			}
+			eye.haveAvg = qtrue;
+		}
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	}
+
+	// a new one, not waited for
+	if (measured && !eye.pending)
+	{
+		FBO_Bind(tr.targetLevelsFbo);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, eye.pbo);
+		qglReadPixels(0, 0, 1, 1, GL_RGBA, GL_FLOAT, NULL);
+		qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+		eye.fence   = qglFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		eye.pending = qtrue;
+	}
+
+	dt         = Com_Clamp(0.0f, 0.25f, (now - eye.lastMs) * 0.001f);
+	eye.lastMs = now;
+	if (eye.haveAvg)
+	{
+		target = Com_Clamp(r_autoExposureMinEV->value, r_autoExposureMaxEV->value,
+			r_autoExposureStrength->value * (r_autoExposureKey->value - eye.logAvg));
+		// brighter: into the dark, slowly
+		rate   = target > eye.ev ? r_autoExposureDarkSpeed->value : r_autoExposureBrightSpeed->value;
+		eye.ev += (target - eye.ev) * (1.0f - exp(-Q_max(rate, 0.0f) * dt));
+	}
+
+	// the level the tone map reads: it multiplies by 2 ^ -level, and the fixed
+	// one is -1. A gamma frame's numbers move by the stops over 2.2.
+	shift = R_RtLinear() ? eye.ev : eye.ev / 2.2f;
+	level = (-1.0f - shift) * 0.05f + 0.5f;
+	VectorSet4(texel, level, level, level, 1.0f);
+	qglTextureSubImage2DEXT(tr.calcLevelsImage->texnum, GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_FLOAT, texel);
+
+	if (r_autoExposureDebug->integer && now - eye.printMs > 1000)
+	{
+		eye.printMs = now;
+		ri.Printf(PRINT_ALL, "eye adaptation: view %.2f stops (key %.2f), exposure %+.2f stops toward %+.2f\n",
+			eye.logAvg, r_autoExposureKey->value, eye.ev,
+			Com_Clamp(r_autoExposureMinEV->value, r_autoExposureMaxEV->value, r_autoExposureStrength->value * (r_autoExposureKey->value - eye.logAvg)));
+	}
+}
+
+// Its buffer goes with the context (RE_Shutdown)
+void RB_EyeAdaptShutdown(void)
+{
+	if (eye.pending)
+		qglDeleteSync(eye.fence);
+	if (eye.pbo)
+		qglDeleteBuffers(1, &eye.pbo);
+	Com_Memset(&eye, 0, sizeof(eye));
+}
+
 void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, int autoExposure)
 {
 	ivec4_t srcBox, dstBox;
@@ -30,6 +143,8 @@ void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, in
 
 	if (autoExposure)
 	{
+		qboolean measured = qfalse;
+
 		if (lastFrameCount == 0 || tr.frameCount < lastFrameCount || tr.frameCount - lastFrameCount > 5)
 		{
 			// determine average log luminance
@@ -63,27 +178,22 @@ void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, in
 				srcFbo = dstFbo;
 				dstFbo = tmp;
 			}
+			measured = qtrue;
 		}
 
-		// blend with old log luminance for gradual change
-		VectorSet4(srcBox, 0, 0, 0, 0);
-
-		color[0] = 
-		color[1] =
-		color[2] = 1.0f;
-		if (glRefConfig.textureFloat)
-			color[3] = 0.03f;
-		else
-			color[3] = 0.1f;
-
-		FBO_Blit(tr.targetLevelsFbo, srcBox, NULL, tr.calcLevelsFbo, NULL,  NULL, color, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
+		// (OPM: ioq3 blended 3% a frame toward it here)
+		RB_EyeAdapt(measured);
 	}
 
-	// tonemap
+	// tonemap (OPM: ioq3 took a stop off with its eye adaptation; ours
+	// starts from the fixed exposure, RB_EyeAdapt)
 	color[0] =
 	color[1] =
-	color[2] = pow(2, r_cameraExposure->value - autoExposure); //exp2(r_cameraExposure->value);
+	color[2] = pow(2, r_cameraExposure->value); //exp2(r_cameraExposure->value);
 	color[3] = 1.0f;
+	// Added in OPM: r_linearLighting's own exposure (tonemap_fp.glsl)
+	if (R_RtLinear())
+		VectorScale(color, pow(2, r_linearExposure->value), color);
 
 	if (autoExposure)
 		GL_BindToTMU(tr.calcLevelsImage,  TB_LEVELSMAP);
@@ -482,4 +592,175 @@ void RB_GaussianBlur(FBO_t *srcFbo, FBO_t *dstFbo, float blur)
 		color[3] = factor;
 		FBO_Blit(tr.textureScratchFbo[0], srcBox, NULL, dstFbo, dstBox, NULL, color, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 	}
+}
+
+/*
+=============
+RB_Bloom
+
+Added in OPM
+What is brighter than the scene's white glows into what is round it, as
+through a lens: a lamp's bulb, the sun off a window, a muzzle flash. Before
+the tone map, from the frame's float image: its bright part halved
+(bloom_fp.glsl), halved again down the levels, then widened back up them,
+each added onto the next bigger, and the biggest onto the frame, scaled by
+r_bloom.
+=============
+*/
+cvar_t *r_bloom;
+cvar_t *r_bloomThreshold;
+cvar_t *r_bloomKnee;
+cvar_t *r_bloomEmissive;
+cvar_t *r_sharpen;
+
+void R_BloomRegisterCvars(void)
+{
+	r_bloom = ri.Cvar_Get("r_bloom", "0.15", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloom, "How much what is brighter than white glows into what is round it (0: no bloom; needs r_hdr and r_postProcess)");
+	r_bloomThreshold = ri.Cvar_Get("r_bloomThreshold", "1.2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloomThreshold, "How bright a pixel must be, before the tone map, to glow (1: what the tone map makes white)");
+	r_sharpen = ri.Cvar_Get("r_sharpen", "0.3", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_sharpen, "Sharpens the tone mapped frame where its contrast leaves room, without halos (0 to 1; 0: off; needs r_toneMap)");
+	r_bloomEmissive = ri.Cvar_Get("r_bloomEmissive", "2", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloomEmissive, "How many times brighter than white the lamps' bulbs, flames and glass are, so that they bloom (1: as white as they were)");
+	r_bloomKnee = ri.Cvar_Get("r_bloomKnee", "0.5", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_bloomKnee, "How softly the glow starts below r_bloomThreshold");
+}
+
+static void RB_BloomPass(image_t *src, const vec4_t srcBox, FBO_t *dst, float mode, float scale, int blend)
+{
+	shaderProgram_t *sp = &tr.bloomShader;
+	vec4_t           quadVerts[4], params, texel;
+	vec2_t           texCoords[4];
+	const float      x0 = srcBox[0], y0 = srcBox[1], x1 = srcBox[2], y1 = srcBox[3];
+
+	FBO_Bind(dst);
+	qglViewport(0, 0, dst->width, dst->height);
+	qglScissor(0, 0, dst->width, dst->height);
+
+	VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet2(texCoords[0], x0, y1);
+	VectorSet2(texCoords[1], x1, y1);
+	VectorSet2(texCoords[2], x1, y0);
+	VectorSet2(texCoords[3], x0, y0);
+
+	GLSL_BindProgram(sp);
+	GL_BindToTMU(src, TB_COLORMAP);
+	VectorSet4(params, mode, r_bloomThreshold->value, r_bloomKnee->value, scale);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMPARAMS, params);
+	// half a texel in from the edge of what is read, past which is the clamp
+	VectorSet4(texel, 1.0f / src->width, 1.0f / src->height, x1 - 0.5f / src->width, y1 - 0.5f / src->height);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, texel);
+
+	GL_State(GLS_DEPTHTEST_DISABLE | blend);
+	GL_Cull(CT_TWO_SIDED);
+	RB_InstantQuad2(quadVerts, texCoords);
+}
+
+void RB_Bloom(FBO_t *fbo, ivec4_t box)
+{
+	image_t *frame;
+	vec4_t   whole = { 0, 0, 1, 1 }, part;
+	int      i;
+
+	if (r_bloom->value <= 0 || !tr.bloomFbo[0] || !tr.bloomShader.program || !fbo || !fbo->colorImage[0]
+		|| (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || backEnd.viewParms.isPortal) {
+		return;
+	}
+	frame = fbo->colorImage[0];
+
+	// the view's part of the frame
+	VectorSet4(part, box[0] / (float)frame->width, box[1] / (float)frame->height,
+		(box[0] + box[2]) / (float)frame->width, (box[1] + box[3]) / (float)frame->height);
+
+	RB_BloomPass(frame, part, tr.bloomFbo[0], 0.0f, 1.0f, 0);
+	for (i = 1; i < BLOOM_LEVELS; i++) {
+		RB_BloomPass(tr.bloomImage[i - 1], whole, tr.bloomFbo[i], 1.0f, 1.0f, 0);
+	}
+	for (i = BLOOM_LEVELS - 1; i > 0; i--) {
+		RB_BloomPass(tr.bloomImage[i], whole, tr.bloomFbo[i - 1], 2.0f, 1.0f, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+	}
+
+	// onto the view, widened once more
+	{
+		shaderProgram_t *sp = &tr.bloomShader;
+		vec4_t           quadVerts[4], params, texel;
+		vec2_t           texCoords[4];
+
+		FBO_Bind(fbo);
+		qglViewport(box[0], box[1], box[2], box[3]);
+		qglScissor(box[0], box[1], box[2], box[3]);
+		VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+		VectorSet2(texCoords[0], 0, 1);
+		VectorSet2(texCoords[1], 1, 1);
+		VectorSet2(texCoords[2], 1, 0);
+		VectorSet2(texCoords[3], 0, 0);
+		GLSL_BindProgram(sp);
+		GL_BindToTMU(tr.bloomImage[0], TB_COLORMAP);
+		VectorSet4(params, 2.0f, r_bloomThreshold->value, r_bloomKnee->value, r_bloom->value);
+		GLSL_SetUniformVec4(sp, UNIFORM_BLOOMPARAMS, params);
+		VectorSet4(texel, 1.0f / tr.bloomImage[0]->width, 1.0f / tr.bloomImage[0]->height, 1.0f - 0.5f / tr.bloomImage[0]->width, 1.0f - 0.5f / tr.bloomImage[0]->height);
+		GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, texel);
+		GL_State(GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+		GL_Cull(CT_TWO_SIDED);
+		RB_InstantQuad2(quadVerts, texCoords);
+	}
+}
+
+/*
+=============
+RB_Sharpen
+
+Added in OPM
+Copies the tone mapped frame back to the view, sharpened (bloom_fp.glsl's
+Sharpen, after AMD's contrast adaptive sharpening): the textures' detail
+the MSAA resolve and the upscaled textures' filtering soften. Returns qfalse
+when it is off, for the plain copy.
+=============
+*/
+qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox)
+{
+	shaderProgram_t *sp = &tr.bloomShader;
+	vec4_t           quadVerts[4], params, texel;
+	vec2_t           texCoords[4];
+	image_t         *image;
+	float            x0, y0, x1, y1;
+
+	if (r_sharpen->value <= 0 || !sp->program || !src || !dst || !src->colorImage[0]) {
+		return qfalse;
+	}
+	image = src->colorImage[0];
+	x0 = srcBox[0] / (float)image->width;
+	y0 = srcBox[1] / (float)image->height;
+	x1 = (srcBox[0] + srcBox[2]) / (float)image->width;
+	y1 = (srcBox[1] + srcBox[3]) / (float)image->height;
+
+	FBO_Bind(dst);
+	qglViewport(dstBox[0], dstBox[1], dstBox[2], dstBox[3]);
+	qglScissor(dstBox[0], dstBox[1], dstBox[2], dstBox[3]);
+	VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+	VectorSet2(texCoords[0], x0, y1);
+	VectorSet2(texCoords[1], x1, y1);
+	VectorSet2(texCoords[2], x1, y0);
+	VectorSet2(texCoords[3], x0, y0);
+
+	GLSL_BindProgram(sp);
+	GL_BindToTMU(image, TB_COLORMAP);
+	VectorSet4(params, 3.0f, 0, 0, r_sharpen->value);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMPARAMS, params);
+	VectorSet4(texel, 1.0f / image->width, 1.0f / image->height, x1 - 0.5f / image->width, y1 - 0.5f / image->height);
+	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, texel);
+	GL_State(GLS_DEPTHTEST_DISABLE);
+	GL_Cull(CT_TWO_SIDED);
+	RB_InstantQuad2(quadVerts, texCoords);
+	return qtrue;
 }
