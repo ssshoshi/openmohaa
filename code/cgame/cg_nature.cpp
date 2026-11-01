@@ -193,9 +193,18 @@ void CG_Rain(centity_t *cent)
 
         iRandom = ((214013 * iRandom + 2531011) >> 16) & 0x7FFF;
 
-        vEnd[0] = (float)(iRandom % cg.rain.slant) + vStart[0] + vss_wind_x->value;
-        iRandom = ((214013 * iRandom + 2531011) >> 16) & 0x7FFF;
-        vEnd[1] = (float)(iRandom % cg.rain.slant) + vStart[1] + vss_wind_y->value;
+        // Added in OPM
+        //  The slant and the wind are for a fall from the top of the box: a
+        //  drop starting lower (the random height above) goes that much less
+        //  to the side, or the low ones fell at every angle (V shapes on the
+        //  walls) where all of the rain should fall the one way
+        {
+            const float fall = vOe[2] > 1.0f ? (vStart[2] - vOmins[2]) / vOe[2] : 1.0f;
+
+            vEnd[0] = ((float)(iRandom % cg.rain.slant) + vss_wind_x->value) * fall + vStart[0];
+            iRandom = ((214013 * iRandom + 2531011) >> 16) & 0x7FFF;
+            vEnd[1] = ((float)(iRandom % cg.rain.slant) + vss_wind_y->value) * fall + vStart[1];
+        }
         vEnd[2] = vOmins[2];
 
         // Fixed in 2.0

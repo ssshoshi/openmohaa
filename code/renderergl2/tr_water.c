@@ -823,8 +823,10 @@ static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean d
             return;
         }
         // edge on from above (a wall): its top along the texels it crosses,
-        // as a thin wall would be lost between their middles
-        const float top = Q_max(a[2], Q_max(b[2], c[2]));
+        // as a thin wall would be lost between their middles. The top where
+        // the texel is along it, not its highest anywhere: a broken wall's
+        // tall piece roofed the low top beside it (dry, its edges wet)
+        const float *tv[3] = {a, b, c};
 
         for (y = y0; y <= y1; y++) {
             for (x = x0; x <= x1; x++) {
@@ -849,8 +851,40 @@ static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean d
                     off = fabs((px - p0[0]) * ey - (py - p0[1]) * ex) / l;
                 }
                 if (off <= rainCover.texel * 0.71f) {
-                    float *h = &rainGrid[y * rainCover.width + x];
-                    *h       = Q_max(*h, top);
+                    const float *p0 = a, *p1 = (Distance(a, b) > Distance(a, c)) ? b : c;
+                    const float  ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+                    const float  l2 = ex * ex + ey * ey;
+                    float        sv[3], st, top = RAIN_COVER_NONE, smin = 1e9f, smax = -1e9f;
+                    float       *h = &rainGrid[y * rainCover.width + x];
+                    int          e;
+
+                    // along the wall: each corner's place, and the texel's,
+                    // kept within the wall's ends
+                    for (e = 0; e < 3; e++) {
+                        sv[e] = ((tv[e][0] - p0[0]) * ex + (tv[e][1] - p0[1]) * ey) / l2;
+                        smin  = Q_min(smin, sv[e]);
+                        smax  = Q_max(smax, sv[e]);
+                    }
+                    st = ((px - p0[0]) * ex + (py - p0[1]) * ey) / l2;
+                    st = Q_max(smin, Q_min(smax, st));
+                    // the highest of the edges over that place
+                    for (e = 0; e < 3; e++) {
+                        const int   f  = (e + 1) % 3;
+                        const float s0 = sv[e], s1 = sv[f];
+
+                        if (fabs(s1 - s0) < 1e-5f) {
+                            if (fabs(st - s0) < 1e-4f) {
+                                top = Q_max(top, Q_max(tv[e][2], tv[f][2]));
+                            }
+                        } else if ((st - s0) * (st - s1) <= 1e-6f) {
+                            const float k = (st - s0) / (s1 - s0);
+                            top = Q_max(top, tv[e][2] + (tv[f][2] - tv[e][2]) * k);
+                        }
+                    }
+                    if (top <= RAIN_COVER_NONE * 0.5f) {
+                        top = Q_max(a[2], Q_max(b[2], c[2]));
+                    }
+                    *h = Q_max(*h, top);
                 }
             }
         }
