@@ -98,15 +98,32 @@ float WetNoise(vec2 p)
 // Out in the rain: nothing over it. A wall reads the grid a little way out
 // from its face, where the rain falls past it; the ground at its own place,
 // where the grid holds its own height (or a little more, on a slope).
-float RainExposed(vec3 p, vec3 n)
+float RainExposedAt(vec3 p, vec2 at)
 {
-	vec2 at = p.xy + n.xy * u_RainParams.y * 1.6;
 	vec2 uv = (at - u_RainCover.xy) * u_RainCover.zw;
 	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)
 		return 1.0;
 	float top  = texture2D(u_RainCoverMap, uv).r;
 	float give = u_RainParams.y + 6.0;
 	return smoothstep(top - give - 10.0, top - give, p.z);
+}
+
+// A wall the wind blows the rain onto: open sky anywhere a little way out
+// from it, past the eaves over it, wets all of it, from the foot to the
+// roof (an eave reaching out a few units kept a whole house front dry). A
+// room's walls, a deep porch's, have a roof all the way out and stay dry.
+float RainExposed(vec3 p, vec3 n)
+{
+	float open = RainExposedAt(p, p.xy + n.xy * u_RainParams.y * 1.6);
+	float side = length(n.xy);
+	if (side > 0.5 && open < 1.0)
+	{
+		vec2 out2 = n.xy / side;
+		open = max(open, RainExposedAt(p, p.xy + out2 * 24.0));
+		open = max(open, RainExposedAt(p, p.xy + out2 * 48.0));
+		open = max(open, RainExposedAt(p, p.xy + out2 * 80.0));
+	}
+	return open;
 }
 
 // How wet it is here (x: the water in it; y: the film on it; z: a puddle
