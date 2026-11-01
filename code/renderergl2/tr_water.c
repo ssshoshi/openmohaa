@@ -77,6 +77,7 @@ cvar_t        *r_waterRipples;
 cvar_t        *r_waterWet;
 cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map has rained (cg_lens.cpp)
 cvar_t        *r_rainPuddles;
+static cvar_t *r_rainPuddleShaders;
 cvar_t        *r_rainBeads;
 cvar_t        *r_rainDebug;
 cvar_t        *r_waterReflect;
@@ -150,6 +151,8 @@ void R_WaterRegisterCvars(void)
     r_rainWet     = ri.Cvar_Get("r_rainWet", "0", CVAR_TEMP);
     r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
     r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
+    r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainPuddleShaders, "In the rain, the textures puddles gather on: names or parts of names, separated by spaces or commas (empty: all open ground)");
     r_rainDebug   = ri.Cvar_Get("r_rainDebug", "0", CVAR_CHEAT);
     ri.Cvar_SetDescription(r_rainWet, "How wet the rain has made what is out under the sky, 0 to 1 (the game sets it on a map with rain; r_waterWet 0 turns it off)");
     ri.Cvar_SetDescription(r_rainPuddles, "In the rain, how much of the open ground holds puddles, with the rain ringing them: 0 none, 1 most of it");
@@ -750,11 +753,18 @@ Added in OPM
 
 static struct {
     float   *height;
+    float   *puddle;      // the highest of what puddles gather on, out in the rain (R_RainBuildPuddles)
+    int      puddleCount; // r_rainPuddleShaders as it was built for
     int      width, rows;
     float    x0, y0, texel;
     vec2_t   mins, maxs;
     qboolean on, tried;
 } rainCover;
+
+static qboolean R_RainPuddleShader(const shader_t *shader);
+
+// the grid R_RainTri draws into: the cover's, or the puddles'
+static float *rainGrid;
 
 static qboolean R_RainCovers(const shader_t *sh)
 {
@@ -788,6 +798,10 @@ static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean d
     y1   = Q_min(rainCover.rows - 1, (int)floor((maxy - rainCover.y0) / rainCover.texel));
 
     if (fabs(area) < 0.001f) {
+        // no puddle lies on a wall
+        if (rainGrid != rainCover.height) {
+            return;
+        }
         // edge on from above (a wall): its top along the texels it crosses,
         // as a thin wall would be lost between their middles
         const float top = Q_max(a[2], Q_max(b[2], c[2]));
@@ -815,7 +829,7 @@ static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean d
                     off = fabs((px - p0[0]) * ey - (py - p0[1]) * ex) / l;
                 }
                 if (off <= rainCover.texel * 0.71f) {
-                    float *h = &rainCover.height[y * rainCover.width + x];
+                    float *h = &rainGrid[y * rainCover.width + x];
                     *h       = Q_max(*h, top);
                 }
             }
@@ -830,7 +844,7 @@ static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean d
             const float wa = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) / area;
             const float wb = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
             const float wc = 1.0f - wa - wb;
-            float      *h  = &rainCover.height[y * rainCover.width + x];
+            float      *h  = &rainGrid[y * rainCover.width + x];
 
             if (wa < -0.001f || wb < -0.001f || wc < -0.001f) {
                 continue;
@@ -840,7 +854,7 @@ static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean d
     }
 }
 
-static void R_RainCoverSurfaces(qboolean draw)
+static void R_RainCoverSurfaces(qboolean draw, qboolean puddles)
 {
     int i, k, x, y;
 
@@ -848,7 +862,7 @@ static void R_RainCoverSurfaces(qboolean draw)
         const msurface_t      *surf = &tr.world->surfaces[i];
         const srfBspSurface_t *bsp;
 
-        if (!R_RainCovers(surf->shader) || !surf->data) {
+        if (!R_RainCovers(surf->shader) || !surf->data || (puddles && !R_RainPuddleShader(surf->shader))) {
             continue;
         }
         if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
@@ -864,7 +878,7 @@ static void R_RainCoverSurfaces(qboolean draw)
     for (i = 0; i < tr.world->numTerraPatches; i++) {
         const cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
 
-        if (!R_RainCovers(patch->shader)) {
+        if (!R_RainCovers(patch->shader) || (puddles && !R_RainPuddleShader(patch->shader))) {
             continue;
         }
         for (y = 0; y < 8; y++) {
@@ -896,7 +910,7 @@ static void R_RainBuildCover(void)
 
     VectorSet2(rainCover.mins, 1e9f, 1e9f);
     VectorSet2(rainCover.maxs, -1e9f, -1e9f);
-    R_RainCoverSurfaces(qfalse);
+    R_RainCoverSurfaces(qfalse, qfalse);
     if (rainCover.maxs[0] <= rainCover.mins[0] || rainCover.maxs[1] <= rainCover.mins[1]) {
         return;
     }
@@ -912,7 +926,8 @@ static void R_RainBuildCover(void)
     for (i = 0; i < rainCover.width * rainCover.rows; i++) {
         rainCover.height[i] = RAIN_COVER_NONE;
     }
-    R_RainCoverSurfaces(qtrue);
+    rainGrid = rainCover.height;
+    R_RainCoverSurfaces(qtrue, qfalse);
 
     tr.rainCoverImage = R_CreateImage("*rainCover", NULL, rainCover.width, rainCover.rows, IMGTYPE_COLORALPHA,
         IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
@@ -925,10 +940,89 @@ static void R_RainBuildCover(void)
         rainCover.texel, ri.Milliseconds() - start);
 }
 
+/*
+===============
+R_RainBuildPuddles
+
+Added in OPM
+  Where puddles gather (r_rainPuddleShaders), out in the rain: the highest
+  of those surfaces at each place of the cover's grid, for the height of the
+  puddles' mirror (R_WaterReflectView). Again when the list changes.
+===============
+*/
+static void R_RainBuildPuddles(void)
+{
+    int i, n = rainCover.width * rainCover.rows;
+
+    if (!rainCover.puddle) {
+        rainCover.puddle = ri.Malloc(n * sizeof(float));
+    }
+    for (i = 0; i < n; i++) {
+        rainCover.puddle[i] = RAIN_COVER_NONE;
+    }
+    rainGrid = rainCover.puddle;
+    R_RainCoverSurfaces(qtrue, qtrue);
+    rainGrid = rainCover.height;
+
+    // under something, no rain falls in it
+    for (i = 0; i < n; i++) {
+        if (rainCover.puddle[i] < rainCover.height[i] - 2.0f) {
+            rainCover.puddle[i] = RAIN_COVER_NONE;
+        }
+    }
+    rainCover.puddleCount = r_rainPuddleShaders->modificationCount;
+}
+
+/*
+===============
+R_RainPuddleHeight
+
+Added in OPM
+  The height of the puddles the eye looks at: the first place along its
+  look, flat over the ground, from under it out to 1024 units, where they
+  gather below it.
+===============
+*/
+static qboolean R_RainPuddleHeight(const vec3_t eye, const vec3_t forward, float *height)
+{
+    vec2_t dir;
+    float  len, d;
+
+    if (!rainCover.puddle) {
+        return qfalse;
+    }
+    VectorSet2(dir, forward[0], forward[1]);
+    len = sqrt(dir[0] * dir[0] + dir[1] * dir[1]);
+    if (len < 0.01f) {
+        VectorSet2(dir, 0.0f, 0.0f);
+    } else {
+        dir[0] /= len;
+        dir[1] /= len;
+    }
+    for (d = 0.0f; d <= 1024.0f; d += rainCover.texel) {
+        const int x = (int)floor((eye[0] + dir[0] * d - rainCover.x0) / rainCover.texel);
+        const int y = (int)floor((eye[1] + dir[1] * d - rainCover.y0) / rainCover.texel);
+        float     h;
+
+        if (x < 0 || y < 0 || x >= rainCover.width || y >= rainCover.rows) {
+            break;
+        }
+        h = rainCover.puddle[y * rainCover.width + x];
+        if (h > RAIN_COVER_NONE * 0.5f && h < eye[2] - 8.0f) {
+            *height = h;
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
 static void R_RainFreeCover(void)
 {
     if (rainCover.height) {
         ri.Free(rainCover.height);
+    }
+    if (rainCover.puddle) {
+        ri.Free(rainCover.puddle);
     }
     memset(&rainCover, 0, sizeof(rainCover));
     // the last map's grid is one of its images, which the next map frees
@@ -940,6 +1034,9 @@ void R_RainFrame(void)
 {
     if (!rainCover.tried && r_rainWet->value > 0.0f && r_waterWet->integer && tr.world) {
         R_RainBuildCover();
+    }
+    if (rainCover.on && (!rainCover.puddle || rainCover.puddleCount != r_rainPuddleShaders->modificationCount)) {
+        R_RainBuildPuddles();
     }
 }
 
@@ -1350,6 +1447,11 @@ It is a mirror portal (oblique near plane at the surface, the faces turned)
 that draws what the main view does: entities and sprites as it has them
 (R_AddEntitySurfaces), no water, no viewmodel; no depth prepass, so no sun
 shadow mask either. One height a view: the water nearest under the eye.
+
+With no water in view, in the rain, the puddles' (r_rainPuddleShaders):
+level at the height of those the eye looks at (R_RainPuddleHeight), cut a
+little over it, as the bumps of the ground around a puddle are not seen in
+it. Their lightall looks itself up in it (R_WaterSetWet).
 ===============
 */
 // what the last view under the water was, for waterinfo
@@ -1366,11 +1468,13 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     viewParms_t parms, oldParms;
     cplane_t    mirror;
     float       above = 0.0f, d;
-    qboolean    found = qfalse;
+    qboolean    found = qfalse, puddles = qfalse, puddleInView = qfalse;
+    const qboolean rain = R_RainAmount() > 0.0f && r_rainPuddles->value > 0.0f && rainCover.puddle;
     mat4_t      mvp;
     int         i;
 
     tr.viewParms.waterReflect = qfalse;
+    tr.viewParms.rainReflect  = qfalse;
 
     if (!r_waterReflect->integer || !tr.waterReflectFbo || !tr.waterShader.program || !tr.world
         || tr.viewParms.isPortal || tr.viewParms.isPortalSky || tr.viewParms.targetFbo
@@ -1388,6 +1492,9 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
         float     h;
 
         R_DecomposeSort(drawSurfs[i].sort, &entityNum, &shader, &fogNum, &dlighted, &pshadowed, &bStaticModel);
+        if (rain && !puddleInView && entityNum == REFENTITYNUM_WORLD && !bStaticModel && R_RainPuddleShader(shader)) {
+            puddleInView = qtrue;
+        }
         if (!shader->waterImage || entityNum != REFENTITYNUM_WORLD) {
             continue;
         }
@@ -1424,6 +1531,16 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
             above  = d;
         }
     }
+    if (!found && puddleInView) {
+        float h;
+
+        if (R_RainPuddleHeight(tr.viewParms.ori.origin, tr.viewParms.ori.axis[0], &h)) {
+            VectorSet(mirror.normal, 0.0f, 0.0f, 1.0f);
+            mirror.dist = h;
+            above       = tr.viewParms.ori.origin[2] - h;
+            found = puddles = qtrue;
+        }
+    }
     if (!found) {
         return;
     }
@@ -1441,7 +1558,7 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     parms.isPortal = qtrue;
     parms.isMirror = qtrue;
     VectorCopy(mirror.normal, parms.portalPlane.normal);
-    parms.portalPlane.dist = mirror.dist - 1.0f;
+    parms.portalPlane.dist = mirror.dist + (puddles ? 8.0f : -1.0f);
     parms.zFar             = 0.0f;
     parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
 
@@ -1465,7 +1582,8 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
 
     tr.viewParms                    = oldParms;
-    tr.viewParms.waterReflect       = qtrue;
+    tr.viewParms.waterReflect       = !puddles;
+    tr.viewParms.rainReflect        = puddles;
     VectorCopy(mirror.normal, tr.viewParms.waterReflectPlane);
     tr.viewParms.waterReflectPlane[3] = mirror.dist;
     tr.viewParms.waterReflectShare[0] = parms.viewportWidth / (float)tr.waterReflectFbo->width;
@@ -1679,6 +1797,55 @@ void R_WaterSetDry(shaderProgram_t *sp)
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
 }
 
+/*
+===============
+R_RainPuddleShader
+
+Added in OPM
+  Whether puddles gather on what is drawn with this shader: its name holds
+  one of r_rainPuddleShaders' words (or the list is empty). Kept for the last
+  shader asked about, as the draws come in runs of one.
+===============
+*/
+static qboolean R_RainPuddleShader(const shader_t *shader)
+{
+    static const shader_t *lastShader;
+    static int             lastCount = -1;
+    static qboolean        last;
+    char                   list[MAX_CVAR_VALUE_STRING];
+    char                  *word, *next;
+
+    if (!shader) {
+        return qfalse;
+    }
+    if (shader == lastShader && r_rainPuddleShaders->modificationCount == lastCount) {
+        return last;
+    }
+    lastShader = shader;
+    lastCount  = r_rainPuddleShaders->modificationCount;
+
+    Q_strncpyz(list, r_rainPuddleShaders->string, sizeof(list));
+    last = qtrue;
+    for (word = list; *word; word = next) {
+        while (*word == ' ' || *word == ',') {
+            word++;
+        }
+        if (!*word) {
+            break;
+        }
+        last = qfalse;
+        for (next = word; *next && *next != ' ' && *next != ','; next++) {
+        }
+        if (*next) {
+            *next++ = 0;
+        }
+        if (Q_stristr(shader->name, word)) {
+            return last = qtrue;
+        }
+    }
+    return last;
+}
+
 void R_WaterSetWet(shaderProgram_t *sp)
 {
     vec4_t      v;
@@ -1710,7 +1877,7 @@ void R_WaterSetWet(shaderProgram_t *sp)
         }
         // shown as how wet and the puddles, in place of the colour
         if (r_rainDebug->integer) {
-            v[3] += 10.0f;
+            v[3] += r_rainDebug->integer == 2 ? 20.0f : 10.0f;
         }
     }
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
@@ -1720,9 +1887,21 @@ void R_WaterSetWet(shaderProgram_t *sp)
             1.0f / (rainCover.rows * rainCover.texel));
         GLSL_SetUniformVec4(sp, UNIFORM_RAINCOVER, v);
         VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
-            Com_Clamp(0.0f, 1.0f, r_rainPuddles->value), Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+            R_RainPuddleShader(tess.shader) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,
+            Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
         GLSL_SetUniformVec4(sp, UNIFORM_RAINPARAMS, v);
         GL_BindToTMU(tr.rainCoverImage, TMU_RAINCOVER);
+
+        // the view the puddles mirror, if it was drawn (R_WaterReflectView)
+        if (backEnd.viewParms.rainReflect && tr.waterReflectImage) {
+            VectorSet4(v, 1.0f, backEnd.viewParms.waterReflectPlane[3], backEnd.viewParms.waterReflectShare[0],
+                backEnd.viewParms.waterReflectShare[1]);
+            GLSL_SetUniformMat4(sp, UNIFORM_RAINREFLECTMVP, backEnd.viewParms.waterReflectMvp);
+            GL_BindToTMU(tr.waterReflectImage, TMU_RAINREFLECT);
+        } else {
+            VectorClear4(v);
+        }
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINREFLECT, v);
     }
 
     R_WaterSky(v);

@@ -535,7 +535,8 @@ enum
 #define TMU_SSRDEPTH         26 // and this frame's depth
 #define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
 #define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
-#define NUM_TEXTURE_UNITS    29
+#define TMU_RAINREFLECT      29 // and the view the puddles mirror (R_WaterReflectView)
+#define NUM_TEXTURE_UNITS    30
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -1125,6 +1126,9 @@ typedef enum
 	UNIFORM_RAINCOVER,      // Added in OPM: the rain's cover grid: its corner, one over its size
 	UNIFORM_RAINPARAMS,     // the time, the grid's texel, how much ground holds puddles, how much the beads show
 	UNIFORM_RAINCOVERMAP,
+	UNIFORM_RAINREFLECT,    // whether the puddles' mirror was drawn, its height, its share of the image across and up
+	UNIFORM_RAINREFLECTMVP, // how it was seen
+	UNIFORM_RAINREFLECTMAP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1349,6 +1353,8 @@ typedef struct {
 	// Added in OPM: the view its water mirrors was drawn first, into
 	// tr.waterReflectImage (R_WaterReflectView): at this height, seen so
 	int			waterReflect;
+	// or, with none, the rain's puddles' (the same fields, the same image)
+	int			rainReflect;
 	vec4_t		waterReflectPlane; // normal, distance
 	vec2_t		waterReflectShare; // of the image across and up
 	mat4_t		waterReflectMvp;

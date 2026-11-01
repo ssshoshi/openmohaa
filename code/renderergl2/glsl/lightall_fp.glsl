@@ -75,6 +75,11 @@ varying vec3      var_WetNormal;
 uniform sampler2D u_RainCoverMap;
 uniform vec4      u_RainCover;
 uniform vec4      u_RainParams;
+// the world the puddles mirror, drawn from under them (R_WaterReflectView):
+// whether there is it, its height, its share of the image across and up
+uniform sampler2D u_RainReflectMap;
+uniform vec4      u_RainReflect;
+uniform mat4      u_RainReflectMvp;
 
 float WetNoise(vec2 p)
 {
@@ -1060,6 +1065,7 @@ void main()
 	// world on the screen where the reflected ray finds it (SsrTrace), the
 	// sky where it finds nothing
 	float wetHit = 0.0;
+	vec3  wetRefl = vec3(0.0);
 	if (wet.z > 0.0)
 	{
 		vec3  Ep   = normalize(u_ViewOrigin - var_WetPos);
@@ -1070,25 +1076,46 @@ void main()
 		vec3  refl = u_WetSky.rgb * mix(0.55, 1.15, smoothstep(0.0, 0.6, R.z));
 		float most = 0.75;
 
+		// the world drawn mirrored at the puddles' height, where this one
+		// lies near it: all of it, off the screen too
+		if (u_RainReflect.x > 0.5)
+		{
+			float near = 1.0 - smoothstep(6.0, 20.0, abs(var_WetPos.z - u_RainReflect.y));
+			if (near > 0.0)
+			{
+				vec4 clip = u_RainReflectMvp * vec4(var_WetPos + vec3(ring * 10.0, 0.0), 1.0);
+				vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
+				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, near);
+				wetHit = near;
+			}
+		}
+
   #if defined(USE_SSR)
+		// elsewhere, what is on the screen
+		if (wetHit < 0.99)
 		{
 			// the water lies level whatever the ground under it; only the
 			// rings tilt it, a little
 			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
 			vec4 world = SsrTrace(var_WetPos, Nw, Ep, 0.08, 32.0, 8.0);
-			refl   = mix(refl, world.rgb, world.a);
-			wetHit = world.a;
-			// still water seen low gives back nearly all of what it mirrors
-			most = mix(most, 0.92, world.a);
+			float take = world.a * (1.0 - wetHit);
+			refl   = mix(refl, world.rgb, take);
+			wetHit += take;
 		}
   #endif
+		// still water seen low gives back nearly all of what it mirrors
+		most = mix(most, 0.92, wetHit);
 
+		wetRefl = refl;
 		gl_FragColor.rgb = mix(gl_FragColor.rgb, refl, clamp(0.04 + F * 1.4, 0.0, most) * wet.z);
 	}
 
 	// Added in OPM: r_rainDebug: red how wet, green a puddle, blue where a
-	// puddle mirrors something on the screen
-	if (u_Wet.w > 9.5)
+	// puddle mirrors the world
+	// (r_rainDebug 2: what the puddles mirror, alone)
+	if (u_Wet.w > 19.5)
+		gl_FragColor.rgb = wet.z > 0.0 ? wetRefl : gl_FragColor.rgb * 0.25;
+	else if (u_Wet.w > 9.5)
 		gl_FragColor.rgb = vec3(wet.x, wet.z, wetHit);
 
 	gl_FragColor.a = alpha;
