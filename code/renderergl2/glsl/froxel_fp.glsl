@@ -50,7 +50,7 @@ uniform vec4   u_FroxelPrevForward; // its unit forward
 uniform vec4   u_FroxelPrevLeft;    // its left over the view's half width forward
 uniform vec4   u_FroxelPrevUp;      // its up likewise
 uniform vec4   u_FroxelJitter;      // where in each cell the light is taken this frame: across, up, deep (0 to 1)
-uniform vec4   u_SmokeBlobs[SMOKE_MAX_BLOBS * 2]; // two a puff: middle and radius, colour and density at the middle
+uniform vec4   u_SmokeBlobs[SMOKE_MAX_BLOBS * 3]; // three a puff: middle and radius, albedo and density at the middle, the light its sprite had (the light grid's)
 uniform vec4   u_SmokeParams;       // puffs, the noise's scale, its drift, how far it eats into them
 uniform sampler3D u_SmokeNoise;     // billows, tiling
 
@@ -222,14 +222,18 @@ float LampShape(int i, vec3 P, out vec3 toLight)
 	return att;
 }
 
-// what is in the air at P: rgb what it scatters (the haze's and the banks'),
-// a what it takes out; fog the banks' share of the scattering (their own light)
-vec4 Media(vec3 P, out vec3 fog)
+// what is in the air at P: rgb what it scatters (the haze's, the banks', the
+// smoke's), a what it takes out; fog the banks' share of the scattering,
+// smoke the smoke's, smokeLit the smoke's as its sprites were lit (the light
+// grid's: the light baked into the map, which the realtime lights leave out)
+vec4 Media(vec3 P, out vec3 fog, out vec3 smoke, out vec3 smokeLit)
 {
 	vec4 m = vec4(vec3(u_VolParams.x), u_VolRange.z);
 	int  count = int(u_FogParams.x);
 
 	fog = vec3(0.0);
+	smoke = vec3(0.0);
+	smokeLit = vec3(0.0);
 	for (int i = 0; i < WATER_MAX_SPOTS / 3; i++)
 	{
 		if (i >= count) break;
@@ -254,7 +258,7 @@ vec4 Media(vec3 P, out vec3 fog)
 	for (int i = 0; i < SMOKE_MAX_BLOBS; i++)
 	{
 		if (i >= puffs) break;
-		vec4  a = u_SmokeBlobs[i * 2];
+		vec4  a = u_SmokeBlobs[i * 3];
 		vec3  e = P - a.xyz;
 		float q = dot(e, e) / (a.w * a.w);
 		if (q >= 1.0) continue;
@@ -268,35 +272,42 @@ vec4 Media(vec3 P, out vec3 fog)
 			float cut = u_SmokeParams.w * (1.0 - billow);
 			d = clamp((d - cut) / max(1.0 - cut, 0.05), 0.0, 1.0);
 		}
-		vec4 b = u_SmokeBlobs[i * 2 + 1];
+		vec4 b = u_SmokeBlobs[i * 3 + 1];
 		d *= b.a;
-		m.rgb += d * b.rgb;
-		m.a   += d;
-		fog   += d * b.rgb;
+		m.rgb    += d * b.rgb;
+		m.a      += d;
+		smoke    += d * b.rgb;
+		smokeLit += d * u_SmokeBlobs[i * 3 + 2].rgb;
 	}
 	return m;
 }
 
 // how much of the light from dir reaches P through the puffs of smoke: each
 // puff's chord along the way, at its mean thickness (2/3 of its middle's)
-float SmokeThrough(vec3 P, vec3 dir)
+float SmokeThroughTo(vec3 P, vec3 dir, float far)
 {
 	float tau = 0.0;
 	int   puffs = int(u_SmokeParams.x);
 	for (int i = 0; i < SMOKE_MAX_BLOBS; i++)
 	{
 		if (i >= puffs) break;
-		vec4  a  = u_SmokeBlobs[i * 2];
+		vec4  a  = u_SmokeBlobs[i * 3];
 		vec3  e  = a.xyz - P;
 		float t  = dot(e, dir);
 		float h2 = dot(e, e) - t * t;
 		float r2 = a.w * a.w;
-		if (h2 >= r2 || t + a.w <= 0.0) continue;
+		if (h2 >= r2 || t + a.w <= 0.0 || t - a.w >= far) continue;
 		float w  = sqrt(r2 - h2);
-		float chord = (t + w) - max(t - w, 0.0);
-		tau += u_SmokeBlobs[i * 2 + 1].a * chord * (2.0 / 3.0) * (1.0 - h2 / r2);
+		float chord = min(t + w, far) - max(t - w, 0.0);
+		tau += u_SmokeBlobs[i * 3 + 1].a * chord * (2.0 / 3.0) * (1.0 - h2 / r2);
 	}
 	return tau;
+}
+
+// all the way out (the sun, the sky)
+float SmokeThrough(vec3 P, vec3 dir)
+{
+	return SmokeThroughTo(P, dir, 1e9);
 }
 
 // what of the light that came in through tau gets about inside the smoke,
@@ -341,10 +352,20 @@ void main()
 
 	// what is in the air here; the smoke's shadows are worked out only where
 	// there is fog or smoke (the haze in the open is not shadowed by it)
-	vec3 fog;
-	vec4 media  = Media(P, fog);
-	bool thick  = max(fog.r, max(fog.g, fog.b)) > 0.0;
-	bool smoky  = thick && u_SmokeParams.x > 0.0;
+	vec3 fog, smoke, smokeLit;
+	vec4 media  = Media(P, fog, smoke, smokeLit);
+	bool smoky  = max(smoke.r, max(smoke.g, smoke.b)) > 0.0;
+	bool thick  = smoky || max(fog.r, max(fog.g, fog.b)) > 0.0;
+
+	// the smoke's depth sideways, toward where one sees it from: the sky's
+	// light comes in that way, and the lamps' but the brightest's
+	float sideTau = 0.0;
+	if (smoky)
+	{
+		vec3 side = vec3(-D.xy, 0.0);
+		side = dot(side, side) > 1e-4 ? normalize(side) : vec3(1.0, 0.0, 0.0);
+		sideTau = SmokeThrough(P, side);
+	}
 
 	// the sun: two taps, this frame's place and one across the cell from it
 	if (u_RtSunDir.w > 0.5 && u_VolParams.z > 0.0)
@@ -366,8 +387,15 @@ void main()
 	// the ray march keeps it
 	if (u_VolParams.w > 0.0)
 	{
-		vec3 lamps = vec3(0.0);
-		int  count = int(u_RtParams.x);
+		vec3  lamps = vec3(0.0);
+		// in the smoke: the brightest lamp's light through the smoke on the
+		// way to it, the others' through the smoke sideways (each its own
+		// way was a walk through every puff for every lamp: 3.35 ms in a
+		// room with a grenade's worth)
+		vec3  bestH = vec3(0.0), bestM = vec3(0.0), restH = vec3(0.0), restM = vec3(0.0);
+		vec3  bestDir = vec3(0.0, 0.0, 1.0);
+		float bestDist = 0.0, bestW = -1.0;
+		int   count = int(u_RtParams.x);
 		for (int k = 0; k < RT_MAX_LIGHTS; k++)
 		{
 			if (k >= count) break;
@@ -382,13 +410,41 @@ void main()
 			vec4 l3 = u_RtLights[i * 4 + 3];
 			if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))
 				f *= LampShadow(l3, -toLight);
-			lamps += l1.rgb * (f * Phase(dot(D, toLight) * inversesqrt(max(d2, 1.0))) / max(d2, 256.0));
-			Lm    += l1.rgb * (f / max(d2, 256.0));
+			vec3 cH = l1.rgb * (f * Phase(dot(D, toLight) * inversesqrt(max(d2, 1.0))) / max(d2, 256.0));
+			vec3 cM = l1.rgb * (f / max(d2, 256.0));
+			if (!smoky)
+			{
+				lamps += cH;
+				Lm    += cM;
+				continue;
+			}
+			float w = max(cM.r, max(cM.g, cM.b));
+			if (w > bestW)
+			{
+				restH += bestH;
+				restM += bestM;
+				bestH = cH;
+				bestM = cM;
+				bestW = w;
+				bestDist = sqrt(d2);
+				bestDir  = toLight / max(bestDist, 1e-3);
+			}
+			else
+			{
+				restH += cH;
+				restM += cM;
+			}
+		}
+		if (smoky)
+		{
+			float bestTau = bestW > 0.0 ? SmokeThroughTo(P, bestDir, bestDist) : 0.0;
+			lamps += bestH * exp(-bestTau) + restH * exp(-sideTau);
+			Lm    += bestM * SmokeMulti(bestTau) + restM * SmokeMulti(sideTau);
 		}
 		L += lamps * u_VolParams.w;
 	}
 
-	vec3 hazeS = media.rgb - fog;
+	vec3 hazeS = media.rgb - fog - smoke;
 	if (thick)
 	{
 		// hanging in the air, lit as a floor is
@@ -398,16 +454,14 @@ void main()
 		{
 			float through = 1.0;
 			if (smoky)
-			{
-				vec3 side = vec3(-D.xy, 0.0);
-				side = dot(side, side) > 1e-4 ? normalize(side) : vec3(1.0, 0.0, 0.0);
-				through = 0.5 * (SmokeMulti(SmokeThrough(P, vec3(0.0, 0.0, 1.0))) + SmokeMulti(SmokeThrough(P, side)));
-			}
+				through = 0.5 * (SmokeMulti(SmokeThrough(P, vec3(0.0, 0.0, 1.0))) + SmokeMulti(sideTau));
 			Lm += RtSky(P, vec3(0.0, 0.0, 1.0)) * through;
 		}
 		Lm += u_FogAmbient.rgb;
 	}
-	vec4 cur = vec4(L * hazeS + Lm * fog, media.a);
+	// the smoke as lit live, or as its sprites were (the map's baked light),
+	// whichever is brighter: under a roof the baked light is most of it
+	vec4 cur = vec4(L * hazeS + Lm * fog + max(Lm * smoke, smokeLit), media.a);
 
 	// last frame's, where this cell's middle was then
 	if (u_FroxelPrevOrigin.w > 0.0)

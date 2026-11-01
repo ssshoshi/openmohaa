@@ -61,7 +61,7 @@ cvar_t *r_volumetricSmokeNoise;
 // the smoke's noise: a tiling 3D texture, made once (R_FroxelSmokeNoise)
 #define SMOKE_NOISE_SIZE 64
 // how much of the light on it smoke gives back
-#define SMOKE_ALBEDO 0.6f
+#define SMOKE_ALBEDO 0.45f
 static GLuint smokeNoiseTexture;
 
 // the air summed from the eye, for what the main view draws after it
@@ -311,14 +311,20 @@ static int R_FroxelSmokeBlobs(vec4_t *out)
 		if (radius < 1.0f || alpha <= 0.0f) {
 			continue;
 		}
-		VectorCopy(spr->origin, out[n * 2]);
-		out[n * 2][3] = radius;
-		// smoke is grey: its tint times SMOKE_ALBEDO
-		VectorSet(out[n * 2 + 1], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
+		VectorCopy(spr->origin, out[n * 3]);
+		out[n * 3][3] = radius;
+		// smoke is grey: its sprite's colour times SMOKE_ALBEDO (the sprite's
+		// colour has the light grid's in it: outdoors about white)
+		VectorSet(out[n * 3 + 1], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
 			spr->shaderRGBA[2] / 255.0f * SMOKE_ALBEDO);
 		// as opaque straight through its middle as the sprite was: the
 		// 1 - q fall-off takes 2/3 of the middle's along a diameter
-		out[n * 2 + 1][3] = -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value;
+		out[n * 3 + 1][3] = -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value;
+		// and as its sprite was lit: the cgame gives smoke that collides the
+		// light grid's light (R_GetLightingForSmoke), the map's baked light
+		// (the sprite showed its grey texture times that: SMOKE_ALBEDO again)
+		VectorSet4(out[n * 3 + 2], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
+			spr->shaderRGBA[2] / 255.0f * SMOKE_ALBEDO, 0.0f);
 		n++;
 	}
 	return n;
@@ -444,7 +450,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 {
 	vec4_t quadVerts[4], viewInfo, volParams, volRange, froxel, v;
 	vec4_t volumes[FOG_MAX_VOLUMES * 3];
-	static vec4_t blobs[SMOKE_MAX_BLOBS * 2];
+	static vec4_t blobs[SMOKE_MAX_BLOBS * 3];
 	int numBlobs, sum;
 	GLuint noise;
 	vec2_t texCoords[4];
@@ -596,7 +602,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	numBlobs = R_FroxelSmokeBlobs(blobs);
 	noise    = numBlobs ? R_FroxelSmokeNoise() : 0;
 	if (numBlobs) {
-		GLSL_SetUniformSmoke(&tr.froxelShader[0], UNIFORM_SMOKEBLOBS, (const vec4_t *)blobs, numBlobs * 2);
+		GLSL_SetUniformSmoke(&tr.froxelShader[0], UNIFORM_SMOKEBLOBS, (const vec4_t *)blobs, numBlobs * 3);
 	}
 	if (noise) {
 		GL_BindMultiTexture(GL_TEXTURE0 + TB_SPECULARMAP, GL_TEXTURE_3D, noise);

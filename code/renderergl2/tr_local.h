@@ -894,7 +894,7 @@ enum
 	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
 	GLSL_VEC4_WATERSPOTS, // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
-	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 2 vec4s (tr_froxel.c)
+	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 3 vec4s (tr_froxel.c)
 };
 
 #define SMOKE_MAX_BLOBS 96 // Added in OPM: the most puffs of smoke the air's grid takes a frame (tr_froxel.c)
@@ -1057,7 +1057,7 @@ typedef enum
 	UNIFORM_FROXELPREVLEFT,
 	UNIFORM_FROXELPREVUP,
 	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
-	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, colour and density
+	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, albedo and density, the light their sprites had
 	UNIFORM_SMOKEPARAMS,  // how many, the noise's scale, its drift (time), how much it eats into them
 	UNIFORM_SMOKENOISE,   // the smoke's 3D noise
 	UNIFORM_FROXELFOG,     // Added in OPM: the air for what is drawn after it (USE_FROXEL_FOG): how, slices, depth curve

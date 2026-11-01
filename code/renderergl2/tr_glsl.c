@@ -1597,7 +1597,7 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
 				break;
 			case GLSL_VEC4_SMOKE:
-				size += sizeof(vec4_t) * SMOKE_MAX_BLOBS * 2;
+				size += sizeof(vec4_t) * SMOKE_MAX_BLOBS * 3;
 				break;
 			default:
 				break;
@@ -1965,7 +1965,7 @@ void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const v
 
 /*
 Added in OPM
-The puffs of smoke in the air's grid (tr_froxel.c), two vec4s each; only
+The puffs of smoke in the air's grid (tr_froxel.c), three vec4s each; only
 those sent.
 */
 void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
@@ -1980,8 +1980,8 @@ void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t
 		ri.Printf(PRINT_WARNING, "GLSL_SetUniformSmoke: wrong type for uniform %i in program %s\n", uniformNum, program->name);
 		return;
 	}
-	if (vec4s > SMOKE_MAX_BLOBS * 2) {
-		vec4s = SMOKE_MAX_BLOBS * 2;
+	if (vec4s > SMOKE_MAX_BLOBS * 3) {
+		vec4s = SMOKE_MAX_BLOBS * 3;
 	}
 	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
 		return;
