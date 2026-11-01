@@ -600,8 +600,18 @@ static void R_RtLoadLampDefs(void)
 			stops = atof(COM_ParseExt(&text, qfalse));
 			VectorNormalize(def->shade);
 			// a ring: a lampshade open at both ends, holding back what leaves
-			// by its sides; sent as longer than a whole (RtLight)
-			token = COM_ParseExt(&text, qfalse);
+			// by its sides; sent as longer than a whole (RtLight). Read only
+			// if it is on this line: at the line's end the parser steps onto
+			// the next one, and SkipRestOfLine then lost that whole line (a
+			// caged bulb's "bulb", and with it the lamp)
+			{
+				const char *p = text;
+
+				while (p && (*p == ' ' || *p == '\t')) {
+					p++;
+				}
+				token = (p && *p && *p != '\n' && *p != '\r') ? COM_ParseExt(&text, qfalse) : "";
+			}
 			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops) + (!Q_stricmp(token, "ring") ? 1.0f : 0.0f), def->shade);
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;

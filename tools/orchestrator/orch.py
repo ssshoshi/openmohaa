@@ -210,8 +210,12 @@ def cmd_launch(args):
     if os.path.isfile(pid_file):
         os.remove(pid_file)
     # Commands left over from the last run would fire at start.
+    # The sidecar may clear the same files at the same moment.
     for stale in glob.glob(os.path.join(CMD_DIR, "*")):
-        os.remove(stale)
+        try:
+            os.remove(stale)
+        except FileNotFoundError:
+            pass
 
     start = []
     if args.save:
@@ -718,7 +722,7 @@ def cmd_swap(args):
         if running:
             out = run_commands("cl_renderer", timeout=3.0) or ""
             m = __import__("re").search(r'is:"(\w+)"', out)
-            renderer = m.group(1) if m else renderer
+            renderer = m.group(1).lower() if m else renderer
         if args.renderer:
             renderer = args.renderer
     target = {"cgame": "cgame", "game": "game", "renderer": f"renderer_{renderer}"}[module]
