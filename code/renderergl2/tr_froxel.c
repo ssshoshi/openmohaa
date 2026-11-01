@@ -64,6 +64,15 @@ cvar_t *r_volumetricSmokeNoise;
 #define SMOKE_ALBEDO 0.6f
 static GLuint smokeNoiseTexture;
 
+// the air summed from the eye, for what the main view draws after it
+// (RB_FroxelOpaqueDone, R_FroxelSetFog)
+static struct {
+	qboolean active;
+	int      frame; // tr.frameCount it was done in
+	int      sum;   // which of tr.froxelSumImage holds it
+	vec4_t   fog, view, grid;
+} froxelFog;
+
 // the sprites taken as puffs this scene (R_FroxelTakesSprite)
 static struct {
 	int scene;
@@ -663,6 +672,119 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 
 	R_GpuTimerEnd(GPUTIMER_VOLUME);
+
+	// for what is drawn after it (R_FroxelSetFog)
+	froxelFog.sum = sum;
+	VectorSet4(froxelFog.fog, 1.0f, (float)FROXEL_SLICES, froxel[3], 0.0f);
+	VectorSet4(froxelFog.view, zmax / zmin, zmax, 1.0f / dstBox[2], 1.0f / dstBox[3]);
+	VectorSet4(froxelFog.grid, froxel[0], froxel[1], (float)dstBox[0], (float)dstBox[1]);
+}
+
+/*
+=============
+R_FroxelOn
+
+Whether the air's grid is drawn this frame: r_volumetric 2 with its
+programs, the lights lit live, and something in the air.
+=============
+*/
+qboolean R_FroxelOn(void)
+{
+	return r_volumetric->integer == 2 && tr.froxelDepthFbo && tr.froxelShader[3].program && R_RtLitLive()
+		&& (r_volumetricDensity->value > 0 || R_FroxelHasWork());
+}
+
+/*
+=============
+RB_FroxelBeginView
+
+A view starts with no air for what it draws (R_FroxelSetFog).
+=============
+*/
+void RB_FroxelBeginView(void)
+{
+	froxelFog.active = qfalse;
+}
+
+/*
+=============
+RB_FroxelOpaqueDone
+
+Between the main view's opaque world and anything drawn after it (sorted
+past opaque: alpha tested leaves, decals, water, dust and smoke, glass):
+the air lit and summed, the opaque world seen through it, and the sum kept
+for the rest, which take it at their own depth (R_FroxelSetFog). Once a
+frame, and left as it found the target and the viewport.
+=============
+*/
+void RB_FroxelOpaqueDone(void)
+{
+	FBO_t  *fbo = glState.currentFBO;
+	ivec4_t box;
+
+	if (backEnd.depthFill || backEnd.projection2D || backEnd.viewParms.isPortal || backEnd.viewParms.isPortalSky
+		|| (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP | VPF_WATERREFLECT))
+		|| (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || !glRefConfig.framebufferObject || !r_postProcess->integer
+		|| froxelFog.frame == tr.frameCount || !R_FroxelOn()) {
+		return;
+	}
+
+	box[0] = backEnd.viewParms.viewportX;
+	box[1] = backEnd.viewParms.viewportY;
+	box[2] = backEnd.viewParms.viewportWidth;
+	box[3] = backEnd.viewParms.viewportHeight;
+	RB_VolumetricFroxels(fbo, box);
+	froxelFog.frame  = tr.frameCount;
+	froxelFog.active = qtrue;
+
+	FBO_Bind(fbo);
+	qglViewport(box[0], box[1], box[2], box[3]);
+	qglScissor(box[0], box[1], box[2], box[3]);
+}
+
+/*
+=============
+R_FroxelSetFog
+
+A stage drawn after the air was summed takes it as its blend does
+(froxelFog_glsl in tr_glsl.c); anything else, none.
+=============
+*/
+void R_FroxelSetFog(shaderProgram_t *sp, int stateBits)
+{
+	vec4_t fog;
+
+	if (sp->uniforms[UNIFORM_FROXELFOG] == -1) {
+		return;
+	}
+	if (!froxelFog.active || backEnd.projection2D) {
+		VectorClear4(fog);
+		GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOG, fog);
+		return;
+	}
+
+	VectorCopy4(froxelFog.fog, fog);
+	{
+		const int src = stateBits & GLS_SRCBLEND_BITS, dst = stateBits & GLS_DSTBLEND_BITS;
+
+		if (dst == GLS_DSTBLEND_ONE) {
+			// added on top
+			fog[0] = 2.0f;
+		} else if (src == GLS_SRCBLEND_DST_COLOR || dst == GLS_DSTBLEND_SRC_COLOR) {
+			// a multiply
+			fog[0] = 3.0f;
+		} else if ((!src && !dst) || dst == GLS_DSTBLEND_ZERO || dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA) {
+			// drawn whole, or blended over
+			fog[0] = 1.0f;
+		} else {
+			fog[0] = 2.0f;
+		}
+	}
+	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOG, fog);
+	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOGVIEW, froxelFog.view);
+	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOGGRID, froxelFog.grid);
+	GLSL_SetUniformInt(sp, UNIFORM_FROXELFOGMAP, TMU_FROXELFOG);
+	GL_BindToTMU(tr.froxelSumImage[froxelFog.sum], TMU_FROXELFOG);
 }
 
 /*

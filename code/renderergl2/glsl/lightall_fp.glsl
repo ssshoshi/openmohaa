@@ -950,4 +950,9 @@ void main()
 	// gets from fixed function GL_FOG.
 	float fogFactor = clamp((var_FogDist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
 	gl_FragColor.rgb = Fog(gl_FragColor.rgb, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
+
+#if defined(USE_FROXEL_FOG)
+	// Added in OPM: the light in the air between it and the eye
+	gl_FragColor.rgb = FroxelFog(gl_FragColor.rgb);
+#endif
 }

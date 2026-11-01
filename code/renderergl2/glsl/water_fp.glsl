@@ -437,5 +437,10 @@ void main()
 	float fogFactor = clamp((dist - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0);
 	color = Fog(color, u_GlobalFogColor.rgb, fogFactor * u_GlobalFogColor.a);
 
+#if defined(USE_FROXEL_FOG)
+	// Added in OPM: the light in the air between it and the eye
+	color = FroxelFog(color);
+#endif
+
 	gl_FragColor = vec4(color, alpha);
 }
