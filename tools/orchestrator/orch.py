@@ -210,8 +210,12 @@ def cmd_launch(args):
     if os.path.isfile(pid_file):
         os.remove(pid_file)
     # Commands left over from the last run would fire at start.
+    # The sidecar may clear the same files at the same moment.
     for stale in glob.glob(os.path.join(CMD_DIR, "*")):
-        os.remove(stale)
+        try:
+            os.remove(stale)
+        except FileNotFoundError:
+            pass
 
     start = []
     if args.save:
