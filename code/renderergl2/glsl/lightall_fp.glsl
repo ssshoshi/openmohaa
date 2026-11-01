@@ -938,7 +938,8 @@ void main()
 	if (wet.x > 0.0)
 	{
 		// the rain running down it (on the world's own surfaces)
-		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
+		// (not on a cut-out: a tree line, a hedge, a fence is no wall)
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0 && u_AlphaTest == 0)
 		{
 			vec3  runN;
 			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
@@ -1129,7 +1130,8 @@ void main()
 		wet.y *= 0.65;
 		vec3 wetN = wetSurfN;
 		// the rain running down it (RainRuns)
-		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
+		// (not on a cut-out: a tree line, a hedge, a fence is no wall)
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0 && u_AlphaTest == 0)
 		{
 			vec3  runN;
 			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
