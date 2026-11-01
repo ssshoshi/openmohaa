@@ -2388,7 +2388,7 @@ static qboolean R_RainPuddleShader(const shader_t *shader)
     return last;
 }
 
-void R_WaterSetWet(shaderProgram_t *sp)
+void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
 {
     vec4_t      v;
     qboolean    beach;
@@ -2400,6 +2400,11 @@ void R_WaterSetWet(shaderProgram_t *sp)
     }
     beach = water.beachSet && water.shoreSet;
     rain  = R_RainAmount();
+    // a cut-out (a tree line, a hedge, a fence) is no wall the rain wets;
+    // the terrain, alpha tested on some maps, is ground that it does
+    if (pStage && (pStage->stateBits & GLS_ATEST_BITS) && !(tess.shader && tess.shader->isTerrain)) {
+        rain = 0.0f;
+    }
     if (!beach && rain <= 0.0f) {
         R_WaterSetDry(sp);
         return;

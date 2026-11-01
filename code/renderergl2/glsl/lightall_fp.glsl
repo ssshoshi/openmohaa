@@ -123,6 +123,17 @@ float RainExposed(vec3 p, vec3 n)
 		open = max(open, RainExposedAt(p, p.xy + out2 * 48.0));
 		open = max(open, RainExposedAt(p, p.xy + out2 * 80.0));
 	}
+	// the ground at a wall's foot reads the wall's own top in the grid (a
+	// dry line along every wall); the wind blows the rain in a little way
+	// under an edge too
+	else if (side <= 0.5 && open < 1.0)
+	{
+		float r = u_RainParams.y * 1.5;
+		open = max(open, RainExposedAt(p, p.xy + vec2( r, 0.0)));
+		open = max(open, RainExposedAt(p, p.xy + vec2(-r, 0.0)));
+		open = max(open, RainExposedAt(p, p.xy + vec2(0.0,  r)));
+		open = max(open, RainExposedAt(p, p.xy + vec2(0.0, -r)));
+	}
 	return open;
 }
 
@@ -132,6 +143,15 @@ vec3 WetAmount(out vec3 surfN)
 {
 	// faces' winding as the rest of this file has it: the front is the back
 	surfN = normalize(!gl_FrontFacing ? var_WetNormal : -var_WetNormal);
+	// a draw that hands over no normals (the terrain, unless the shader
+	// asks for them): the face's own, from how it lies on the screen, to
+	// the eye
+	if (dot(var_WetNormal, var_WetNormal) < 1e-4)
+	{
+		surfN = normalize(cross(dFdx(var_WetPos), dFdy(var_WetPos)));
+		if (dot(surfN, u_ViewOrigin - var_WetPos) < 0.0)
+			surfN = -surfN;
+	}
 	vec3 wet = vec3(0.0);
 
 	// the beach: up to the tide's mark, which is not a ruled line; the film
@@ -155,8 +175,8 @@ vec3 WetAmount(out vec3 surfN)
 	// the rain: what is out under the sky soaked through, with a film on it
 	// thick where it faces up and in runs down what stands up; nothing on
 	// the undersides it never reaches; puddles on the open ground
-	// (not a cut-out: a tree line, a hedge, a fence is no wall)
-	if (u_Wet.z > 0.0 && u_AlphaTest == 0)
+	// (none on a cut-out, a tree line, a hedge, a fence: R_WaterSetWet)
+	if (u_Wet.z > 0.0)
 	{
 		float open  = RainExposed(var_WetPos, surfN) * u_Wet.z;
 		float under = smoothstep(-0.75, -0.3, surfN.z);
@@ -956,8 +976,8 @@ void main()
 	if (wet.x > 0.0)
 	{
 		// the rain running down it (on the world's own surfaces)
-		// (not on a cut-out: a tree line, a hedge, a fence is no wall)
-		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0 && u_AlphaTest == 0)
+		// (none on a cut-out: a tree line, a hedge, a fence; R_WaterSetWet)
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
 		{
 			vec3  runN;
 			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
@@ -1148,8 +1168,8 @@ void main()
 		wet.y *= 0.65;
 		vec3 wetN = wetSurfN;
 		// the rain running down it (RainRuns)
-		// (not on a cut-out: a tree line, a hedge, a fence is no wall)
-		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0 && u_AlphaTest == 0)
+		// (none on a cut-out: a tree line, a hedge, a fence; R_WaterSetWet)
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
 		{
 			vec3  runN;
 			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;

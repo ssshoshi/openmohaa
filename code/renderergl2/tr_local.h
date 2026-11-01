@@ -758,6 +758,9 @@ typedef struct shader_s {
     // texture of its first stage, which the program takes its ripples from
     qboolean isWater;
     image_t *waterImage;
+    // Added in OPM: the terrain is drawn with it (R_LoadTerrain): ground the
+    // rain wets, even with an alpha test, where a cut-out takes none of it
+    qboolean isTerrain;
 } shader_t;
 
 enum
@@ -4130,7 +4133,7 @@ void R_WaterInfo_f(void);
 void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
-void R_WaterSetWet(shaderProgram_t *sp);
+void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage);
 void R_RainFrame(const refdef_t *fd);
 qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale);
 void R_WaterSetDry(shaderProgram_t *sp);

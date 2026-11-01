@@ -3335,6 +3335,10 @@ void R_UnpackTerraPatch(cTerraPatch_t* pPacked, cTerraPatchUnpacked_t* pUnpacked
     pUnpacked->y0 = ((int)pPacked->y << 6);
     pUnpacked->z0 = pPacked->iBaseHeight;
     pUnpacked->shader = ShaderForShaderNum(pPacked->iShader, FatLightmap(pPacked->iLightMap));
+    // Added in OPM: the rain wets it (R_WaterSetWet)
+    if (pUnpacked->shader) {
+        pUnpacked->shader->isTerrain = qtrue;
+    }
     pUnpacked->iNorth = pPacked->iNorth;
     pUnpacked->iEast = pPacked->iEast;
     pUnpacked->iSouth = pPacked->iSouth;
