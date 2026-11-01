@@ -766,7 +766,7 @@ static struct {
     float    flashTime;
     struct rainEave_s *eaves; // where water pours off a roof (R_RainFindEaves)
     int      numEaves;
-    qhandle_t streamShader, splashShader, curtainShader, mistShader;
+    qhandle_t streamShader, curtainShader, crownShader, dropShader, mistShader;
     qboolean shadersTried;
     qboolean hasLast;
     int      width, rows;
@@ -1147,9 +1147,8 @@ Added in OPM
   runs off a roof: a veil all along the edge (opm/rain_curtain), leaving it
   whole and thinning to drops as it falls, leaning out as water thrown off
   an edge does; here and there a heavier stream in it (opm/rain_stream); and
-  spray where it lands, a splash and the mist off it (opm/rain_splash,
-  opm/rain_mist). Added to the scene as polygons, before it is begun
-  (RE_RenderScene).
+  a splash where it lands (R_RainSplash). Added to the scene as polygons,
+  before it is begun (RE_RenderScene).
 ===============
 */
 #define RAIN_RUNOFF_RANGE 1600.0f
@@ -1174,6 +1173,130 @@ static void R_RainQuad(qhandle_t shader, const vec3_t tl, const vec3_t trc, cons
         v[k].modulate[3] = (byte)Com_Clamp(0.0f, 255.0f, (k < 2 ? alphaTop : alphaBottom) * 255.0f);
     }
     RE_AddPolyToScene(shader, 4, v, 1);
+}
+
+/*
+===============
+R_RainSplash
+
+Added in OPM
+  Where the water off an eave lands, a splash with some body to it, of our
+  own textures (tools/content/rain_textures.py): the crown of spray thrown
+  up and out (opm/rain_crown), two of them out of step along the edge; drops
+  flying off it, each on its own arc and drawn out along its flight
+  (opm/rain_drop); and the fine mist rising off it in two puffs that grow
+  and thin (opm/rain_mist). Turned to the eye about the upright, but at
+  different places and heights, so it has depth as the eye goes round it.
+===============
+*/
+#define RAIN_SPLASH_RANGE 900.0f
+#define RAIN_SPLASH_DROPS 10
+
+static float R_RainHash(float x)
+{
+    const float h = sin(x * 12.9898f) * 43758.5453f;
+
+    return h - floor(h);
+}
+
+static void R_RainSplash(const vec3_t base, const vec3_t along, const vec3_t side, float half, float seed, float flow,
+    float a, byte grey, float time)
+{
+    const vec3_t up = {0.0f, 0.0f, 1.0f};
+    float        st[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    vec3_t       c, tl, trc, br, bl;
+    int          k;
+
+    // the crowns
+    if (rainCover.crownShader) {
+        for (k = 0; k < 2; k++) {
+            const float phase = time * (3.2f + 2.0f * seed + 0.7f * k) + seed * 17.0f + k * 0.5f;
+            const float f     = phase - floor(phase);
+            const float w     = (8.0f + 11.0f * sqrt(f)) * (0.75f + 0.5f * R_RainHash(floor(phase) + seed)) * (0.6f + 0.5f * flow);
+            const float h     = w * (0.9f + 0.5f * (1.0f - f));
+            const int   flip  = ((int)floor(phase) + k) & 1;
+
+            VectorMA(base, (k ? -0.3f : 0.3f) * half + (seed - 0.5f) * 4.0f, along, c);
+            VectorMA(c, -w, side, bl);
+            VectorMA(c, w, side, br);
+            VectorMA(bl, h, up, tl);
+            VectorMA(br, h, up, trc);
+            st[0][0] = st[3][0] = flip ? 1.0f : 0.0f;
+            st[1][0] = st[2][0] = flip ? 0.0f : 1.0f;
+            R_RainQuad(rainCover.crownShader, tl, trc, br, bl, st, grey, Q_min(1.0f, a * 1.3f) * (1.0f - f) * 0.85f, Q_min(1.0f, a * 1.3f) * (1.0f - f));
+        }
+    }
+
+    // the drops thrown off it
+    if (rainCover.dropShader) {
+        st[0][0] = st[3][0] = 0.0f;
+        st[1][0] = st[2][0] = 1.0f;
+        for (k = 0; k < RAIN_SPLASH_DROPS; k++) {
+            const float id    = seed * 97.0f + k * 7.31f;
+            const float rate  = 1.6f + 1.4f * R_RainHash(id);
+            const float phase = time * rate + R_RainHash(id + 1.0f);
+            const float n     = floor(phase) + id;
+            const float f     = phase - floor(phase);
+            // its throw: up, and out any way, this time round
+            const float vz    = 50.0f + 70.0f * R_RainHash(n + 2.0f);
+            const float vh    = 15.0f + 45.0f * R_RainHash(n + 3.0f);
+            const float ang   = R_RainHash(n + 4.0f) * 2.0f * M_PI;
+            const float life  = 2.0f * vz / 500.0f;
+            const float t     = f * life;
+            vec3_t      dir, vel, pos, ax, sd, toEye;
+            float       len, w;
+
+            VectorScale(along, cos(ang), dir);
+            VectorMA(dir, sin(ang), side, dir);
+            VectorMA(base, (R_RainHash(n + 5.0f) - 0.5f) * 2.0f * half, along, pos);
+            VectorMA(pos, vh * t, dir, pos);
+            pos[2] += vz * t - 250.0f * t * t;
+
+            VectorScale(dir, vh, vel);
+            vel[2] = vz - 500.0f * t;
+            len    = VectorNormalize2(vel, ax);
+            // drawn out along its flight, across it to the eye
+            VectorSet(toEye, -side[1], side[0], 0.0f);
+            CrossProduct(ax, toEye, sd);
+            if (VectorNormalize(sd) < 0.01f) {
+                VectorCopy(side, sd);
+            }
+            w   = 0.7f + 0.6f * R_RainHash(n + 6.0f);
+            len = w + len * 0.03f;
+
+            VectorMA(pos, len, ax, c);
+            VectorMA(c, -w, sd, tl);
+            VectorMA(c, w, sd, trc);
+            VectorMA(pos, -len, ax, c);
+            VectorMA(c, w, sd, br);
+            VectorMA(c, -w, sd, bl);
+            R_RainQuad(rainCover.dropShader, tl, trc, br, bl, st, grey, a * (1.0f - f * f), a * (1.0f - f * f));
+        }
+    }
+
+    // the mist
+    if (rainCover.mistShader) {
+        for (k = 0; k < 2; k++) {
+            const float phase = time * (0.45f + 0.2f * k) + seed * 5.0f + k * 0.5f;
+            const float f     = phase - floor(phase);
+            const float size  = (12.0f + 20.0f * f) * (0.8f + 0.4f * seed);
+            const float ma    = Q_min(1.0f, a * 0.65f * sin(f * M_PI) * (0.5f + 0.5f * flow));
+
+            VectorMA(base, (k ? 0.45f : -0.45f) * half, along, c);
+            c[2] += 2.0f + size * 0.5f + 6.0f * f;
+            VectorMA(c, -size, side, tl);
+            VectorMA(tl, size, up, tl);
+            VectorMA(c, size, side, trc);
+            VectorMA(trc, size, up, trc);
+            VectorMA(c, size, side, br);
+            VectorMA(br, -size, up, br);
+            VectorMA(c, -size, side, bl);
+            VectorMA(bl, -size, up, bl);
+            st[0][0] = st[3][0] = (k ^ ((int)floor(phase) & 1)) ? 1.0f : 0.0f;
+            st[1][0] = st[2][0] = 1.0f - st[0][0];
+            R_RainQuad(rainCover.mistShader, tl, trc, br, bl, st, grey, ma, ma);
+        }
+    }
 }
 
 static qhandle_t R_RainRunoffShader(const char *name)
@@ -1201,7 +1324,8 @@ static void R_RainRunoff(const refdef_t *fd)
         rainCover.shadersTried  = qtrue;
         rainCover.curtainShader = R_RainRunoffShader("opm/rain_curtain");
         rainCover.streamShader  = R_RainRunoffShader("opm/rain_stream");
-        rainCover.splashShader  = R_RainRunoffShader("opm/rain_splash");
+        rainCover.crownShader   = R_RainRunoffShader("opm/rain_crown");
+        rainCover.dropShader    = R_RainRunoffShader("opm/rain_drop");
         rainCover.mistShader    = R_RainRunoffShader("opm/rain_mist");
     }
     if (!rainCover.curtainShader) {
@@ -1295,52 +1419,9 @@ static void R_RainRunoff(const refdef_t *fd)
             R_RainQuad(rainCover.streamShader, tl, trc, br, bl, st, grey, a, a * 0.8f);
         }
 
-        // spray where it lands: a splash never the same twice, and the mist
-        // thrown up off it
-        if (dist < RAIN_RUNOFF_RANGE * 0.7f) {
-            vec3_t up = {0.0f, 0.0f, 1.0f}, c;
-
-            if (rainCover.splashShader) {
-                const float phase = time * (5.0f + 3.0f * e->seed) + e->seed * 17.0f;
-                const float f     = phase - floor(phase);
-                const float size  = (7.0f + 9.0f * f) * (0.7f + 0.6f * e->seed) * (0.6f + 0.6f * flow);
-                const int   flip  = (int)floor(phase) & 1;
-
-                VectorMA(bot, size * 0.45f, up, c);
-                VectorMA(c, (e->seed - 0.5f) * half, along, c);
-                VectorMA(c, -size, side, tl);
-                VectorMA(tl, size, up, tl);
-                VectorMA(c, size, side, trc);
-                VectorMA(trc, size, up, trc);
-                VectorMA(c, size, side, br);
-                VectorMA(br, -size * 0.5f, up, br);
-                VectorMA(c, -size, side, bl);
-                VectorMA(bl, -size * 0.5f, up, bl);
-                st[0][0] = st[3][0] = flip ? 1.0f : 0.0f;
-                st[1][0] = st[2][0] = flip ? 0.0f : 1.0f;
-                st[0][1] = st[1][1] = 0.0f;
-                st[2][1] = st[3][1] = 1.0f;
-                R_RainQuad(rainCover.splashShader, tl, trc, br, bl, st, grey, (1.0f - f) * a, (1.0f - f) * a);
-            }
-            if (rainCover.mistShader) {
-                const float size = (14.0f + 8.0f * e->seed) * (0.8f + 0.3f * sin(time * 1.7f + e->seed * 31.0f));
-                const float ma   = a * 0.35f;
-
-                VectorMA(bot, size * 0.35f, up, c);
-                VectorMA(c, -size, side, tl);
-                VectorMA(tl, size * 0.8f, up, tl);
-                VectorMA(c, size, side, trc);
-                VectorMA(trc, size * 0.8f, up, trc);
-                VectorMA(c, size, side, br);
-                VectorMA(br, -size * 0.35f, up, br);
-                VectorMA(c, -size, side, bl);
-                VectorMA(bl, -size * 0.35f, up, bl);
-                st[0][0] = st[3][0] = (e->seed > 0.5f) ? 1.0f : 0.0f;
-                st[1][0] = st[2][0] = (e->seed > 0.5f) ? 0.0f : 1.0f;
-                st[0][1] = st[1][1] = 0.0f;
-                st[2][1] = st[3][1] = 1.0f;
-                R_RainQuad(rainCover.mistShader, tl, trc, br, bl, st, grey, ma, ma);
-            }
+        // the splash where it lands, near enough to see (R_RainSplash)
+        if (dist < RAIN_SPLASH_RANGE) {
+            R_RainSplash(bot, along, side, half, e->seed, flow, a, grey, time);
         }
         drawn++;
     }

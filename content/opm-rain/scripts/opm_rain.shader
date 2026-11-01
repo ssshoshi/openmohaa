@@ -1,8 +1,7 @@
 // Added in OPM: the water pouring off the eaves of roofs in the rain, and the
 // spray where it lands (tr_water.c, R_RainRunoff). The renderer gives each
-// polygon its brightness and fade in its vertex colours. The veil and the
-// streams are our own (tools/content/rain_textures.py); the splash and the
-// mist are the game's water splashes.
+// polygon its brightness and fade in its vertex colours. All the images are
+// our own (tools/content/rain_textures.py).
 
 // the veil off an edge: its streaks and drops twice over, at two sizes and
 // speeds, so it never looks one sheet
@@ -49,7 +48,9 @@ opm/rain_stream
 	}
 }
 
-opm/rain_splash
+// the splash where it lands (R_RainSplash): the crown of spray, the drops
+// thrown off it, the mist rising
+opm/rain_crown
 {
 	nopicmip
 	surfaceparm nolightmap
@@ -58,14 +59,29 @@ opm/rain_splash
 	surfaceparm nomarks
 	cull none
 	{
-		clampmap textures/effects/water_splash2.tga
+		clampmap textures/opm_rain/crown.tga
 		blendfunc blend
 		rgbGen vertex
 		alphaGen vertex
 	}
 }
 
-// the mist thrown up where it lands
+opm/rain_drop
+{
+	nopicmip
+	surfaceparm nolightmap
+	surfaceparm nonsolid
+	surfaceparm trans
+	surfaceparm nomarks
+	cull none
+	{
+		clampmap textures/opm_rain/drop.tga
+		blendfunc blend
+		rgbGen vertex
+		alphaGen vertex
+	}
+}
+
 opm/rain_mist
 {
 	nopicmip
@@ -75,7 +91,7 @@ opm/rain_mist
 	surfaceparm nomarks
 	cull none
 	{
-		clampmap textures/effects/water_splash.tga
+		clampmap textures/opm_rain/mist.tga
 		blendfunc blend
 		rgbGen vertex
 		alphaGen vertex

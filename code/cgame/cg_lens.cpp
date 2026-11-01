@@ -275,7 +275,8 @@ The rain. Once it has rained on a map, what is out under the sky is wet for
 the rest of it (the renderer's r_rainWet, tr_water.c): the map's weather
 script turns the rain down indoors, and the world does not dry as a man goes
 in. Out under the sky in the rain, a drop lands on the lens now and then, the
-more the higher he looks.
+more the higher he looks: looking straight up, a dozen and more a second,
+bigger, and many running down.
 */
 static void CG_LensRain(float dt)
 {
@@ -308,16 +309,26 @@ static void CG_LensRain(float dt)
         return;
     }
 
-    // drops a second: a few looking ahead, many looking up, hardly any down
-    up   = cg.refdef.viewaxis[0][2];
-    rate = cg_lens_rain->value * (0.15f + 3.0f * Square(Q_max(0.0f, up + 0.25f)));
-    if (random() < rate * dt) {
-        cgLensSpot_t *s = CG_LensNew(
-            LENS_WATER, 0.05f + random() * 0.9f, 0.1f + random() * 0.85f, 0.007f + random() * random() * 0.02f,
-            2200 + (int)(random() * 2500), 0.75f + 0.25f * random()
-        );
+    // drops a second: a few looking ahead, many looking up, hardly any down;
+    // the heavier the rain the more (its density runs from under 1 to 10)
+    up   = Q_max(0.0f, cg.refdef.viewaxis[0][2] + 0.25f);
+    rate = cg_lens_rain->value * (0.2f + 7.0f * up * up * up)
+         * Com_Clamp(0.5f, 2.0f, 0.6f + 0.15f * cg.rain.density);
+    // several a frame when it comes to that
+    for (float left = rate * dt; left > 0.0f; left -= 1.0f) {
+        cgLensSpot_t *s;
+        float         size;
 
-        s->slide = s->size > 0.016f ? 0.02f + random() * 0.06f : 0.0f;
+        if (left < 1.0f && random() >= left) {
+            break;
+        }
+        // bigger ones looking up, as they gather and run together
+        size = 0.007f + random() * random() * (0.02f + 0.02f * Q_min(1.0f, up));
+        s    = CG_LensNew(
+            LENS_WATER, 0.05f + random() * 0.9f, 0.1f + random() * 0.85f, size, 2200 + (int)(random() * 2500),
+            0.75f + 0.25f * random()
+        );
+        s->slide = s->size > 0.014f ? 0.02f + random() * (0.06f + 0.08f * Q_min(1.0f, up)) : 0.0f;
     }
 }
 

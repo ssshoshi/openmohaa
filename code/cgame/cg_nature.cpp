@@ -28,6 +28,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 cvar_t *cg_rain;
 cvar_t *cg_rain_drawcoverage;
+// Added in OPM: more of the rain than the map's script asks for
+static cvar_t *cg_rain_scale;
 
 void RainTouch(ctempmodel_t *ct, trace_t *trace)
 {
@@ -59,6 +61,7 @@ void ClientGameCommandManager::InitializeRainCvars()
     int i;
 
     cg_rain = cgi.Cvar_Get("cg_rain", "1", CVAR_ARCHIVE);
+    cg_rain_scale = cgi.Cvar_Get("cg_rain_scale", "1.6", CVAR_ARCHIVE);
     cg_rain_drawcoverage =
         cgi.Cvar_Get("cg_rain_drawcoverage", "0", CVAR_SAVEGAME | CVAR_RESETSTRING | CVAR_SYSTEMINFO);
 
@@ -157,6 +160,8 @@ void CG_Rain(centity_t *cent)
 
     VectorSubtract(vOmaxs, vOmins, vOe);
     fDensity  = cg.rain.density / 200.0;
+    // Added in OPM: heavier (cg_rain_scale)
+    fDensity *= Q_max(0.0f, cg_rain_scale->value);
     iNumSpawn = (int)(sqrt(vOe[0] * vOe[1]) * fDensity);
     if (iNumSpawn > MAX_BEAMS) {
         iNumSpawn = MAX_BEAMS;
