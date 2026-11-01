@@ -812,10 +812,12 @@ qboolean CG_PhysicsGrabHeld(void)
 
     if (pg.server) {
         // Gone from the snapshot (broken, or out of sight), or picked up. An
-        // item lying about is never solid.
+        // item lying about is never solid, nor a prop that stops shots only
+        // (EF_PHYSICS_BODY).
         const entityState_t *es = &cg_entities[pg.entnum].currentState;
 
-        if (!cg_entities[pg.entnum].currentValid || (!es->solid && es->eType != ET_ITEM) || es->parent != ENTITYNUM_NONE) {
+        if (!cg_entities[pg.entnum].currentValid || (!es->solid && es->eType != ET_ITEM && !(es->eFlags & EF_PHYSICS_BODY))
+            || es->parent != ENTITYNUM_NONE) {
             CG_PhysicsGrabRelease();
         }
     } else if (!phys_system || !phys_system->GetBodyInterface().IsAdded(pg.id)) {
