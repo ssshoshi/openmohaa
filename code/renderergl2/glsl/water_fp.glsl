@@ -439,7 +439,7 @@ void main()
 
 #if defined(USE_FROXEL_FOG)
 	// Added in OPM: the light in the air between it and the eye
-	color = FroxelFog(color);
+	color = FroxelFog(color, alpha);
 #endif
 
 	gl_FragColor = vec4(color, alpha);

@@ -1806,7 +1806,8 @@ typedef struct refSprite_s {
     byte shaderRGBA[4];
     int renderfx;
     float shaderTime;
-    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke, not as a sprite (R_FroxelTakesSprite)
+    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke (R_FroxelTakesSprite)
+    byte     froxelAlpha; // and its alpha before its sprite gave the grid its share
 } refSprite_t;
 
 //=========================
@@ -4091,6 +4092,7 @@ void R_FogLoadWorld(const char *mapName);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;
 qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
+qboolean R_FroxelSpriteToo(const refSprite_t *sprite);
 qboolean R_FroxelHasWork(void);
 void RB_FroxelOpaqueDone(void);
 void RB_FroxelBeginView(void);

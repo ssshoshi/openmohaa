@@ -57,6 +57,7 @@ cvar_t *r_volumetricFog;
 cvar_t *r_volumetricTemporal;
 cvar_t *r_volumetricSmoke;
 cvar_t *r_volumetricSmokeNoise;
+cvar_t *r_volumetricSmokeSprites;
 
 // the smoke's noise: a tiling 3D texture, made once (R_FroxelSmokeNoise)
 #define SMOKE_NOISE_SIZE 64
@@ -225,6 +226,8 @@ void R_FroxelInit(void)
 	ri.Cvar_SetDescription(r_volumetricSmoke, "With r_volumetric 2: smoke grenades and other smoke with a volume drawn in the air, lit and shadowed, in place of their sprites; how thick (0: sprites)");
 	r_volumetricSmokeNoise = ri.Cvar_Get("r_volumetricSmokeNoise", "0.4", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_volumetricSmokeNoise, "With r_volumetric 2: how much the noise breaks up the smoke's puffs, 0 smooth balls, 1 shreds");
+	r_volumetricSmokeSprites = ri.Cvar_Get("r_volumetricSmokeSprites", "0.5", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_volumetricSmokeSprites, "With r_volumetric 2: how much of a puff of smoke in the air is still drawn as its sprite, for the sprite's texture (0 all volume, 1 all sprite)");
 	ri.Cmd_AddCommand("foginfo", R_FogInfo_f);
 	ri.Cmd_AddCommand("fogreload", R_FogReload_f);
 	froxelPrev.frame = -1;
@@ -276,9 +279,37 @@ qboolean R_FroxelTakesSprite(const refSprite_t *sprite)
 	if (VectorLengthSquared(delta) > Square(range * 0.85f)) {
 		return qfalse;
 	}
+	// no smaller than two cells across where it is (a cigarette's, a shot's
+	// at a distance, an explosion's first puffs): the grid cannot hold it,
+	// and a small puff as thick as its sprite was a cell or two of dark
+	// square. Its sprite shows it as it is, until it grows
+	{
+		const model_t *model = tr.models[spr->hModel > 0 && spr->hModel < tr.numModels ? spr->hModel : 0];
+		const float    cellsX = tr.froxelLightImage[0] ? (float)(tr.froxelLightImage[0]->width / FROXEL_TILES) : 1.0f;
+		const float    cell   = VectorLength(delta) * 2.0f * tan(tr.viewParms.fovX * M_PI / 360.0f) / cellsX;
+		float          radius;
+
+		if (model->type != MOD_SPRITE || !model->d.sprite) {
+			return qfalse;
+		}
+		radius = Q_max(model->d.sprite->origin_x, model->d.sprite->origin_y) * spr->scale * model->d.sprite->scale;
+		if (radius < cell * 2.0f) {
+			return qfalse;
+		}
+	}
 	spr->froxelTaken = qtrue;
 	smokeTaken.taken++;
+	// the sprite keeps r_volumetricSmokeSprites of it, for its texture; the
+	// grid the rest (R_FroxelSmokeBlobs)
+	spr->froxelAlpha = spr->shaderRGBA[3];
+	spr->shaderRGBA[3] = (byte)(spr->shaderRGBA[3] * Com_Clamp(0.0f, 1.0f, r_volumetricSmokeSprites->value));
 	return qtrue;
+}
+
+// whether a taken puff's sprite is drawn too
+qboolean R_FroxelSpriteToo(const refSprite_t *sprite)
+{
+	return sprite->shaderRGBA[3] > 0;
 }
 
 /*
@@ -307,7 +338,10 @@ static int R_FroxelSmokeBlobs(vec4_t *out)
 		}
 		// a little wider than the sprite: the noise eats its edge
 		radius = Q_max(model->d.sprite->origin_x, model->d.sprite->origin_y) * spr->scale * model->d.sprite->scale * 1.15f;
-		alpha  = Com_Clamp(0.0f, 0.99f, spr->shaderRGBA[3] / 255.0f);
+		// what the sprite does not cover of the puff: together as opaque as
+		// the sprite was alone
+		alpha  = Com_Clamp(0.0f, 0.99f, spr->froxelAlpha / 255.0f);
+		alpha  = 1.0f - (1.0f - alpha) / Q_max(1.0f - spr->shaderRGBA[3] / 255.0f, 0.01f);
 		if (radius < 1.0f || alpha <= 0.0f) {
 			continue;
 		}
@@ -322,9 +356,19 @@ static int R_FroxelSmokeBlobs(vec4_t *out)
 		out[n * 3 + 1][3] = -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value;
 		// and as its sprite was lit: the cgame gives smoke that collides the
 		// light grid's light (R_GetLightingForSmoke), the map's baked light
-		// (the sprite showed its grey texture times that: SMOKE_ALBEDO again)
+		// (the sprite showed its grey texture times that: SMOKE_ALBEDO again).
+		// A sprite the cgame did not light so (no collision: explosions'
+		// smoke, dust, spray) is given the grid's light here, at its middle
 		VectorSet4(out[n * 3 + 2], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
 			spr->shaderRGBA[2] / 255.0f * SMOKE_ALBEDO, 0.0f);
+		if (!(spr->renderfx & RF_SMOKE_GRIDLIT) && tr.world && tr.world->lightGridData) {
+			vec3_t grid;
+
+			R_GetLightingForSmoke(grid, spr->origin);
+			out[n * 3 + 2][0] *= grid[0];
+			out[n * 3 + 2][1] *= grid[1];
+			out[n * 3 + 2][2] *= grid[2];
+		}
 		n++;
 	}
 	return n;
@@ -779,6 +823,9 @@ void R_FroxelSetFog(shaderProgram_t *sp, int stateBits)
 		} else if (src == GLS_SRCBLEND_DST_COLOR || dst == GLS_DSTBLEND_SRC_COLOR) {
 			// a multiply
 			fog[0] = 3.0f;
+		} else if (src == GLS_SRCBLEND_ONE && dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA) {
+			// a colour already times its alpha
+			fog[0] = 4.0f;
 		} else if ((!src && !dst) || dst == GLS_DSTBLEND_ZERO || dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA) {
 			// drawn whole, or blended over
 			fog[0] = 1.0f;

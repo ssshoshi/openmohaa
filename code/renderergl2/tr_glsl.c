@@ -927,7 +927,10 @@ FROXEL_APPLY reads it at each pixel's), and put on the fragment as its blend
 takes it (u_FroxelFog.x): 1 what it lets through of the fragment plus what it
 adds (blended over, or drawn whole), 2 only what it lets through (added on top:
 the air's own light would be added again each time), 3 a multiply faded as far
-as the air hides it.
+as the air hides it, 4 as 1 for a colour already times its alpha (blended
+with one and one less its alpha: the air's light only as far as it covers,
+or its quad's clear corners took the air's light, dark squares round a
+fireball in smoke).
 */
 static const char *froxelFog_glsl =
 	"uniform sampler2D u_FroxelFogMap;\n"
@@ -940,7 +943,7 @@ static const char *froxelFog_glsl =
 	"	vec2 tile = vec2(mod(s, 8.0), floor(s / 8.0));\n"
 	"	return (tile + clamp(uv, edge, 1.0 - edge)) / 8.0;\n"
 	"}\n"
-	"vec3 FroxelFog(vec3 c)\n"
+	"vec3 FroxelFog(vec3 c, float alpha)\n"
 	"{\n"
 	"	if (u_FroxelFog.x < 0.5) return c;\n"
 	"	float depth = u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, gl_FragCoord.z);\n"
@@ -963,7 +966,8 @@ static const char *froxelFog_glsl =
 	"	vec4 air = mix(a, b, f);\n"
 	"	if (u_FroxelFog.x < 1.5) return c * air.a + air.rgb;\n"
 	"	if (u_FroxelFog.x < 2.5) return c * air.a;\n"
-	"	return mix(vec3(1.0), c, air.a);\n"
+	"	if (u_FroxelFog.x < 3.5) return mix(vec3(1.0), c, air.a);\n"
+	"	return c * air.a + air.rgb * clamp(alpha, 0.0, 1.0);\n"
 	"}\n";
 
 static const char *rt_skyBake_vp =
