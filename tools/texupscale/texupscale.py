@@ -45,13 +45,13 @@ VERSION = 1
 ROOTS = ("textures/", "env/", "models/")
 
 # UI, tool and particle textures: drawn at a fixed size on screen, never seen,
-# or soft gradients that gain nothing.
+# or soft gradients that gain nothing. textures/mohtest/ and textures/test/
+# hold level art the shipped maps use, despite their names (see matgen).
 SKIP_DIRS = (
     "textures/common/", "textures/effects/", "textures/gametext/",
     "textures/hud/", "textures/light/", "textures/lights/",
     "textures/mohmenu/", "textures/objectives/", "textures/special/",
-    "textures/sprites/", "textures/test/", "textures/mohtest/",
-    "textures/weather/", "textures/tempsign/",
+    "textures/sprites/", "textures/weather/", "textures/tempsign/",
 )
 
 # matgen's outputs, and the material maps texture packs ship

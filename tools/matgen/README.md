@@ -33,7 +33,9 @@ build/deepbump/venv/bin/python tools/matgen/matgen.py --parallax --install
   don't tile, so their relief is found without wrapping around the edges.
 - **Skipped.** UI, sky, sprite, effect and tool directories, textures only used by additive,
   filter, environment-mapped, sky or sprite stages, and textures that already ship their own
-  `_n`, `_nh` or `_s` map.
+  `_n`, `_nh` or `_s` map. A filter stage right after a `$lightmap` stage is not skipped: GL2
+  swaps the two and lights the texture. `textures/mohtest/` and `textures/test/` are not tool
+  directories, whatever their names: the shipped maps use them (45 of the 55 use mohtest).
 - **Normal and height.** By default DeepBump's network estimates the normals from the texture
   (it tells stains from relief far better than brightness does), and the height is those
   normals integrated, band-passed to features up to 1/64 of the texture (mortar joints, plank
