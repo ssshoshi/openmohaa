@@ -1147,6 +1147,54 @@ static void R_RainFindEaves(void)
                         continue;
                     }
                 }
+                if (x - 2 * dx < 1 || x - 2 * dx > W - 2 || y - 2 * dy < 1 || y - 2 * dy > H - 2) {
+                    continue;
+                }
+                // Added in OPM: the roof runs down to this edge, not along
+                // it: at a gable's sloped side the roof rises behind it
+                // across (diagonally), but its water runs on down the slope
+                {
+                    const int   bx = x - 2 * dx, by = y - 2 * dy;
+                    const float c  = g[by * W + bx];
+                    const float hx1 = g[by * W + bx + 1], hx0 = g[by * W + bx - 1];
+                    const float hy1 = g[(by + 1) * W + bx], hy0 = g[(by - 1) * W + bx];
+                    float       ux, uy, ul, dl;
+
+                    // a neighbour off the roof (past its edge) stands in as
+                    // the roof's own height here
+                    ux = ((fabs(hx1 - c) < 3.0f * t ? hx1 : c) - (fabs(hx0 - c) < 3.0f * t ? hx0 : c));
+                    uy = ((fabs(hy1 - c) < 3.0f * t ? hy1 : c) - (fabs(hy0 - c) < 3.0f * t ? hy0 : c));
+                    ul = sqrt(ux * ux + uy * uy);
+                    dl = sqrt((float)(dx * dx + dy * dy));
+                    // uphill must point back, away from the edge
+                    if (ul < 0.001f || (-(ux * dx + uy * dy) / (ul * dl)) < 0.85f) {
+                        continue;
+                    }
+                }
+                // Added in OPM: a roof is wide: the slope goes on to either
+                // side of the way down, where a wall's broken cap, sloping
+                // down along the wall, is a texel or two across
+                {
+                    const int   bx = x - 2 * dx, by = y - 2 * dy;
+                    const int   sx = -dy, sy = dx;
+                    const float c  = g[by * W + bx];
+                    int         side, k, wide = 0;
+
+                    for (side = -1; side <= 1; side += 2) {
+                        for (k = 1; k <= 3; k++) {
+                            const int   qx = bx + side * k * sx, qy = by + side * k * sy;
+                            const float q  = (qx >= 0 && qx < W && qy >= 0 && qy < H) ? g[qy * W + qx] : RAIN_COVER_NONE;
+
+                            if (fabs(q - c) > 2.0f * t * k) {
+                                break;
+                            }
+                        }
+                        wide += k - 1;
+                    }
+                    if (wide < 4) {
+                        continue;
+                    }
+                }
                 len = sqrt((float)(dx * dx + dy * dy));
                 px  = rainCover.x0 + (x + 0.5f + 0.5f * dx / len) * t;
                 py  = rainCover.y0 + (y + 0.5f + 0.5f * dy / len) * t;
