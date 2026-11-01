@@ -37,14 +37,15 @@ TARGET_TILT = 12.0
 
 # Directories whose textures are never drawn by the lit lightall path (UI,
 # sky, sprites, effects, tool textures), so maps for them would only take
-# up space.
+# up space. textures/mohtest/ and textures/test/ are not on this list: in
+# spite of their names they hold level art the shipped maps use (mohtest's
+# walls, floors and joists in 45 of the 55 maps; Omaha's beach in test/).
 SKIP_DIRS = (
     "textures/common/", "textures/effects/", "textures/gametext/",
     "textures/hud/", "textures/light/", "textures/lights/",
     "textures/mohmenu/", "textures/objectives/", "textures/sky/",
-    "textures/special/", "textures/sprites/", "textures/test/",
-    "textures/mohtest/", "textures/weather/", "textures/tempsign/",
-    "models/fx/",
+    "textures/special/", "textures/sprites/", "textures/weather/",
+    "textures/tempsign/", "models/fx/",
 )
 
 # Where the images with maps are: world textures, and model skins (most of
@@ -62,6 +63,10 @@ UNLIT_BLENDS = {
     "gl_one gl_one", "gl_dst_color gl_zero", "gl_zero gl_src_color",
     "gl_dst_color gl_one", "gl_one gl_one_minus_src_color",
 }
+
+# Filter blends that, on the stage right after a $lightmap stage, make that
+# stage the lit diffuse (the stages are swapped; tr_shader.c).
+LIGHTMAP_FILTERS = {"filter", "gl_dst_color gl_zero", "gl_zero gl_src_color"}
 
 # Material presets for the non-PBR specular map.
 #   f0:     specular reflectance at normal incidence (also darkens the diffuse
@@ -278,7 +283,12 @@ def collect_uses(vfs):
                           l[1].startswith("autosprite"))
                          for l in low)
             sky = any(l[0] == "skyparms" for l in low) or "sky" in materials
-            for st in stages:
+            # "$lightmap, then the texture as a filter": GL2 swaps the two
+            # (CollapseStagesToGLSL), so the texture is the lit diffuse
+            lightmap_first = bool(stages) and any(
+                len(l) > 1 and l[0].lower() == "map" and
+                l[1].lower() == "$lightmap" for l in stages[0])
+            for si, st in enumerate(stages):
                 stl = [[t.lower() for t in l] for l in st]
                 images = []
                 clamp = False
@@ -294,6 +304,8 @@ def collect_uses(vfs):
                 env = any(l[0] == "tcgen" and len(l) > 1 and
                           l[1] == "environment" for l in stl)
                 unlit = sprite or sky or env or blend in UNLIT_BLENDS
+                if si == 1 and lightmap_first and blend in LIGHTMAP_FILTERS:
+                    unlit = sprite or sky or env
                 for img in images:
                     if img.startswith("$") or img.startswith("*"):
                         continue
