@@ -647,14 +647,17 @@ static qboolean CG_PhysicsRayEntity(const vec3_t start, const vec3_t dir, float 
         }
     }
 
-    // Weapons and items lying about, which are triggers and so not in the
+    // Weapons and items lying about, which are triggers, and the server's
+    // props, which stop shots only (EF_PHYSICS_BODY), so neither is in the
     // trace: their models' boxes, nearer than what the trace struck.
     for (int i = 0; i < cg.snap->numEntities; i++) {
         const entityState_t *es = &cg.snap->entities[i];
         vec3_t               origin, axis[3], mins, maxs;
         float                at;
+        const bool           item = es->eType == ET_ITEM && es->parent == ENTITYNUM_NONE;
+        const bool           prop = (es->eFlags & EF_PHYSICS_BODY) && !es->solid;
 
-        if (es->eType != ET_ITEM || es->parent != ENTITYNUM_NONE || !CG_PhysicsEntityBox(es->number, origin, axis, mins, maxs)) {
+        if ((!item && !prop) || !CG_PhysicsEntityBox(es->number, origin, axis, mins, maxs)) {
             continue;
         }
         if (CG_PhysicsRayHitsBox(start, dir, range, origin, axis, mins, maxs, &at) && at < best) {

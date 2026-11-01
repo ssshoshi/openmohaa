@@ -1006,6 +1006,7 @@ bool G_PhysicsAddEntity(Entity *ent)
     gphys_entities[ent->entnum].id       = id;
     gphys_entities[ent->entnum].owned    = qtrue;
     gphys_entities[ent->entnum].ruleMass = ruleMass;
+    ent->edict->s.eFlags |= EF_PHYSICS_BODY;
 
     if (g_physics_log->integer >= 2) {
         gi.Printf(
@@ -1038,6 +1039,7 @@ void G_PhysicsRemoveEntity(Entity *ent)
     bodies.RemoveBody(pe->id);
     bodies.DestroyBody(pe->id);
     pe->owned = qfalse;
+    ent->edict->s.eFlags &= ~EF_PHYSICS_BODY;
     // No longer ours to slide, nor its scrape.
     G_PhysicsStopScrape(ent->entnum);
 

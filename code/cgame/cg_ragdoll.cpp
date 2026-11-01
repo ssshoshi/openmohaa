@@ -8127,7 +8127,8 @@ qboolean CG_RagdollNoteBullet(const vec3_t start, const vec3_t end, int large, v
 // and nobody else sees it. Bound to keys rather than being a weapon, and off
 // until cg_ragdoll_grab is set, which binds them (see rd_grabBinds):
 //
-//   mouse2       +rdgrab          hold to carry the body under the crosshair
+//   alt+mouse2   +rdgrab          hold to carry the body under the crosshair
+//                                 (an altbind; mouse2 alone aims down the sights)
 //   mouse3       rdpunt           throw what is held, or knock what is aimed at
 //   mwheeldown   rdgrab_nearer
 //   mwheelup     rdgrab_farther
@@ -8430,7 +8431,7 @@ static const struct {
     const char *command;
     const char *stock;
 } rd_grabBinds[] = {
-    {"MOUSE2",     "+rdgrab",        "+attacksecondary"},
+    {"MOUSE2",     "+aim",           "+attacksecondary"},
     {"MOUSE3",     "rdpunt",         ""                },
     {"MWHEELDOWN", "rdgrab_nearer",  "weapprev"        },
     {"MWHEELUP",   "rdgrab_farther", "weapnext"        },
@@ -8600,12 +8601,15 @@ static void CG_RagdollGrabBindings(void)
         for (i = 0; i < RD_NUM_GRAB_BINDS; i++) {
             cgi.Cmd_Execute(EXEC_APPEND, va("bind %s \"%s\"\n", rd_grabBinds[i].key, rd_grabBinds[i].command));
         }
+        // The grab itself on alt + mouse2, mouse2 alone being the sights.
+        cgi.Cmd_Execute(EXEC_APPEND, "seta cl_altbindings 1\naltbind MOUSE2 \"+rdgrab\"\n");
 
         if (applied == 0) {
-            cgi.Printf("Ragdoll grabber on: hold mouse2 to grab, mouse3 punts, the wheel moves it nearer and farther\n");
+            cgi.Printf("Ragdoll grabber on: hold alt + mouse2 to grab, mouse3 punts, the wheel moves it nearer and farther\n");
         }
     } else {
         CG_RagdollRelease();
+        cgi.Cmd_Execute(EXEC_APPEND, "unaltbind MOUSE2\n");
 
         // Nothing to give back if it was never on.
         if (cg_ragdoll_grabsaved->string[0]) {

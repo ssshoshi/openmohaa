@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cl_ui.h"
 #include "client.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
@@ -110,6 +111,9 @@ static void MDB_List(void)
             mdb_models.push_back(all[i]);
         }
     }
+    std::sort(mdb_models.begin(), mdb_models.end(), [](const std::string& a, const std::string& b) {
+        return MDB_Lower(a) < MDB_Lower(b);
+    });
 }
 
 static bool MDB_HasRemaster(const char *path)
@@ -126,15 +130,27 @@ enum {
     MDB_COL_REMASTER
 };
 
+enum {
+    MDB_ITEM_MODEL,
+    MDB_ITEM_FOLDER, // path is the folder, with its slash
+    MDB_ITEM_UP      // to the folder above
+};
+
 class ModelBrowserItem : public UIListCtrlItem
 {
 public:
     str  path;
+    str  shown; // the name as listed: under the folder being shown
     bool remaster;
+    int  kind;
+    int  count; // a folder's models
 
-    ModelBrowserItem(const char *p, bool r)
+    ModelBrowserItem(const char *p, const char *s, bool r, int k = MDB_ITEM_MODEL, int c = 0)
         : path(p)
+        , shown(s)
         , remaster(r)
+        , kind(k)
+        , count(c)
     {}
 
     griditemtype_t getListItemType(int which) const override { return TYPE_STRING; }
@@ -143,9 +159,9 @@ public:
     {
         switch (which) {
         case MDB_COL_NAME:
-            return path.c_str() + 7; // without models/
+            return shown;
         case MDB_COL_REMASTER:
-            return remaster ? "remaster" : "";
+            return kind == MDB_ITEM_FOLDER ? str(va("%d", count)) : kind == MDB_ITEM_MODEL && remaster ? str("remaster") : str("");
         }
         return "";
     }
@@ -333,6 +349,7 @@ class UIModelBrowser;
 static UIModelBrowser *mdb_window; // the Models tab, while the cvar browser has one
 static str             mdb_selected; // kept between openings
 static int             mdb_view;
+static str             mdb_folder = "models/"; // the folder shown, with its slash
 
 class UIModelBrowser : public UIWidget
 {
@@ -351,6 +368,7 @@ public:
     UIField     *health;
 
     str lastFilter;
+    str openFolder; // a folder clicked, opened at the next draw (not inside the list's own click)
 
     UIModelBrowser()
         : list(NULL)
@@ -407,6 +425,7 @@ public:
         list->setHeaderFont("verdana-12");
         list->AddColumn("Model", MDB_COL_NAME, 470, false, false);
         list->AddColumn("", MDB_COL_REMASTER, 90, false, false);
+        list->SetDrawHeader(qfalse);
         list->Connect(this, EV_UIListBase_ItemSelected, EV_UIListBase_ItemSelected);
         list->Connect(this, EV_UIListBase_ItemDoubleClicked, EV_UIListBase_ItemDoubleClicked);
         list->AllowActivate(true);
@@ -497,46 +516,94 @@ public:
         b->setBackgroundColor(usable ? UColor(0.12f, 0.16f, 0.24f, 1.0f) : UColor(0.08f, 0.09f, 0.11f, 1.0f), true);
     }
 
+    // Whether a model is listed in this view.
+    bool InView(const char *p)
+    {
+        if (mdb_view == MDB_VIEW_REMASTERED && !MDB_HasRemaster(p)) {
+            return false;
+        }
+        if (mdb_view == MDB_VIEW_SOLDIERS && !MDB_IsSoldier(p)) {
+            return false;
+        }
+        return true;
+    }
+
+    // The folder shown, as folders and models: "..", then the folders in it
+    // (with how many models each holds), then its models. With a filter, every
+    // model under it that matches, by its path from there. The Soldiers view is
+    // one folder, flat.
     void Refill(void)
     {
         const str needle = Cvar_VariableString("ui_mdb_filter");
-        int       count  = 0;
+        const bool flat  = needle.length() || mdb_view == MDB_VIEW_SOLDIERS;
+        const char *root = mdb_view == MDB_VIEW_SOLDIERS ? "models/" : mdb_folder.c_str();
+        const size_t rootLen = strlen(root);
+        std::map<std::string, int> folders;
+        int count = 0;
 
         MDB_List();
         list->DeleteAllItems();
 
+        if (!flat && rootLen > 7) {
+            list->AddItem(new ModelBrowserItem(root, "..", false, MDB_ITEM_UP));
+        }
         for (size_t i = 0; i < mdb_models.size(); i++) {
-            const char *p        = mdb_models[i].c_str();
-            const bool  remaster = MDB_HasRemaster(p);
+            const char *p = mdb_models[i].c_str();
+            const char *rest, *slash;
 
-            if (mdb_view == MDB_VIEW_REMASTERED && !remaster) {
+            if (Q_stricmpn(p, root, rootLen) || !InView(p)) {
                 continue;
             }
-            if (mdb_view == MDB_VIEW_SOLDIERS && !MDB_IsSoldier(p)) {
+            rest  = p + rootLen;
+            slash = strchr(rest, '/');
+            if (!flat && slash) {
+                folders[std::string(rest, slash - rest)]++;
+            }
+        }
+        for (std::map<std::string, int>::iterator it = folders.begin(); it != folders.end(); ++it) {
+            list->AddItem(new ModelBrowserItem(va("%s%s/", root, it->first.c_str()), va("%s/", it->first.c_str()), false, MDB_ITEM_FOLDER, it->second));
+        }
+        for (size_t i = 0; i < mdb_models.size(); i++) {
+            const char *p = mdb_models[i].c_str();
+            const char *rest;
+
+            if (Q_stricmpn(p, root, rootLen) || !InView(p)) {
                 continue;
             }
-            if (needle.length() && !Q_stristr(p, needle.c_str())) {
+            rest = p + rootLen;
+            if (!flat && strchr(rest, '/')) {
                 continue;
             }
-            list->AddItem(new ModelBrowserItem(p, remaster));
+            if (needle.length() && !Q_stristr(rest, needle.c_str())) {
+                continue;
+            }
+            list->AddItem(new ModelBrowserItem(p, rest, MDB_HasRemaster(p)));
             count++;
         }
 
-        list->SortByColumn(MDB_COL_NAME);
         lastFilter = needle;
         countLabel->SetLabel(
             mdb_view == MDB_VIEW_SOLDIERS ? va("%d soldiers", count)
-            : mdb_remastered.size() ? va("%d shown, %d with a remaster", count, (int)mdb_remastered.size())
-                                  : va("%d shown; no remaster pak loaded", count)
+            : va("%s   %d models here%s%s", root, count, needle.length() ? " and below" : "",
+                 mdb_remastered.size() ? "" : "; no remaster pak loaded")
         );
 
         // The last selection, when still listed.
         for (int i = 1; i <= list->getNumItems(); i++) {
-            if (!Q_stricmp(((ModelBrowserItem *)list->GetItem(i))->path, mdb_selected)) {
+            ModelBrowserItem *item = (ModelBrowserItem *)list->GetItem(i);
+
+            if (item->kind == MDB_ITEM_MODEL && !Q_stricmp(item->path, mdb_selected)) {
                 list->TrySelectItem(i);
                 break;
             }
         }
+    }
+
+    // Into a folder, or up one.
+    void Open(const str& folder)
+    {
+        mdb_folder = folder;
+        Refill();
     }
 
     void SetView(int v)
@@ -557,7 +624,18 @@ public:
     {
         ModelBrowserItem *item = Item(EventItem(ev));
 
-        if (item) {
+        if (!item) {
+            return;
+        }
+        if (item->kind == MDB_ITEM_FOLDER) {
+            openFolder = item->path;
+        } else if (item->kind == MDB_ITEM_UP) {
+            // the folder above: back to the slash before the last
+            const std::string up(item->path.c_str());
+            const size_t      slash = up.length() > 1 ? up.rfind('/', up.length() - 2) : std::string::npos;
+
+            openFolder = slash != std::string::npos && slash >= 6 ? str(up.substr(0, slash + 1).c_str()) : str("models/");
+        } else {
             mdb_selected = item->path;
         }
     }
@@ -566,7 +644,7 @@ public:
     {
         ModelBrowserItem *item = Item(EventItem(ev));
 
-        if (item) {
+        if (item && item->kind == MDB_ITEM_MODEL) {
             mdb_selected = item->path;
             Cbuf_AddText(mdb_view == MDB_VIEW_SOLDIERS ? "modelbrowser_spawn soldier\n" : "modelbrowser_spawn\n");
         }
@@ -579,7 +657,12 @@ public:
 
         UIWidget::Draw();
 
-        if (needle != lastFilter) {
+        if (openFolder.length()) {
+            const str folder = openFolder;
+
+            openFolder = "";
+            Open(folder);
+        } else if (needle != lastFilter) {
             Refill();
         }
 
@@ -587,7 +670,11 @@ public:
             int               n    = list->hoverItem ? list->hoverItem : list->getCurrentItem();
             ModelBrowserItem *item = Item(n);
 
-            if (item) {
+            if (item && item->kind != MDB_ITEM_MODEL) {
+                info->title = item->kind == MDB_ITEM_UP ? "Up a folder" : item->shown.c_str();
+                info->line1 = item->kind == MDB_ITEM_UP ? "Back to the folder above" : item->path.c_str();
+                info->line2 = item->kind == MDB_ITEM_FOLDER ? va("%d models in it and below. Click to open it.", item->count) : "";
+            } else if (item) {
                 const char *slash = strrchr(item->path.c_str(), '/');
 
                 info->title = slash ? slash + 1 : item->path.c_str();
@@ -710,6 +797,7 @@ void UI_ModelBrowser_f(void)
             return;
         }
         mdb_selected = found;
+        mdb_folder   = "models/";
         Cvar_Set("ui_mdb_filter", strrchr(found.c_str(), '/') + 1);
         UI_CvarBrowserShowTab("models");
         if (mdb_window) {
