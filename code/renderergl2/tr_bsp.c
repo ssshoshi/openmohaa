@@ -4154,6 +4154,7 @@ void RE_LoadWorldMap( const char *name ) {
 	//  From the file as it is, before the lightmaps went into atlases.
 	R_GroundCoverLoadWorld(fileBase, header);
 	R_WaterLoadWorld(s_worldData.baseName);
+	R_FogLoadWorld(s_worldData.baseName);
 
     ri.FS_FreeFile( buffer.v );
 

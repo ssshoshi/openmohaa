@@ -3134,10 +3134,27 @@ void R_CreateBuiltinImages( void ) {
 
 		// Added in OPM: r_volumetric's, at a quarter of the view's size
 		// across, brighter than white
-		if (r_volumetric->integer && r_realtimeLighting->integer == 2)
+		if (r_volumetric->integer == 1 && r_realtimeLighting->integer == 2)
 		{
 			tr.volumeImage     = R_CreateImage("*volume", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			tr.volumeBlurImage = R_CreateImage("*volumeBlur", NULL, width / 4, height / 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+		}
+		// Added in OPM: r_volumetric 2's grid of the air, a cell FROXEL_PIXELS
+		// of the view a side, its slices FROXEL_TILES a row
+		else if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		{
+			const int cellsX = (width + FROXEL_PIXELS - 1) / FROXEL_PIXELS;
+			const int cellsY = (height + FROXEL_PIXELS - 1) / FROXEL_PIXELS;
+			const int atlasW = cellsX * FROXEL_TILES;
+			const int atlasH = cellsY * (FROXEL_SLICES / FROXEL_TILES);
+
+			tr.froxelLightImage[0] = R_CreateImage("*froxelLight0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelLightImage[1] = R_CreateImage("*froxelLight1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelSumImage[0] = R_CreateImage("*froxelSum0", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelSumImage[1] = R_CreateImage("*froxelSum1", NULL, atlasW, atlasH, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			tr.froxelDepthImage = R_CreateImage("*froxelDepth", NULL, cellsX, cellsY, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+			// raw depth, which a half float cannot tell apart near 1
+			tr.froxelDepthQuarterImage = R_CreateImage("*froxelDepthQuarter", NULL, cellsX * 4, cellsY * 4, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 		}
 
 		for( x = 0; x < MAX_DRAWN_PSHADOWS; x++)

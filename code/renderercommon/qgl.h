@@ -148,6 +148,11 @@ extern void (APIENTRYP qglUnlockArraysEXT) (void);
 	GLE(void, CompressedTexImage2D, GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void *data) \
 	GLE(void, CompressedTexSubImage2D, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLsizei imageSize, const void *data) \
 
+// Added in OPM: OpenGL 1.2's 3D textures, desktop GL only (the froxel
+// smoke's noise, tr_froxel.c)
+#define QGL_TEXTURE3D_PROCS \
+	GLE(void, TexImage3D, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const GLvoid *pixels) \
+
 // GL_ARB_occlusion_query, built-in to OpenGL 1.5 but not OpenGL ES 2.0
 #define QGL_ARB_occlusion_query_PROCS \
 	GLE(void, GenQueries, GLsizei n, GLuint *ids) \
@@ -348,6 +353,7 @@ QGL_DESKTOP_1_1_FIXED_FUNCTION_PROCS;
 QGL_ES_1_1_PROCS;
 QGL_ES_1_1_FIXED_FUNCTION_PROCS;
 QGL_1_3_PROCS;
+QGL_TEXTURE3D_PROCS;
 QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;

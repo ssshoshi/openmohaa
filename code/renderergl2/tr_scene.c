@@ -842,6 +842,7 @@ void RE_AddRefSpriteToScene(const refEntity_t* ent) {
     spr->scale = ent->scale;
     spr->renderfx = ent->renderfx;
     spr->shaderTime = ent->shaderTime;
+    spr->froxelTaken = qfalse;
 	AxisCopy(ent->axis, spr->axis);
 
 	for (i = 0; i < 4; ++i) {

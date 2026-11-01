@@ -2512,6 +2512,9 @@ const void *RB_PostProcess(const void *data)
 	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
 		RB_Volumetric(srcFbo, srcBox);
+	else if (srcFbo && tr.froxelDepthFbo && tr.froxelShader[3].program && R_RtLitLive() && (r_volumetricDensity->value > 0 || R_FroxelHasWork())
+		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
+		RB_VolumetricFroxels(srcFbo, srcBox);
 
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)

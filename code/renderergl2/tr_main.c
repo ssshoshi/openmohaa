@@ -3398,6 +3398,10 @@ void R_AddSpriteSurfaces()
 		if (tr.currentModel->type != MOD_SPRITE) {
 			continue;
 		}
+		// Added in OPM: a puff of smoke the air's grid draws (tr_froxel.c)
+		if ((sprite->renderfx & RF_VOLUME_SMOKE) && R_FroxelTakesSprite(sprite)) {
+			continue;
+		}
 
 		R_AdjustVisBoundsForSprite(&tr.refdef.sprites[tr.currentSpriteNum], &tr.viewParms, &tr.ori );
 		sprite->shaderNum = tr.currentModel->d.sprite->shader->sortedIndex;

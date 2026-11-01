@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 QGL_1_1_PROCS;
 QGL_DESKTOP_1_1_PROCS;
 QGL_1_3_PROCS;
+QGL_TEXTURE3D_PROCS;
 QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;
@@ -534,6 +535,12 @@ enum
 #define TMU_SSRDEPTH         26 // and this frame's depth
 #define NUM_TEXTURE_UNITS    27
 
+// Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
+// FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
+// out FROXEL_TILES slices a row of a 2D image
+#define FROXEL_PIXELS  16
+#define FROXEL_SLICES  64
+#define FROXEL_TILES   8
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
 #define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
@@ -885,8 +892,11 @@ enum
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
-	GLSL_VEC4_WATERSPOTS  // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_WATERSPOTS, // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 2 vec4s (tr_froxel.c)
 };
+
+#define SMOKE_MAX_BLOBS 96 // Added in OPM: the most puffs of smoke the air's grid takes a frame (tr_froxel.c)
 
 #define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
 #define WATER_RIPPLE_SIZE 1024 // Added in OPM: the water's ripples, a grid this many texels across (tr_water.c)
@@ -1037,6 +1047,18 @@ typedef enum
 	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
 	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
 	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
+	UNIFORM_FROXEL,       // Added in OPM: r_volumetric 2 (froxel_fp.glsl): the grid's cells across, up, slices, its depth curve
+	UNIFORM_FOGVOLUMES,   // the map's fog banks, three vec4s each (tr_froxel.c)
+	UNIFORM_FOGPARAMS,    // how many
+	UNIFORM_FOGAMBIENT,   // their own light
+	UNIFORM_FROXELPREVORIGIN,  // last frame's eye, w how much of last frame each cell keeps
+	UNIFORM_FROXELPREVFORWARD, // its axes, left and up over the view's half width and height
+	UNIFORM_FROXELPREVLEFT,
+	UNIFORM_FROXELPREVUP,
+	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
+	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, colour and density
+	UNIFORM_SMOKEPARAMS,  // how many, the noise's scale, its drift (time), how much it eats into them
+	UNIFORM_SMOKENOISE,   // the smoke's 3D noise
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -1779,6 +1801,7 @@ typedef struct refSprite_s {
     byte shaderRGBA[4];
     int renderfx;
     float shaderTime;
+    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke, not as a sprite (R_FroxelTakesSprite)
 } refSprite_t;
 
 //=========================
@@ -2595,6 +2618,10 @@ typedef struct {
 	image_t                 *gtaoDepthImage; // the depth at that size, read by both
 	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
 	image_t                 *volumeBlurImage; // and half of its blur
+	image_t                 *froxelLightImage[2]; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row), this frame's and last
+	image_t                 *froxelSumImage[2]; // and summed from the eye, in passes from one to the other
+	image_t                 *froxelDepthImage; // and each tile of the view's furthest depth
+	image_t                 *froxelDepthQuarterImage; // and each quarter tile's, on the way (raw depth)
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2627,6 +2654,10 @@ typedef struct {
 	FBO_t					*gtaoDepthFbo;
 	FBO_t					*volumeFbo;
 	FBO_t					*volumeBlurFbo;
+	FBO_t					*froxelLightFbo[2];
+	FBO_t					*froxelSumFbo[2];
+	FBO_t					*froxelDepthFbo;
+	FBO_t					*froxelDepthQuarterFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2678,6 +2709,7 @@ typedef struct {
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
 	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
+	shaderProgram_t froxelShader[4];  // Added in OPM: r_volumetric 2 (froxel_fp.glsl): FROXEL_LIGHT, FROXEL_INTEGRATE, FROXEL_APPLY, FROXEL_DEPTH
 	shaderProgram_t ssaoShader;
 	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];
@@ -4044,6 +4076,19 @@ void R_WaterRegisterCvars(void);
 void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs);
 void R_PlaneForSurface(surfaceType_t *surfType, cplane_t *plane);
 void R_WaterLoadWorld(const char *mapName);
+
+// Added in OPM: tr_froxel.c, r_volumetric 2 and the maps' fog banks
+extern cvar_t *r_volumetricFog;
+extern cvar_t *r_volumetricTemporal;
+void R_FroxelInit(void);
+void R_FroxelShutdown(void);
+void R_FogLoadWorld(const char *mapName);
+qboolean R_FroxelFogOn(void);
+extern cvar_t *r_volumetricSmoke;
+qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
+qboolean R_FroxelHasWork(void);
+void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
 void RB_BeachDraw(void);
