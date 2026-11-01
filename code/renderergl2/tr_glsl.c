@@ -299,7 +299,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RainCoverMap",    GLSL_INT },
 	{ "u_RainReflect",     GLSL_VEC4 },
 	{ "u_RainReflectMvp",  GLSL_MAT16 },
-	{ "u_RainReflectMap",  GLSL_INT }
+	{ "u_RainReflectMap",  GLSL_INT },
+	{ "u_RainFlash",       GLSL_VEC4 }
 };
 
 typedef enum

@@ -78,6 +78,7 @@ cvar_t        *r_waterWet;
 cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map has rained (cg_lens.cpp)
 cvar_t        *r_rainPuddles;
 static cvar_t *r_rainPuddleShaders;
+static cvar_t *r_rainFlash;
 cvar_t        *r_rainBeads;
 cvar_t        *r_rainDebug;
 cvar_t        *r_waterReflect;
@@ -152,6 +153,8 @@ void R_WaterRegisterCvars(void)
     r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
     r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
     r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
+    r_rainFlash = ri.Cvar_Get("r_rainFlash", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainFlash, "In the rain, how brightly lightning lights what is out under the sky: 0 not at all");
     ri.Cvar_SetDescription(r_rainPuddleShaders, "In the rain, the textures puddles gather on: names or parts of names, separated by spaces or commas (empty: all open ground)");
     r_rainDebug   = ri.Cvar_Get("r_rainDebug", "0", CVAR_CHEAT);
     ri.Cvar_SetDescription(r_rainWet, "How wet the rain has made what is out under the sky, 0 to 1 (the game sets it on a map with rain; r_waterWet 0 turns it off)");
@@ -756,6 +759,8 @@ static struct {
     float   *puddle;      // the highest of what puddles gather on, out in the rain (R_RainBuildPuddles)
     int      puddleCount; // r_rainPuddleShaders as it was built for
     float    lastHeight;  // the height the puddles' mirror last took (R_WaterReflectView)
+    float    flash;       // a lightning flash, fading (R_RainFrame)
+    float    flashTime;
     qboolean hasLast;
     int      width, rows;
     float    x0, y0, texel;
@@ -1039,6 +1044,24 @@ void R_RainFrame(void)
     }
     if (rainCover.on && (!rainCover.puddle || rainCover.puddleCount != r_rainPuddleShaders->modificationCount)) {
         R_RainBuildPuddles();
+    }
+
+    // lightning: global/weather.scr flashes by setting r_fastsky to 1 (the
+    // sky cleared to the white fog) for a tenth or a fifth of a second; the
+    // light of it on the world goes out over a moment after
+    {
+        const float now = tr.refdef.floatTime;
+        const float dt  = Com_Clamp(0.0f, 0.25f, now - rainCover.flashTime);
+
+        rainCover.flashTime = now;
+        if (rainCover.on && r_rainFlash->value > 0.0f && r_fastsky->value >= 0.99f) {
+            rainCover.flash = 1.0f;
+        } else {
+            rainCover.flash *= exp(-dt * 9.0f);
+            if (rainCover.flash < 0.01f) {
+                rainCover.flash = 0.0f;
+            }
+        }
     }
 }
 
@@ -1915,6 +1938,10 @@ void R_WaterSetWet(shaderProgram_t *sp)
             VectorClear4(v);
         }
         GLSL_SetUniformVec4(sp, UNIFORM_RAINREFLECT, v);
+
+        // a lightning flash (R_RainFrame), cold white
+        VectorSet4(v, 0.8f, 0.87f, 1.0f, rainCover.flash * r_rainFlash->value * 2.5f);
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINFLASH, v);
     }
 
     R_WaterSky(v);

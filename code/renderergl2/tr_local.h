@@ -1129,6 +1129,7 @@ typedef enum
 	UNIFORM_RAINREFLECT,    // whether the puddles' mirror was drawn, its height, its share of the image across and up
 	UNIFORM_RAINREFLECTMVP, // how it was seen
 	UNIFORM_RAINREFLECTMAP,
+	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
 
 	UNIFORM_COUNT
 } uniform_t;

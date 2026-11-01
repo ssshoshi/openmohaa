@@ -80,6 +80,8 @@ uniform vec4      u_RainParams;
 uniform sampler2D u_RainReflectMap;
 uniform vec4      u_RainReflect;
 uniform mat4      u_RainReflectMvp;
+// a lightning flash: its light, how strong (R_RainFrame)
+uniform vec4      u_RainFlash;
 
 float WetNoise(vec2 p)
 {
@@ -1213,6 +1215,15 @@ void main()
 
 		wetRefl = refl;
 		gl_FragColor.rgb = mix(gl_FragColor.rgb, refl, clamp(0.04 + F * 1.4, 0.0, most) * wet.z);
+	}
+
+	// Added in OPM: a lightning flash lights what is out under the sky, from
+	// above more than from the side; what has a roof over it stays dark
+	if (u_RainFlash.a > 0.0 && u_Wet.z > 0.0)
+	{
+		float open = RainExposed(var_WetPos, wetSurfN);
+		gl_FragColor.rgb += diffuse.rgb * u_RainFlash.rgb * u_RainFlash.a * open
+			* mix(0.3, 1.0, clamp(wetSurfN.z * 0.5 + 0.5, 0.0, 1.0));
 	}
 
 	// Added in OPM: r_rainDebug: red how wet, green a puddle, blue where a
