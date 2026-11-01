@@ -946,7 +946,11 @@ static const char *froxelFog_glsl =
 	"vec3 FroxelFog(vec3 c, float alpha)\n"
 	"{\n"
 	"	if (u_FroxelFog.x < 0.5) return c;\n"
-	"	float depth = u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, gl_FragCoord.z);\n"
+	// w more than 0: the depth to take it at (a flare, drawn flat at the
+	// end); less: the depth range squeezed into one part of it (the view
+	// weapon's), undone
+	"	float zf = u_FroxelFog.w < 0.0 ? min(gl_FragCoord.z * -u_FroxelFog.w, 1.0) : gl_FragCoord.z;\n"
+	"	float depth = u_FroxelFog.w > 0.0 ? u_FroxelFog.w : u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, zf);\n"
 	"	vec2  uv = (gl_FragCoord.xy - u_FroxelFogGrid.zw) * u_FroxelFogView.zw;\n"
 	"	float f  = min(log2(depth / 256.0 + 1.0) / u_FroxelFog.z * u_FroxelFog.y, u_FroxelFog.y) - 1.0;\n"
 	"	vec4  a, b;\n"
@@ -2654,6 +2658,10 @@ void GLSL_InitGPUShaders(void)
 			Q_strcat(extradefines, 1024, "#define USE_DEFORM_VERTEXES\n");
 		}
 
+		// Added in OPM: the light in the air, over what is drawn after it
+		if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+			Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
+
 		if (!GLSL_InitGPUShader(&tr.dlightShader[i], "dlight", attribs, qtrue, extradefines, qtrue, fallbackShader_dlight_vp, fallbackShader_dlight_fp))
 		{
 			ri.Error(ERR_FATAL, "Could not load dlight shader!");
@@ -2725,6 +2733,9 @@ void GLSL_InitGPUShaders(void)
 	extradefines[0] = '\0';
 
 	Q_strcat(extradefines, 1024, "#define USE_PCF\n#define USE_DISCARD\n");
+	// Added in OPM: the light in the air, over what is drawn after it
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
 
 	if (!GLSL_InitGPUShader(&tr.pshadowShader, "pshadow", attribs, qtrue, extradefines, qtrue, fallbackShader_pshadow_vp, fallbackShader_pshadow_fp))
 	{

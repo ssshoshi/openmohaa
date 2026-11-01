@@ -2632,6 +2632,7 @@ typedef struct {
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
 	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
+	image_t					*waterReflectDepthImage; // and its depth, for the air in it (tr_froxel.c)
 	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
@@ -4097,9 +4098,10 @@ qboolean R_FroxelHasWork(void);
 void RB_FroxelOpaqueDone(void);
 void RB_FroxelBeginView(void);
 void R_FroxelSetFog(shaderProgram_t *sp, int stateBits);
+void RB_FroxelFogDepth(float depth);
 qboolean R_FroxelOn(void);
 void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
-void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox);
+void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qboolean mainView);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
 void RB_BeachDraw(void);

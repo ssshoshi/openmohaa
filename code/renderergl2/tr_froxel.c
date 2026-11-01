@@ -69,8 +69,10 @@ static GLuint smokeNoiseTexture;
 // (RB_FroxelOpaqueDone, R_FroxelSetFog)
 static struct {
 	qboolean active;
-	int      frame; // tr.frameCount it was done in
+	int      frame;        // tr.frameCount the main view's was done in
+	int      reflectFrame; // and a water reflection's
 	int      sum;   // which of tr.froxelSumImage holds it
+	float    depth; // the depth to take it at for what is drawn now (a flare), 0 the fragment's
 	vec4_t   fog, view, grid;
 } froxelFog;
 
@@ -490,7 +492,7 @@ frame's), summed from the eye, then the view seen through it at each pixel's
 depth.
 =============
 */
-void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
+void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qboolean mainView)
 {
 	vec4_t quadVerts[4], viewInfo, volParams, volRange, froxel, v;
 	vec4_t volumes[FOG_MAX_VOLUMES * 3];
@@ -510,8 +512,10 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	const qboolean cascades = r_sunlightMode->integer && (backEnd.viewParms.flags & VPF_USESUNLIGHT) && tr.sunShadowDepthImage[3];
 	const int numVolumes = fogScale > 0 ? fog.numVolumes : 0;
 	// last frame's cells, if they were lit last frame for a grid like this one
-	const qboolean history = r_volumetricTemporal->value > 0 && froxelPrev.frame == tr.frameCount - 1 && froxelPrev.range == range;
-	const int lit = history ? !froxelPrev.current : froxelPrev.current;
+	// (the main view's: a water reflection's view lights into the image the
+	// main view lights into after it, and keeps none)
+	const qboolean history = mainView && r_volumetricTemporal->value > 0 && froxelPrev.frame == tr.frameCount - 1 && froxelPrev.range == range;
+	const int lit = (history || !mainView) ? !froxelPrev.current : froxelPrev.current;
 	int i;
 
 	R_GpuTimerBegin(GPUTIMER_VOLUME);
@@ -543,10 +547,11 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 
 		GLSL_BindProgram(sp);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);
-		GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, backEnd.refdef.viewaxis[0]);
-		VectorScale(backEnd.refdef.viewaxis[1], tanX, viewVector);
+		// the view's own axes (a reflection's are turned over)
+		GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, backEnd.viewParms.ori.axis[0]);
+		VectorScale(backEnd.viewParms.ori.axis[1], tanX, viewVector);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWLEFT, viewVector);
-		VectorScale(backEnd.refdef.viewaxis[2], tanY, viewVector);
+		VectorScale(backEnd.viewParms.ori.axis[2], tanY, viewVector);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWUP, viewVector);
 		GLSL_SetUniformVec4(sp, UNIFORM_VIEWINFO, viewInfo);
 		GLSL_SetUniformVec4(sp, UNIFORM_VOLPARAMS, volParams);
@@ -554,10 +559,11 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 		GLSL_SetUniformVec4(sp, UNIFORM_FROXEL, froxel);
 	}
 
-	box[0] = backEnd.viewParms.viewportX / (float)glConfig.vidWidth;
-	box[1] = backEnd.viewParms.viewportY / (float)glConfig.vidHeight;
-	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)glConfig.vidWidth;
-	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)glConfig.vidHeight;
+	// the view's share of its depth image (a reflection's is its own size)
+	box[0] = backEnd.viewParms.viewportX / (float)depthImage->width;
+	box[1] = backEnd.viewParms.viewportY / (float)depthImage->height;
+	box[2] = box[0] + backEnd.viewParms.viewportWidth / (float)depthImage->width;
+	box[3] = box[1] + backEnd.viewParms.viewportHeight / (float)depthImage->height;
 
 	// each tile of the view's furthest depth: the cells behind it are left
 	// unlit. In two steps of 4 x 4 each, the first into a quarter tile each
@@ -576,7 +582,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VIEWINFO, viewInfo);
 	VectorSet4(v, range, 0.0f, 0.0f, 0.0f);
 	GLSL_SetUniformVec4(&tr.froxelShader[3], UNIFORM_VOLRANGE, v);
-	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
+	GL_BindToTMU(depthImage, TB_LIGHTMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
 	texCoords[0][0] = 0; texCoords[0][1] = 1;
 	texCoords[1][0] = 1; texCoords[1][1] = 1;
@@ -675,7 +681,8 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	GLSL_SetUniformVec4(&tr.froxelShader[0], UNIFORM_FROXELPREVUP, v);
 	RB_InstantQuad2(quadVerts, texCoords);
 
-	// kept for the next frame
+	// kept for the next frame (the main view's)
+	if (mainView) {
 	froxelPrev.frame   = tr.frameCount;
 	froxelPrev.current = lit;
 	froxelPrev.range   = range;
@@ -685,6 +692,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	VectorCopy(backEnd.refdef.viewaxis[0], froxelPrev.axis[0]);
 	VectorCopy(backEnd.refdef.viewaxis[1], froxelPrev.axis[1]);
 	VectorCopy(backEnd.refdef.viewaxis[2], froxelPrev.axis[2]);
+	}
 
 	// summed from the eye, as a prefix scan: the first pass the lit cells
 	// and the slice before each, then each pass twice as many slices apart,
@@ -717,7 +725,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	qglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 	GLSL_BindProgram(&tr.froxelShader[2]);
 	GL_BindToTMU(tr.froxelSumImage[sum], TB_COLORMAP);
-	GL_BindToTMU(tr.renderDepthImage, TB_LIGHTMAP);
+	GL_BindToTMU(depthImage, TB_LIGHTMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
 	qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 
@@ -772,10 +780,13 @@ void RB_FroxelOpaqueDone(void)
 	FBO_t  *fbo = glState.currentFBO;
 	ivec4_t box;
 
-	if (backEnd.depthFill || backEnd.projection2D || backEnd.viewParms.isPortal || backEnd.viewParms.isPortalSky
-		|| (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP | VPF_WATERREFLECT))
+	const qboolean reflection = (backEnd.viewParms.flags & VPF_WATERREFLECT) != 0;
+
+	// the main view, and a water reflection's (with its own depth), once a frame each
+	if (backEnd.depthFill || backEnd.projection2D || (backEnd.viewParms.isPortal && !reflection) || backEnd.viewParms.isPortalSky
+		|| (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) || (reflection && !tr.waterReflectDepthImage)
 		|| (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || !glRefConfig.framebufferObject || !r_postProcess->integer
-		|| froxelFog.frame == tr.frameCount || !R_FroxelOn()) {
+		|| (reflection ? froxelFog.reflectFrame : froxelFog.frame) == tr.frameCount || !R_FroxelOn()) {
 		return;
 	}
 
@@ -783,8 +794,12 @@ void RB_FroxelOpaqueDone(void)
 	box[1] = backEnd.viewParms.viewportY;
 	box[2] = backEnd.viewParms.viewportWidth;
 	box[3] = backEnd.viewParms.viewportHeight;
-	RB_VolumetricFroxels(fbo, box);
-	froxelFog.frame  = tr.frameCount;
+	RB_VolumetricFroxels(fbo, box, reflection ? tr.waterReflectDepthImage : tr.renderDepthImage, !reflection);
+	if (reflection) {
+		froxelFog.reflectFrame = tr.frameCount;
+	} else {
+		froxelFog.frame = tr.frameCount;
+	}
 	froxelFog.active = qtrue;
 
 	FBO_Bind(fbo);
@@ -814,6 +829,16 @@ void R_FroxelSetFog(shaderProgram_t *sp, int stateBits)
 	}
 
 	VectorCopy4(froxelFog.fog, fog);
+	// a flare's own depth; the view weapon's depth range (0 to 0.3,
+	// RB_RenderDrawSurfList) undone
+	if (froxelFog.depth > 0) {
+		fog[3] = froxelFog.depth;
+	} else if (backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity
+		&& (backEnd.currentEntity->e.renderfx & RF_DEPTHHACK) && !(backEnd.currentEntity->e.renderfx & RF_CROSSHAIR)) {
+		fog[3] = -1.0f / 0.3f;
+	} else {
+		fog[3] = 0.0f;
+	}
 	{
 		const int src = stateBits & GLS_SRCBLEND_BITS, dst = stateBits & GLS_DSTBLEND_BITS;
 
@@ -838,6 +863,20 @@ void R_FroxelSetFog(shaderProgram_t *sp, int stateBits)
 	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOGGRID, froxelFog.grid);
 	GLSL_SetUniformInt(sp, UNIFORM_FROXELFOGMAP, TMU_FROXELFOG);
 	GL_BindToTMU(tr.froxelSumImage[froxelFog.sum], TMU_FROXELFOG);
+}
+
+/*
+=============
+RB_FroxelFogDepth
+
+What is drawn now takes the air at this depth (forward of the eye), not its
+fragment's: a flare, drawn flat at the end of the view. 0 back to the
+fragment's.
+=============
+*/
+void RB_FroxelFogDepth(float depth)
+{
+	froxelFog.depth = depth;
 }
 
 /*
