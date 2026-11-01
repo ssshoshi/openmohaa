@@ -4130,7 +4130,7 @@ void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp);
-void R_RainFrame(void);
+void R_RainFrame(const refdef_t *fd);
 void R_WaterSetDry(shaderProgram_t *sp);
 void RB_WaterSawSky(const shader_t *sh);
 

@@ -545,7 +545,7 @@ void RE_RenderScene( const refdef_t *fd ) {
 	if ( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
 		R_RtAddTestEntity();
 		// and the rain's cover, the first frame it rains
-		R_RainFrame();
+		R_RainFrame(fd);
 	}
 	GLimp_LogComment( "====== RE_RenderScene =====\n" );
 
