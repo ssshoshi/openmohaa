@@ -1223,7 +1223,7 @@ void ClientGameCommandManager::AddVSSSources()
         pComp = pCurrent->prev;
 
         // Added in OPM: each source is a puff the renderer may draw in the air
-        newEnt.renderfx = RF_VOLUME_SMOKE;
+        newEnt.renderfx = RF_VOLUME_SMOKE | (vss_lighting_fps->integer ? RF_SMOKE_GRIDLIT : 0);
         if ((pCurrent->flags & T_DETAIL) && !cg_detail->integer) {
             FreeVSSSource(pCurrent);
             continue;

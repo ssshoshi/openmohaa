@@ -565,6 +565,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			}
 			RB_BeachDraw();
 			beachDrawn = qtrue;
+			// Added in OPM: the light in the air, over the opaque world,
+			// for what comes after it to take at its own depth
+			RB_FroxelOpaqueDone();
 		}
 
 		//
@@ -811,6 +814,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// Added in OPM: the beach, when nothing blended came after the world
 	if (!beachDrawn && !backEnd.depthFill) {
 		RB_BeachDraw();
+		RB_FroxelOpaqueDone();
 	}
 	RB_SurfProfEnd();
 
@@ -1461,6 +1465,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	// Added in OPM: no air for what it draws until it is summed (tr_froxel.c)
+	RB_FroxelBeginView();
 	backEnd.waterScene = qfalse;
 	backEnd.depthPrepassed = qfalse;
 
@@ -2512,9 +2518,8 @@ const void *RB_PostProcess(const void *data)
 	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
 		RB_Volumetric(srcFbo, srcBox);
-	else if (srcFbo && tr.froxelDepthFbo && tr.froxelShader[3].program && R_RtLitLive() && (r_volumetricDensity->value > 0 || R_FroxelHasWork())
-		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
-		RB_VolumetricFroxels(srcFbo, srcBox);
+	// (r_volumetric 2 is drawn in the view, between the opaque world and
+	// what comes after it: RB_FroxelOpaqueDone)
 
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)

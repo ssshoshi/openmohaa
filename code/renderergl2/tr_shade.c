@@ -1189,6 +1189,8 @@ static void ForwardDlight( void ) {
 			// thick: a light near far terrain (m3l1a's bunker MG42s' muzzle
 			// flashes on the bluff behind) blinked it white.
 			RB_SetGlobalFogUniforms(sp, pStage);
+			// Added in OPM: the light in the air between it and the eye
+			R_FroxelSetFog(sp, pStage->stateBits);
 			if (backEnd.globalFogEnabled && !tess.no_global_fog && (pStage->stateBits & GLS_FOG_ENABLED))
 			{
 				const vec4_t black = { 0.0f, 0.0f, 0.0f, 1.0f };

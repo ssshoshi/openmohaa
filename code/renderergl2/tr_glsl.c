@@ -232,6 +232,10 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SmokeBlobs",      GLSL_VEC4_SMOKE },
 	{ "u_SmokeParams",     GLSL_VEC4 },
 	{ "u_SmokeNoise",      GLSL_INT },
+	{ "u_FroxelFog",       GLSL_VEC4 },
+	{ "u_FroxelFogView",   GLSL_VEC4 },
+	{ "u_FroxelFogGrid",   GLSL_VEC4 },
+	{ "u_FroxelFogMap",    GLSL_INT },
 	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
@@ -914,6 +918,58 @@ static const char *rt_glsl =
 	"}\n"
 	"#endif\n";
 
+/*
+Added in OPM: the light in the air (r_volumetric 2, tr_froxel.c) for what is
+drawn after the opaque world: dust, smoke, glass, water, the alpha tested
+leaves. The air from the eye to the fragment, summed (what it adds, what it
+lets through), read from the grid at the fragment's depth (as froxel_fp.glsl's
+FROXEL_APPLY reads it at each pixel's), and put on the fragment as its blend
+takes it (u_FroxelFog.x): 1 what it lets through of the fragment plus what it
+adds (blended over, or drawn whole), 2 only what it lets through (added on top:
+the air's own light would be added again each time), 3 a multiply faded as far
+as the air hides it, 4 as 1 for a colour already times its alpha (blended
+with one and one less its alpha: the air's light only as far as it covers,
+or its quad's clear corners took the air's light, dark squares round a
+fireball in smoke).
+*/
+static const char *froxelFog_glsl =
+	"uniform sampler2D u_FroxelFogMap;\n"
+	"uniform vec4 u_FroxelFog;\n"
+	"uniform vec4 u_FroxelFogView;\n"
+	"uniform vec4 u_FroxelFogGrid;\n"
+	"vec2 FroxelFogUV(vec2 uv, float s)\n"
+	"{\n"
+	"	vec2 edge = 0.5 / u_FroxelFogGrid.xy;\n"
+	"	vec2 tile = vec2(mod(s, 8.0), floor(s / 8.0));\n"
+	"	return (tile + clamp(uv, edge, 1.0 - edge)) / 8.0;\n"
+	"}\n"
+	"vec3 FroxelFog(vec3 c, float alpha)\n"
+	"{\n"
+	"	if (u_FroxelFog.x < 0.5) return c;\n"
+	"	float depth = u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, gl_FragCoord.z);\n"
+	"	vec2  uv = (gl_FragCoord.xy - u_FroxelFogGrid.zw) * u_FroxelFogView.zw;\n"
+	"	float f  = min(log2(depth / 256.0 + 1.0) / u_FroxelFog.z * u_FroxelFog.y, u_FroxelFog.y) - 1.0;\n"
+	"	vec4  a, b;\n"
+	"	if (f < 0.0)\n"
+	"	{\n"
+	"		a = vec4(0.0, 0.0, 0.0, 1.0);\n"
+	"		b = texture2D(u_FroxelFogMap, FroxelFogUV(uv, 0.0));\n"
+	"		f += 1.0;\n"
+	"	}\n"
+	"	else\n"
+	"	{\n"
+	"		float s = floor(f);\n"
+	"		a = texture2D(u_FroxelFogMap, FroxelFogUV(uv, s));\n"
+	"		b = texture2D(u_FroxelFogMap, FroxelFogUV(uv, min(s + 1.0, u_FroxelFog.y - 1.0)));\n"
+	"		f -= s;\n"
+	"	}\n"
+	"	vec4 air = mix(a, b, f);\n"
+	"	if (u_FroxelFog.x < 1.5) return c * air.a + air.rgb;\n"
+	"	if (u_FroxelFog.x < 2.5) return c * air.a;\n"
+	"	if (u_FroxelFog.x < 3.5) return mix(vec3(1.0), c, air.a);\n"
+	"	return c * air.a + air.rgb * clamp(alpha, 0.0, 1.0);\n"
+	"}\n";
+
 static const char *rt_skyBake_vp =
 	"attribute vec3 attr_Position;\n"
 	"attribute vec3 attr_Normal;\n"
@@ -1185,6 +1241,10 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 			Q_strcat(dest, size, "#define RT_BOUNCE\n");
 		Q_strcat(dest, size, rt_glsl);
 	}
+
+	// Added in OPM: the light in the air, for what is drawn after it
+	if (extra && shaderType == GL_FRAGMENT_SHADER && strstr(extra, "#define USE_FROXEL_FOG"))
+		Q_strcat(dest, size, froxelFog_glsl);
 
 	if (r_pbr->integer)
 		Q_strcat(dest, size, "#define USE_PBR\n");
@@ -1541,7 +1601,7 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
 				break;
 			case GLSL_VEC4_SMOKE:
-				size += sizeof(vec4_t) * SMOKE_MAX_BLOBS * 2;
+				size += sizeof(vec4_t) * SMOKE_MAX_BLOBS * 3;
 				break;
 			default:
 				break;
@@ -1909,7 +1969,7 @@ void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const v
 
 /*
 Added in OPM
-The puffs of smoke in the air's grid (tr_froxel.c), two vec4s each; only
+The puffs of smoke in the air's grid (tr_froxel.c), three vec4s each; only
 those sent.
 */
 void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
@@ -1924,8 +1984,8 @@ void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t
 		ri.Printf(PRINT_WARNING, "GLSL_SetUniformSmoke: wrong type for uniform %i in program %s\n", uniformNum, program->name);
 		return;
 	}
-	if (vec4s > SMOKE_MAX_BLOBS * 2) {
-		vec4s = SMOKE_MAX_BLOBS * 2;
+	if (vec4s > SMOKE_MAX_BLOBS * 3) {
+		vec4s = SMOKE_MAX_BLOBS * 3;
 	}
 	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
 		return;
@@ -2249,6 +2309,10 @@ static qboolean GLSL_InitLightallShader(int i)
 		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
 	}
 
+	// Added in OPM: the light in the air, for what is drawn after it
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
+
 	if (!GLSL_InitGPUShader(&tr.lightallShader[i], "lightall", attribs, qtrue, extradefines, qtrue, fallbackShader_lightall_vp, fallbackShader_lightall_fp))
 	{
 		ri.Error(ERR_FATAL, "Could not load lightall shader!");
@@ -2384,6 +2448,8 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 		Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
 	if (slim)
 		Q_strcat(extradefines, 1024, "#define RT_NO_PIXEL_LOOP\n");
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
 
 	if (!GLSL_InitGPUShader(sp, "generic", attribs, qtrue, extradefines, qtrue, fallbackShader_generic_vp, fallbackShader_generic_fp))
 	{
@@ -2958,6 +3024,8 @@ void GLSL_InitGPUShaders(void)
 
 		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
 		Q_strcat(extradefines, 1024, va("#define WATER_RIPPLE_SIZE %d\n", WATER_RIPPLE_SIZE));
+		if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+			Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
 
 		if (GLSL_InitGPUShader(&tr.waterShader, "water", attribs, qtrue, extradefines, qtrue, fallbackShader_water_vp, fallbackShader_water_fp))
 		{

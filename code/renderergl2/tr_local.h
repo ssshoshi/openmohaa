@@ -533,7 +533,8 @@ enum
 #define GTAO_DEPTH_MIPS      4  // and the smaller copies of the depth it reads (gtao_fp.glsl's)
 #define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
 #define TMU_SSRDEPTH         26 // and this frame's depth
-#define NUM_TEXTURE_UNITS    27
+#define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
+#define NUM_TEXTURE_UNITS    28
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -893,7 +894,7 @@ enum
 	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
 	GLSL_VEC4_WATERSPOTS, // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
-	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 2 vec4s (tr_froxel.c)
+	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 3 vec4s (tr_froxel.c)
 };
 
 #define SMOKE_MAX_BLOBS 96 // Added in OPM: the most puffs of smoke the air's grid takes a frame (tr_froxel.c)
@@ -1056,9 +1057,13 @@ typedef enum
 	UNIFORM_FROXELPREVLEFT,
 	UNIFORM_FROXELPREVUP,
 	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
-	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, colour and density
+	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, albedo and density, the light their sprites had
 	UNIFORM_SMOKEPARAMS,  // how many, the noise's scale, its drift (time), how much it eats into them
 	UNIFORM_SMOKENOISE,   // the smoke's 3D noise
+	UNIFORM_FROXELFOG,     // Added in OPM: the air for what is drawn after it (USE_FROXEL_FOG): how, slices, depth curve
+	UNIFORM_FROXELFOGVIEW, // zfar / znear, zfar, one over the view's size
+	UNIFORM_FROXELFOGGRID, // cells across, up, the view's corner
+	UNIFORM_FROXELFOGMAP,
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -1801,7 +1806,8 @@ typedef struct refSprite_s {
     byte shaderRGBA[4];
     int renderfx;
     float shaderTime;
-    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke, not as a sprite (R_FroxelTakesSprite)
+    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke (R_FroxelTakesSprite)
+    byte     froxelAlpha; // and its alpha before its sprite gave the grid its share
 } refSprite_t;
 
 //=========================
@@ -4086,7 +4092,12 @@ void R_FogLoadWorld(const char *mapName);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;
 qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
+qboolean R_FroxelSpriteToo(const refSprite_t *sprite);
 qboolean R_FroxelHasWork(void);
+void RB_FroxelOpaqueDone(void);
+void RB_FroxelBeginView(void);
+void R_FroxelSetFog(shaderProgram_t *sp, int stateBits);
+qboolean R_FroxelOn(void);
 void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
 void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);

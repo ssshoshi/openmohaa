@@ -1016,6 +1016,8 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
         RB_WaterViewBox(v);
         GLSL_SetUniformVec4(sp, UNIFORM_WATERVIEW, v);
     }
+    // Added in OPM: the light in the air between it and the eye
+    R_FroxelSetFog(sp, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 
     GLSL_SetUniformVec4(sp, UNIFORM_WATERCOLOR, water.color);
 

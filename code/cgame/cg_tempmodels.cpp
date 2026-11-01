@@ -31,6 +31,9 @@ cvar_t *cg_showtempmodels;
 cvar_t *cg_max_tempmodels;
 cvar_t *cg_reserve_tempmodels;
 cvar_t *cg_detail;
+// Added in OPM: the sprites that are puffs of smoke, dust or spray with a
+// volume, whatever effect throws them (T2_SMOKEVOLUME)
+cvar_t *cg_smokeVolumeSprites;
 cvar_t *cg_effectdetail;
 cvar_t *cg_effect_physicsrate;
 
@@ -226,10 +229,68 @@ void ClientGameCommandManager::InitializeTempModels(void)
     m_tempmodels[numtempmodels - 1].next = NULL;
 }
 
+/*
+===============
+CG_SmokeVolumeSprite
+
+Added in OPM: whether a temp model's sprite is one cg_smokeVolumeSprites
+names (its file's name, without folder or .spr): smoke, dust and spray the
+renderer may draw in the air with a volume (r_volumetric 2), lit and
+shadowed, whatever effect throws it. The emitter keyword smokevolume marks
+any other.
+===============
+*/
+static qboolean CG_SmokeVolumeSprite(const char *model)
+{
+    static int  modified = -1;
+    static char names[64][MAX_QPATH];
+    static int  numNames;
+    char        base[MAX_QPATH];
+    const char *slash;
+    int         i;
+
+    if (!cg_smokeVolumeSprites) {
+        return qfalse;
+    }
+    if (modified != cg_smokeVolumeSprites->modificationCount) {
+        const char *text = cg_smokeVolumeSprites->string;
+        const char *token;
+
+        modified = cg_smokeVolumeSprites->modificationCount;
+        numNames = 0;
+        for (token = COM_Parse((char **)&text); token[0] && numNames < 64; token = COM_Parse((char **)&text)) {
+            Q_strncpyz(names[numNames++], token, MAX_QPATH);
+        }
+    }
+    if (!numNames) {
+        return qfalse;
+    }
+
+    slash = strrchr(model, '/');
+    Q_strncpyz(base, slash ? slash + 1 : model, sizeof(base));
+    COM_StripExtension(base, base, sizeof(base));
+    if (Q_stricmp(model + strlen(model) - Q_min(strlen(model), 4), ".spr")) {
+        return qfalse;
+    }
+    for (i = 0; i < numNames; i++) {
+        if (!Q_stricmp(base, names[i])) {
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
 void ClientGameCommandManager::InitializeTempModelCvars(void)
 {
     cg_showtempmodels = cgi.Cvar_Get("cg_showtempmodels", "0", 0);
     cg_detail         = cgi.Cvar_Get("detail", "1", CVAR_ARCHIVE);
+    // Added in OPM
+    cg_smokeVolumeSprites = cgi.Cvar_Get(
+        "cg_smokeVolumeSprites",
+        "vsssource vsssource2 explsmoke smokegrenade_german dustdrop dirtplume bh_snow_puff oceanspray opm_oceanspray "
+        "opm_ocean_plume opm_waterplume",
+        CVAR_ARCHIVE
+    );
 
     cg_effectdetail = cgi.Cvar_Get("cg_effectdetail", "1.0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_effectdetail, 0.2, 1.0, qfalse);
@@ -1083,6 +1144,10 @@ void ClientGameCommandManager::AddTempModels(void)
         // Added in OPM: a puff of smoke the renderer may draw in the air
         if (p->cgd.flags2 & T2_SMOKEVOLUME) {
             newEnt.renderfx |= RF_VOLUME_SMOKE;
+            // its colour has the light grid's in it (OtherTempModelEffects)
+            if (p->cgd.flags & T_COLLISION) {
+                newEnt.renderfx |= RF_SMOKE_GRIDLIT;
+            }
         }
         newEnt.hModel     = p->ent.hModel;
         newEnt.reType     = p->ent.reType;
@@ -1341,6 +1406,11 @@ void ClientGameCommandManager::SpawnTempModel(int mcount)
 
         p->addedOnce    = qfalse;
         p->lastEntValid = qfalse;
+
+        // Added in OPM: smoke, dust or spray with a volume, whatever throws it
+        if (p->modelname.length() && CG_SmokeVolumeSprite(p->modelname.c_str())) {
+            p->cgd.flags2 |= T2_SMOKEVOLUME;
+        }
 
         if (p->modelname.length()) {
             ent.hModel = cgi.R_RegisterModel(p->modelname.c_str());

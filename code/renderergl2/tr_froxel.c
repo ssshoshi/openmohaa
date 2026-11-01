@@ -57,12 +57,22 @@ cvar_t *r_volumetricFog;
 cvar_t *r_volumetricTemporal;
 cvar_t *r_volumetricSmoke;
 cvar_t *r_volumetricSmokeNoise;
+cvar_t *r_volumetricSmokeSprites;
 
 // the smoke's noise: a tiling 3D texture, made once (R_FroxelSmokeNoise)
 #define SMOKE_NOISE_SIZE 64
 // how much of the light on it smoke gives back
-#define SMOKE_ALBEDO 0.6f
+#define SMOKE_ALBEDO 0.45f
 static GLuint smokeNoiseTexture;
+
+// the air summed from the eye, for what the main view draws after it
+// (RB_FroxelOpaqueDone, R_FroxelSetFog)
+static struct {
+	qboolean active;
+	int      frame; // tr.frameCount it was done in
+	int      sum;   // which of tr.froxelSumImage holds it
+	vec4_t   fog, view, grid;
+} froxelFog;
 
 // the sprites taken as puffs this scene (R_FroxelTakesSprite)
 static struct {
@@ -216,6 +226,8 @@ void R_FroxelInit(void)
 	ri.Cvar_SetDescription(r_volumetricSmoke, "With r_volumetric 2: smoke grenades and other smoke with a volume drawn in the air, lit and shadowed, in place of their sprites; how thick (0: sprites)");
 	r_volumetricSmokeNoise = ri.Cvar_Get("r_volumetricSmokeNoise", "0.4", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_volumetricSmokeNoise, "With r_volumetric 2: how much the noise breaks up the smoke's puffs, 0 smooth balls, 1 shreds");
+	r_volumetricSmokeSprites = ri.Cvar_Get("r_volumetricSmokeSprites", "0.5", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_volumetricSmokeSprites, "With r_volumetric 2: how much of a puff of smoke in the air is still drawn as its sprite, for the sprite's texture (0 all volume, 1 all sprite)");
 	ri.Cmd_AddCommand("foginfo", R_FogInfo_f);
 	ri.Cmd_AddCommand("fogreload", R_FogReload_f);
 	froxelPrev.frame = -1;
@@ -267,9 +279,37 @@ qboolean R_FroxelTakesSprite(const refSprite_t *sprite)
 	if (VectorLengthSquared(delta) > Square(range * 0.85f)) {
 		return qfalse;
 	}
+	// no smaller than two cells across where it is (a cigarette's, a shot's
+	// at a distance, an explosion's first puffs): the grid cannot hold it,
+	// and a small puff as thick as its sprite was a cell or two of dark
+	// square. Its sprite shows it as it is, until it grows
+	{
+		const model_t *model = tr.models[spr->hModel > 0 && spr->hModel < tr.numModels ? spr->hModel : 0];
+		const float    cellsX = tr.froxelLightImage[0] ? (float)(tr.froxelLightImage[0]->width / FROXEL_TILES) : 1.0f;
+		const float    cell   = VectorLength(delta) * 2.0f * tan(tr.viewParms.fovX * M_PI / 360.0f) / cellsX;
+		float          radius;
+
+		if (model->type != MOD_SPRITE || !model->d.sprite) {
+			return qfalse;
+		}
+		radius = Q_max(model->d.sprite->origin_x, model->d.sprite->origin_y) * spr->scale * model->d.sprite->scale;
+		if (radius < cell * 2.0f) {
+			return qfalse;
+		}
+	}
 	spr->froxelTaken = qtrue;
 	smokeTaken.taken++;
+	// the sprite keeps r_volumetricSmokeSprites of it, for its texture; the
+	// grid the rest (R_FroxelSmokeBlobs)
+	spr->froxelAlpha = spr->shaderRGBA[3];
+	spr->shaderRGBA[3] = (byte)(spr->shaderRGBA[3] * Com_Clamp(0.0f, 1.0f, r_volumetricSmokeSprites->value));
 	return qtrue;
+}
+
+// whether a taken puff's sprite is drawn too
+qboolean R_FroxelSpriteToo(const refSprite_t *sprite)
+{
+	return sprite->shaderRGBA[3] > 0;
 }
 
 /*
@@ -298,18 +338,37 @@ static int R_FroxelSmokeBlobs(vec4_t *out)
 		}
 		// a little wider than the sprite: the noise eats its edge
 		radius = Q_max(model->d.sprite->origin_x, model->d.sprite->origin_y) * spr->scale * model->d.sprite->scale * 1.15f;
-		alpha  = Com_Clamp(0.0f, 0.99f, spr->shaderRGBA[3] / 255.0f);
+		// what the sprite does not cover of the puff: together as opaque as
+		// the sprite was alone
+		alpha  = Com_Clamp(0.0f, 0.99f, spr->froxelAlpha / 255.0f);
+		alpha  = 1.0f - (1.0f - alpha) / Q_max(1.0f - spr->shaderRGBA[3] / 255.0f, 0.01f);
 		if (radius < 1.0f || alpha <= 0.0f) {
 			continue;
 		}
-		VectorCopy(spr->origin, out[n * 2]);
-		out[n * 2][3] = radius;
-		// smoke is grey: its tint times SMOKE_ALBEDO
-		VectorSet(out[n * 2 + 1], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
+		VectorCopy(spr->origin, out[n * 3]);
+		out[n * 3][3] = radius;
+		// smoke is grey: its sprite's colour times SMOKE_ALBEDO (the sprite's
+		// colour has the light grid's in it: outdoors about white)
+		VectorSet(out[n * 3 + 1], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
 			spr->shaderRGBA[2] / 255.0f * SMOKE_ALBEDO);
 		// as opaque straight through its middle as the sprite was: the
 		// 1 - q fall-off takes 2/3 of the middle's along a diameter
-		out[n * 2 + 1][3] = -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value;
+		out[n * 3 + 1][3] = -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value;
+		// and as its sprite was lit: the cgame gives smoke that collides the
+		// light grid's light (R_GetLightingForSmoke), the map's baked light
+		// (the sprite showed its grey texture times that: SMOKE_ALBEDO again).
+		// A sprite the cgame did not light so (no collision: explosions'
+		// smoke, dust, spray) is given the grid's light here, at its middle
+		VectorSet4(out[n * 3 + 2], spr->shaderRGBA[0] / 255.0f * SMOKE_ALBEDO, spr->shaderRGBA[1] / 255.0f * SMOKE_ALBEDO,
+			spr->shaderRGBA[2] / 255.0f * SMOKE_ALBEDO, 0.0f);
+		if (!(spr->renderfx & RF_SMOKE_GRIDLIT) && tr.world && tr.world->lightGridData) {
+			vec3_t grid;
+
+			R_GetLightingForSmoke(grid, spr->origin);
+			out[n * 3 + 2][0] *= grid[0];
+			out[n * 3 + 2][1] *= grid[1];
+			out[n * 3 + 2][2] *= grid[2];
+		}
 		n++;
 	}
 	return n;
@@ -435,7 +494,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 {
 	vec4_t quadVerts[4], viewInfo, volParams, volRange, froxel, v;
 	vec4_t volumes[FOG_MAX_VOLUMES * 3];
-	static vec4_t blobs[SMOKE_MAX_BLOBS * 2];
+	static vec4_t blobs[SMOKE_MAX_BLOBS * 3];
 	int numBlobs, sum;
 	GLuint noise;
 	vec2_t texCoords[4];
@@ -587,7 +646,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	numBlobs = R_FroxelSmokeBlobs(blobs);
 	noise    = numBlobs ? R_FroxelSmokeNoise() : 0;
 	if (numBlobs) {
-		GLSL_SetUniformSmoke(&tr.froxelShader[0], UNIFORM_SMOKEBLOBS, (const vec4_t *)blobs, numBlobs * 2);
+		GLSL_SetUniformSmoke(&tr.froxelShader[0], UNIFORM_SMOKEBLOBS, (const vec4_t *)blobs, numBlobs * 3);
 	}
 	if (noise) {
 		GL_BindMultiTexture(GL_TEXTURE0 + TB_SPECULARMAP, GL_TEXTURE_3D, noise);
@@ -663,6 +722,122 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox)
 	qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);
 
 	R_GpuTimerEnd(GPUTIMER_VOLUME);
+
+	// for what is drawn after it (R_FroxelSetFog)
+	froxelFog.sum = sum;
+	VectorSet4(froxelFog.fog, 1.0f, (float)FROXEL_SLICES, froxel[3], 0.0f);
+	VectorSet4(froxelFog.view, zmax / zmin, zmax, 1.0f / dstBox[2], 1.0f / dstBox[3]);
+	VectorSet4(froxelFog.grid, froxel[0], froxel[1], (float)dstBox[0], (float)dstBox[1]);
+}
+
+/*
+=============
+R_FroxelOn
+
+Whether the air's grid is drawn this frame: r_volumetric 2 with its
+programs, the lights lit live, and something in the air.
+=============
+*/
+qboolean R_FroxelOn(void)
+{
+	return r_volumetric->integer == 2 && tr.froxelDepthFbo && tr.froxelShader[3].program && R_RtLitLive()
+		&& (r_volumetricDensity->value > 0 || R_FroxelHasWork());
+}
+
+/*
+=============
+RB_FroxelBeginView
+
+A view starts with no air for what it draws (R_FroxelSetFog).
+=============
+*/
+void RB_FroxelBeginView(void)
+{
+	froxelFog.active = qfalse;
+}
+
+/*
+=============
+RB_FroxelOpaqueDone
+
+Between the main view's opaque world and anything drawn after it (sorted
+past opaque: alpha tested leaves, decals, water, dust and smoke, glass):
+the air lit and summed, the opaque world seen through it, and the sum kept
+for the rest, which take it at their own depth (R_FroxelSetFog). Once a
+frame, and left as it found the target and the viewport.
+=============
+*/
+void RB_FroxelOpaqueDone(void)
+{
+	FBO_t  *fbo = glState.currentFBO;
+	ivec4_t box;
+
+	if (backEnd.depthFill || backEnd.projection2D || backEnd.viewParms.isPortal || backEnd.viewParms.isPortalSky
+		|| (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP | VPF_WATERREFLECT))
+		|| (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || !glRefConfig.framebufferObject || !r_postProcess->integer
+		|| froxelFog.frame == tr.frameCount || !R_FroxelOn()) {
+		return;
+	}
+
+	box[0] = backEnd.viewParms.viewportX;
+	box[1] = backEnd.viewParms.viewportY;
+	box[2] = backEnd.viewParms.viewportWidth;
+	box[3] = backEnd.viewParms.viewportHeight;
+	RB_VolumetricFroxels(fbo, box);
+	froxelFog.frame  = tr.frameCount;
+	froxelFog.active = qtrue;
+
+	FBO_Bind(fbo);
+	qglViewport(box[0], box[1], box[2], box[3]);
+	qglScissor(box[0], box[1], box[2], box[3]);
+}
+
+/*
+=============
+R_FroxelSetFog
+
+A stage drawn after the air was summed takes it as its blend does
+(froxelFog_glsl in tr_glsl.c); anything else, none.
+=============
+*/
+void R_FroxelSetFog(shaderProgram_t *sp, int stateBits)
+{
+	vec4_t fog;
+
+	if (sp->uniforms[UNIFORM_FROXELFOG] == -1) {
+		return;
+	}
+	if (!froxelFog.active || backEnd.projection2D) {
+		VectorClear4(fog);
+		GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOG, fog);
+		return;
+	}
+
+	VectorCopy4(froxelFog.fog, fog);
+	{
+		const int src = stateBits & GLS_SRCBLEND_BITS, dst = stateBits & GLS_DSTBLEND_BITS;
+
+		if (dst == GLS_DSTBLEND_ONE) {
+			// added on top
+			fog[0] = 2.0f;
+		} else if (src == GLS_SRCBLEND_DST_COLOR || dst == GLS_DSTBLEND_SRC_COLOR) {
+			// a multiply
+			fog[0] = 3.0f;
+		} else if (src == GLS_SRCBLEND_ONE && dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA) {
+			// a colour already times its alpha
+			fog[0] = 4.0f;
+		} else if ((!src && !dst) || dst == GLS_DSTBLEND_ZERO || dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA) {
+			// drawn whole, or blended over
+			fog[0] = 1.0f;
+		} else {
+			fog[0] = 2.0f;
+		}
+	}
+	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOG, fog);
+	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOGVIEW, froxelFog.view);
+	GLSL_SetUniformVec4(sp, UNIFORM_FROXELFOGGRID, froxelFog.grid);
+	GLSL_SetUniformInt(sp, UNIFORM_FROXELFOGMAP, TMU_FROXELFOG);
+	GL_BindToTMU(tr.froxelSumImage[froxelFog.sum], TMU_FROXELFOG);
 }
 
 /*

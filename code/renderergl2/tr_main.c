@@ -3399,7 +3399,7 @@ void R_AddSpriteSurfaces()
 			continue;
 		}
 		// Added in OPM: a puff of smoke the air's grid draws (tr_froxel.c)
-		if ((sprite->renderfx & RF_VOLUME_SMOKE) && R_FroxelTakesSprite(sprite)) {
+		if ((sprite->renderfx & RF_VOLUME_SMOKE) && R_FroxelTakesSprite(sprite) && !R_FroxelSpriteToo(sprite)) {
 			continue;
 		}
 
