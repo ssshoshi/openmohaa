@@ -766,7 +766,7 @@ static struct {
     float    flashTime;
     struct rainEave_s *eaves; // where water pours off a roof (R_RainFindEaves)
     int      numEaves;
-    qhandle_t streamShader, splashShader;
+    qhandle_t streamShader, splashShader, curtainShader, mistShader;
     qboolean shadersTried;
     qboolean hasLast;
     int      width, rows;
@@ -1049,6 +1049,7 @@ typedef struct rainEave_s {
     vec3_t top;    // the edge, where it leaves the roof
     float  bottom; // where it lands
     float  seed;
+    vec2_t out;    // the way off the roof, flat
 } rainEave_t;
 
 #define RAIN_MAX_EAVES 8192
@@ -1123,6 +1124,7 @@ static void R_RainFindEaves(void)
                 e = &rainCover.eaves[rainCover.numEaves++];
                 VectorSet(e->top, px, py, h - 1.0f);
                 e->bottom = n;
+                VectorSet2(e->out, dx / len, dy / len);
                 e->seed   = (float)((x * 73856093u) ^ (y * 19349663u)) / 4294967296.0f;
                 if (e->seed < 0.0f) {
                     e->seed = -e->seed;
@@ -1141,58 +1143,81 @@ static void R_RainFindEaves(void)
 R_RainRunoff
 
 Added in OPM
-  The water pouring off the eaves near the eye (R_RainFindEaves): a thin
-  ribbon turned to face it, the rain's streaks running down it, some a
-  steady stream and some a drip, and a splash where it lands. Added to the
-  scene as polygons, before it is begun (RE_RenderScene).
+  The water pouring off the eaves near the eye (R_RainFindEaves), as rain
+  runs off a roof: a veil all along the edge (opm/rain_curtain), leaving it
+  whole and thinning to drops as it falls, leaning out as water thrown off
+  an edge does; here and there a heavier stream in it (opm/rain_stream); and
+  spray where it lands, a splash and the mist off it (opm/rain_splash,
+  opm/rain_mist). Added to the scene as polygons, before it is begun
+  (RE_RenderScene).
 ===============
 */
 #define RAIN_RUNOFF_RANGE 1600.0f
 #define RAIN_RUNOFF_MAX   384
 
+// a quad, its top two corners first: the colour, and the alpha at the top
+// and at the bottom
+static void R_RainQuad(qhandle_t shader, const vec3_t tl, const vec3_t trc, const vec3_t br, const vec3_t bl,
+    const float st[4][2], byte grey, float alphaTop, float alphaBottom)
+{
+    polyVert_t v[4];
+    int        k;
+
+    VectorCopy(tl, v[0].xyz);
+    VectorCopy(trc, v[1].xyz);
+    VectorCopy(br, v[2].xyz);
+    VectorCopy(bl, v[3].xyz);
+    for (k = 0; k < 4; k++) {
+        v[k].st[0]       = st[k][0];
+        v[k].st[1]       = st[k][1];
+        v[k].modulate[0] = v[k].modulate[1] = v[k].modulate[2] = grey;
+        v[k].modulate[3] = (byte)Com_Clamp(0.0f, 255.0f, (k < 2 ? alphaTop : alphaBottom) * 255.0f);
+    }
+    RE_AddPolyToScene(shader, 4, v, 1);
+}
+
+static qhandle_t R_RainRunoffShader(const char *name)
+{
+    const qhandle_t h  = RE_RegisterShader(name);
+    shader_t       *sh = R_GetShaderByHandle(h);
+
+    // without the pak that has it, none: the default shader is a white square
+    return sh && !sh->defaultShader ? h : 0;
+}
+
 static void R_RainRunoff(const refdef_t *fd)
 {
     const float amount = r_rainRunoff->value * R_RainAmount();
     const float time   = fd->time * 0.001f;
-    polyVert_t  v[4];
     vec4_t      sky;
     float       lum;
+    byte        grey;
     int         i, drawn = 0;
 
     if (amount <= 0.0f || !rainCover.numEaves) {
         return;
     }
     if (!rainCover.shadersTried) {
-        shader_t *sh;
-
-        rainCover.shadersTried = qtrue;
-        rainCover.streamShader = RE_RegisterShader("opm/rain_stream");
-        rainCover.splashShader = RE_RegisterShader("opm/rain_splash");
-        // without the pak that has them, none: the default shader is a
-        // white square
-        sh = R_GetShaderByHandle(rainCover.streamShader);
-        if (!sh || sh->defaultShader) {
-            rainCover.streamShader = 0;
-        }
-        sh = R_GetShaderByHandle(rainCover.splashShader);
-        if (!sh || sh->defaultShader) {
-            rainCover.splashShader = 0;
-        }
+        rainCover.shadersTried  = qtrue;
+        rainCover.curtainShader = R_RainRunoffShader("opm/rain_curtain");
+        rainCover.streamShader  = R_RainRunoffShader("opm/rain_stream");
+        rainCover.splashShader  = R_RainRunoffShader("opm/rain_splash");
+        rainCover.mistShader    = R_RainRunoffShader("opm/rain_mist");
     }
-    if (!rainCover.streamShader) {
+    if (!rainCover.curtainShader) {
         return;
     }
 
     // as bright as the sky over it
     R_WaterSky(sky);
-    lum = Com_Clamp(0.25f, 1.0f, 0.2126f * sky[0] + 0.7152f * sky[1] + 0.0722f * sky[2] + 0.15f);
+    lum  = Com_Clamp(0.25f, 1.0f, 0.2126f * sky[0] + 0.7152f * sky[1] + 0.0722f * sky[2] + 0.15f);
+    grey = (byte)Com_Clamp(0.0f, 255.0f, lum * 235.0f);
 
     for (i = 0; i < rainCover.numEaves && drawn < RAIN_RUNOFF_MAX; i++) {
         const rainEave_t *e = &rainCover.eaves[i];
-        vec3_t            to, side, bot;
-        float             dist, fade, flow, width, a;
-        byte              c;
-        int               k;
+        vec3_t            to, side, along, out, bot, mid, tl, trc, ml, mr, bl, br;
+        float             dist, fade, flow, a, fall, lean, half, s0, s1;
+        float             st[4][2];
 
         VectorSubtract(fd->vieworg, e->top, to);
         to[2] = 0.0f;
@@ -1204,72 +1229,118 @@ static void R_RainRunoff(const refdef_t *fd)
         if (DotProduct(to, fd->viewaxis[0]) > 64.0f) {
             continue;
         }
-        // not every bit of an edge pours; less of it when it rains less
-        if (e->seed > 0.35f + 0.5f * Com_Clamp(0.0f, 1.0f, amount)) {
+        // less of the edge pours when it rains less
+        if (e->seed > 0.2f + 0.8f * Com_Clamp(0.0f, 1.0f, amount)) {
             continue;
         }
 
         fade = 1.0f - Com_Clamp(0.0f, 1.0f, (dist - RAIN_RUNOFF_RANGE * 0.6f) / (RAIN_RUNOFF_RANGE * 0.4f));
-        // a steady stream, or a drip that comes and goes
-        if (e->seed < 0.12f) {
-            flow = 0.5f + 0.5f * sin(time * (3.0f + 4.0f * e->seed) + e->seed * 40.0f);
-        } else {
-            flow = 0.8f + 0.2f * sin(time * 7.0f + e->seed * 90.0f);
-        }
-        a = lum * fade * flow * Com_Clamp(0.0f, 2.0f, amount);
+        // heavier here, lighter there along the edge, and as gusts come
+        flow = 0.55f + 0.3f * sin(e->seed * 53.0f + time * 0.9f) + 0.15f * sin(time * 5.0f + e->seed * 91.0f);
+        a    = fade * Com_Clamp(0.0f, 1.0f, flow) * Com_Clamp(0.0f, 1.5f, amount);
         if (a < 0.02f) {
             continue;
         }
-        c = (byte)Com_Clamp(0.0f, 255.0f, lum * 235.0f);
 
+        VectorSet(out, e->out[0], e->out[1], 0.0f);
+        VectorSet(along, -out[1], out[0], 0.0f);
+        fall = e->top[2] - e->bottom;
+        // thrown off the edge: out as the square root of the fall
+        lean = (4.0f + 0.05f * fall) * (0.7f + 0.6f * e->seed);
+        half = RAIN_EAVE_GAP * 0.5f + 3.0f;
+
+        VectorSet(mid, e->top[0], e->top[1], e->top[2] - fall * 0.35f);
+        VectorMA(mid, lean * 0.59f, out, mid);
+        VectorSet(bot, e->top[0], e->top[1], e->bottom);
+        VectorMA(bot, lean, out, bot);
+
+        VectorMA(e->top, -half, along, tl);
+        VectorMA(e->top, half, along, trc);
+        VectorMA(mid, -half, along, ml);
+        VectorMA(mid, half, along, mr);
+        VectorMA(bot, -half, along, bl);
+        VectorMA(bot, half, along, br);
+
+        // the texture held to the world along the edge, so the pieces of
+        // one edge run on into each other
+        s0 = (DotProduct(e->top, along) - half) / 64.0f;
+        s1 = (DotProduct(e->top, along) + half) / 64.0f;
+
+        // the veil: whole off the edge, then breaking up
+        st[0][0] = st[3][0] = s0;
+        st[1][0] = st[2][0] = s1;
+        st[0][1] = st[1][1] = -e->top[2] / 96.0f;
+        st[2][1] = st[3][1] = -mid[2] / 96.0f;
+        R_RainQuad(rainCover.curtainShader, tl, trc, mr, ml, st, grey, a * 0.9f, a * 0.7f);
+        st[0][1] = st[1][1] = -mid[2] / 96.0f;
+        st[2][1] = st[3][1] = -bot[2] / 96.0f;
+        R_RainQuad(rainCover.curtainShader, ml, mr, br, bl, st, grey, a * 0.7f, a * 0.25f);
+
+        // the face of the eye's to turn the rest to
         VectorNormalize(to);
         VectorSet(side, -to[1], to[0], 0.0f);
-        width = 1.6f + 1.4f * e->seed;
-        VectorSet(bot, e->top[0], e->top[1], e->bottom);
 
-        VectorMA(e->top, -width, side, v[0].xyz);
-        VectorMA(e->top, width, side, v[1].xyz);
-        VectorMA(bot, width, side, v[2].xyz);
-        VectorMA(bot, -width, side, v[3].xyz);
-        // the streaks down it, long and moving (the shader scrolls them)
-        // one of the texture's threads of water across it
-        v[0].st[0] = v[3].st[0] = floor(e->seed * 16.0f) * 0.25f;
-        v[1].st[0] = v[2].st[0] = floor(e->seed * 16.0f) * 0.25f + 0.5f;
-        v[0].st[1] = v[1].st[1] = -e->top[2] / 160.0f;
-        v[2].st[1] = v[3].st[1] = -e->bottom / 160.0f;
-        for (k = 0; k < 4; k++) {
-            v[k].modulate[0] = v[k].modulate[1] = v[k].modulate[2] = c;
-            v[k].modulate[3] = (byte)Com_Clamp(0.0f, 255.0f, a * 230.0f);
+        // a heavier stream, here and there
+        if (rainCover.streamShader && e->seed < 0.14f) {
+            const float w = 2.0f + 2.5f * (e->seed / 0.14f);
+
+            VectorMA(e->top, -w, side, tl);
+            VectorMA(e->top, w, side, trc);
+            VectorMA(bot, w, side, br);
+            VectorMA(bot, -w, side, bl);
+            st[0][0] = st[3][0] = floor(e->seed * 100.0f) * 0.25f;
+            st[1][0] = st[2][0] = st[0][0] + 0.75f;
+            st[0][1] = st[1][1] = -e->top[2] / 160.0f;
+            st[2][1] = st[3][1] = -e->bottom / 160.0f;
+            R_RainQuad(rainCover.streamShader, tl, trc, br, bl, st, grey, a, a * 0.8f);
         }
-        RE_AddPolyToScene(rainCover.streamShader, 4, v, 1);
 
-        // the splash where it lands, never the same twice
-        if (rainCover.splashShader && dist < RAIN_RUNOFF_RANGE * 0.7f) {
-            const float phase = time * (5.0f + 3.0f * e->seed) + e->seed * 17.0f;
-            const float f     = phase - floor(phase);
-            const float size  = (6.0f + 8.0f * f) * (0.7f + 0.6f * e->seed) * (0.6f + 0.4f * flow);
-            const float alpha = (1.0f - f) * a;
-            vec3_t      mid, up = {0.0f, 0.0f, 1.0f};
-            const int   flip  = (int)floor(phase) & 1;
+        // spray where it lands: a splash never the same twice, and the mist
+        // thrown up off it
+        if (dist < RAIN_RUNOFF_RANGE * 0.7f) {
+            vec3_t up = {0.0f, 0.0f, 1.0f}, c;
 
-            VectorSet(mid, bot[0], bot[1], bot[2] + size * 0.45f);
-            VectorMA(mid, -size, side, v[0].xyz);
-            VectorMA(v[0].xyz, size, up, v[0].xyz);
-            VectorMA(mid, size, side, v[1].xyz);
-            VectorMA(v[1].xyz, size, up, v[1].xyz);
-            VectorMA(mid, size, side, v[2].xyz);
-            VectorMA(v[2].xyz, -size * 0.5f, up, v[2].xyz);
-            VectorMA(mid, -size, side, v[3].xyz);
-            VectorMA(v[3].xyz, -size * 0.5f, up, v[3].xyz);
-            v[0].st[0] = v[3].st[0] = flip ? 1.0f : 0.0f;
-            v[1].st[0] = v[2].st[0] = flip ? 0.0f : 1.0f;
-            v[0].st[1] = v[1].st[1] = 0.0f;
-            v[2].st[1] = v[3].st[1] = 1.0f;
-            for (k = 0; k < 4; k++) {
-                v[k].modulate[0] = v[k].modulate[1] = v[k].modulate[2] = (byte)Com_Clamp(0.0f, 255.0f, lum * 200.0f);
-                v[k].modulate[3] = (byte)Com_Clamp(0.0f, 255.0f, alpha * 255.0f);
+            if (rainCover.splashShader) {
+                const float phase = time * (5.0f + 3.0f * e->seed) + e->seed * 17.0f;
+                const float f     = phase - floor(phase);
+                const float size  = (7.0f + 9.0f * f) * (0.7f + 0.6f * e->seed) * (0.6f + 0.6f * flow);
+                const int   flip  = (int)floor(phase) & 1;
+
+                VectorMA(bot, size * 0.45f, up, c);
+                VectorMA(c, (e->seed - 0.5f) * half, along, c);
+                VectorMA(c, -size, side, tl);
+                VectorMA(tl, size, up, tl);
+                VectorMA(c, size, side, trc);
+                VectorMA(trc, size, up, trc);
+                VectorMA(c, size, side, br);
+                VectorMA(br, -size * 0.5f, up, br);
+                VectorMA(c, -size, side, bl);
+                VectorMA(bl, -size * 0.5f, up, bl);
+                st[0][0] = st[3][0] = flip ? 1.0f : 0.0f;
+                st[1][0] = st[2][0] = flip ? 0.0f : 1.0f;
+                st[0][1] = st[1][1] = 0.0f;
+                st[2][1] = st[3][1] = 1.0f;
+                R_RainQuad(rainCover.splashShader, tl, trc, br, bl, st, grey, (1.0f - f) * a, (1.0f - f) * a);
             }
-            RE_AddPolyToScene(rainCover.splashShader, 4, v, 1);
+            if (rainCover.mistShader) {
+                const float size = (14.0f + 8.0f * e->seed) * (0.8f + 0.3f * sin(time * 1.7f + e->seed * 31.0f));
+                const float ma   = a * 0.35f;
+
+                VectorMA(bot, size * 0.35f, up, c);
+                VectorMA(c, -size, side, tl);
+                VectorMA(tl, size * 0.8f, up, tl);
+                VectorMA(c, size, side, trc);
+                VectorMA(trc, size * 0.8f, up, trc);
+                VectorMA(c, size, side, br);
+                VectorMA(br, -size * 0.35f, up, br);
+                VectorMA(c, -size, side, bl);
+                VectorMA(bl, -size * 0.35f, up, bl);
+                st[0][0] = st[3][0] = (e->seed > 0.5f) ? 1.0f : 0.0f;
+                st[1][0] = st[2][0] = (e->seed > 0.5f) ? 0.0f : 1.0f;
+                st[0][1] = st[1][1] = 0.0f;
+                st[2][1] = st[3][1] = 1.0f;
+                R_RainQuad(rainCover.mistShader, tl, trc, br, bl, st, grey, ma, ma);
+            }
         }
         drawn++;
     }

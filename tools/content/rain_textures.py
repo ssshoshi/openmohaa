@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Draws the rain runoff texture (content/opm-rain/textures/opm_rain/stream.tga).
+"""Draws the rain runoff textures (content/opm-rain/textures/opm_rain/*.tga).
+
+curtain.tga: the veil of water that leaves a roof's edge all along it, many
+short streaks falling and the drops they break into (tiling both ways).
+stream.tga, below:
 
 Water pouring off an eave (tr_water.c, R_RainRunoff): a few thin threads of
 it side by side, each wandering a little, thinning and breaking into drops
@@ -75,6 +79,37 @@ def stream(rng):
     return Image.fromarray(img, "RGBA")
 
 
+def curtain(rng):
+    """A veil of water off a roof edge: many short streaks of it falling, and
+    the drops it breaks into, densely, tiling both ways (W2 x H2)."""
+    w2, h2 = 256, 512
+    alpha = np.zeros((h2, w2))
+    xs = np.arange(w2)
+    ys = np.arange(h2)
+
+    def stamp(x0, y0, length, width, strength):
+        # a streak from (x0, y0) down, wrapping at the edges
+        dx = (xs - x0 + w2 / 2) % w2 - w2 / 2
+        dy = (ys - y0 + h2 / 2) % h2 - h2 / 2
+        across = np.clip(1.0 - np.abs(dx) / width, 0.0, 1.0)
+        along = np.clip(1.0 - np.abs(dy - length / 2) / (length / 2 + 0.5), 0.0, 1.0) ** 0.6
+        np.maximum(alpha, np.outer(along, across) * strength, out=alpha)
+
+    # streaks: long and faint, short and bright
+    for _ in range(520):
+        stamp(rng.random() * w2, rng.random() * h2, 8 + rng.random() * 70, 0.6 + rng.random() * 1.1,
+              0.25 + 0.6 * rng.random())
+    # drops, a little drawn out by their fall
+    for _ in range(900):
+        stamp(rng.random() * w2, rng.random() * h2, 2 + rng.random() * 6, 0.7 + rng.random() * 0.9,
+              0.5 + 0.5 * rng.random())
+
+    rgb = np.empty((h2, w2, 3))
+    rgb[...] = (205 + 50 * alpha)[..., None]
+    img = np.dstack([rgb, alpha * 255]).astype(np.uint8)
+    return Image.fromarray(img, "RGBA")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=3)
@@ -82,9 +117,10 @@ def main():
 
     rng = np.random.default_rng(args.seed)
     os.makedirs(OUT, exist_ok=True)
-    path = os.path.join(OUT, "stream.tga")
-    stream(rng).save(path)
-    print(path)
+    for name, draw in (("stream", stream), ("curtain", curtain)):
+        path = os.path.join(OUT, name + ".tga")
+        draw(rng).save(path)
+        print(path)
 
 
 if __name__ == "__main__":
