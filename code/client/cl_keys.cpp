@@ -1160,7 +1160,20 @@ void CL_KeyEvent(int key, qboolean down, unsigned time)
     // escape is always handled special
     if (key == K_ESCAPE) {
         if (down) {
-            qboolean wasup = UI_MenuUp();
+            qboolean wasup;
+
+            // Added in OPM
+            //  Escape closes the cvar browser (and its Models tab), not the game;
+            //  while a value is edited there, it leaves the edit.
+            if (UI_CvarBrowserCancelEdit()) {
+                return;
+            }
+            if (UI_CvarBrowserOpen()) {
+                UI_CloseCvarBrowser();
+                return;
+            }
+
+            wasup = UI_MenuUp();
             UI_DeactiveFloatingWindows();
 
             if (clc.state == CA_CINEMATIC) {

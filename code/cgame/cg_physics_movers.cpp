@@ -647,14 +647,17 @@ static qboolean CG_PhysicsRayEntity(const vec3_t start, const vec3_t dir, float 
         }
     }
 
-    // Weapons and items lying about, which are triggers and so not in the
+    // Weapons and items lying about, which are triggers, and the server's
+    // props, which stop shots only (EF_PHYSICS_BODY), so neither is in the
     // trace: their models' boxes, nearer than what the trace struck.
     for (int i = 0; i < cg.snap->numEntities; i++) {
         const entityState_t *es = &cg.snap->entities[i];
         vec3_t               origin, axis[3], mins, maxs;
         float                at;
+        const bool           item = es->eType == ET_ITEM && es->parent == ENTITYNUM_NONE;
+        const bool           prop = (es->eFlags & EF_PHYSICS_BODY) && !es->solid;
 
-        if (es->eType != ET_ITEM || es->parent != ENTITYNUM_NONE || !CG_PhysicsEntityBox(es->number, origin, axis, mins, maxs)) {
+        if ((!item && !prop) || !CG_PhysicsEntityBox(es->number, origin, axis, mins, maxs)) {
             continue;
         }
         if (CG_PhysicsRayHitsBox(start, dir, range, origin, axis, mins, maxs, &at) && at < best) {
@@ -809,10 +812,12 @@ qboolean CG_PhysicsGrabHeld(void)
 
     if (pg.server) {
         // Gone from the snapshot (broken, or out of sight), or picked up. An
-        // item lying about is never solid.
+        // item lying about is never solid, nor a prop that stops shots only
+        // (EF_PHYSICS_BODY).
         const entityState_t *es = &cg_entities[pg.entnum].currentState;
 
-        if (!cg_entities[pg.entnum].currentValid || (!es->solid && es->eType != ET_ITEM) || es->parent != ENTITYNUM_NONE) {
+        if (!cg_entities[pg.entnum].currentValid || (!es->solid && es->eType != ET_ITEM && !(es->eFlags & EF_PHYSICS_BODY))
+            || es->parent != ENTITYNUM_NONE) {
             CG_PhysicsGrabRelease();
         }
     } else if (!phys_system || !phys_system->GetBodyInterface().IsAdded(pg.id)) {

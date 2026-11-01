@@ -25,8 +25,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // The cvar browser (cvarbrowser, bound to F7 by default): every cvar with its
 // value, default, range and flags, and the cheat commands, each with a
 // description. Hovering over a row shows its description large at the
-// bottom; clicking one selects it for editing. A changed value that only takes
+// bottom; double-clicking one edits its value in place (Enter sets it, Escape
+// leaves it; a cheat's arguments, Enter runs it). A changed value that only takes
 // effect after a restart lights the Restart Video / Restart Sound button.
+// The Models tab is the model browser (cl_uimodelbrowser.cpp): spawning
+// props and soldiers.
 //
 // The descriptions and the ranges the code does not declare come from
 // help/cvars.txt and help/cheats.txt (data/opm-cvarhelp, written with
@@ -391,6 +394,32 @@ public:
     }
 
     void MouseExited(Event *ev) { hoverItem = 0; }
+
+    // Where row n's cell of a column is drawn, in the list's own frame;
+    // false when the row is scrolled out of view.
+    bool CellRect(int n, int columnName, UIRect2D& out)
+    {
+        const int rowH  = m_font->getHeight(getVirtualScale());
+        const int first = m_vertscroll ? m_vertscroll->getTopItem() + 1 : 1;
+        float     x     = 0;
+        float     y;
+
+        if (n < first || n > getNumItems() || rowH <= 0) {
+            return false;
+        }
+        y = getHeaderHeight() + (n - first) * rowH;
+        if (y + rowH > m_frame.size.height) {
+            return false;
+        }
+        for (int c = 1; c <= m_columnlist.NumObjects(); c++) {
+            if (m_columnlist.ObjectAt(c).name == columnName) {
+                out = UIRect2D(x, y, m_columnlist.ObjectAt(c).width, rowH);
+                return true;
+            }
+            x += m_columnlist.ObjectAt(c).width;
+        }
+        return false;
+    }
 };
 
 CLASS_DECLARATION(UIListCtrl, UICvarList, NULL) {
@@ -500,10 +529,13 @@ enum {
     CVB_VIEW_ALL,
     CVB_VIEW_CHANGED,
     CVB_VIEW_LATCHED,
-    CVB_VIEW_CHEATS
+    CVB_VIEW_CHEATS,
+    CVB_VIEW_MODELS,
+    CVB_NUM_VIEWS
 };
 
-static const char *cvb_viewNames[] = {"all", "changed", "latched", "cheats"};
+static const char *cvb_viewNames[] = {"all", "changed", "latched", "cheats", "models"};
+static int         cvb_lastView; // the tab it opens on: the last one shown
 
 // The child space resized: a window's own W_SizeChanged is taken.
 static Event W_CvarBrowser_ChildSizeChanged(
@@ -520,20 +552,26 @@ public:
 
     UICvarList *list;
     UICvarInfo *info;
-    UIField    *filter, *value;
-    UILabel    *filterLabel, *valueLabel, *countLabel, *selectedLabel;
-    UIButton   *views[4];
-    UIButton   *setButton, *resetButton, *runButton, *vidButton, *sndButton;
+    UIField    *filter;
+    UIField    *editor; // over the Value cell of the row being edited
+    UILabel    *filterLabel, *countLabel, *selectedLabel;
+    UIButton   *views[CVB_NUM_VIEWS];
+    UIButton   *resetButton, *runButton, *vidButton, *sndButton;
+    UIWidget   *models; // the Models tab, made when first shown
 
     int view;
     str lastFilter;
     str selected; // the row being edited
     int selectedCheat;
     int lastCount;
+    int editRow; // the list row the editor is on, 0 for none
 
     UICvarBrowser()
         : list(NULL)
         , info(NULL)
+        , editor(NULL)
+        , editRow(0)
+        , models(NULL)
         , view(CVB_VIEW_ALL)
         , selectedCheat(0)
         , lastCount(-1)
@@ -578,8 +616,8 @@ public:
         filter->setForegroundColor(UWhite);
         filter->LinkCvar("ui_cvb_filter");
 
-        for (int i = 0; i < 4; i++) {
-            static const char *titles[] = {"All", "Changed", "Latched", "Cheats"};
+        for (int i = 0; i < CVB_NUM_VIEWS; i++) {
+            static const char *titles[] = {"All", "Changed", "Latched", "Cheats", "Models"};
             views[i] = MakeButton(titles[i], va("cvarbrowser_view %s", cvb_viewNames[i]));
         }
         countLabel = MakeLabel("");
@@ -597,23 +635,25 @@ public:
         list->AddColumn("Max", CVB_COL_MAX, 56, true, false);
         list->AddColumn("Flags", CVB_COL_FLAGS, 200, false, false);
         list->Connect(this, EV_UIListBase_ItemSelected, EV_UIListBase_ItemSelected);
+        list->Connect(this, EV_UIListBase_ItemDoubleClicked, EV_UIListBase_ItemDoubleClicked);
         list->AllowActivate(true);
         list->SetDontLocalize();
+
+        // The in-place editor: a child of the list, over the Value cell. Enter
+        // runs cvarbrowser_set with what was typed.
+        editor = new UIField();
+        editor->InitFrame(list, 0, 0, 100, 20, border_indent, "verdana-14");
+        editor->setBackgroundColor(UColor(0.0f, 0.0f, 0.0f, 1.0f), true);
+        editor->setForegroundColor(UWhite);
+        editor->LinkCvar("ui_cvb_value");
+        editor->LinkCommand("cvarbrowser_set");
+        editor->setShow(false);
 
         info = new UICvarInfo();
         info->InitFrame(getChildSpace(), 0, 0, 100, 100, 0, "verdana-14");
 
         selectedLabel = MakeLabel("");
-        valueLabel    = MakeLabel("Value");
 
-        value = new UIField();
-        value->InitFrame(getChildSpace(), 0, 0, 200, 22, border_indent, "verdana-14");
-        value->setBackgroundColor(UColor(0.0f, 0.0f, 0.0f, 1.0f), true);
-        value->setForegroundColor(UWhite);
-        value->LinkCvar("ui_cvb_value");
-        value->LinkCommand("cvarbrowser_set");
-
-        setButton   = MakeButton("Set", "cvarbrowser_set");
         resetButton = MakeButton("Reset", "cvarbrowser_reset");
         runButton   = MakeButton("Run", "cvarbrowser_run");
         vidButton   = MakeButton("Restart Video", "vid_restart");
@@ -621,7 +661,7 @@ public:
 
         getChildSpace()->Connect(this, W_SizeChanged, W_CvarBrowser_ChildSizeChanged);
         Layout();
-        Refill();
+        SetView(cvb_lastView);
     }
 
     void Layout(void)
@@ -632,17 +672,23 @@ public:
         float          x    = pad;
         const float    infoH = Q_max(110.0f, s.height * 0.24f);
 
+        // the tabs first, then what the cvar tabs filter by
+        for (int i = 0; i < CVB_NUM_VIEWS; i++) {
+            views[i]->setFrame(UIRect2D(x, pad, 74, rowH));
+            x += 78;
+        }
+        x += 10;
         filterLabel->setFrame(UIRect2D(x, pad, 40, rowH));
         x += 44;
         filter->setFrame(UIRect2D(x, pad, 220, rowH));
         x += 228;
-        for (int i = 0; i < 4; i++) {
-            views[i]->setFrame(UIRect2D(x, pad, 74, rowH));
-            x += 78;
-        }
         countLabel->setFrame(UIRect2D(x + 6, pad, s.width - x - 12, rowH));
 
         const float listTop = pad * 2 + rowH;
+
+        if (models) {
+            models->setFrame(UIRect2D(0, listTop, s.width, s.height - listTop));
+        }
         const float editTop = s.height - pad - rowH;
         const float infoTop = editTop - pad - infoH;
 
@@ -650,14 +696,8 @@ public:
         info->setFrame(UIRect2D(pad, infoTop, s.width - pad * 2, infoH));
 
         x = pad;
-        selectedLabel->setFrame(UIRect2D(x, editTop, 220, rowH));
-        x += 224;
-        valueLabel->setFrame(UIRect2D(x, editTop, 40, rowH));
-        x += 44;
-        value->setFrame(UIRect2D(x, editTop, 200, rowH));
-        x += 206;
-        setButton->setFrame(UIRect2D(x, editTop, 56, rowH));
-        x += 60;
+        selectedLabel->setFrame(UIRect2D(x, editTop, 420, rowH));
+        x += 426;
         resetButton->setFrame(UIRect2D(x, editTop, 56, rowH));
         x += 60;
         runButton->setFrame(UIRect2D(x, editTop, 56, rowH));
@@ -682,6 +722,7 @@ public:
         int       count  = 0;
 
         CVB_LoadHelp();
+        StopEditing();
         list->DeleteAllItems();
 
         if (view == CVB_VIEW_CHEATS) {
@@ -720,21 +761,41 @@ public:
 
     void SetView(int v)
     {
-        view = v;
-        Refill();
+        const bool onModels = v == CVB_VIEW_MODELS;
+        UIWidget  *cvarParts[] = {filterLabel, filter, countLabel, list, info, selectedLabel,
+                                  resetButton, runButton, vidButton, sndButton};
+
+        StopEditing();
+        view         = v;
+        cvb_lastView = v;
+        if (onModels && !models) {
+            models = UI_CreateModelPanel(getChildSpace());
+            Layout();
+        }
+        for (size_t i = 0; i < ARRAY_LEN(cvarParts); i++) {
+            cvarParts[i]->setShow(!onModels);
+        }
+        if (models) {
+            models->setShow(onModels);
+        }
+        if (!onModels) {
+            Refill();
+        }
     }
 
     // Filtered to a name and that row selected, as cvarbrowser <name> asks.
     void Select(const char *name)
     {
+        int v = CVB_VIEW_ALL;
+
         Cvar_Set("ui_cvb_filter", name);
-        view = CVB_VIEW_ALL;
+        CVB_LoadHelp();
         for (size_t i = 0; i < cvb_cheats.size(); i++) {
             if (!Q_stricmp(cvb_cheats[i].name.c_str(), name)) {
-                view = CVB_VIEW_CHEATS;
+                v = CVB_VIEW_CHEATS;
             }
         }
-        Refill();
+        SetView(v);
 
         for (int i = 1; i <= list->getNumItems(); i++) {
             CvarBrowserItem *item = (CvarBrowserItem *)list->GetItem(i);
@@ -750,11 +811,58 @@ public:
         }
     }
 
+    // Out of the editor, the keyboard back to the list.
+    void StopEditing(void)
+    {
+        if (editor && editRow) {
+            editRow = 0;
+            editor->setShow(false);
+            uWinMan.ActivateControl(list);
+        }
+    }
+
+    // Row n's value (a cheat's arguments) to edit in place, the editor holding
+    // the keyboard.
+    void Edit(int n)
+    {
+        UIRect2D r;
+
+        if (!list->CellRect(n, CVB_COL_VALUE, r)) {
+            return;
+        }
+        editRow = n;
+        // what it is now, or for a cheat what was typed last for it
+        if (!selectedCheat) {
+            const cvar_t *cv = Cvar_FindVar(selected);
+            Cvar_Set("ui_cvb_value", cv ? (cv->latchedString ? cv->latchedString : cv->string) : "");
+        }
+        editor->UpdateData();
+        editor->setFrame(UIRect2D(r.pos.x, r.pos.y - 1, Q_max(r.size.width, 200.0f), r.size.height + 2));
+        editor->setShow(true);
+        uWinMan.ActivateControl(editor);
+    }
+
+    void OnItemDoubleClicked(Event *ev)
+    {
+        const int n = ev->NumArgs() > 0 ? ev->GetInteger(1) : list->getCurrentItem();
+
+        if (n > 0 && n <= list->getNumItems()) {
+            Event sel(EV_UIListBase_ItemSelected);
+
+            sel.AddInteger(n);
+            OnItemSelected(&sel);
+            Edit(n);
+        }
+    }
+
     void OnItemSelected(Event *ev)
     {
         const int        n    = ev->GetInteger(1);
         CvarBrowserItem *item = n > 0 && n <= list->getNumItems() ? (CvarBrowserItem *)list->GetItem(n) : NULL;
 
+        if (n != editRow) {
+            StopEditing();
+        }
         if (!item) {
             return;
         }
@@ -783,7 +891,7 @@ public:
             info->title    = c.name.c_str();
             info->subtitle = c.args.length() ? va("cheat command   arguments: %s", c.args.c_str()) : "cheat command, no arguments";
             info->body     = c.description.length() ? c.description.c_str() : "No description.";
-            info->footer   = "Needs cheats on (thereisnomonkey 1 in single player). Run it with Run; arguments go in the Value box.";
+            info->footer   = "Needs cheats on (thereisnomonkey 1 in single player). Double-click to type its arguments, Enter runs it; Run runs it bare.";
             return;
         }
 
@@ -840,8 +948,30 @@ public:
 
         UIFloatingWindow::Draw();
 
+        for (int i = 0; i < CVB_NUM_VIEWS; i++) {
+            views[i]->setBackgroundColor(
+                i == view ? UColor(0.25f, 0.32f, 0.45f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true
+            );
+        }
+        if (view == CVB_VIEW_MODELS) {
+            return;
+        }
+
         if (needle != lastFilter) {
             Refill();
+        }
+
+        // The editor follows its row as the list scrolls, and goes when the
+        // row does; and when the keyboard went elsewhere (a click off it).
+        if (editRow) {
+            UIRect2D r;
+
+            if (uWinMan.ActiveControl() != editor || !list->CellRect(editRow, CVB_COL_VALUE, r)) {
+                editRow = 0;
+                editor->setShow(false);
+            } else {
+                editor->setFrame(UIRect2D(r.pos.x, r.pos.y - 1, Q_max(r.size.width, 200.0f), r.size.height + 2));
+            }
         }
 
         // Hovered row first, else the selected one.
@@ -865,21 +995,18 @@ public:
         vidButton->setBackgroundColor(pendVid ? UColor(0.6f, 0.35f, 0.05f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true);
         sndButton->setBackgroundColor(pendSnd ? UColor(0.6f, 0.35f, 0.05f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true);
 
-        for (int i = 0; i < 4; i++) {
-            views[i]->setBackgroundColor(
-                i == view ? UColor(0.25f, 0.32f, 0.45f, 1.0f) : UColor(0.12f, 0.16f, 0.24f, 1.0f), true
-            );
-        }
-
-        selectedLabel->SetLabel(selected.length() ? str(selectedCheat ? "Cheat: " : "Editing: ") + selected : str("Click a row to edit it"));
+        selectedLabel->SetLabel(
+            selected.length() ? str(selectedCheat ? "Cheat: " : "Selected: ") + selected + "   (double-click to edit, Enter to set)"
+                              : str("Double-click a row to edit its value; Enter sets it")
+        );
         runButton->setShow(selectedCheat != 0);
-        setButton->setShow(selectedCheat == 0);
         resetButton->setShow(selectedCheat == 0);
     }
 };
 
 CLASS_DECLARATION(UIFloatingWindow, UICvarBrowser, NULL) {
-    {&EV_UIListBase_ItemSelected, &UICvarBrowser::OnItemSelected   },
+    {&EV_UIListBase_ItemSelected,       &UICvarBrowser::OnItemSelected     },
+    {&EV_UIListBase_ItemDoubleClicked,  &UICvarBrowser::OnItemDoubleClicked},
     {&W_CvarBrowser_ChildSizeChanged, &UICvarBrowser::OnChildSizeChanged},
     {NULL,                            NULL                             }
 };
@@ -902,7 +1029,36 @@ static void CVB_Close(void)
     // Back to the game, unless a menu is up.
     if (clc.state == CA_ACTIVE && !UI_MenuActive()) {
         UI_ActivateView3D();
+        // The mouse back to looking around, unless the console still has it.
+        if (!UI_ConsoleIsVisible()) {
+            IN_MouseOff();
+        }
     }
+}
+
+void UI_CloseCvarBrowser(void)
+{
+    CVB_Close();
+}
+
+static void CVB_Open(void)
+{
+    const float w = Q_min(1100.0f, uid.vidWidth * 0.9f);
+    const float h = Q_min(760.0f, uid.vidHeight * 0.9f);
+
+    cvb_window = new UICvarBrowser();
+    cvb_window->Create(
+        NULL,
+        UIRect2D((uid.vidWidth - w) / 2, (uid.vidHeight - h) / 2, w, h),
+        "Cvars, cheats and models (F7)",
+        UColor(0.1f, 0.13f, 0.19f),
+        UHudColor
+    );
+    cvb_window->Build();
+    uWinMan.ActivateControl(cvb_window);
+    // A cursor for it, as a menu has: opened from a key in game, the mouse
+    // would still turn the view.
+    IN_MouseOn();
 }
 
 // cvarbrowser [name]: opens the window, or closes it when open. With a name,
@@ -920,45 +1076,74 @@ void UI_CvarBrowser_f(void)
         return;
     }
 
-    const float w = Q_min(1100.0f, uid.vidWidth * 0.9f);
-    const float h = Q_min(760.0f, uid.vidHeight * 0.9f);
-
-    cvb_window = new UICvarBrowser();
-    cvb_window->Create(
-        NULL, UIRect2D((uid.vidWidth - w) / 2, (uid.vidHeight - h) / 2, w, h), "Cvars and cheats (F7)", UColor(0.1f, 0.13f, 0.19f), UHudColor
-    );
-    cvb_window->Build();
+    CVB_Open();
     if (name[0]) {
         cvb_window->Select(name);
     }
-    uWinMan.ActivateControl(cvb_window);
 }
 
-// cvarbrowser_view <all|changed|latched|cheats>
+// The window open on a tab (opened if closed), as the model browser's
+// commands ask.
+void UI_CvarBrowserShowTab(const char *tab)
+{
+    if (!cvb_window) {
+        CVB_Open();
+    }
+    for (int i = 0; cvb_window && i < CVB_NUM_VIEWS; i++) {
+        if (!Q_stricmp(tab, cvb_viewNames[i]) && cvb_window->view != i) {
+            cvb_window->SetView(i);
+        }
+    }
+}
+
+// Whether the window is open on that tab.
+qboolean UI_CvarBrowserOnTab(const char *tab)
+{
+    return cvb_window && cvb_window->view >= 0 && cvb_window->view < CVB_NUM_VIEWS && !Q_stricmp(tab, cvb_viewNames[cvb_window->view])
+             ? qtrue
+             : qfalse;
+}
+
+// cvarbrowser_view <all|changed|latched|cheats|models>
 static void UI_CvarBrowserView_f(void)
 {
     if (!cvb_window) {
         return;
     }
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < CVB_NUM_VIEWS; i++) {
         if (!Q_stricmp(Cmd_Argv(1), cvb_viewNames[i])) {
             cvb_window->SetView(i);
         }
     }
 }
 
-// cvarbrowser_set [value]: the selected cvar to the value, or to what is in
-// the Value box.
+// cvarbrowser_set [value]: the selected cvar to the value, or to what was
+// typed in the editor (Enter there runs this); for a cheat, it run with it.
 static void UI_CvarBrowserSet_f(void)
 {
     const char *v;
 
-    if (!cvb_window || !cvb_window->selected.length() || cvb_window->selectedCheat) {
+    if (!cvb_window || !cvb_window->selected.length()) {
         return;
     }
 
     v = Cmd_Argc() > 1 ? Cmd_ArgsFrom(1) : Cvar_VariableString("ui_cvb_value");
-    Cvar_Set(cvb_window->selected, v);
+    if (cvb_window->selectedCheat) {
+        Cbuf_AddText(va("%s %s\n", cvb_window->selected.c_str(), v));
+    } else {
+        Cvar_Set(cvb_window->selected, v);
+    }
+    cvb_window->StopEditing();
+}
+
+// Escape while a value is being edited leaves it, and the window open.
+qboolean UI_CvarBrowserCancelEdit(void)
+{
+    if (!cvb_window || !cvb_window->editRow) {
+        return qfalse;
+    }
+    cvb_window->StopEditing();
+    return qtrue;
 }
 
 // cvarbrowser_reset: the selected cvar back to its default.
@@ -975,13 +1160,13 @@ static void UI_CvarBrowserReset_f(void)
     Cvar_Set("ui_cvb_value", cv ? (cv->latchedString ? cv->latchedString : cv->string) : "");
 }
 
-// cvarbrowser_run: the selected cheat, with what is in the Value box.
+// cvarbrowser_run: the selected cheat, without arguments.
 static void UI_CvarBrowserRun_f(void)
 {
     if (!cvb_window || !cvb_window->selectedCheat) {
         return;
     }
-    Cbuf_AddText(va("%s %s\n", cvb_window->selected.c_str(), Cvar_VariableString("ui_cvb_value")));
+    Cbuf_AddText(va("%s\n", cvb_window->selected.c_str()));
 }
 
 void UI_InitCvarBrowser(void)
