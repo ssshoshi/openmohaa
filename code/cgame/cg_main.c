@@ -88,6 +88,7 @@ cvar_t *cg_firstPersonShadow;
 cvar_t *cg_firstPersonBody;
 cvar_t *cg_firstPersonBodyOffset;
 cvar_t *cg_firstPersonBodyNeckGap;
+cvar_t *cg_firstPersonBodyNeckGapPitch;
 cvar_t *cg_hitmessages;
 cvar_t *cg_acidtrip;
 cvar_t *cg_hud;
@@ -130,6 +131,9 @@ cvar_t *vm_sprint_up;
 cvar_t *vm_sprint_speed;
 cvar_t *vm_sprint_pivot;
 cvar_t *vm_crawl;
+cvar_t *vm_idle;
+cvar_t *vm_idle_scale;
+cvar_t *vm_idle_speed;
 cvar_t *vm_crawl_pitch;
 cvar_t *vm_crawl_yaw;
 cvar_t *vm_crawl_roll;
@@ -203,6 +207,7 @@ void CG_RegisterCvars(void)
     cg_firstPersonBody            = cgi.Cvar_Get("cg_firstPersonBody", "0", CVAR_ARCHIVE);
     cg_firstPersonBodyOffset      = cgi.Cvar_Get("cg_firstPersonBodyOffset", "0", CVAR_ARCHIVE);
     cg_firstPersonBodyNeckGap     = cgi.Cvar_Get("cg_firstPersonBodyNeckGap", "8", 0);
+    cg_firstPersonBodyNeckGapPitch = cgi.Cvar_Get("cg_firstPersonBodyNeckGapPitch", "0.2", 0);
     cg_hitmessages                = cgi.Cvar_Get("cg_hitmessages", "1", CVAR_ARCHIVE);
     cg_acidtrip                   = cgi.Cvar_Get("cg_acidtrip", "0", CVAR_CHEAT);
     cg_hud                        = cgi.Cvar_Get("cg_hud", "0", 0);
@@ -248,6 +253,10 @@ void CG_RegisterCvars(void)
     vm_sprint_up                  = cgi.Cvar_Get("vm_sprint_up", "-1", 0);
     vm_sprint_speed               = cgi.Cvar_Get("vm_sprint_speed", "7", 0);
     vm_sprint_pivot               = cgi.Cvar_Get("vm_sprint_pivot", "16", 0);
+    // Added in OPM: the third person idle on the view weapon (CG_IdleViewModelSway)
+    vm_idle                       = cgi.Cvar_Get("vm_idle", "1", CVAR_ARCHIVE);
+    vm_idle_scale                 = cgi.Cvar_Get("vm_idle_scale", "0.5", 0);
+    vm_idle_speed                 = cgi.Cvar_Get("vm_idle_speed", "3", 0);
     // Added in OPM: the view weapon's pose while crawling (CG_CrawlViewModel)
     vm_crawl                      = cgi.Cvar_Get("vm_crawl", "1", CVAR_ARCHIVE);
     vm_crawl_pitch                = cgi.Cvar_Get("vm_crawl_pitch", "8", 0);
