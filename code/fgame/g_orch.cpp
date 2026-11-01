@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "scriptthread.h"
 #include "scriptexception.h"
 #include "scriptslave.h"
+#include "object.h"
 #include "g_spawn.h"
 #include "../script/scriptvm.h"
 #include "../script/scriptclass.h"
@@ -807,11 +808,13 @@ static int G_OrchSpawnClear(void)
     return count;
 }
 
-// A model on its own, not solid, named so it can be cleared; NULL when it
-// doesn't load.
-static ScriptModel *G_OrchSpawnOne(const str& path, const Vector& at, float face)
+// A model on its own, named so it can be cleared; NULL when it doesn't load.
+// A prop as the map's small ones are (InteractObject): a physics body that
+// falls, is shot about and grabbed, solid to shots (G_PhysicsDecide lets
+// whatever was spawned here move, whatever its size).
+static Animate *G_OrchSpawnOne(const str& path, const Vector& at, float face)
 {
-    ScriptModel *m  = new ScriptModel();
+    Animate     *m  = new InteractObject();
     Event       *ev = new Event(EV_Model);
 
     ev->AddString(path);
@@ -839,7 +842,7 @@ qboolean G_OrchSpawnModelCmd(gentity_t *ent)
     Vector               at;
     float                faceYaw = 0, gap = 16.0f;
     Container<str>       paths;
-    Container<ScriptModel *> models;
+    Container<Animate *> models;
     int                  i;
 
     if (g_gametype->integer != GT_SINGLE_PLAYER) {
@@ -914,7 +917,7 @@ qboolean G_OrchSpawnModelCmd(gentity_t *ent)
     }
 
     for (i = 1; i <= paths.NumObjects(); i++) {
-        ScriptModel *m = G_OrchSpawnOne(paths.ObjectAt(i), base, anglemod(yaw + 180));
+        Animate *m = G_OrchSpawnOne(paths.ObjectAt(i), base, anglemod(yaw + 180));
 
         if (!m) {
             gi.Printf("spawnmodel: %s didn't load\n", paths.ObjectAt(i).c_str());
@@ -930,7 +933,7 @@ qboolean G_OrchSpawnModelCmd(gentity_t *ent)
     // is on their right.
     float total = 0, deepest = 0;
     for (i = 1; i <= models.NumObjects(); i++) {
-        ScriptModel *m = models.ObjectAt(i);
+        Animate *m = models.ObjectAt(i);
         total += Q_max(m->maxs[1] - m->mins[1], 8.0f);
         deepest = Q_max(deepest, m->maxs[0] - m->mins[0]);
         if (i < models.NumObjects()) {
@@ -950,7 +953,7 @@ qboolean G_OrchSpawnModelCmd(gentity_t *ent)
 
     float cursor = -total / 2;
     for (i = 1; i <= models.NumObjects(); i++) {
-        ScriptModel *m     = models.ObjectAt(i);
+        Animate     *m     = models.ObjectAt(i);
         const float  side  = cursor - m->mins[1];
         // Its middle on the aim point, not its origin: its +x points back at the player.
         const float  depth = (m->mins[0] + m->maxs[0]) / 2;

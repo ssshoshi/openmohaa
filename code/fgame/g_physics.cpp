@@ -46,6 +46,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "gamecvars.h"
 #include "g_physics.h"
 #include "g_phys.h"
+#include "g_orch.h"
 #include "sentient.h"
 #include "barrels.h"
 #include "object.h"
@@ -592,6 +593,10 @@ static int G_PhysicsDecide(Entity *ent, float *mass, const char **why)
         }
         byDefault  = true;
         defaultWhy = ent->IsSubclassOfCrateObject() ? "a crate" : "a barrel";
+    } else if (ent->isSubclassOf(InteractObject) && G_OrchSpawned(ent)) {
+        // spawned from the model browser (g_orch.cpp): a prop, whatever its size
+        byDefault  = true;
+        defaultWhy = "spawned from the model browser";
     } else if (ent->isSubclassOf(InteractObject)) {
         byDefault  = ent->size[0] <= 96 && ent->size[1] <= 96 && ent->size[2] <= 96;
         defaultWhy = byDefault ? "small enough to move" : "too big to move";

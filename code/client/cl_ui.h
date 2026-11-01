@@ -87,6 +87,7 @@ void     UI_CvarBrowser_f(void);
 void     UI_CloseCvarBrowser(void);
 void     UI_CvarBrowserShowTab(const char *tab);
 qboolean UI_CvarBrowserOnTab(const char *tab);
+qboolean UI_CvarBrowserCancelEdit(void);
 //  The model browser, the cvar browser's Models tab (cl_uimodelbrowser.cpp)
 void      UI_InitModelBrowser(void);
 void      UI_ShutdownModelBrowser(void);
