@@ -3056,6 +3056,8 @@ void R_CreateBuiltinImages( void ) {
 			const int shift = r_waterReflect->integer == 2 ? 0 : 1;
 
 			tr.waterReflectImage = R_CreateImage("*waterReflect", NULL, width >> shift, height >> shift, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
+			// its depth as an image the air's grid can read (r_volumetric 2)
+			tr.waterReflectDepthImage = R_CreateImage("*waterReflectDepth", NULL, width >> shift, height >> shift, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT24);
 		}
 
 		// Added in OPM: the water's ripples (tr_water.c)

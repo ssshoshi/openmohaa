@@ -462,7 +462,10 @@ void RB_RenderFlare( flare_t *f ) {
 	tess.indexes[tess.numIndexes++] = 2;
 	tess.indexes[tess.numIndexes++] = 3;
 
+	// Added in OPM: the light in the air between it and the eye (r_volumetric 2)
+	RB_FroxelFogDepth(-f->eyeZ);
 	RB_EndSurface();
+	RB_FroxelFogDepth(0.0f);
 }
 
 /*
