@@ -155,7 +155,8 @@ vec3 WetAmount(out vec3 surfN)
 	// the rain: what is out under the sky soaked through, with a film on it
 	// thick where it faces up and in runs down what stands up; nothing on
 	// the undersides it never reaches; puddles on the open ground
-	if (u_Wet.z > 0.0)
+	// (not a cut-out: a tree line, a hedge, a fence is no wall)
+	if (u_Wet.z > 0.0 && u_AlphaTest == 0)
 	{
 		float open  = RainExposed(var_WetPos, surfN) * u_Wet.z;
 		float under = smoothstep(-0.75, -0.3, surfN.z);
@@ -201,7 +202,7 @@ float RainRuns(vec3 p, vec3 n, float t, out vec3 dN)
 	{
 		for (int k = 0; k < 2; k++)
 		{
-			float w    = k == 0 ? 14.0 : 22.0;
+			float w    = k == 0 ? 7.0 : 11.0;
 			float uk   = u + float(k) * 3.7;
 			float c    = floor(uk / w) + float(k) * 173.0;
 			float h    = WetHash(c);
@@ -209,32 +210,32 @@ float RainRuns(vec3 p, vec3 n, float t, out vec3 dN)
 				continue;
 			float x     = fract(uk / w) - mix(0.25, 0.75, WetHash(c + 0.31));
 			float speed = mix(18.0, 46.0, WetHash(c + 0.57));
-			float len   = mix(50.0, 150.0, WetHash(c + 0.83));
+			float len   = mix(40.0, 110.0, WetHash(c + 0.83));
 			// where along its run, the bead at 1, its trail above it fading
 			float s     = fract((v - t * speed) / len + h * 7.0);
 			float trail = smoothstep(0.25, 0.97, s) * (1.0 - smoothstep(0.985, 1.0, s));
 			float head  = smoothstep(0.93, 0.975, s) * (1.0 - smoothstep(0.985, 1.0, s));
 			// a little wider at the bead; wandering side to side as it goes
-			x += (WetNoise(vec2(c, v / 9.0)) - 0.5) * 0.12;
-			float width = mix(0.08, 0.16, WetHash(c + 0.13)) * (1.0 + head * 0.7);
+			x += (WetNoise(vec2(c, v / 9.0)) - 0.5) * 0.1;
+			float width = mix(0.06, 0.1, WetHash(c + 0.13)) * (1.0 + head * 0.4);
 			float prof  = 1.0 - smoothstep(0.0, width, abs(x));
 			float m     = prof * max(trail * 0.75, head);
 			run = max(run, m * steep);
 			// rounded across, and the bead's dome down it
-			dN += across * clamp(x / width, -1.0, 1.0) * m * steep * 0.5;
-			dN += down * head * prof * steep * 0.3;
+			dN += across * clamp(x / width, -1.0, 1.0) * m * steep * 0.35;
+			dN += down * head * prof * steep * 0.2;
 		}
 	}
 
 	// a sheet down a slope, in bands where more of it runs
 	{
-		float sheet = smoothstep(0.97, 0.88, n.z) * smoothstep(0.25, 0.45, n.z);
-		vec2  q  = vec2(u / 16.0, (v - t * 40.0) / 34.0);
+		float sheet = smoothstep(0.97, 0.88, n.z) * smoothstep(0.45, 0.6, n.z);
+		vec2  q  = vec2(u / 7.0, (v - t * 40.0) / 14.0);
 		float e  = 0.08;
 		float n0 = WetNoise(q) * 0.65 + WetNoise(q * 2.7 + 4.1) * 0.35;
 		float nx = WetNoise(q + vec2(e, 0.0)) * 0.65 + WetNoise((q + vec2(e, 0.0)) * 2.7 + 4.1) * 0.35;
 		float ny = WetNoise(q + vec2(0.0, e)) * 0.65 + WetNoise((q + vec2(0.0, e)) * 2.7 + 4.1) * 0.35;
-		dN  += (across * (n0 - nx) + down * (n0 - ny)) / e * 0.12 * sheet;
+		dN  += (across * (n0 - nx) + down * (n0 - ny)) / e * 0.06 * sheet;
 		run  = max(run, sheet * smoothstep(0.35, 0.75, n0));
 	}
 	return run;
@@ -973,7 +974,7 @@ void main()
 		wet.y *= mix(1.0, 0.5, porosity);
 		WetMaterial(wet.xy, porosity, diffuse.rgb, roughness);
 		// the water running down it: darker, and glossy over what is wet
-		diffuse.rgb *= mix(1.0, 0.65, wetRun);
+		diffuse.rgb *= mix(1.0, 0.9, wetRun);
 		roughness    = mix(roughness, 0.06, wetRun);
 		specular.rgb = mix(specular.rgb, max(specular.rgb, vec3(0.02)), wet.y);
 		N  = normalize(mix(N, surfNormal, 0.8 * wet.y) + wetRunN);
@@ -1156,7 +1157,7 @@ void main()
 			{
 				wet.y    = max(wet.y, run);
 				wetRough = mix(wetRough, 0.1, run);
-				diffuse.rgb *= mix(1.0, 0.65, run);
+				diffuse.rgb *= mix(1.0, 0.9, run);
 				wetN     = normalize(wetN + runN * wet.x);
 			}
 		}
