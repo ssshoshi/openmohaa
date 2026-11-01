@@ -259,6 +259,7 @@ uniform mat4      u_SsrPrevViewProj;
 uniform vec4      u_SsrParams; // strength (0: off), how far, near, far
 
 #define SSR_STEPS    16
+#define SSR_MAX_STEPS 40
 #define SSR_REFINE   5
 // rougher than this, the reflection is too blurred to be one
 #define SSR_ROUGHEST 0.45
@@ -270,22 +271,30 @@ float SsrSceneDepth(vec2 uv)
 	return 2.0 * n * f / (f + n - z * (f - n));
 }
 
-// x y z the colour, w how much of it (0: none found)
-vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness)
+// x y z the colour, w how much of it (0: none found); in steps steps (at
+// most SSR_MAX_STEPS). What the ray meets or passes behind before it has
+// risen rise units off the surface is not seen: still water hides the
+// ground around it, the bumps a puddle lies among
+vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness, float steps, float rise)
 {
 	if (u_SsrParams.x <= 0.0 || roughness >= SSR_ROUGHEST)
 		return vec4(0.0);
 
 	vec3  R      = reflect(-E, N);
 	float reach  = u_SsrParams.y;
-	float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+	// steps staggered pixel to pixel; a puddle's (rise > 0), in its many
+	// steps, the same for all: staggered, its hits and misses side by side
+	// were a grain over it
+	float jitter = rise > 0.0 ? 0.5 : fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 	float prevT  = 0.0, t = 0.0;
 	bool  hit    = false;
 	vec4  c;
 
-	for (int i = 0; i < SSR_STEPS; i++)
+	for (int i = 0; i < SSR_MAX_STEPS; i++)
 	{
-		float s = (float(i) + jitter) / float(SSR_STEPS);
+		if (float(i) >= steps)
+			break;
+		float s = (float(i) + jitter) / steps;
 		t = 2.0 + reach * s * s;
 		c = u_SsrViewProj * vec4(P + R * t, 1.0);
 		if (c.w <= 1.0)
@@ -294,7 +303,7 @@ vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness)
 		if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
 			break;
 		float behind = c.w - SsrSceneDepth(uv);
-		if (behind > 0.0)
+		if (behind > 0.0 && dot(R, N) * t >= rise)
 		{
 			// behind what is seen there, not by much: the ray meets it.
 			// Further behind, it passed behind something: what it would
@@ -899,7 +908,7 @@ void main()
 	}
 
   #if defined(USE_SSR)
-	ssr = SsrTrace(var_WetPos, N, E, roughness);
+	ssr = SsrTrace(var_WetPos, N, E, roughness, float(SSR_STEPS), 0.0);
   #endif
 
 	reflectance  = CalcDiffuse(diffuse.rgb, NH, EH, roughness);
@@ -1046,22 +1055,41 @@ void main()
 
 #endif
 
-	// Added in OPM: a puddle mirrors the sky over it, the more the lower it is
-	// seen, its face tilted by the rings of the rain falling in it
+	// Added in OPM: a puddle mirrors what is over it, the more the lower it
+	// is seen, its face tilted by the rings of the rain falling in it: the
+	// world on the screen where the reflected ray finds it (SsrTrace), the
+	// sky where it finds nothing
+	float wetHit = 0.0;
 	if (wet.z > 0.0)
 	{
-		vec3  Ep  = normalize(u_ViewOrigin - var_WetPos);
-		vec3  Np  = normalize(wetSurfN + vec3(RainRipples(var_WetPos.xy, u_RainParams.x), 0.0));
-		float F   = 0.03 + 0.97 * pow(1.0 - clamp(dot(Np, Ep), 0.0, 1.0), 5.0);
-		vec3  R   = reflect(-Ep, Np);
-		vec3  sky = u_WetSky.rgb * mix(0.55, 1.15, smoothstep(0.0, 0.6, R.z));
+		vec3  Ep   = normalize(u_ViewOrigin - var_WetPos);
+		vec2  ring = RainRipples(var_WetPos.xy, u_RainParams.x);
+		vec3  Np   = normalize(wetSurfN + vec3(ring, 0.0));
+		float F    = 0.03 + 0.97 * pow(1.0 - clamp(dot(Np, Ep), 0.0, 1.0), 5.0);
+		vec3  R    = reflect(-Ep, Np);
+		vec3  refl = u_WetSky.rgb * mix(0.55, 1.15, smoothstep(0.0, 0.6, R.z));
+		float most = 0.75;
 
-		gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, clamp(0.04 + F * 1.4, 0.0, 0.75) * wet.z);
+  #if defined(USE_SSR)
+		{
+			// the water lies level whatever the ground under it; only the
+			// rings tilt it, a little
+			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
+			vec4 world = SsrTrace(var_WetPos, Nw, Ep, 0.08, 32.0, 8.0);
+			refl   = mix(refl, world.rgb, world.a);
+			wetHit = world.a;
+			// still water seen low gives back nearly all of what it mirrors
+			most = mix(most, 0.92, world.a);
+		}
+  #endif
+
+		gl_FragColor.rgb = mix(gl_FragColor.rgb, refl, clamp(0.04 + F * 1.4, 0.0, most) * wet.z);
 	}
 
-	// Added in OPM: r_rainDebug: red how wet, green a puddle
+	// Added in OPM: r_rainDebug: red how wet, green a puddle, blue where a
+	// puddle mirrors something on the screen
 	if (u_Wet.w > 9.5)
-		gl_FragColor.rgb = vec3(wet.x, wet.z, 0.0);
+		gl_FragColor.rgb = vec3(wet.x, wet.z, wetHit);
 
 	gl_FragColor.a = alpha;
 
