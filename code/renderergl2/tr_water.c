@@ -755,6 +755,8 @@ static struct {
     float   *height;
     float   *puddle;      // the highest of what puddles gather on, out in the rain (R_RainBuildPuddles)
     int      puddleCount; // r_rainPuddleShaders as it was built for
+    float    lastHeight;  // the height the puddles' mirror last took (R_WaterReflectView)
+    qboolean hasLast;
     int      width, rows;
     float    x0, y0, texel;
     vec2_t   mins, maxs;
@@ -1534,7 +1536,18 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     if (!found && puddleInView) {
         float h;
 
-        if (R_RainPuddleHeight(tr.viewParms.ori.origin, tr.viewParms.ori.axis[0], &h)) {
+        // none along the look: the height it last took, so the mirror is not
+        // dropped and taken up again as the eye turns
+        qboolean have = R_RainPuddleHeight(tr.viewParms.ori.origin, tr.viewParms.ori.axis[0], &h);
+
+        if (have) {
+            rainCover.lastHeight = h;
+            rainCover.hasLast    = qtrue;
+        } else if (rainCover.hasLast && rainCover.lastHeight < tr.viewParms.ori.origin[2] - 8.0f) {
+            h    = rainCover.lastHeight;
+            have = qtrue;
+        }
+        if (have) {
             VectorSet(mirror.normal, 0.0f, 0.0f, 1.0f);
             mirror.dist = h;
             above       = tr.viewParms.ori.origin[2] - h;

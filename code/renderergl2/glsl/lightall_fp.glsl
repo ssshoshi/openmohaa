@@ -1076,14 +1076,21 @@ void main()
 		vec3  refl = u_WetSky.rgb * mix(0.55, 1.15, smoothstep(0.0, 0.6, R.z));
 		float most = 0.75;
 
-		// the world drawn mirrored at the puddles' height, where this one
-		// lies near it: all of it, off the screen too
-		if (u_RainReflect.x > 0.5)
+		// the world drawn mirrored at the puddles' height: all of it, off
+		// the screen too. A puddle higher or lower looks it up where the
+		// eye's ray through it crosses that height: there the mirror gave
+		// back the same way, so what is far off is where it should be, and
+		// only what is near is a little out (twice the difference). Faded
+		// only far off that height, as one at another height went grey and
+		// back as the height the mirror took changed underfoot
+		if (u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
 		{
-			float near = 1.0 - smoothstep(6.0, 20.0, abs(var_WetPos.z - u_RainReflect.y));
+			float near = 1.0 - smoothstep(64.0, 128.0, abs(var_WetPos.z - u_RainReflect.y));
 			if (near > 0.0)
 			{
-				vec4 clip = u_RainReflectMvp * vec4(var_WetPos + vec3(ring * 10.0, 0.0), 1.0);
+				vec3 Q    = u_ViewOrigin + (var_WetPos - u_ViewOrigin)
+					* ((u_ViewOrigin.z - u_RainReflect.y) / (u_ViewOrigin.z - var_WetPos.z));
+				vec4 clip = u_RainReflectMvp * vec4(Q + vec3(ring * 10.0, 0.0), 1.0);
 				vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
 				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, near);
 				wetHit = near;
