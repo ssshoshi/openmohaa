@@ -155,6 +155,72 @@ vec3 WetAmount(out vec3 surfN)
 	return wet;
 }
 
+float WetHash(float x)
+{
+	return fract(sin(x * 91.3458) * 47453.5453);
+}
+
+// Added in OPM: the rain running off what it falls on: down what stands up
+// in rivulets, each a bead sliding down with its wet trail over it, and down
+// a slope (a roof, a bank) in a sheet that ripples as it goes. How much of
+// the film it is here, and the tilt it gives the face (dN, along it)
+float RainRuns(vec3 p, vec3 n, float t, out vec3 dN)
+{
+	dN = vec3(0.0);
+	if (n.z > 0.97 || n.z < -0.25)
+		return 0.0;
+
+	// down the face, and across it
+	vec3  down   = normalize(vec3(0.0, 0.0, -1.0) + n * n.z);
+	vec3  across = normalize(cross(n, down));
+	float u = dot(p, across), v = dot(p, down);
+	float run = 0.0;
+
+	// rivulets, on what stands up
+	float steep = smoothstep(0.8, 0.4, n.z);
+	if (steep > 0.0)
+	{
+		for (int k = 0; k < 2; k++)
+		{
+			float w    = k == 0 ? 14.0 : 22.0;
+			float uk   = u + float(k) * 3.7;
+			float c    = floor(uk / w) + float(k) * 173.0;
+			float h    = WetHash(c);
+			if (h > 0.6)
+				continue;
+			float x     = fract(uk / w) - mix(0.25, 0.75, WetHash(c + 0.31));
+			float speed = mix(18.0, 46.0, WetHash(c + 0.57));
+			float len   = mix(50.0, 150.0, WetHash(c + 0.83));
+			// where along its run, the bead at 1, its trail above it fading
+			float s     = fract((v - t * speed) / len + h * 7.0);
+			float trail = smoothstep(0.25, 0.97, s) * (1.0 - smoothstep(0.985, 1.0, s));
+			float head  = smoothstep(0.93, 0.975, s) * (1.0 - smoothstep(0.985, 1.0, s));
+			// a little wider at the bead; wandering side to side as it goes
+			x += (WetNoise(vec2(c, v / 9.0)) - 0.5) * 0.12;
+			float width = mix(0.08, 0.16, WetHash(c + 0.13)) * (1.0 + head * 0.7);
+			float prof  = 1.0 - smoothstep(0.0, width, abs(x));
+			float m     = prof * max(trail * 0.75, head);
+			run = max(run, m * steep);
+			// rounded across, and the bead's dome down it
+			dN += across * clamp(x / width, -1.0, 1.0) * m * steep * 0.5;
+			dN += down * head * prof * steep * 0.3;
+		}
+	}
+
+	// a sheet down a slope, in bands where more of it runs
+	{
+		float sheet = smoothstep(0.97, 0.88, n.z) * smoothstep(0.25, 0.45, n.z);
+		vec2  q  = vec2(u / 16.0, (v - t * 40.0) / 34.0);
+		float e  = 0.08;
+		float n0 = WetNoise(q) * 0.65 + WetNoise(q * 2.7 + 4.1) * 0.35;
+		float nx = WetNoise(q + vec2(e, 0.0)) * 0.65 + WetNoise((q + vec2(e, 0.0)) * 2.7 + 4.1) * 0.35;
+		float ny = WetNoise(q + vec2(0.0, e)) * 0.65 + WetNoise((q + vec2(0.0, e)) * 2.7 + 4.1) * 0.35;
+		dN  += (across * (n0 - nx) + down * (n0 - ny)) / e * 0.12 * sheet;
+		run  = max(run, sheet * smoothstep(0.35, 0.75, n0));
+	}
+	return run;
+}
+
 // The rain falling in a puddle: rings spreading from where each drop lands,
 // the tilt they give the water's face, along the ground
 vec2 RainRipples(vec2 p, float t)
@@ -741,6 +807,9 @@ void main()
 	vec3 wetSurfN;
 	vec3 wet       = WetAmount(wetSurfN);
 	vec3 wetLight  = lightColor;
+	// Added in OPM: the tilt the rain running down it gives it (RainRuns)
+	vec3 wetRunN   = vec3(0.0);
+	float wetRun   = 0.0;
 	// Added in OPM: the reflection of what is on the screen (SsrTrace)
 	vec4 ssr       = vec4(0.0);
 
@@ -866,12 +935,28 @@ void main()
 	// the normal map's bumps
 	if (wet.x > 0.0)
 	{
+		// the rain running down it (on the world's own surfaces)
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
+		{
+			vec3  runN;
+			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
+			if (run > 0.0)
+			{
+				wet.y   = max(wet.y, run);
+				wetRunN = runN * wet.x;
+				wetRun  = run;
+			}
+		}
+
 		// what drinks the water holds less of it on top
 		float porosity = WetPorosity(roughness, specular.rgb);
 		wet.y *= mix(1.0, 0.5, porosity);
 		WetMaterial(wet.xy, porosity, diffuse.rgb, roughness);
+		// the water running down it: darker, and glossy over what is wet
+		diffuse.rgb *= mix(1.0, 0.65, wetRun);
+		roughness    = mix(roughness, 0.06, wetRun);
 		specular.rgb = mix(specular.rgb, max(specular.rgb, vec3(0.02)), wet.y);
-		N  = normalize(mix(N, surfNormal, 0.8 * wet.y));
+		N  = normalize(mix(N, surfNormal, 0.8 * wet.y) + wetRunN);
 
 		// a puddle: still water over it, darker under, rung by the rain
 		if (wet.z > 0.0)
@@ -1040,8 +1125,21 @@ void main()
 		vec3  F0       = vec3(0.02);
 
 		wet.y *= 0.65;
-		WetMaterial(wet.xy, 0.7, diffuse.rgb, wetRough);
 		vec3 wetN = wetSurfN;
+		// the rain running down it (RainRuns)
+		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
+		{
+			vec3  runN;
+			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
+			if (run > 0.0)
+			{
+				wet.y    = max(wet.y, run);
+				wetRough = mix(wetRough, 0.1, run);
+				diffuse.rgb *= mix(1.0, 0.65, run);
+				wetN     = normalize(wetN + runN * wet.x);
+			}
+		}
+		WetMaterial(wet.xy, 0.7, diffuse.rgb, wetRough);
 		// a puddle: still water, darker under, rung by the rain
 		if (wet.z > 0.0)
 		{
