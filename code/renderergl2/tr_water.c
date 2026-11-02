@@ -78,6 +78,7 @@ cvar_t        *r_waterWet;
 cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map has rained (cg_lens.cpp)
 cvar_t        *r_rainPuddles;
 static cvar_t *r_rainPuddleShaders;
+static cvar_t *r_rainRoofShaders;
 static cvar_t *r_rainFlash;
 static cvar_t *r_rainRunoff;
 static cvar_t *r_rainMist;
@@ -155,6 +156,8 @@ void R_WaterRegisterCvars(void)
     r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
     r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
     r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
+    r_rainRoofShaders = ri.Cvar_Get("r_rainRoofShaders", "roof shingle shngl siding thatch", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainRoofShaders, "In the rain, the textures of roofs, which the rain runs down in a rippling sheet: names or parts of names, separated by spaces or commas (on others it is just wet)");
     r_rainFlash = ri.Cvar_Get("r_rainFlash", "1", CVAR_ARCHIVE);
     r_rainRunoff = ri.Cvar_Get("r_rainRunoff", "1", CVAR_ARCHIVE);
     r_rainMist = ri.Cvar_Get("r_rainMist", "1", CVAR_ARCHIVE);
@@ -2397,25 +2400,30 @@ Added in OPM
   shader asked about, as the draws come in runs of one.
 ===============
 */
-static qboolean R_RainPuddleShader(const shader_t *shader)
+typedef struct {
+    const shader_t *shader;
+    int             count;
+    qboolean        match;
+} rainShaderMatch_t;
+
+// whether the shader's name holds one of the list's words (or the list is
+// empty, if emptyAll), kept for the last shader asked about
+static qboolean R_RainShaderInList(const shader_t *shader, const cvar_t *cv, qboolean emptyAll, rainShaderMatch_t *m)
 {
-    static const shader_t *lastShader;
-    static int             lastCount = -1;
-    static qboolean        last;
-    char                   list[MAX_CVAR_VALUE_STRING];
-    char                  *word, *next;
+    char  list[MAX_CVAR_VALUE_STRING];
+    char *word, *next;
 
     if (!shader) {
         return qfalse;
     }
-    if (shader == lastShader && r_rainPuddleShaders->modificationCount == lastCount) {
-        return last;
+    if (shader == m->shader && cv->modificationCount == m->count) {
+        return m->match;
     }
-    lastShader = shader;
-    lastCount  = r_rainPuddleShaders->modificationCount;
+    m->shader = shader;
+    m->count  = cv->modificationCount;
 
-    Q_strncpyz(list, r_rainPuddleShaders->string, sizeof(list));
-    last = qtrue;
+    Q_strncpyz(list, cv->string, sizeof(list));
+    m->match = emptyAll;
     for (word = list; *word; word = next) {
         while (*word == ' ' || *word == ',') {
             word++;
@@ -2423,17 +2431,40 @@ static qboolean R_RainPuddleShader(const shader_t *shader)
         if (!*word) {
             break;
         }
-        last = qfalse;
+        m->match = qfalse;
         for (next = word; *next && *next != ' ' && *next != ','; next++) {
         }
         if (*next) {
             *next++ = 0;
         }
         if (Q_stristr(shader->name, word)) {
-            return last = qtrue;
+            return m->match = qtrue;
         }
     }
-    return last;
+    return m->match;
+}
+
+static qboolean R_RainPuddleShader(const shader_t *shader)
+{
+    static rainShaderMatch_t m = {NULL, -1, qfalse};
+
+    return R_RainShaderInList(shader, r_rainPuddleShaders, qtrue, &m);
+}
+
+/*
+===============
+R_RainRoofShader
+
+Added in OPM
+  Whether the rain runs down what is drawn with this shader in a sheet, as
+  off a roof (r_rainRoofShaders): on a bank, a wall's cap, it is just wet.
+===============
+*/
+static qboolean R_RainRoofShader(const shader_t *shader)
+{
+    static rainShaderMatch_t m = {NULL, -1, qfalse};
+
+    return R_RainShaderInList(shader, r_rainRoofShaders, qfalse, &m);
 }
 
 void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
@@ -2466,7 +2497,8 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
         const trRefEntity_t *ent = backEnd.currentEntity;
 
         if (ent == &tr.worldEntity && !backEnd.currentStaticModel) {
-            v[3] = 1.0f;
+            // a roof's a quarter more (the sheet down it: RainRuns)
+            v[3] = R_RainRoofShader(tess.shader) ? 1.25f : 1.0f;
         } else if (ent && ent != &tr.worldEntity && (ent->e.renderfx & RF_FIRST_PERSON)) {
             v[3] = 2.0f;
         }

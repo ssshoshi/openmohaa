@@ -139,19 +139,21 @@ float RainExposed(vec3 p, vec3 n)
 
 // How wet it is here (x: the water in it; y: the film on it; z: a puddle
 // standing on it) and which way the surface itself faces
+// the face's own normal, from how it lies on the screen, to the eye
+// (WetAmount): which way is down it, whatever the vertices' normals say
+vec3 wetGeoN = vec3(0.0, 0.0, 1.0);
+
 vec3 WetAmount(out vec3 surfN)
 {
+	wetGeoN = normalize(cross(dFdx(var_WetPos), dFdy(var_WetPos)));
+	if (dot(wetGeoN, u_ViewOrigin - var_WetPos) < 0.0)
+		wetGeoN = -wetGeoN;
 	// faces' winding as the rest of this file has it: the front is the back
 	surfN = normalize(!gl_FrontFacing ? var_WetNormal : -var_WetNormal);
 	// a draw that hands over no normals (the terrain, unless the shader
-	// asks for them): the face's own, from how it lies on the screen, to
-	// the eye
+	// asks for them): the face's own
 	if (dot(var_WetNormal, var_WetNormal) < 1e-4)
-	{
-		surfN = normalize(cross(dFdx(var_WetPos), dFdy(var_WetPos)));
-		if (dot(surfN, u_ViewOrigin - var_WetPos) < 0.0)
-			surfN = -surfN;
-	}
+		surfN = wetGeoN;
 	vec3 wet = vec3(0.0);
 
 	// the beach: up to the tide's mark, which is not a ruled line; the film
@@ -204,7 +206,7 @@ float WetHash(float x)
 // in rivulets, each a bead sliding down with its wet trail over it, and down
 // a slope (a roof, a bank) in a sheet that ripples as it goes. How much of
 // the film it is here, and the tilt it gives the face (dN, along it)
-float RainRuns(vec3 p, vec3 n, float t, out vec3 dN)
+float RainRuns(vec3 p, vec3 n, float t, float roof, out vec3 dN)
 {
 	dN = vec3(0.0);
 	if (n.z > 0.97 || n.z < -0.25)
@@ -216,14 +218,20 @@ float RainRuns(vec3 p, vec3 n, float t, out vec3 dN)
 	float u = dot(p, across), v = dot(p, down);
 	float run = 0.0;
 
-	// rivulets, on what stands up
+	// rivulets, on what stands up: straight down, in columns along the
+	// world's axis nearest the face. Not along the face's normal: smoothed
+	// across a wall, it turns a little from place to place, and so far out
+	// from the world's middle that turned the columns into slants
 	float steep = smoothstep(0.8, 0.4, n.z);
 	if (steep > 0.0)
 	{
+		vec3  rAcross = abs(n.x) < abs(n.y) ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+		vec3  rDown   = vec3(0.0, 0.0, -1.0);
+		float ru = dot(p, rAcross), rv = -p.z;
 		for (int k = 0; k < 2; k++)
 		{
 			float w    = k == 0 ? 7.0 : 11.0;
-			float uk   = u + float(k) * 3.7;
+			float uk   = ru + float(k) * 3.7;
 			float c    = floor(uk / w) + float(k) * 173.0;
 			float h    = WetHash(c);
 			if (h > 0.6)
@@ -232,24 +240,26 @@ float RainRuns(vec3 p, vec3 n, float t, out vec3 dN)
 			float speed = mix(18.0, 46.0, WetHash(c + 0.57));
 			float len   = mix(40.0, 110.0, WetHash(c + 0.83));
 			// where along its run, the bead at 1, its trail above it fading
-			float s     = fract((v - t * speed) / len + h * 7.0);
+			float s     = fract((rv - t * speed) / len + h * 7.0);
 			float trail = smoothstep(0.25, 0.97, s) * (1.0 - smoothstep(0.985, 1.0, s));
 			float head  = smoothstep(0.93, 0.975, s) * (1.0 - smoothstep(0.985, 1.0, s));
 			// a little wider at the bead; wandering side to side as it goes
-			x += (WetNoise(vec2(c, v / 9.0)) - 0.5) * 0.1;
+			x += (WetNoise(vec2(c, rv / 9.0)) - 0.5) * 0.1;
 			float width = mix(0.06, 0.1, WetHash(c + 0.13)) * (1.0 + head * 0.4);
 			float prof  = 1.0 - smoothstep(0.0, width, abs(x));
 			float m     = prof * max(trail * 0.75, head);
 			run = max(run, m * steep);
 			// rounded across, and the bead's dome down it
-			dN += across * clamp(x / width, -1.0, 1.0) * m * steep * 0.35;
-			dN += down * head * prof * steep * 0.2;
+			dN += rAcross * clamp(x / width, -1.0, 1.0) * m * steep * 0.35;
+			dN += rDown * head * prof * steep * 0.2;
 		}
 	}
 
 	// a sheet down a slope, in bands where more of it runs
 	{
-		float sheet = smoothstep(0.97, 0.88, n.z) * smoothstep(0.45, 0.6, n.z);
+		// (on a roof only, r_rainRoofShaders: on a bank, a wall's cap, the
+		// ground, it is just wet)
+		float sheet = smoothstep(0.97, 0.88, n.z) * smoothstep(0.45, 0.6, n.z) * roof;
 		vec2  q  = vec2(u / 7.0, (v - t * 40.0) / 14.0);
 		float e  = 0.08;
 		float n0 = WetNoise(q) * 0.65 + WetNoise(q * 2.7 + 4.1) * 0.35;
@@ -980,7 +990,7 @@ void main()
 		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
 		{
 			vec3  runN;
-			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
+			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, step(0.1, mod(u_Wet.w, 10.0) - 1.0), runN) * wet.x;
 			if (run > 0.0)
 			{
 				wet.y   = max(wet.y, run);
@@ -1172,7 +1182,7 @@ void main()
 		if (abs(mod(u_Wet.w, 10.0) - 1.0) < 0.5 && u_Wet.z > 0.0)
 		{
 			vec3  runN;
-			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, runN) * wet.x;
+			float run = RainRuns(var_WetPos, wetSurfN, u_RainParams.x, step(0.1, mod(u_Wet.w, 10.0) - 1.0), runN) * wet.x;
 			if (run > 0.0)
 			{
 				wet.y    = max(wet.y, run);
