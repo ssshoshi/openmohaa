@@ -2627,6 +2627,11 @@ typedef struct {
 	image_t					*renderDepthImage;
 	image_t					*pshadowMaps[MAX_DRAWN_PSHADOWS];
 	image_t					*screenScratchImage;
+	// Added in OPM: SMAA (tr_smaa.c)
+	image_t					*smaaEdgesImage;
+	image_t					*smaaBlendImage;
+	image_t					*smaaAreaImage;
+	image_t					*smaaSearchImage;
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
 	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
@@ -2664,6 +2669,8 @@ typedef struct {
 	FBO_t					*depthFbo;
 	FBO_t					*pshadowFbos[MAX_DRAWN_PSHADOWS];
 	FBO_t					*screenScratchFbo;
+	FBO_t					*smaaEdgesFbo;	// Added in OPM: SMAA (tr_smaa.c)
+	FBO_t					*smaaBlendFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
 	FBO_t                   *bloomFbo[BLOOM_LEVELS];
@@ -2744,6 +2751,7 @@ typedef struct {
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
+	shaderProgram_t smaaShader[3]; // Added in OPM: SMAA's edges, weights, blend (tr_smaa.c)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
@@ -4154,6 +4162,12 @@ void R_BloomRegisterCvars(void);
 void RB_Bloom(FBO_t *fbo, ivec4_t box);
 qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox);
 extern cvar_t *r_sharpen;
+// Added in OPM: SMAA 1x (tr_smaa.c)
+extern cvar_t *r_smaa;
+qboolean R_SmaaWanted(void);
+void R_SmaaCreateImages(int width, int height);
+void R_SmaaCreateFbos(void);
+qboolean RB_Smaa(FBO_t *src, ivec4_t box, FBO_t *dst);
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);

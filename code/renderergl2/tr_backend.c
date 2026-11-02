@@ -2534,8 +2534,18 @@ const void *RB_PostProcess(const void *data)
 			// Use an intermediate FBO because it can't blit to the same FBO directly
 			// and can't read from an MSAA dstFbo later.
 			RB_ToneMap(srcFbo, srcBox, tr.screenScratchFbo, srcBox, autoExposure);
-			// (Added in OPM: sharpened on its way back, r_sharpen)
-			if (!RB_Sharpen(tr.screenScratchFbo, srcBox, srcFbo, srcBox))
+			// (Added in OPM: anti-aliased, r_smaa, and sharpened on its way
+			// back, r_sharpen; with both, SMAA writes to its edges image,
+			// done with by then, and the sharpening reads it)
+			if (r_smaa->integer && tr.smaaEdgesFbo && r_sharpen->value > 0 && r_smaa->integer > 0
+				&& RB_Smaa(tr.screenScratchFbo, srcBox, tr.smaaEdgesFbo))
+			{
+				if (!RB_Sharpen(tr.smaaEdgesFbo, srcBox, srcFbo, srcBox))
+					FBO_FastBlit(tr.smaaEdgesFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+			}
+			else if (RB_Smaa(tr.screenScratchFbo, srcBox, srcFbo))
+				;
+			else if (!RB_Sharpen(tr.screenScratchFbo, srcBox, srcFbo, srcBox))
 				FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		}
 		else if (r_cameraExposure->value != 0.0f)

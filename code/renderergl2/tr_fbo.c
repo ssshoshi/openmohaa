@@ -318,6 +318,9 @@ void FBO_Init(void)
 		R_CheckFBO(tr.screenScratchFbo);
 	}
 
+	// Added in OPM: SMAA (tr_smaa.c)
+	R_SmaaCreateFbos();
+
 	if (tr.sunRaysImage)
 	{
 		tr.sunRaysFbo = FBO_Create("_sunRays", tr.renderDepthImage->width, tr.renderDepthImage->height);
