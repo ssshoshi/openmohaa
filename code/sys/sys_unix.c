@@ -545,17 +545,10 @@ double Sys_Microseconds (void)
 
 int Sys_Milliseconds (void)
 {
-	struct timeval tp;
-
-	gettimeofday(&tp, NULL);
-
-	if (!sys_timeBase)
-	{
-		sys_timeBase = tp.tv_sec;
-		return tp.tv_usec/1000;
-	}
-
-	curtime = (tp.tv_sec - sys_timeBase)*1000 + tp.tv_usec/1000;
+	// Added in OPM: the monotonic clock of Sys_Microseconds rather than the
+	// wall clock (which NTP can slew), and one clock for both, so the part of
+	// a millisecond the integer game time drops can be measured
+	curtime = (int)(Sys_Microseconds() / 1000.0);
 
 	return curtime;
 }

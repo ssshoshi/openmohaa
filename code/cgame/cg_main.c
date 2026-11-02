@@ -54,6 +54,7 @@ cvar_t *cg_animSpeed;
 cvar_t *cg_debugAnim;
 cvar_t *cg_debugAnimWatch;
 cvar_t *cg_errorDecay;
+cvar_t *cg_subMsecLerp;
 cvar_t *cg_nopredict;
 cvar_t *cg_showmiss;
 cvar_t *cg_addMarks;
@@ -173,6 +174,8 @@ void CG_RegisterCvars(void)
     cg_debugAnim                  = cgi.Cvar_Get("cg_debuganim", "0", CVAR_CHEAT);
     cg_debugAnimWatch             = cgi.Cvar_Get("cg_debuganimwatch", "0", CVAR_CHEAT);
     cg_errorDecay                 = cgi.Cvar_Get("cg_errordecay", "100", 0);
+    // Added in OPM
+    cg_subMsecLerp                = cgi.Cvar_Get("cg_subMsecLerp", "1", CVAR_ARCHIVE);
     cg_nopredict                  = cgi.Cvar_Get("cg_nopredict", "0", 0);
     cg_showmiss                   = cgi.Cvar_Get("cg_showmiss", "0", 0);
     cg_stats                      = cgi.Cvar_Get("cg_stats", "0", 0);
