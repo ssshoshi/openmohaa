@@ -703,6 +703,23 @@ vec3 CalcSpecular(vec3 specular, float NH, float EH, float roughness)
 	return specular * (rrrr / (4.0 * d * d * v));
 }
 
+// Added in OPM: the sun's glint on what is wet (u_WetSun: towards it, how
+// bright). Behind the rain's clouds the way to it is longer than 1 by how
+// overcast it is (R_WaterSetWet), and the glint is the clouds': wide and
+// soft, no bright sun in it
+vec3 WetSunGlint(vec3 N, vec3 E, vec3 specular, float roughness)
+{
+	float len = length(u_WetSun.xyz);
+	if (u_WetSun.w <= 0.0 || len < 0.001)
+		return vec3(0.0);
+	vec3  L  = u_WetSun.xyz / len;
+	float oc = max(len - 1.0, 0.0);
+	vec3  H  = normalize(L + E);
+	roughness = mix(roughness, max(roughness, 0.55), clamp(oc * 2.0, 0.0, 1.0));
+	return u_WetSun.w * clamp(dot(N, L), 0.0, 1.0)
+		* CalcSpecular(specular, clamp(dot(N, H), 0.0, 1.0), clamp(dot(E, H), 0.0, 1.0), roughness);
+}
+
 
 float CalcLightAttenuation(float point, float normDist)
 {
@@ -1157,11 +1174,7 @@ void main()
 		gl_FragColor.rgb += wet.y * (1.0 - ssr.a) * WetSky(N, E, roughness, specular.rgb, wetLight);
     #endif
     #if !defined(USE_PRIMARY_LIGHT) && !defined(SHADOWMAP_MODULATE)
-		{
-			vec3 Hs = normalize(u_WetSun.xyz + E);
-			gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(N, u_WetSun.xyz), 0.0, 1.0)
-				* CalcSpecular(specular.rgb, clamp(dot(N, Hs), 0.0, 1.0), clamp(dot(E, Hs), 0.0, 1.0), roughness);
-		}
+		gl_FragColor.rgb += wet.y * WetSunGlint(N, E, specular.rgb, roughness);
     #endif
 	}
 
@@ -1172,7 +1185,6 @@ void main()
 	{
 		float wetRough = 0.6;
 		vec3  Ew       = normalize(u_ViewOrigin - var_WetPos);
-		vec3  Hs       = normalize(u_WetSun.xyz + Ew);
 		vec3  F0       = vec3(0.02);
 
 		wet.y *= 0.65;
@@ -1202,8 +1214,7 @@ void main()
 		}
 		gl_FragColor.rgb  = diffuse.rgb * lightColor;
 		gl_FragColor.rgb += wet.y * WetSky(wetN, Ew, wetRough, F0, wetLight);
-		gl_FragColor.rgb += wet.y * u_WetSun.w * clamp(dot(wetN, u_WetSun.xyz), 0.0, 1.0)
-			* CalcSpecular(F0, clamp(dot(wetN, Hs), 0.0, 1.0), clamp(dot(Ew, Hs), 0.0, 1.0), wetRough);
+		gl_FragColor.rgb += wet.y * WetSunGlint(wetN, Ew, F0, wetRough);
 	}
 	else
 		gl_FragColor.rgb = diffuse.rgb * lightColor;

@@ -1645,12 +1645,6 @@ float R_RainOvercast(void)
     return R_RainAmount() * Com_Clamp(0.0f, 1.0f, r_rainOvercast->value);
 }
 
-// how much the sun glints on what it lights, 0 to 1: not at all behind the
-// rain's clouds (with any r_rainOvercast), whatever is left of its light
-float R_RainSunShine(void)
-{
-    return r_rainOvercast->value > 0.0f ? 1.0f - R_RainAmount() : 1.0f;
-}
 
 void R_WaterLoadWorld(const char *mapName)
 {
@@ -2573,7 +2567,11 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
         v[3] = Com_Clamp(0.0f, 1.0f, most) * 0.6f;
         // behind the rain's clouds: no sun to glint, in the shade or out
         // of it (a glint is not shadowed, and showed in the shade)
-        v[3] *= R_RainSunShine();
+        // behind the rain's clouds the glint is the clouds', soft and wide
+        // (a sun's sharp one showed in the shade, the sun before the
+        // clouds): how overcast, in how much longer than 1 the way to the
+        // sun is (glsl/lightall_fp.glsl, WetSunGlint)
+        VectorScale(v, 1.0f + R_RainOvercast(), v);
         GLSL_SetUniformVec4(sp, UNIFORM_WETSUN, v);
     }
 }

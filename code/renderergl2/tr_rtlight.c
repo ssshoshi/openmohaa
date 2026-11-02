@@ -6348,7 +6348,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorCopy(rt.sunDir, tr.rtSunDir);
 		// Added in OPM: 1 with a sun, and past that how much it shines: a sun
 		// behind the rain's clouds lights a little and gives no glint
-		tr.rtSunDir[3] = 1.0f + R_RainSunShine();
+		tr.rtSunDir[3] = 1.0f + R_RainOvercast();
 		// Added in OPM: behind the rain's clouds, less of it (R_RainOvercast)
 		VectorScale(rt.sunColor, bake * (1.0f - R_RainOvercast()), tr.rtSunColor);
 		// the screen shadow the depth prepass leaves (RB_RenderDrawSurfList)
