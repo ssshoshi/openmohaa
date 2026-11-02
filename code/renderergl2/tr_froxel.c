@@ -499,6 +499,7 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qb
 	static vec4_t blobs[SMOKE_MAX_BLOBS * 3];
 	int numBlobs, sum;
 	GLuint noise;
+	qboolean mist;
 	vec2_t texCoords[4];
 	vec3_t viewVector;
 	vec4_t box;
@@ -648,9 +649,27 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qb
 	v[3] = 0.0f;
 	GLSL_SetUniformVec4(&tr.froxelShader[0], UNIFORM_FOGAMBIENT, v);
 
+	// the rain's mist, out under the sky, which the smoke's noise drifts
+	// through (R_RainMistParams)
+	{
+		vec4_t cover;
+
+		mist = R_RainMistParams(v, cover, fogScale);
+		if (mist) {
+			GLSL_SetUniformVec4(&tr.froxelShader[0], UNIFORM_RAINCOVER, cover);
+			GL_BindToTMU(tr.rainCoverImage, TMU_RAINCOVER);
+		} else {
+			VectorClear4(v);
+		}
+	}
+
 	// the puffs of smoke, and their noise
 	numBlobs = R_FroxelSmokeBlobs(blobs);
-	noise    = numBlobs ? R_FroxelSmokeNoise() : 0;
+	noise    = (numBlobs || mist) ? R_FroxelSmokeNoise() : 0;
+	if (!noise) {
+		VectorClear4(v);
+	}
+	GLSL_SetUniformVec4(&tr.froxelShader[0], UNIFORM_RAINMIST, v);
 	if (numBlobs) {
 		GLSL_SetUniformSmoke(&tr.froxelShader[0], UNIFORM_SMOKEBLOBS, (const vec4_t *)blobs, numBlobs * 3);
 	}

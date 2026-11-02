@@ -1,0 +1,24 @@
+//=============================================================================
+// maps/m5l1a_opm.scr - OpenMoHAA add-on for m5l1a
+//
+// It is raining when the level starts: global/weather.scr takes its rain,
+// wind and thunder from these level variables when the level has set them,
+// and eases on from there to its patterns (from dry, it took a minute).
+//
+// An add-on (Level::StartMapAddon) and not a change to maps/m5l1a.scr: a
+// savegame keeps a script thread's place as an offset into the compiled map
+// script, so adding lines to it sent every thread of a save made before into
+// the middle of other code (a game crash at the sniper). Runs at level start,
+// before weather.scr reads these, and again whenever a save is loaded, when
+// they are already set and it leaves them.
+//=============================================================================
+
+	if (level.raindensity != NIL)
+		end
+
+	level.windtime = 3
+	level.shuttertime = 0.2
+	level.rainvolume = 0.4
+	level.raindensity = 3
+	level.thundertime = 6
+end

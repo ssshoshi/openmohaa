@@ -534,7 +534,10 @@ enum
 #define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
 #define TMU_SSRDEPTH         26 // and this frame's depth
 #define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
-#define NUM_TEXTURE_UNITS    28
+#define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
+#define TMU_RAINREFLECT      29 // and the view the puddles mirror (R_WaterReflectView)
+#define TMU_RAINREFLECTDEPTH 30 // and its depth, to tell what is under a higher puddle
+#define NUM_TEXTURE_UNITS    31
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -756,6 +759,9 @@ typedef struct shader_s {
     // texture of its first stage, which the program takes its ripples from
     qboolean isWater;
     image_t *waterImage;
+    // Added in OPM: the terrain is drawn with it (R_LoadTerrain): ground the
+    // rain wets, even with an alpha test, where a cut-out takes none of it
+    qboolean isTerrain;
 } shader_t;
 
 enum
@@ -1111,6 +1117,7 @@ typedef enum
 	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
 	UNIFORM_LENSSPOTS,
 	UNIFORM_LENSLOOK,
+	UNIFORM_LENSRAIN,      // the rain on the glass: how wet, the time
 	UNIFORM_BLOOMPARAMS,   // Added in OPM: the bloom (RB_Bloom, glsl/bloom_fp.glsl)
 	UNIFORM_BLOOMTEXEL,
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
@@ -1121,6 +1128,15 @@ typedef enum
 	UNIFORM_SSRPREVVIEWPROJ, // and to the last frame's
 	UNIFORM_SSRPARAMS,      // strength (0: off), reach, near, far
 	UNIFORM_WETSUN,
+	UNIFORM_RAINCOVER,      // Added in OPM: the rain's cover grid: its corner, one over its size
+	UNIFORM_RAINPARAMS,     // the time, the grid's texel, how much ground holds puddles, how much the beads show
+	UNIFORM_RAINCOVERMAP,
+	UNIFORM_RAINREFLECT,    // whether the puddles' mirror was drawn, its height, its share of the image across and up
+	UNIFORM_RAINREFLECTMVP, // how it was seen
+	UNIFORM_RAINREFLECTMAP,
+	UNIFORM_RAINREFLECTDEPTHMAP,
+	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
+	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1345,6 +1361,8 @@ typedef struct {
 	// Added in OPM: the view its water mirrors was drawn first, into
 	// tr.waterReflectImage (R_WaterReflectView): at this height, seen so
 	int			waterReflect;
+	// or, with none, the rain's puddles' (the same fields, the same image)
+	int			rainReflect;
 	vec4_t		waterReflectPlane; // normal, distance
 	vec2_t		waterReflectShare; // of the image across and up
 	mat4_t		waterReflectMvp;
@@ -2634,6 +2652,7 @@ typedef struct {
 	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
 	image_t					*waterReflectDepthImage; // and its depth, for the air in it (tr_froxel.c)
 	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
+	image_t					*rainCoverImage;   // Added in OPM: the highest of the world at each place, from above: what keeps the rain off (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
@@ -3246,6 +3265,14 @@ enum {
 	RT_STAGE_PARTICLE,  // translucent dust or smoke: as RT_STAGE_LIT_BAKED, lit at its corners from every side
 	RT_STAGE_PARTICLE_LIT // the same, as RT_STAGE_LIT
 };
+
+// Added in OPM: in the view water and puddles mirror (VPF_WATERREFLECT) the
+// eye's up is the world's down: a billboard built on the view's axes stood
+// on its head in the world, and so came out the right way up in the mirror
+// (a fire in a puddle). Turned half round, it still faces the eye, and the
+// mirror turns it over.
+#define R_VIEW_UPSIDE_DOWN() ((backEnd.viewParms.flags & VPF_WATERREFLECT) != 0)
+
 qboolean R_RtActive(void);
 int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);
@@ -4109,7 +4136,10 @@ void R_WaterInfo_f(void);
 void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
-void R_WaterSetWet(shaderProgram_t *sp);
+void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage);
+void R_RainFrame(const refdef_t *fd);
+qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale);
+float    R_RainOvercast(void);
 void R_WaterSetDry(shaderProgram_t *sp);
 void RB_WaterSawSky(const shader_t *sh);
 

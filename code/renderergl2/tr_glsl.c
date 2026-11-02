@@ -284,6 +284,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_LensInfo",        GLSL_VEC4 },
 	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
 	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_LensRain",        GLSL_VEC4 },
 	{ "u_BloomParams",     GLSL_VEC4 },
 	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },
@@ -293,7 +294,16 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SsrViewProj",     GLSL_MAT16 },
 	{ "u_SsrPrevViewProj", GLSL_MAT16 },
 	{ "u_SsrParams",       GLSL_VEC4 },
-	{ "u_WetSun",          GLSL_VEC4 }
+	{ "u_WetSun",          GLSL_VEC4 },
+	{ "u_RainCover",       GLSL_VEC4 },
+	{ "u_RainParams",      GLSL_VEC4 },
+	{ "u_RainCoverMap",    GLSL_INT },
+	{ "u_RainReflect",     GLSL_VEC4 },
+	{ "u_RainReflectMvp",  GLSL_MAT16 },
+	{ "u_RainReflectMap",  GLSL_INT },
+	{ "u_RainReflectDepthMap", GLSL_INT },
+	{ "u_RainFlash",       GLSL_VEC4 },
+	{ "u_RainMist",        GLSL_VEC4 }
 };
 
 typedef enum
@@ -405,7 +415,7 @@ static const char *rt_glsl =
 	// the lights this draw may take, four indexes a vec4; u_RtParams.x of them
 	"uniform vec4 u_RtList[RT_MAX_LIGHTS / 4];\n"
 	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
-	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
+	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun, and past that how overcast (R_RainOvercast)
 	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
 	"uniform vec4 u_RtAmbient;\n"
 	"uniform int  u_RtStage;\n"
@@ -782,7 +792,15 @@ static const char *rt_glsl =
 	"				vis = texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r;\n"
 	"			sum += u_RtSunColor.rgb * (ndl * vis);\n"
 	"			if (rt_specOn && dot(N, u_RtSunDir.xyz) > 0.0)\n"
-	"				rt_spec += u_RtSunColor.rgb * (ndl * vis) * RtSpecular(N, u_RtSunDir.xyz);\n"
+	// (w past 1: how overcast, how much of its light the rain's clouds took;
+	// its shine then is theirs, wide and soft, as bright as the sun was)
+	"			{\n"
+	"				float oc = u_RtSunDir.w - 1.0;\n"
+	"				float keep = rt_specRough;\n"
+	"				rt_specRough = mix(rt_specRough, max(rt_specRough, 0.55), clamp(oc * 2.0, 0.0, 1.0));\n"
+	"				rt_spec += u_RtSunColor.rgb / max(1.0 - oc, 0.05) * (ndl * vis) * RtSpecular(N, u_RtSunDir.xyz);\n"
+	"				rt_specRough = keep;\n"
+	"			}\n"
 	"		}\n"
 	"	}\n"
 	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
@@ -1493,8 +1511,9 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	// Added in OPM: room for lightall, which with its header outgrew 32000
 	// (it failed to load, saying only that it could not); static, as two
 	// such buffers are a lot of stack and the shaders are built one at a time
-	static char vpCode[65536];
-	static char fpCode[65536];
+	// (and again: lightall with its header past 65536)
+	static char vpCode[131072];
+	static char fpCode[131072];
 	char *postHeader;
 	int size;
 	int result;
@@ -2348,6 +2367,9 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINREFLECTMAP,  TMU_RAINREFLECT);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINREFLECTDEPTHMAP, TMU_RAINREFLECTDEPTH);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRCOLORMAP,     TMU_SSRCOLOR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRDEPTHMAP,     TMU_SSRDEPTH);
 
@@ -2472,6 +2494,9 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINREFLECTMAP,  TMU_RAINREFLECT);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINREFLECTDEPTHMAP, TMU_RAINREFLECTDEPTH);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTAOMAP,         TMU_RTAO);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
@@ -2919,6 +2944,8 @@ void GLSL_InitGPUShaders(void)
 
 			GLSL_InitUniforms(sp);
 			GLSL_SetUniformInt(sp, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			// Added in OPM: the rain's cover, for its mist (R_RainMistParams)
+			GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP, TMU_RAINCOVER);
 			// the light pass's tile depths off TB_LIGHTMAP, which is the
 			// sun's third cascade (TB_SHADOWMAP3) there
 			GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP, i == 0 ? TB_NORMALMAP : TB_LIGHTMAP);
