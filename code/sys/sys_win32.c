@@ -280,16 +280,11 @@ double Sys_Microseconds (void)
 
 int Sys_Milliseconds (void)
 {
-	int             sys_curtime;
-	static qboolean initialized = qfalse;
-
-	if (!initialized) {
-		sys_timeBase = timeGetTime();
-		initialized = qtrue;
-	}
-	sys_curtime = timeGetTime() - sys_timeBase;
-
-	return sys_curtime;
+	// Added in OPM: the same performance counter as Sys_Microseconds, rather
+	// than timeGetTime, so a frame's whole milliseconds and its microseconds
+	// come from one clock and the part of a millisecond the integer game time
+	// drops can be measured (com_frameTimeFrac)
+	return (int)(Sys_Microseconds() / 1000.0);
 }
 
 /*

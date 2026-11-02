@@ -730,6 +730,9 @@ void CL_CGameRendering( stereoFrame_t stereo );
 void CL_CGame2D( stereoFrame_t stereo );
 void CL_UpdateSnapFlags( void );
 void CL_SetCGameTime( void );
+// Added in OPM: the sub-millisecond part of a serverTime handed to cgame
+void CL_RecordTimeFraction( int serverTime, double frac );
+float CL_TimeFraction( int serverTime );
 void CL_FirstSnapshot( void );
 void CL_ShaderStateChanged( void );
 baseshader_t *CL_GetShaderPointer( int iShaderNum );

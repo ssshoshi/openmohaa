@@ -863,6 +863,7 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 	cgi->R_SetWaterBlood			= re.SetWaterBlood;
 	cgi->R_AddWaterRipples			= re.AddWaterRipples;
 	cgi->R_SetLensSpots			= re.SetLensSpots;
+	cgi->TimeFraction				= CL_TimeFraction;
 	cgi->apiversion					= CGAME_IMPORT_API_VERSION;
 	// FIXME
 	//cgi->pUnknownVar				= NULL;
@@ -1222,6 +1223,49 @@ void CL_UpdateSnapFlags( void ) {
 CL_SetCGameTime
 ==================
 */
+/*
+==================
+CL_RecordTimeFraction / CL_TimeFraction
+
+Added in OPM: cl.serverTime is whole milliseconds, so at a steady frame rate it
+moves on by uneven steps (7, 7, 6, 7 ms at 144 fps) while the frames are shown
+evenly, and what moves on screen moves unevenly with it. Each serverTime
+handed to cgame is kept here with the part of a millisecond it dropped
+(com_frameTimeFrac), for cgame to add back to what is only seen: entity
+interpolation by cg.time, the view by the player state's commandTime (which
+is the serverTime of an earlier frame, so it needs its own lookup).
+==================
+*/
+#define TIME_FRACTIONS 16
+
+static int   timeFractionTime[TIME_FRACTIONS];
+static float timeFractionValue[TIME_FRACTIONS];
+static int   timeFractionNext;
+
+void CL_RecordTimeFraction( int serverTime, double frac ) {
+	timeFractionTime[timeFractionNext] = serverTime;
+	timeFractionValue[timeFractionNext] = (float)frac;
+	timeFractionNext = ( timeFractionNext + 1 ) % TIME_FRACTIONS;
+}
+
+float CL_TimeFraction( int serverTime ) {
+	int i, slot;
+
+	if ( clc.demoplaying && ( cl_timedemo->integer || cl_freezeDemo->integer ) ) {
+		return 0;
+	}
+
+	// newest first
+	for ( i = 1; i <= TIME_FRACTIONS; i++ ) {
+		slot = ( timeFractionNext - i + TIME_FRACTIONS ) % TIME_FRACTIONS;
+		if ( timeFractionTime[slot] == serverTime ) {
+			return timeFractionValue[slot];
+		}
+	}
+
+	return 0;
+}
+
 void CL_SetCGameTime( void ) {
 	// getting a valid frame message ends the connection process
 	if ( clc.state != CA_ACTIVE ) {
@@ -1300,6 +1344,9 @@ void CL_SetCGameTime( void ) {
 		// serverTimeDelta made an adjustment or cl_timeNudge was changed
 		if ( cl.serverTime < cl.oldServerTime ) {
 			cl.serverTime = cl.oldServerTime;
+		} else {
+			// Added in OPM: what this time drops below the millisecond
+			CL_RecordTimeFraction( cl.serverTime, com_frameTimeFrac );
 		}
 
 		// note if we are almost past the latest frame (without timeNudge),

@@ -591,6 +591,18 @@ static int CG_CalcViewValues(void)
     VectorCopy(ps->origin, cg.refdef.vieworg);
     VectorCopy(ps->viewangles, cg.refdefViewAngles);
 
+    // Added in OPM: the predicted state is where the player was at its
+    // command's whole millisecond; carry the eye on by the part of a
+    // millisecond that dropped, so walking does not move it in uneven steps
+    // (7, 7, 6 ms at 144 fps) while frames are shown evenly
+    if (ps->pm_type == PM_NORMAL && !cg_nopredict->integer && !cg_synchronousClients->integer) {
+        float frac = CG_TimeFraction(ps->commandTime);
+
+        if (frac > 0) {
+            VectorMA(cg.refdef.vieworg, frac * 0.001f, ps->velocity, cg.refdef.vieworg);
+        }
+    }
+
     cg.refdefViewAngles[2] += ps->fLeanAngle * 0.1;
 
     if (cg.snap->ps.stats[STAT_HEALTH] > 0) {
@@ -1162,6 +1174,25 @@ static void CG_ReportFrameTimers(void)
     cgTimerFrames = 0;
 }
 
+/*
+=================
+CG_TimeFraction
+
+Added in OPM: the part of a millisecond the engine dropped from a serverTime
+it handed over (cg.time, or the commandTime of a predicted player state), so
+what is seen can follow real time rather than whole-millisecond steps. 0 with
+cg_subMsecLerp 0 or an engine without the entry.
+=================
+*/
+float CG_TimeFraction(int serverTime)
+{
+    if (!cg_subMsecLerp->integer || cgi.apiversion < 8 || !cgi.TimeFraction) {
+        return 0;
+    }
+
+    return cgi.TimeFraction(serverTime);
+}
+
 void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView, qboolean demoPlayback)
 {
     cg.time         = serverTime;
@@ -1199,7 +1230,8 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
         if (delta == 0) {
             cg.frameInterpolation = 0;
         } else {
-            cg.frameInterpolation = (float)(cg.time - cg.snap->serverTime) / delta;
+            // Added in OPM: plus the part of a millisecond cg.time dropped
+            cg.frameInterpolation = ((float)(cg.time - cg.snap->serverTime) + CG_TimeFraction(cg.time)) / delta;
         }
     } else {
         cg.frameInterpolation = 0; // actually, it should never be used, because

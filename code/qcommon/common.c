@@ -125,6 +125,11 @@ cvar_t	*com_legacyprotocol;
 cvar_t	*com_basegame;
 cvar_t  *com_homepath;
 cvar_t	*com_busyWait;
+// Added in OPM: the frame pacer (Com_PaceFrame)
+cvar_t	*com_maxfpsPrecise;
+cvar_t	*com_maxfpsSpinUs;
+cvar_t	*com_paceStats;
+double	com_frameTimeFrac;
 #ifndef DEDICATED
 cvar_t  *con_autochat;
 #endif
@@ -1941,6 +1946,16 @@ void Com_Init( char *commandLine ) {
 	com_maxfpsMinimized = Cvar_Get( "com_maxfpsMinimized", "0", CVAR_ARCHIVE );
 	com_abnormalExit = Cvar_Get( "com_abnormalExit", "0", CVAR_ROM );
 	com_busyWait = Cvar_Get("com_busyWait", "0", CVAR_ARCHIVE);
+	// Added in OPM: the frame pacer
+	com_maxfpsPrecise = Cvar_Get("com_maxfpsPrecise", "1", CVAR_ARCHIVE);
+	Cvar_SetDescription(com_maxfpsPrecise, "Frame cap: 1 starts frames on an even microsecond schedule at exactly com_maxfps "
+		"(which may have a fraction, e.g. 143.9), 0 is the old whole-millisecond cap that alternates frame lengths");
+	com_maxfpsSpinUs = Cvar_Get("com_maxfpsSpinUs", "-1", CVAR_ARCHIVE);
+	Cvar_SetDescription(com_maxfpsSpinUs, "Frame cap (com_maxfpsPrecise 1): microseconds before each frame start spent "
+		"polling the clock instead of sleeping, which wakes up late; -1 learns it from how late sleeps wake, 0 only sleeps");
+	com_paceStats = Cvar_Get("com_paceStats", "0", 0);
+	Cvar_SetDescription(com_paceStats, "Prints every N frames how evenly frames started: mean interval, spread, share within "
+		"0.25 ms of the com_maxfps period, and how many started late");
 
 	if( com_dedicated->integer )
 	{
@@ -2537,6 +2552,189 @@ void Com_ReportFrameTimers( void )
 
 /*
 =================
+Com_PaceCap
+
+Added in OPM: the frame rate to hold now, as a float (0 = none).
+=================
+*/
+static double Com_PaceCap( void )
+{
+	if ( com_minimized->integer && com_maxfpsMinimized->integer > 0 ) {
+		return com_maxfpsMinimized->value;
+	}
+	if ( com_unfocused->integer && com_maxfpsUnfocused->integer > 0 ) {
+		return com_maxfpsUnfocused->value;
+	}
+	if ( com_maxfps->value > 0 ) {
+		return com_maxfps->value;
+	}
+	return 0;
+}
+
+/*
+=================
+Com_PaceStats
+
+Added in OPM: how evenly frames start, every com_paceStats frames.
+=================
+*/
+static double Com_Spread( double sum, double sumSq, int n )
+{
+	double mean = sum / n, var = sumSq / n - mean * mean;
+	return var > 0 ? sqrt( var ) : 0;
+}
+
+static void Com_PaceStats( double usStart, double periodUs, qboolean late )
+{
+	static double lastStart, sum, sumSq;
+	static double lastGame, gameSum, gameSumSq, wholeSum, wholeSumSq;
+	static int    lastWhole;
+	static int    frames, within, lateFrames;
+	double        interval, mean, spread, game, step;
+
+	if ( com_paceStats->integer <= 0 ) {
+		lastStart = 0;
+		frames = within = lateFrames = 0;
+		sum = sumSq = gameSum = gameSumSq = wholeSum = wholeSumSq = 0;
+		return;
+	}
+
+	// game time as the client steps it (whole ms) and with the dropped part
+	// of a millisecond added back, as cgame shows it (cg_subMsecLerp)
+	game = com_frameTime + com_frameTimeFrac;
+
+	if ( lastStart > 0 ) {
+		step = com_frameTime - lastWhole;
+		wholeSum += step;
+		wholeSumSq += step * step;
+		step = game - lastGame;
+		gameSum += step;
+		gameSumSq += step * step;
+
+		interval = usStart - lastStart;
+		sum += interval;
+		sumSq += interval * interval;
+		if ( periodUs > 0 && fabs( interval - periodUs ) <= 250.0 ) {
+			within++;
+		}
+		if ( late ) {
+			lateFrames++;
+		}
+		frames++;
+	}
+	lastStart = usStart;
+	lastGame = game;
+	lastWhole = com_frameTime;
+
+	if ( frames < com_paceStats->integer ) {
+		return;
+	}
+
+	mean = sum / frames;
+	spread = sumSq / frames - mean * mean;
+	spread = spread > 0 ? sqrt( spread ) : 0;
+
+	Com_Printf( "pace: interval %.3fms spread %.3fms period %.3fms within 0.25ms %.1f%% late %i (of %i frames)"
+		" | game step spread: whole ms %.3fms, with fraction %.3fms\n",
+		mean / 1000.0, spread / 1000.0, periodUs / 1000.0, 100.0 * within / frames, lateFrames, frames,
+		Com_Spread( wholeSum, wholeSumSq, frames ), Com_Spread( gameSum, gameSumSq, frames ) );
+
+	frames = within = lateFrames = 0;
+	sum = sumSq = gameSum = gameSumSq = wholeSum = wholeSumSq = 0;
+}
+
+/*
+=================
+Com_PaceFrame
+
+Added in OPM: holds the frame cap on an absolute microsecond schedule.
+
+The stock cap waits for whole milliseconds since the last frame (1000 /
+com_maxfps rounded down, plus a bias that averages the rate out), so at 144
+frames start 6, 7 or 8 ms apart, and the sleep wakes up to a millisecond late on
+top of that. Here each frame has a deadline one period after the previous
+deadline, whatever the frame cost, so errors do not add up and the average is
+the cap exactly. Sleeping wakes late, so the last com_maxfpsSpinUs before the
+deadline polls the clock instead (learnt from how late sleeps wake when -1).
+
+A frame that starts more than a period late resets the schedule rather than
+running the next frames back to back to catch up.
+
+Returns whether the frame started late (no wait at all).
+=================
+*/
+static qboolean Com_PaceFrame( double capFps, double *periodOut )
+{
+	static double deadline;
+	static double learntSpinUs = 1000.0;
+	double        period, now, remain, spinUs, before, overshoot;
+	int           ms;
+	qboolean      late = qfalse;
+
+	period = 1000000.0 / capFps;
+	*periodOut = period;
+
+	now = Sys_Microseconds();
+	if ( deadline <= 0.0 || now - deadline > period ) {
+		// first frame, or more than a frame behind: start a new schedule
+		deadline = now;
+		late = qtrue;
+	} else if ( now >= deadline ) {
+		late = qtrue;
+	}
+
+	for ( ;; ) {
+		if ( com_sv_running->integer ) {
+			SV_SendQueuedPackets();
+		}
+
+		now = Sys_Microseconds();
+		remain = deadline - now;
+
+		// never start two frames in the same millisecond: integer game time
+		// would not move (only possible above 1000 fps or after a late frame)
+		if ( remain <= 0.0 && Sys_Milliseconds() != com_frameTime ) {
+			break;
+		}
+
+		if ( com_maxfpsSpinUs->integer >= 0 ) {
+			spinUs = com_maxfpsSpinUs->integer;
+		} else {
+			spinUs = learntSpinUs;
+		}
+
+		if ( !com_busyWait->integer && remain > spinUs + 1000.0 ) {
+			ms = (int)( ( remain - spinUs ) / 1000.0 );
+			before = now;
+			NET_Sleep( ms );
+
+			// learn how late a sleep wakes: jump up to a late wake at once,
+			// come back down slowly, so one long wake does not leave the
+			// spin high for long and one short one does not drop it
+			overshoot = Sys_Microseconds() - before - ms * 1000.0;
+			if ( overshoot + 200.0 > learntSpinUs ) {
+				learntSpinUs = overshoot + 200.0;
+			} else {
+				learntSpinUs += ( overshoot + 200.0 - learntSpinUs ) * 0.02;
+			}
+			if ( learntSpinUs < 200.0 ) {
+				learntSpinUs = 200.0;
+			} else if ( learntSpinUs > 4000.0 ) {
+				learntSpinUs = 4000.0;
+			}
+		} else if ( remain > 200.0 ) {
+			// let the packets in, without sleeping
+			NET_Sleep( 0 );
+		}
+	}
+
+	deadline += period;
+
+	return late;
+}
+
+/*
+=================
 Com_Frame
 =================
 */
@@ -2552,6 +2750,8 @@ void Com_Frame( void ) {
 	int		timeBeforeEvents;
 	int		timeBeforeClient;
 	int		timeAfter;
+	double	paceFps, pacePeriod = 0, usPaceStart;
+	qboolean	paceLate = qfalse;
   
 
 	if ( setjmp (abortframe) ) {
@@ -2636,33 +2836,57 @@ void Com_Frame( void ) {
 
     usStage = Sys_Microseconds();
 
-    do
-    {
-        if (com_sv_running->integer)
+    // Added in OPM: the frame pacer, for a capped client
+    paceFps = 0;
+    if (!com_timedemo->integer && !com_dedicated->integer && com_maxfpsPrecise->integer) {
+        paceFps = Com_PaceCap();
+    }
+
+    if (paceFps > 0) {
+        paceLate = Com_PaceFrame(paceFps, &pacePeriod);
+    } else {
+        do
         {
-            timeValSV = SV_SendQueuedPackets();
+            if (com_sv_running->integer)
+            {
+                timeValSV = SV_SendQueuedPackets();
 
-            timeVal = Com_TimeVal(minMsec);
+                timeVal = Com_TimeVal(minMsec);
 
-            if (timeValSV < timeVal)
-                timeVal = timeValSV;
-        }
-        else
-            timeVal = Com_TimeVal(minMsec);
+                if (timeValSV < timeVal)
+                    timeVal = timeValSV;
+            }
+            else
+                timeVal = Com_TimeVal(minMsec);
 
-        if (com_busyWait->integer || timeVal < 1)
-            NET_Sleep(0);
-        else
-            NET_Sleep(timeVal - 1);
-    } while (Com_TimeVal(minMsec));
+            if (com_busyWait->integer || timeVal < 1)
+                NET_Sleep(0);
+            else
+                NET_Sleep(timeVal - 1);
+        } while (Com_TimeVal(minMsec));
+    }
 
     com_frameUsec[FRAMETIMER_SLEEP] += Sys_Microseconds() - usStage;
     usStage = Sys_Microseconds();
+
+    usPaceStart = usStage;
 
     IN_Frame();
 
     lastTime = com_frameTime;
     com_frameTime = Com_EventLoop();
+
+    // Added in OPM: the part of a millisecond the integer frame time drops.
+    // Sys_Milliseconds is the whole part of Sys_Microseconds, so this is
+    // where in its millisecond the frame was sampled.
+    com_frameTimeFrac = Sys_Microseconds() / 1000.0 - com_frameTime;
+    if (com_frameTimeFrac < 0 || com_fixedtime->integer || com_timescale->value != 1.0f) {
+        com_frameTimeFrac = 0;
+    } else if (com_frameTimeFrac > 0.999) {
+        com_frameTimeFrac = 0.999;
+    }
+
+    Com_PaceStats(usPaceStart, pacePeriod, paceLate);
 
     msec = com_frameTime - lastTime;
 

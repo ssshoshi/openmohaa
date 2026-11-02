@@ -1117,6 +1117,10 @@ extern	int		time_frontend;
 extern	int		time_backend;		// renderer backend time
 
 extern	int		com_frameTime;
+// Added in OPM: how far past com_frameTime the frame really started, in
+// milliseconds (0..1). Integer game time drops it; cgame adds it back for
+// what is seen (CL_TimeFraction, cg_subMsecLerp).
+extern	double	com_frameTimeFrac;
 extern	int		com_frameMsec;
 
 extern	qboolean	com_errorEntered;
