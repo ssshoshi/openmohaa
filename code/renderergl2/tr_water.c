@@ -2188,14 +2188,6 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     parms.portalPlane.dist = mirror.dist + (puddles ? 2.0f : -1.0f);
     parms.zFar             = 0.0f;
     parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
-    // Added in OPM: the puddles' mirror sees more than the eye: a puddle near
-    // the feet gives back what is high over it, out of the eye's own view
-    // turned over when it looks level (looked up at the image's edge, a
-    // grey smear that grew and shrank as the eye looked up and down)
-    if (puddles) {
-        parms.fovX = 2.0f * RAD2DEG(atan(1.6f * tan(DEG2RAD(oldParms.fovX) * 0.5f)));
-        parms.fovY = 2.0f * RAD2DEG(atan(1.6f * tan(DEG2RAD(oldParms.fovY) * 0.5f)));
-    }
 
     // the same share of the image as the view has of the screen
     parms.targetFbo      = tr.waterReflectFbo;

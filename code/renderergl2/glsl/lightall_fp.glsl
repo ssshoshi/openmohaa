@@ -397,10 +397,6 @@ float SsrSceneDepth(vec2 uv)
 // most SSR_MAX_STEPS). What the ray meets or passes behind before it has
 // risen rise units off the surface is not seen: still water hides the
 // ground around it, the bumps a puddle lies among
-// how far along its ray the last SsrTrace met something (Added in OPM: the
-// puddles take what is near from the screen, what is far from their mirror)
-float ssrHitT = 0.0;
-
 vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness, float steps, float rise)
 {
 	if (u_SsrParams.x <= 0.0 || roughness >= SSR_ROUGHEST)
@@ -457,7 +453,6 @@ vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness, float steps, float rise)
 		}
 		t = b;
 	}
-	ssrHitT = t;
 
 	// there in the last frame
 	vec4 pc = u_SsrPrevViewProj * vec4(P + R * t, 1.0);
@@ -499,22 +494,6 @@ vec3 Fog(vec3 c, vec3 fog, float f)
 	if (u_Linear > 0.5)
 		return Lin(mix(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), fog, f));
 	return mix(c, fog, f);
-}
-
-// Added in OPM: what the map's distance fog over the distance d makes of the
-// colour c, and what c was before the fog over d (Unfog): so a reflection
-// taken from the frame can have the fog of the way it went instead
-float FogAt(float d)
-{
-	return clamp((d - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0) * u_GlobalFogColor.a;
-}
-
-vec3 Unfog(vec3 c, float f)
-{
-	f = min(f, 0.95);
-	if (u_Linear > 0.5)
-		return Lin((pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)) - u_GlobalFogColor.rgb * f) / (1.0 - f));
-	return (c - u_GlobalFogColor.rgb * f) / (1.0 - f);
 }
 
 varying vec4      var_TexCoords;
@@ -1270,24 +1249,10 @@ void main()
 			vec2  uv = (var_WetPos.xy - u_RainCover.xy) * u_RainCover.zw;
 			float hw = texture2D(u_RainCoverMap, clamp(uv, 0.0, 1.0)).r;
 			hw = clamp(hw, var_WetPos.z, var_WetPos.z + 6.0);
-			// a puddle is one level all over: near the mirror's, the
-			// mirror's (the grid's, from cell to cell, made patches of it
-			// that looked the mirror up at other heights, a grey cloud over
-			// the puddle that moved as the eye did)
-			if (u_RainReflect.x > 0.5 && abs(hw - u_RainReflect.y) < 10.0 && var_WetPos.z <= u_RainReflect.y + 2.0)
-				hw = u_RainReflect.y;
 			if (u_ViewOrigin.z - hw > 1.0)
 				Pw = u_ViewOrigin + (var_WetPos - u_ViewOrigin) * ((u_ViewOrigin.z - hw) / (u_ViewOrigin.z - var_WetPos.z));
 		}
 
-		// what the screen gives (its colour, how much of it) and what the
-		// mirror or the sky does, put together at the end: the screen's
-		// over the mirror's, so where it fades it fades to the mirror. (Put
-		// over the sky first, then the mirror over what was left of that,
-		// some of the sky stayed in where it faded, a grey cloud that came
-		// and went over the puddle as the eye moved)
-		vec3  ssrCol = vec3(0.0);
-		float ssrA   = 0.0;
   #if defined(USE_SSR)
 		// what is on the screen: right at any height, so a man's reflection
 		// meets his feet
@@ -1296,33 +1261,8 @@ void main()
 			// rings tilt it, a little
 			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
 			vec4 world = SsrTrace(Pw, Nw, Ep, 0.08, 32.0, 3.0);
-			// what is near only, where there is a mirror: what is far is the
-			// mirror's, which has its own air; the screen's has the air to
-			// the eye in it already, greyer, and faded in and out of the
-			// mirror's it was a grey cloud over the puddle as the eye moved
-			if (u_RainReflect.x > 0.5)
-				world.a *= 1.0 - smoothstep(200.0, 450.0, ssrHitT);
-			// and none at all on a puddle at the mirror's height (all of
-			// those within 10 units of it, which lie at it): the mirror is
-			// right there, near and far, and the screen's, its air and its
-			// misses, was a grey cloud over them as the eye moved. The screen
-			// is for the puddles higher or lower, which the mirror gives
-			// back only nearly
-			if (u_RainReflect.x > 0.5)
-				world.a *= smoothstep(1.0, 6.0, abs(Pw.z - u_RainReflect.y));
-			ssrCol = world.rgb;
-			ssrA   = world.a;
-			// the frame has the fog of the eye's straight way to what the ray
-			// met; the mirror's has the fog of the way the reflection goes,
-			// to the puddle and up from it: the same for both, so where one
-			// gives way to the other they match
-			if (ssrA > 0.0)
-			{
-				vec3  hit = Pw + reflect(-Ep, Nw) * ssrHitT;
-				float f1  = FogAt(distance(u_ViewOrigin, hit));
-				float f2  = FogAt(distance(u_ViewOrigin, Pw) + ssrHitT);
-				ssrCol = Fog(max(Unfog(ssrCol, f1), vec3(0.0)), u_GlobalFogColor.rgb, f2);
-			}
+			refl   = mix(refl, world.rgb, world.a);
+			wetHit = world.a;
 		}
   #endif
 
@@ -1334,7 +1274,7 @@ void main()
 		// little out (the screen has that). One higher than it would look
 		// under the ground: it looks the way its ray goes, far off, where
 		// the mirror has nothing lower than it that way
-		if (ssrA < 0.99 && u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
+		if (wetHit < 0.99 && u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
 		{
 			float dh = Pw.z - u_RainReflect.y;
 			vec4  clip;
@@ -1369,19 +1309,12 @@ void main()
 			}
 			if (near > 0.0)
 			{
-				// (out of the mirror's view, the sky's colour, not its edge
-				// smeared)
-				vec2 at   = clip.xy / max(clip.w, 0.001) * 0.5 + 0.5;
-				vec2 in2  = min(at, vec2(1.0) - at);
-				near *= clip.w > 0.0 ? smoothstep(0.0, 0.04, min(in2.x, in2.y)) : 0.0;
-				at = clamp(at, 0.001, 0.999);
-				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, near);
-				wetHit = near;
+				vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
+				float take = near * (1.0 - wetHit);
+				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, take);
+				wetHit += take;
 			}
 		}
-
-		refl   = mix(refl, ssrCol, ssrA);
-		wetHit = ssrA + (1.0 - ssrA) * wetHit;
 
 		// still water seen low gives back nearly all of what it mirrors
 		most = mix(most, 0.92, wetHit);
