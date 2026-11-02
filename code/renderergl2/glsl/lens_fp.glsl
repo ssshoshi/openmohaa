@@ -70,16 +70,12 @@ float GlassBeads(vec2 p, float t, float wet)
 	return GlassBlob(length(fract(q) - 0.5 - at), r) * life * here;
 }
 
-// where a running drop is across its cell at a height in it: a wandering
-// path, its own for each drop
-float GlassPath(float y, vec3 n)
-{
-	return 0.5 + (n.x - 0.5) * 0.3 + sin(y * (4.0 + 6.0 * n.y) + n.z * 6.283) * 0.08 * (n.z - 0.3);
-}
-
-// drops running down, one in a few of the cells (the wetter the more), each
-// its own: how big, how long it sits before it goes, how fast and how much
-// it gathers speed, and whether it goes in fits or smoothly
+// drops running down, one in a few of the cells (the wetter the more). Each
+// time round a cell's drop is another: where it lands, whether it lands at
+// all, how big. It sits a while, then goes down in one to four legs, each
+// with its own pause, its own pace (slow at first, gathering speed) and its
+// own slight slant; where it paused it may leave a small bead, which dries
+// away slowly
 float GlassRunning(vec2 p, float t, float seed, float wet)
 {
 	const vec2 cell = vec2(1.0 / 8.0, 0.7); // in view heights at this scale
@@ -89,32 +85,78 @@ float GlassRunning(vec2 p, float t, float seed, float wet)
 	vec2  q   = vec2(p.x / cell.x, p.y / cell.y + cn.x);
 	vec2  id  = floor(q);
 	vec2  st  = fract(q);
-	vec3  n   = GlassHash(id + seed * 3.7);
-	vec3  m   = GlassHash(id * 1.31 + seed * 9.1 + 4.2);
+	vec3  h0  = GlassHash(id + seed * 3.7);
 
-	float life = fract(t * (0.05 + 0.12 * m.x) + n.z);
-	float show = smoothstep(0.0, 0.04, life) * smoothstep(1.0, 0.94, life) * step(n.y, 0.22 * wet);
+	// this time round the cell, and this drop's own
+	float lt   = t * (0.06 + 0.1 * h0.x) + h0.z;
+	float life = fract(lt);
+	vec2  cyc  = id + vec2(floor(lt) * 17.31, floor(lt) * 5.13 + seed);
+	vec3  n    = GlassHash(cyc);
+	vec3  m    = GlassHash(cyc * 1.31 + 4.2);
+
+	float show = smoothstep(0.0, 0.03, life) * smoothstep(1.0, 0.92, life) * step(n.y, 0.25 * wet);
 	if (show <= 0.0)
 		return 0.0;
 
-	// it sits, then goes: slow at first, gathering speed
-	float hold = 0.1 + 0.5 * m.y;
-	float go   = clamp((life - hold) / (1.0 - hold), 0.0, 1.0);
-	float gone = pow(go, 1.3 + 1.7 * m.z);
-	// some catch on the glass and slip on again
-	if (m.x > 0.5)
-	{
-		float fits = 2.0 + floor(m.y * 4.0);
-		gone = mix(gone, (floor(gone * fits) + smoothstep(0.5, 1.0, fract(gone * fits))) / fits, 0.8);
-	}
-	float y = 0.85 - 0.72 * gone;
+	float r    = 0.022 * (0.5 + 1.1 * n.x * n.x);
+	float rx   = r / cell.x + 0.03;
+	float hold = 0.05 + 0.35 * m.y;
+	float legs = 1.0 + floor(m.z * 4.0);
+	float tl   = clamp((life - hold) / (0.78 - hold), 0.0, 1.0);
+	float leg  = min(floor(tl * legs), legs - 1.0);
 
-	// the drop: longer the faster it goes, fuller below, where the water
+	// where it is, leg by leg, and the beads it left where it paused
+	float x    = 0.5 + (n.z - 0.5) * 0.3;
+	float water  = 0.0;
+	float gone = 0.0;
+	for (int j = 0; j < 4; j++)
+	{
+		float fj = float(j);
+		if (fj >= legs)
+			break;
+		vec3  k     = GlassHash(cyc + vec2(fj * 3.3, 7.7));
+		float slant = (k.x - 0.5) * 0.5;
+		float y0    = fj / legs;
+		if (fj < leg)
+		{
+			// a leg it has gone down: the bead it may have left at its start
+			if (j > 0 && k.y < 0.6)
+			{
+				float age  = life - (hold + fj / legs * (0.78 - hold));
+				float fade = 1.0 - smoothstep(0.0, 0.2, age);
+				float rb   = r * (0.3 + 0.25 * k.z);
+				vec2  bd   = vec2((st.x - clamp(x, rx, 1.0 - rx)) * cell.x, (st.y - (0.85 - 0.72 * y0)) * cell.y);
+				water += GlassBlob(length(bd), rb) * fade;
+			}
+			x += slant / legs;
+		}
+		else
+		{
+			// the leg it is on: a pause, then away, faster as it goes
+			float tau  = fract(tl * legs);
+			if (tl >= 1.0)
+				tau = 1.0;
+			float pace = pow(smoothstep(0.15 + 0.4 * k.y, 1.0, tau), 1.2 + 1.6 * k.z);
+			gone = (fj + pace) / legs;
+			if (j > 0 && k.y < 0.6 && pace < 1.0)
+			{
+				float rb = r * (0.3 + 0.25 * k.z);
+				vec2  bd = vec2((st.x - clamp(x, rx, 1.0 - rx)) * cell.x, (st.y - (0.85 - 0.72 * y0)) * cell.y);
+				water += GlassBlob(length(bd), rb) * smoothstep(0.0, 0.3, pace);
+			}
+			x += slant * pace / legs;
+			break;
+		}
+	}
+	x = clamp(x, rx, 1.0 - rx);
+
+	// the drop: longer when it goes fast, fuller below, where the water
 	// gathers
-	float r  = 0.022 * (0.5 + 1.1 * n.x * n.x);
-	vec2  d  = vec2((st.x - GlassPath(y, n)) * cell.x, (st.y - y) * cell.y);
-	d.y     *= d.y > 0.0 ? 1.0 - 0.35 * go : 0.75;
-	return GlassBlob(length(d), r) * show;
+	float y = 0.85 - 0.72 * gone;
+	vec2  d = vec2((st.x - x) * cell.x, (st.y - y) * cell.y);
+	d.y    *= d.y > 0.0 ? 0.8 : 0.75;
+	water += GlassBlob(length(d), r);
+	return water * show;
 }
 
 // the water on the glass here, 0 to 1

@@ -304,10 +304,10 @@ static void CG_LensRain(void)
             open = (tr.fraction >= 1.0f || (tr.surfaceFlags & SURF_SKY)) ? qtrue : qfalse;
         }
         if (open) {
-            // some looking ahead, all of it looking up; the heavier the rain
-            // the more (its density runs from under 1 to 10)
-            up   = Com_Clamp(0.0f, 1.0f, (cg.refdef.viewaxis[0][2] + 0.3f) / 1.0f);
-            want = cg_lens_rain->value * (0.45f + 0.55f * up)
+            // a little looking ahead, all of it looking up; the heavier the
+            // rain the more (its density runs from under 1 to 10)
+            up   = Com_Clamp(0.0f, 1.0f, (cg.refdef.viewaxis[0][2] + 0.2f) / 0.9f);
+            want = cg_lens_rain->value * (0.12f + 0.88f * up * up)
                  * Com_Clamp(0.4f, 1.0f, 0.5f + 0.1f * cg.rain.density);
             want = Com_Clamp(0.0f, 1.0f, want);
         }
