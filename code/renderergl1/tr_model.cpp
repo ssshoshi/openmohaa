@@ -1874,7 +1874,7 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
     skelIndex_t       *triangles;
     int                indexes;
     int                baseIndex, baseVertex;
-    short              collapse[1000];
+    short              collapse[TIKI_MAX_VERTEXES];
 
     if (!r_drawstaticmodelpoly->integer) {
         return;

@@ -61,8 +61,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define GORE_GIB_KEY        MAX_GENTITIES // a gib's body is keyed from here up
 #define GORE_GIB_LIGHT_UP   12.f // lit from above its middle: on the ground, the grid there is dark
 #define GORE_MAX_DECAL_FRAGS 320
-#define GORE_SKIN_VERTS     8192
-#define GORE_SKIN_TRIS      12288
+#define GORE_SKIN_VERTS     32768 // (a body smoothed by tools/model-smooth has four times the vertexes)
+#define GORE_SKIN_TRIS      49152
 
 #define GORE_HIT_TTL      250  // ms a hit waits for its body to be drawn
 #define GORE_RAY_BACK     20.f // the shot's line is traced from this far before the hit
