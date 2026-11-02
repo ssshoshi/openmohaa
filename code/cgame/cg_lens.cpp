@@ -274,61 +274,49 @@ void CG_LensBlast(const vec3_t at, int kind, qboolean inWater)
 The rain. Once it has rained on a map, what is out under the sky is wet for
 the rest of it (the renderer's r_rainWet, tr_water.c): the map's weather
 script turns the rain down indoors, and the world does not dry as a man goes
-in. Out under the sky in the rain, a drop lands on the lens now and then, the
-more the higher he looks: looking straight up, a dozen and more a second,
-bigger, and many running down.
+in. Out under the sky in the rain, it rains on the lens: how hard, the more
+the higher he looks and the heavier the rain, goes to the renderer
+(r_lensRain), which draws the drops on the glass, running down and gathering
+(glsl/lens_fp.glsl) and lets it dry when he goes in.
 */
-static void CG_LensRain(float dt)
+static void CG_LensRain(void)
 {
     static int      lastLook;
     static qboolean open;
-    float           up, rate;
+    static float    lastSet = -1.0f;
+    float           want = 0.0f;
 
-    if (cg.rain.density <= 0.0f) {
-        return;
-    }
-    if (cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
+    if (cg.rain.density > 0.0f && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
         cgi.Cvar_Set("r_rainWet", "1");
     }
-    if (!CG_LensOn() || !cg_lens_rain->value || dt <= 0.0f || !cg.snap) {
-        return;
-    }
+    if (cg.rain.density > 0.0f && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
+        float up;
 
-    // nothing over him but the sky
-    if (cg.time - lastLook > 250 || cg.time < lastLook) {
-        trace_t tr;
-        vec3_t  end;
+        // nothing over him but the sky
+        if (cg.time - lastLook > 250 || cg.time < lastLook) {
+            trace_t tr;
+            vec3_t  end;
 
-        lastLook = cg.time;
-        VectorCopy(cg.refdef.vieworg, end);
-        end[2] += 4096.0f;
-        CG_Trace(&tr, cg.refdef.vieworg, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SOLID, qfalse, qtrue, "lens rain");
-        open = (tr.fraction >= 1.0f || (tr.surfaceFlags & SURF_SKY)) ? qtrue : qfalse;
-    }
-    if (!open) {
-        return;
-    }
-
-    // drops a second: a few looking ahead, many looking up, hardly any down;
-    // the heavier the rain the more (its density runs from under 1 to 10)
-    up   = Q_max(0.0f, cg.refdef.viewaxis[0][2] + 0.25f);
-    rate = cg_lens_rain->value * (0.2f + 7.0f * up * up * up)
-         * Com_Clamp(0.5f, 2.0f, 0.6f + 0.15f * cg.rain.density);
-    // several a frame when it comes to that
-    for (float left = rate * dt; left > 0.0f; left -= 1.0f) {
-        cgLensSpot_t *s;
-        float         size;
-
-        if (left < 1.0f && random() >= left) {
-            break;
+            lastLook = cg.time;
+            VectorCopy(cg.refdef.vieworg, end);
+            end[2] += 4096.0f;
+            CG_Trace(&tr, cg.refdef.vieworg, vec3_origin, vec3_origin, end, cg.snap->ps.clientNum, MASK_SOLID, qfalse, qtrue, "lens rain");
+            open = (tr.fraction >= 1.0f || (tr.surfaceFlags & SURF_SKY)) ? qtrue : qfalse;
         }
-        // bigger ones looking up, as they gather and run together
-        size = 0.007f + random() * random() * (0.02f + 0.02f * Q_min(1.0f, up));
-        s    = CG_LensNew(
-            LENS_WATER, 0.05f + random() * 0.9f, 0.1f + random() * 0.85f, size, 2200 + (int)(random() * 2500),
-            0.75f + 0.25f * random()
-        );
-        s->slide = s->size > 0.014f ? 0.02f + random() * (0.06f + 0.08f * Q_min(1.0f, up)) : 0.0f;
+        if (open) {
+            // some looking ahead, all of it looking up; the heavier the rain
+            // the more (its density runs from under 1 to 10)
+            up   = Com_Clamp(0.0f, 1.0f, (cg.refdef.viewaxis[0][2] + 0.3f) / 1.0f);
+            want = cg_lens_rain->value * (0.45f + 0.55f * up)
+                 * Com_Clamp(0.4f, 1.0f, 0.5f + 0.1f * cg.rain.density);
+            want = Com_Clamp(0.0f, 1.0f, want);
+        }
+    }
+    // in steps, so the cvar is set now and then, not every frame
+    want = floor(want * 20.0f + 0.5f) / 20.0f;
+    if (want != lastSet) {
+        lastSet = want;
+        cgi.Cvar_Set("r_lensRain", va("%.2f", want));
     }
 }
 
@@ -344,7 +332,7 @@ void CG_LensFrame(void)
         dt = 0.0f;
     }
 
-    CG_LensRain(dt);
+    CG_LensRain();
     if (!CG_LensOn()) {
         return;
     }

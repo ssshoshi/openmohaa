@@ -284,6 +284,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_LensInfo",        GLSL_VEC4 },
 	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
 	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_LensRain",        GLSL_VEC4 },
 	{ "u_BloomParams",     GLSL_VEC4 },
 	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },

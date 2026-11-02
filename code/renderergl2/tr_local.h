@@ -1116,6 +1116,7 @@ typedef enum
 	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
 	UNIFORM_LENSSPOTS,
 	UNIFORM_LENSLOOK,
+	UNIFORM_LENSRAIN,      // the rain on the glass: how wet, the time
 	UNIFORM_BLOOMPARAMS,   // Added in OPM: the bloom (RB_Bloom, glsl/bloom_fp.glsl)
 	UNIFORM_BLOOMTEXEL,
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)

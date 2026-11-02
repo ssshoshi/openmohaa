@@ -11,6 +11,7 @@ uniform sampler2D u_ScreenImageMap; // the frame
 uniform vec4 u_LensInfo;                     // how many, the view's width over its height, how far it is across a texel of the copy
 uniform vec4 u_LensSpots[WATER_MAX_SPOTS];   // x, y (a share of the view), how big (a share of its height), how much of it is left
 uniform vec4 u_LensLook[WATER_MAX_SPOTS];    // what (0 water, 1 blood, 2 dirt), a seed, how far it has run down, 0
+uniform vec4 u_LensRain;                     // how wet the glass is from the rain (0 to 1), the time in seconds
 
 varying vec2 var_Tex;
 varying vec2 var_View;
@@ -34,6 +35,100 @@ float Clouds(vec2 x)
 	return Noise(x) * 0.6 + Noise(x * 2.1 + 3.7) * 0.28 + Noise(x * 4.3 + 9.1) * 0.12;
 }
 
+// The rain on the glass. Three kinds of water, each a height on the glass
+// (0 none, 1 the top of a drop) that the light through it is bent by:
+// beads that land and sit, then dry away; and drops that run, in fits,
+// down a wandering path, leaving a line of small beads behind them where
+// they went, in two sizes. Where they meet they run together.
+
+// a drop's height at a distance from its middle: a dome, which bends the
+// light all across it as a lens does (flat topped, only its rim did)
+float GlassDome(float len, float r)
+{
+	float q = len / max(r, 0.0001);
+	return q < 1.0 ? sqrt(1.0 - q * q) : 0.0;
+}
+
+vec3 GlassHash(vec2 id)
+{
+	return fract(sin(vec3(dot(id, vec2(127.1, 311.7)), dot(id, vec2(269.5, 183.3)), dot(id, vec2(419.2, 371.9)))) * 43758.5453);
+}
+
+// beads sitting on the glass: one to a cell, here and there, landing at
+// once and drying away slowly
+float GlassBeads(vec2 p, float t)
+{
+	vec2  q  = p * 26.0;
+	vec2  id = floor(q);
+	vec3  n  = GlassHash(id + 7.3);
+	// kept inside its cell (cut by its edge, it drew a box)
+	float r  = 0.08 + 0.17 * n.z;
+	vec2  at = (n.xy - 0.5) * (0.9 - 2.0 * r);
+	float c  = fract(t * 0.04 + n.z * 3.1);
+	float life = smoothstep(0.0, 0.02, c) * smoothstep(1.0, 0.35, c) * step(0.4, fract(n.z * 13.1));
+
+	return GlassDome(length(fract(q) - 0.5 - at), r) * life;
+}
+
+// where a running drop is across its column at a height in it
+float GlassPath(float y, vec3 n)
+{
+	return 0.5 + (n.x - 0.5) * 0.2 + sin(y * 7.0 + n.y * 6.283) * 0.1 * (n.z - 0.35);
+}
+
+// drops running down: one to a cell of a column, starting high in it, going
+// down in fits (it holds, then slips), the beads of its trail above it
+// thinning out and smaller the further back
+float GlassRunning(vec2 p, float t, float seed)
+{
+	const vec2 cell = vec2(1.0 / 9.0, 0.6); // in view heights at this scale
+
+	float col = floor(p.x / cell.x);
+	vec3  cn  = GlassHash(vec2(col, seed));
+	vec2  q   = vec2(p.x / cell.x, p.y / cell.y + cn.x);
+	vec2  id  = floor(q);
+	vec2  st  = fract(q);
+	vec3  n   = GlassHash(id + seed * 3.7);
+
+	float life = fract(t * (0.09 + 0.08 * n.y) + n.z);
+	float fits = 5.0;
+	float gone = (floor(life * fits) + smoothstep(0.55, 1.0, fract(life * fits))) / fits;
+	float y    = 0.85 - 0.72 * gone;
+	float show = smoothstep(0.0, 0.05, life) * smoothstep(1.0, 0.92, life) * step(0.25, n.y);
+
+	// the drop: rounder below, where the water gathers
+	float r  = 0.017 * (0.75 + 0.5 * n.x);
+	vec2  d  = vec2((st.x - GlassPath(y, n)) * cell.x, (st.y - y) * cell.y);
+	d.y     *= d.y > 0.0 ? 1.35 : 0.85;
+	float m  = GlassDome(length(d), r);
+
+	// its trail: beads left where it went, above it
+	float back = (st.y - y) * cell.y;
+	if (back > 0.0)
+	{
+		float gap   = r * 1.9;
+		float k     = back / gap;
+		float along = (fract(k) - 0.5) * gap;
+		float dx    = (st.x - GlassPath(st.y, n)) * cell.x;
+		float rb    = r * (0.5 - 0.25 * smoothstep(0.0, 0.3, back));
+		float here  = step(0.35, fract(sin(floor(k) * 91.7 + n.z * 37.0) * 4375.5));
+		float fade  = smoothstep(0.35, 0.0, back);
+		// (a bead left out is left out: a smoothstep from 0 to 0 is no
+		// shape at all, and drew boxes)
+		m = max(m, GlassDome(length(vec2(dx, along)), rb) * fade * here);
+	}
+	return m * show;
+}
+
+// the water on the glass here, 0 to 1, as much of each as it is wet
+float GlassWater(vec2 p, float t, float wet)
+{
+	float h = GlassBeads(p, t) * smoothstep(0.0, 0.4, wet);
+	h = max(h, GlassRunning(p, t, 1.0) * smoothstep(0.1, 0.6, wet));
+	h = max(h, GlassRunning(p * 1.6 + vec2(3.1, 1.7), t * 1.1, 2.0) * smoothstep(0.35, 0.9, wet));
+	return h;
+}
+
 void main()
 {
 	float aspect = u_LensInfo.y;
@@ -42,6 +137,29 @@ void main()
 	float glint  = 0.0;       // the sky's light caught on one
 	float blood  = 0.0;
 	float dirt   = 0.0;
+
+	// the rain on the glass: what is behind bent by how the water lies on
+	// it, darker where it is steep (a drop's rim), lit where it faces up
+	if (u_LensRain.x > 0.002)
+	{
+		vec2  p  = (var_View - 0.5) * vec2(aspect, 1.0);
+		float t  = u_LensRain.y;
+		float e  = 0.0015;
+		float h  = GlassWater(p, t, u_LensRain.x);
+		vec2  dh = vec2(GlassWater(p + vec2(e, 0.0), t, u_LensRain.x) - h, GlassWater(p + vec2(0.0, e), t, u_LensRain.x) - h);
+
+		// a drop turns what is behind it over: the further from its
+		// middle, the further across it looks (its steep rim, not too far)
+		vec2 lens = dh / e * 0.012;
+		float ll  = length(lens);
+		if (ll > 0.05)
+			lens *= 0.05 / ll;
+		bent  += lens;
+		// darker at the rim, where it sends the light away; the sky caught
+		// high on it
+		shade  = max(shade, smoothstep(0.0, 0.25, h) * (1.0 - smoothstep(0.25, 0.75, h)) * 0.22);
+		glint  = max(glint, clamp(dot(normalize(dh + 0.00001), vec2(-0.6, 0.8)), 0.0, 1.0) * smoothstep(0.4, 0.9, h) * 0.18);
+	}
 
 	int count = int(u_LensInfo.x + 0.5);
 	for (int i = 0; i < WATER_MAX_SPOTS; i++)
