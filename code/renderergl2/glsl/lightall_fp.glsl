@@ -1264,6 +1264,14 @@ void main()
 				Pw = u_ViewOrigin + (var_WetPos - u_ViewOrigin) * ((u_ViewOrigin.z - hw) / (u_ViewOrigin.z - var_WetPos.z));
 		}
 
+		// what the screen gives (its colour, how much of it) and what the
+		// mirror or the sky does, put together at the end: the screen's
+		// over the mirror's, so where it fades it fades to the mirror. (Put
+		// over the sky first, then the mirror over what was left of that,
+		// some of the sky stayed in where it faded, a grey cloud that came
+		// and went over the puddle as the eye moved)
+		vec3  ssrCol = vec3(0.0);
+		float ssrA   = 0.0;
   #if defined(USE_SSR)
 		// what is on the screen: right at any height, so a man's reflection
 		// meets his feet
@@ -1278,8 +1286,8 @@ void main()
 			// mirror's it was a grey cloud over the puddle as the eye moved
 			if (u_RainReflect.x > 0.5)
 				world.a *= 1.0 - smoothstep(200.0, 450.0, ssrHitT);
-			refl   = mix(refl, world.rgb, world.a);
-			wetHit = world.a;
+			ssrCol = world.rgb;
+			ssrA   = world.a;
 		}
   #endif
 
@@ -1291,7 +1299,7 @@ void main()
 		// little out (the screen has that). One higher than it would look
 		// under the ground: it looks the way its ray goes, far off, where
 		// the mirror has nothing lower than it that way
-		if (wetHit < 0.99 && u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
+		if (ssrA < 0.99 && u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
 		{
 			float dh = Pw.z - u_RainReflect.y;
 			vec4  clip;
@@ -1332,11 +1340,13 @@ void main()
 				vec2 in2  = min(at, vec2(1.0) - at);
 				near *= clip.w > 0.0 ? smoothstep(0.0, 0.04, min(in2.x, in2.y)) : 0.0;
 				at = clamp(at, 0.001, 0.999);
-				float take = near * (1.0 - wetHit);
-				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, take);
-				wetHit += take;
+				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, near);
+				wetHit = near;
 			}
 		}
+
+		refl   = mix(refl, ssrCol, ssrA);
+		wetHit = ssrA + (1.0 - ssrA) * wetHit;
 
 		// still water seen low gives back nearly all of what it mirrors
 		most = mix(most, 0.92, wetHit);
