@@ -2458,6 +2458,247 @@ int Com_TimeVal(int minMsec)
 }
 
 /*
+=============================================================================
+
+LOAD PROFILER
+
+Added in OPM, after the RTCW Castle Operations remaster's load profiler. A map
+load shows its loading screen only when the loaders stop to redraw it, so the
+window can sit still for a second or more while one stage works; these are
+the gaps. com_loadProfile 1 records every frame presented from the start of a
+map load (Com_LoadProfileBegin, SV_SpawnServer) to the first frame of the
+game, and prints how long the load took, how many frames it showed, the
+longest gap, the 95th percentile gap and how many went over 33 ms (30 fps),
+then the worst gaps: the stage they started and ended in (Com_LoadProfileMark)
+and the file that held them up longest (the time from opening one file to
+opening the next is put down to the first, which is its loading and whatever
+was done with it). com_loadProfile 2 also prints every stage as it starts.
+
+=============================================================================
+*/
+
+#define LOADPROFILE_WORST 12
+#define LOADPROFILE_GAPS  8192
+
+typedef struct {
+	float       gap;
+	float       at;
+	const char *from;
+	const char *to;
+	char        slowest[MAX_QPATH];
+	float       slowestMs;
+} loadGap_t;
+
+static struct {
+	qboolean    active;
+	char        why[MAX_QPATH];
+	double      start;
+	double      lastPresent;
+	const char *stage;
+	const char *gapStartStage;
+	double      hintTime;
+	char        hint[MAX_QPATH];
+	char        gapSlowest[MAX_QPATH];
+	double      gapSlowestMs;
+	int         frames;
+	int         numGaps;
+	float       gaps[LOADPROFILE_GAPS];
+	loadGap_t   worst[LOADPROFILE_WORST];
+	int         numWorst;
+	double      kindMs[8];
+	int         kindCount[8];
+} loadProfile;
+
+// what kind of file the time went to, for the totals
+static const char *loadKinds[8] = { "_nh/_n.png", "_s.png", "other .png", ".dds", ".tga/.jpg", "models", "sounds", "other" };
+
+static int Com_LoadProfileKind( const char *name )
+{
+	const char *ext = COM_GetExtension( name );
+
+	if ( !Q_stricmp( ext, "png" ) ) {
+		if ( Q_stristr( name, "_nh." ) || Q_stristr( name, "_n." ) ) {
+			return 0;
+		}
+		if ( Q_stristr( name, "_s." ) ) {
+			return 1;
+		}
+		return 2;
+	}
+	if ( !Q_stricmp( ext, "dds" ) ) {
+		return 3;
+	}
+	if ( !Q_stricmp( ext, "tga" ) || !Q_stricmp( ext, "jpg" ) ) {
+		return 4;
+	}
+	if ( !Q_stricmp( ext, "tik" ) || !Q_stricmp( ext, "skd" ) || !Q_stricmp( ext, "skb" ) || !Q_stricmp( ext, "skc" ) || !Q_stricmp( ext, "lod" ) ) {
+		return 5;
+	}
+	if ( !Q_stricmp( ext, "wav" ) || !Q_stricmp( ext, "mp3" ) || !Q_stricmp( ext, "ogg" ) ) {
+		return 6;
+	}
+	return 7;
+}
+
+static cvar_t *com_loadProfile;
+
+static int Com_LoadProfileCompare( const void *a, const void *b )
+{
+	float fa = *(const float *)a, fb = *(const float *)b;
+	return fa < fb ? -1 : ( fa > fb ? 1 : 0 );
+}
+
+void Com_LoadProfileBegin( const char *why )
+{
+	if ( !com_loadProfile ) {
+		com_loadProfile = Cvar_Get( "com_loadProfile", "0", 0 );
+		Cvar_SetDescription( com_loadProfile, "Map load profiler: 1 prints, when a load ends, how long the screen sat still "
+			"between frames and what it was doing; 2 also prints each load stage as it starts" );
+	}
+	if ( !com_loadProfile->integer ) {
+		loadProfile.active = qfalse;
+		return;
+	}
+
+	Com_Memset( &loadProfile, 0, sizeof( loadProfile ) );
+	loadProfile.active = qtrue;
+	Q_strncpyz( loadProfile.why, why, sizeof( loadProfile.why ) );
+	loadProfile.start = loadProfile.lastPresent = loadProfile.hintTime = Sys_Microseconds();
+	loadProfile.stage = loadProfile.gapStartStage = "begin";
+}
+
+void Com_LoadProfileMark( const char *stage )
+{
+	if ( !loadProfile.active ) {
+		return;
+	}
+
+	loadProfile.stage = stage;
+	if ( com_loadProfile->integer >= 2 ) {
+		Com_Printf( "LOADPROFILE_MARK %.0fms %s\n", ( Sys_Microseconds() - loadProfile.start ) / 1000.0, stage );
+	}
+}
+
+// the time since the last file was opened, put down to that file
+static void Com_LoadProfileHold( double now )
+{
+	double held = ( now - loadProfile.hintTime ) / 1000.0;
+
+	if ( loadProfile.hint[0] ) {
+		int kind = Com_LoadProfileKind( loadProfile.hint );
+
+		loadProfile.kindMs[kind] += held;
+	}
+	if ( loadProfile.hint[0] && held > loadProfile.gapSlowestMs ) {
+		loadProfile.gapSlowestMs = held;
+		Q_strncpyz( loadProfile.gapSlowest, loadProfile.hint, sizeof( loadProfile.gapSlowest ) );
+	}
+	loadProfile.hintTime = now;
+}
+
+void Com_LoadProfileHint( const char *asset )
+{
+	if ( !loadProfile.active || !asset ) {
+		return;
+	}
+
+	Com_LoadProfileHold( Sys_Microseconds() );
+	Q_strncpyz( loadProfile.hint, asset, sizeof( loadProfile.hint ) );
+	loadProfile.kindCount[Com_LoadProfileKind( asset )]++;
+}
+
+static void Com_LoadProfileReport( double now )
+{
+	float sorted[LOADPROFILE_GAPS];
+	int   i, over33 = 0;
+	float p95 = 0;
+
+	for ( i = 0; i < loadProfile.numGaps; i++ ) {
+		sorted[i] = loadProfile.gaps[i];
+		if ( sorted[i] > 33.0f ) {
+			over33++;
+		}
+	}
+	if ( loadProfile.numGaps ) {
+		qsort( sorted, loadProfile.numGaps, sizeof( float ), Com_LoadProfileCompare );
+		p95 = sorted[(int)( ( loadProfile.numGaps - 1 ) * 0.95f )];
+	}
+
+	Com_Printf( "LOADPROFILE %s total=%.0fms frames=%i maxgap=%.0fms p95=%.0fms over33=%i\n",
+		loadProfile.why, ( now - loadProfile.start ) / 1000.0, loadProfile.frames,
+		loadProfile.numWorst ? loadProfile.worst[0].gap : 0.0f, p95, over33 );
+
+	// where the time between file opens went, by kind of file (time spent
+	// on a file includes whatever was done with it before the next opened)
+	for ( i = 0; i < 8; i++ ) {
+		if ( loadProfile.kindCount[i] ) {
+			Com_Printf( "LOADPROFILE_KIND %-11s %6.0fms over %4i opens (%.1fms each)\n", loadKinds[i],
+				loadProfile.kindMs[i], loadProfile.kindCount[i], loadProfile.kindMs[i] / loadProfile.kindCount[i] );
+		}
+	}
+
+	for ( i = 0; i < loadProfile.numWorst; i++ ) {
+		const loadGap_t *g = &loadProfile.worst[i];
+
+		Com_Printf( "LOADPROFILE_GAP %5.0fms at %6.0fms  %s -> %s  slowest %s (%.0fms)\n",
+			g->gap, g->at, g->from, g->to, g->slowest[0] ? g->slowest : "-", g->slowestMs );
+	}
+}
+
+void Com_LoadProfilePresent( qboolean loaded )
+{
+	double    now, gap;
+	loadGap_t entry;
+	int       i;
+
+	if ( !loadProfile.active ) {
+		return;
+	}
+
+	now = Sys_Microseconds();
+	gap = ( now - loadProfile.lastPresent ) / 1000.0;
+
+	// the file still being dealt with when the frame came counts up to now
+	// (and on into the next gap, from now)
+	Com_LoadProfileHold( now );
+
+	loadProfile.frames++;
+	if ( loadProfile.numGaps < LOADPROFILE_GAPS ) {
+		loadProfile.gaps[loadProfile.numGaps++] = gap;
+	}
+
+	// keep the worst gaps, longest first
+	entry.gap = gap;
+	entry.at = ( loadProfile.lastPresent - loadProfile.start ) / 1000.0;
+	entry.from = loadProfile.gapStartStage;
+	entry.to = loadProfile.stage;
+	Q_strncpyz( entry.slowest, loadProfile.gapSlowest, sizeof( entry.slowest ) );
+	entry.slowestMs = loadProfile.gapSlowestMs;
+
+	for ( i = loadProfile.numWorst; i > 0 && loadProfile.worst[i - 1].gap < entry.gap; i-- ) {
+		if ( i < LOADPROFILE_WORST ) {
+			loadProfile.worst[i] = loadProfile.worst[i - 1];
+		}
+	}
+	if ( i < LOADPROFILE_WORST ) {
+		loadProfile.worst[i] = entry;
+		if ( loadProfile.numWorst < LOADPROFILE_WORST ) {
+			loadProfile.numWorst++;
+		}
+	}
+
+	loadProfile.lastPresent = now;
+	loadProfile.gapStartStage = loadProfile.stage;
+	loadProfile.gapSlowest[0] = '\0';
+	loadProfile.gapSlowestMs = 0;
+
+	if ( loaded ) {
+		Com_LoadProfileReport( now );
+		loadProfile.active = qfalse;
+	}
+}
+
+/*
 =================
 Com_ReportFrameTimers
 

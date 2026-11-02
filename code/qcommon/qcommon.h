@@ -1059,6 +1059,13 @@ typedef enum {
 extern	double	com_frameUsec[FRAMETIMER_COUNT];
 
 void	Com_ReportFrameTimers( void );
+
+// Added in OPM: the load profiler (com_loadProfile): every frame shown while a
+// map loads, and what ran in the longest waits between them
+void	Com_LoadProfileBegin( const char *why );
+void	Com_LoadProfileMark( const char *stage );	// a string literal
+void	Com_LoadProfileHint( const char *asset );
+void	Com_LoadProfilePresent( qboolean loaded );
 extern	cvar_t	*com_timescale;
 extern	cvar_t	*com_sv_running;
 extern	cvar_t	*com_cl_running;

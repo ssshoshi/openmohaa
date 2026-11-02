@@ -1685,6 +1685,9 @@ separate file or a ZIP file.
 */
 long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE, qboolean quiet)
 {
+	// Added in OPM: what the load profiler names (com_loadProfile)
+	Com_LoadProfileHint(filename);
+
 	searchpath_t *search;
 	long len;
 	qboolean isLocalConfig;
