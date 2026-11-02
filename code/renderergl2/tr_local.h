@@ -4137,6 +4137,8 @@ void RE_AddWaterRipples(const float *ripples, int numRipples);
 void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage);
 void R_RainFrame(const refdef_t *fd);
 qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale);
+float    R_RainOvercast(void);
+float    R_RainSunShine(void);
 void R_WaterSetDry(shaderProgram_t *sp);
 void RB_WaterSawSky(const shader_t *sh);
 

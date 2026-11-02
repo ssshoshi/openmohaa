@@ -79,6 +79,7 @@ cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map 
 cvar_t        *r_rainPuddles;
 static cvar_t *r_rainPuddleShaders;
 static cvar_t *r_rainRoofShaders;
+static cvar_t *r_rainOvercast;
 static cvar_t *r_rainFlash;
 static cvar_t *r_rainRunoff;
 static cvar_t *r_rainMist;
@@ -158,6 +159,8 @@ void R_WaterRegisterCvars(void)
     r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
     r_rainRoofShaders = ri.Cvar_Get("r_rainRoofShaders", "roof shingle shngl siding thatch", CVAR_ARCHIVE);
     ri.Cvar_SetDescription(r_rainRoofShaders, "In the rain, the textures of roofs, which the rain runs down in a rippling sheet: names or parts of names, separated by spaces or commas (on others it is just wet)");
+    r_rainOvercast = ri.Cvar_Get("r_rainOvercast", "0.7", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainOvercast, "In the rain, how much of the sun's light the clouds take, 0 to 1 (its glint on the wet goes with it)");
     r_rainFlash = ri.Cvar_Get("r_rainFlash", "1", CVAR_ARCHIVE);
     r_rainRunoff = ri.Cvar_Get("r_rainRunoff", "1", CVAR_ARCHIVE);
     r_rainMist = ri.Cvar_Get("r_rainMist", "1", CVAR_ARCHIVE);
@@ -1627,6 +1630,28 @@ static float R_RainAmount(void)
     return rainCover.on ? Com_Clamp(0.0f, 1.0f, r_rainWet->value) : 0.0f;
 }
 
+/*
+===============
+R_RainOvercast
+
+Added in OPM
+  How much of the sun the rain's clouds hide, 0 to 1 (r_rainOvercast): the
+  realtime sun is that much dimmer (R_RtSetupFrame), and its glint on what
+  the rain has wet (R_WaterSetWet) goes the same way.
+===============
+*/
+float R_RainOvercast(void)
+{
+    return R_RainAmount() * Com_Clamp(0.0f, 1.0f, r_rainOvercast->value);
+}
+
+// how much the sun glints on what it lights, 0 to 1: not at all behind the
+// rain's clouds (with any r_rainOvercast), whatever is left of its light
+float R_RainSunShine(void)
+{
+    return r_rainOvercast->value > 0.0f ? 1.0f - R_RainAmount() : 1.0f;
+}
+
 void R_WaterLoadWorld(const char *mapName)
 {
     int i;
@@ -2546,6 +2571,9 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
         VectorCopy(backEnd.refdef.sunDir, v);
         VectorNormalize(v);
         v[3] = Com_Clamp(0.0f, 1.0f, most) * 0.6f;
+        // behind the rain's clouds: no sun to glint, in the shade or out
+        // of it (a glint is not shadowed, and showed in the shade)
+        v[3] *= R_RainSunShine();
         GLSL_SetUniformVec4(sp, UNIFORM_WETSUN, v);
     }
 }

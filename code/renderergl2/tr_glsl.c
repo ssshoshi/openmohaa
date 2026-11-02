@@ -414,7 +414,7 @@ static const char *rt_glsl =
 	// the lights this draw may take, four indexes a vec4; u_RtParams.x of them
 	"uniform vec4 u_RtList[RT_MAX_LIGHTS / 4];\n"
 	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
-	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
+	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun, and how much it shines past that (to 2)
 	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
 	"uniform vec4 u_RtAmbient;\n"
 	"uniform int  u_RtStage;\n"
@@ -791,7 +791,8 @@ static const char *rt_glsl =
 	"				vis = texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r;\n"
 	"			sum += u_RtSunColor.rgb * (ndl * vis);\n"
 	"			if (rt_specOn && dot(N, u_RtSunDir.xyz) > 0.0)\n"
-	"				rt_spec += u_RtSunColor.rgb * (ndl * vis) * RtSpecular(N, u_RtSunDir.xyz);\n"
+	// (w past 1: how much of a shine it gives; none behind the rain's clouds)
+	"				rt_spec += u_RtSunColor.rgb * (ndl * vis * (u_RtSunDir.w - 1.0)) * RtSpecular(N, u_RtSunDir.xyz);\n"
 	"		}\n"
 	"	}\n"
 	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
