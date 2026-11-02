@@ -536,7 +536,8 @@ enum
 #define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
 #define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
 #define TMU_RAINREFLECT      29 // and the view the puddles mirror (R_WaterReflectView)
-#define NUM_TEXTURE_UNITS    30
+#define TMU_RAINREFLECTDEPTH 30 // and its depth, to tell what is under a higher puddle
+#define NUM_TEXTURE_UNITS    31
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -1133,6 +1134,7 @@ typedef enum
 	UNIFORM_RAINREFLECT,    // whether the puddles' mirror was drawn, its height, its share of the image across and up
 	UNIFORM_RAINREFLECTMVP, // how it was seen
 	UNIFORM_RAINREFLECTMAP,
+	UNIFORM_RAINREFLECTDEPTHMAP,
 	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
 	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
 

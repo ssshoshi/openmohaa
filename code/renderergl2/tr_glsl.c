@@ -301,6 +301,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RainReflect",     GLSL_VEC4 },
 	{ "u_RainReflectMvp",  GLSL_MAT16 },
 	{ "u_RainReflectMap",  GLSL_INT },
+	{ "u_RainReflectDepthMap", GLSL_INT },
 	{ "u_RainFlash",       GLSL_VEC4 },
 	{ "u_RainMist",        GLSL_VEC4 }
 };
@@ -1510,8 +1511,9 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	// Added in OPM: room for lightall, which with its header outgrew 32000
 	// (it failed to load, saying only that it could not); static, as two
 	// such buffers are a lot of stack and the shaders are built one at a time
-	static char vpCode[65536];
-	static char fpCode[65536];
+	// (and again: lightall with its header past 65536)
+	static char vpCode[131072];
+	static char fpCode[131072];
 	char *postHeader;
 	int size;
 	int result;
@@ -2367,6 +2369,7 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINREFLECTMAP,  TMU_RAINREFLECT);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINREFLECTDEPTHMAP, TMU_RAINREFLECTDEPTH);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRCOLORMAP,     TMU_SSRCOLOR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRDEPTHMAP,     TMU_SSRDEPTH);
 
@@ -2493,6 +2496,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
 	GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
 	GLSL_SetUniformInt(sp, UNIFORM_RAINREFLECTMAP,  TMU_RAINREFLECT);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINREFLECTDEPTHMAP, TMU_RAINREFLECTDEPTH);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTAOMAP,         TMU_RTAO);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);

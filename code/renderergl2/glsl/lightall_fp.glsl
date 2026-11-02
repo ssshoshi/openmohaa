@@ -78,6 +78,7 @@ uniform vec4      u_RainParams;
 // the world the puddles mirror, drawn from under them (R_WaterReflectView):
 // whether there is it, its height, its share of the image across and up
 uniform sampler2D u_RainReflectMap;
+uniform sampler2D u_RainReflectDepthMap; // its depth
 uniform vec4      u_RainReflect;
 uniform mat4      u_RainReflectMvp;
 // a lightning flash: its light, how strong (R_RainFrame)
@@ -1271,16 +1272,43 @@ void main()
 		// where the eye's ray through it crosses that height, which gives
 		// back the same way: far off where it should be, what is near a
 		// little out (the screen has that). One higher than it would look
-		// under the ground (the underside of what lay over the plane)
+		// under the ground: it looks the way its ray goes, far off, where
+		// the mirror has nothing lower than it that way
 		if (wetHit < 0.99 && u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
 		{
-			float dh   = Pw.z - u_RainReflect.y;
-			float near = dh > 0.0 ? 1.0 - smoothstep(3.0, 10.0, dh) : 1.0 - smoothstep(96.0, 160.0, -dh);
+			float dh = Pw.z - u_RainReflect.y;
+			vec4  clip;
+			float near;
+			if (dh <= 3.0)
+			{
+				near = 1.0 - smoothstep(96.0, 160.0, -dh);
+				vec3 Q = u_ViewOrigin + (var_WetPos - u_ViewOrigin)
+					* ((u_ViewOrigin.z - u_RainReflect.y) / (u_ViewOrigin.z - var_WetPos.z));
+				clip = u_RainReflectMvp * vec4(Q + vec3(ring * 10.0, 0.0), 1.0);
+			}
+			else
+			{
+				// higher than the mirror: what lies the way its reflected ray
+				// goes, far off (what is near is the screen's), unless what
+				// the mirror drew that way is lower than this puddle: the
+				// ground or rubble it lies on, seen from under it
+				vec3 Rw = reflect(-Ep, normalize(vec3(ring * 0.1, 1.0)));
+				vec3 X  = Pw + Rw * 4000.0;
+				clip = u_RainReflectMvp * vec4(X, 1.0);
+				near = 0.0;
+				if (clip.w > 0.1)
+				{
+					vec3  Em = vec3(u_ViewOrigin.xy, 2.0 * u_RainReflect.y - u_ViewOrigin.z);
+					float k  = (Pw.z - Em.z) / max(X.z - Em.z, 0.001);
+					vec4  cy = u_RainReflectMvp * vec4(Em + (X - Em) * clamp(k, 0.0, 1.0), 1.0);
+					vec2  at = clamp(clip.xy / clip.w * 0.5 + 0.5, 0.001, 0.999);
+					float ds = texture2D(u_RainReflectDepthMap, at * u_RainReflect.zw).r;
+					float dy = cy.w > 0.0 ? cy.z / cy.w * 0.5 + 0.5 : 0.0;
+					near = ds > dy ? 1.0 : 0.0;
+				}
+			}
 			if (near > 0.0)
 			{
-				vec3 Q    = u_ViewOrigin + (var_WetPos - u_ViewOrigin)
-					* ((u_ViewOrigin.z - u_RainReflect.y) / (u_ViewOrigin.z - var_WetPos.z));
-				vec4 clip = u_RainReflectMvp * vec4(Q + vec3(ring * 10.0, 0.0), 1.0);
 				vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
 				float take = near * (1.0 - wetHit);
 				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, take);

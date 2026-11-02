@@ -2559,6 +2559,7 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
                 backEnd.viewParms.waterReflectShare[1]);
             GLSL_SetUniformMat4(sp, UNIFORM_RAINREFLECTMVP, backEnd.viewParms.waterReflectMvp);
             GL_BindToTMU(tr.waterReflectImage, TMU_RAINREFLECT);
+            GL_BindToTMU(tr.waterReflectDepthImage ? tr.waterReflectDepthImage : tr.whiteImage, TMU_RAINREFLECTDEPTH);
         } else {
             VectorClear4(v);
         }
