@@ -1254,6 +1254,12 @@ void main()
 			vec2  uv = (var_WetPos.xy - u_RainCover.xy) * u_RainCover.zw;
 			float hw = texture2D(u_RainCoverMap, clamp(uv, 0.0, 1.0)).r;
 			hw = clamp(hw, var_WetPos.z, var_WetPos.z + 6.0);
+			// a puddle is one level all over: near the mirror's, the
+			// mirror's (the grid's, from cell to cell, made patches of it
+			// that looked the mirror up at other heights, a grey cloud over
+			// the puddle that moved as the eye did)
+			if (u_RainReflect.x > 0.5 && abs(hw - u_RainReflect.y) < 10.0 && var_WetPos.z <= u_RainReflect.y + 2.0)
+				hw = u_RainReflect.y;
 			if (u_ViewOrigin.z - hw > 1.0)
 				Pw = u_ViewOrigin + (var_WetPos - u_ViewOrigin) * ((u_ViewOrigin.z - hw) / (u_ViewOrigin.z - var_WetPos.z));
 		}
