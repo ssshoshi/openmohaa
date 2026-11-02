@@ -3932,6 +3932,10 @@ void RE_LoadWorldMap( const char *name ) {
 	//=========================
 
 	// determine vertex light directions
+	// Added in OPM: rounded brushwork edges (r_bevel), before the vertexes'
+	// light directions are worked out
+	R_BevelWorld(&s_worldData);
+
 	R_CalcVertexLightDirs();
 
 	// determine which parts of the map are in sunlight
