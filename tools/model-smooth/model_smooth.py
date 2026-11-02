@@ -226,7 +226,7 @@ def dot(a, b):
 # --- one Loop level
 
 
-def subdivide(s, crease_cos, decal_tris, min_weight):
+def subdivide(s, crease_cos, decal_tris, min_weight, scheme="butterfly"):
     n = len(s.verts)
     tris = s.tris
     if n < 3 or not tris:
@@ -292,10 +292,10 @@ def subdivide(s, crease_cos, decal_tris, min_weight):
     morphs = [morphs_of(s.verts[reps[t]]) for t in range(nt)]
     normals = [s.verts[reps[t]].normal for t in range(nt)]
 
-    # the vertexes moved
+    # the vertexes moved (Loop); the butterfly scheme leaves them where they are
     new_skin, new_morph, new_normal = [], [], []
     for t in range(nt):
-        if flat[t]:
+        if flat[t] or scheme == "butterfly":
             terms = [(1.0, t)]
         elif boundary[t]:
             if len(boundary[t]) == 2:
@@ -315,11 +315,27 @@ def subdivide(s, crease_cos, decal_tris, min_weight):
         new_normal.append(normalize(tuple(sum(a * normals[u][i] for a, u in terms) for i in range(3))))
 
     # the edges' new vertexes, per welded edge
+    def wing(x, y, z):
+        # the vertex across edge x-y from z, or None
+        o = edges.get((min(x, y), max(x, y)), [])
+        if len(o) != 2:
+            return None
+        return o[1] if o[0] == z else o[0] if o[1] == z else None
+
     edge_skin, edge_morph, edge_normal = {}, {}, {}
     for key, opp in edges.items():
         a, b = key
         if flat[a] or len(opp) != 2:
             terms = [(0.5, a), (0.5, b)]
+        elif scheme == "butterfly":
+            # interpolating: the original vertexes stay, the new one sits on
+            # the curve through its neighbours (Dyn, Levin, Gregory 1990)
+            c, d = opp
+            wings = [wing(a, c, b), wing(b, c, a), wing(a, d, b), wing(b, d, a)]
+            if None in wings:
+                terms = [(0.5, a), (0.5, b)]
+            else:
+                terms = [(0.5, a), (0.5, b), (0.125, c), (0.125, d)] + [(-0.0625, w) for w in wings]
         else:
             terms = [(0.375, a), (0.375, b), (0.125, opp[0]), (0.125, opp[1])]
         edge_skin[key] = mix([(w, skins[u]) for w, u in terms])
@@ -393,6 +409,10 @@ def main():
     ap.add_argument("--crease", type=float, default=60.0, help="degrees between normals past which an edge stays a hard edge")
     ap.add_argument("--decal-tris", type=int, default=24, help="pieces apart from the rest under this are cut, not smoothed")
     ap.add_argument("--min-weight", type=float, default=0.01, help="weights under this are dropped from new vertexes")
+    ap.add_argument("--scheme", choices=("butterfly", "loop"), default="butterfly",
+                    help="butterfly (default) keeps every original vertex where it was and only places the new ones on a smooth "
+                    "curve, so pieces laid over others (straps, a pack on a shirt) stay where they were drawn and textures stay "
+                    "pinned; loop moves every vertex onto the limit surface: smoother, but overlays can sink into what is under them")
     args = ap.parse_args()
 
     if args.list:
@@ -431,7 +451,7 @@ def main():
             before = sum(len(s.tris) for s in skd.surfaces)
             changed = 0
             for i, s in enumerate(skd.surfaces):
-                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight)
+                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight, args.scheme)
                 if out:
                     skd.surfaces[i] = out
                     changed += 1
