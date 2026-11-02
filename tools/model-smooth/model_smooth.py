@@ -409,6 +409,8 @@ def main():
     ap.add_argument("--crease", type=float, default=60.0, help="degrees between normals past which an edge stays a hard edge")
     ap.add_argument("--decal-tris", type=int, default=24, help="pieces apart from the rest under this are cut, not smoothed")
     ap.add_argument("--min-weight", type=float, default=0.01, help="weights under this are dropped from new vertexes")
+    ap.add_argument("--loop", metavar="REGEX", help="models matching this use the loop scheme whatever --scheme says "
+                    "(closed, smooth shapes nothing is laid over, such as helmets)")
     ap.add_argument("--scheme", choices=("butterfly", "loop"), default="butterfly",
                     help="butterfly (default) keeps every original vertex where it was and only places the new ones on a smooth "
                     "curve, so pieces laid over others (straps, a pack on a shirt) stay where they were drawn and textures stay "
@@ -450,8 +452,9 @@ def main():
                 continue
             before = sum(len(s.tris) for s in skd.surfaces)
             changed = 0
+            scheme = "loop" if args.loop and re.search(args.loop, path, re.I) else args.scheme
             for i, s in enumerate(skd.surfaces):
-                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight, args.scheme)
+                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight, scheme)
                 if out:
                     skd.surfaces[i] = out
                     changed += 1
@@ -460,7 +463,7 @@ def main():
             if changed:
                 done += 1
                 z.writestr(path, write(skd))
-            print(f"{path}: {changed}/{len(skd.surfaces)} surfaces, {before} -> {after} triangles")
+            print(f"{path}: {changed}/{len(skd.surfaces)} surfaces, {before} -> {after} triangles ({scheme})")
         z.close()
         print(f"{done} of {total} models written to {args.pk3}")
         return

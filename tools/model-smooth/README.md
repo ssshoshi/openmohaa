@@ -4,8 +4,9 @@ Smoother MOH:AA skeletal meshes (`.skd`): one level of subdivision, with the ski
 the interpolating butterfly (`--scheme butterfly`): every original vertex stays where it was and only the new ones
 sit on a smooth curve, so pieces laid over others (straps and packs from the gear models over a shirt) stay where they
 were drawn and textures stay pinned. `--scheme loop` moves every vertex onto the limit surface: smoother, but tested on
-the techdemo it sank straps into shirts and warped the pack's lettering. Only bodies (`models/human/`) are worth
-doing: gear and equipment are boxy and only warp. After the RTCW
+the techdemo it sank straps into shirts and warped the pack's lettering. Gear and equipment are boxy and only warp,
+except helmets and caps: closed domes nothing is laid over, where faceting shows most, so they take `--loop` (seen side
+on: butterfly leaves the stahlhelm's ridges, loop makes it round). After the RTCW
 Castle Operations remaster's `tools/model-smooth` (RTCW `.mds`).
 
 Linear blend skinning is linear in each bone's weight and weight × offset, so every vertex is carried as those and
@@ -24,7 +25,8 @@ Only dropping a new vertex's weakest weights (`--min-weight`, past the most the 
 ```bash
 python3 -I tools/model-smooth/model_smooth.py --roundtrip '.*'                 # all 815 SKDs must be byte identical
 python3 -I tools/model-smooth/model_smooth.py --list 'human/german'            # surfaces and their sizes
-python3 -I tools/model-smooth/model_smooth.py --smooth '^models/human/' --pk3 zzzzzzzzz-opm-smooth.pk3
+HEL='^models/(gear|equipment|dc|static/equipment)/.*(helm|hat|cap)[^/]*\.skd$'
+python3 -I tools/model-smooth/model_smooth.py --smooth "^models/human/|$HEL" --loop "$HEL" --pk3 zzzzzzzzz-opm-smooth.pk3
 ```
 
 Reads the game's paks through `tools/paks.py` (`MOHAA_GAME`). The pk3 it writes is made from the game's models:
