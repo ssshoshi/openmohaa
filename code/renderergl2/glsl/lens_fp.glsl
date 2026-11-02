@@ -37,9 +37,9 @@ float Clouds(vec2 x)
 
 // The rain on the glass. Water lies on it in blobs that run together where
 // they meet (each a soft mound, the mounds added, and water where the sum is
-// enough): beads that land and sit, then dry away; and drops that run down
-// in fits along a wandering path, a line of small beads behind them, in two
-// sizes. Few at a time: a drop now and then looking ahead, a couple of
+// enough): beads that land and sit, then dry away; and drops that sit a
+// while, then run down a wandering path, each at its own pace, gathering
+// speed, some in fits, in two sizes. Few at a time: a drop now and then looking ahead, a couple of
 // dozen looking up. What is behind is bent by the slope of the water.
 
 vec3 GlassHash(vec2 id)
@@ -70,18 +70,19 @@ float GlassBeads(vec2 p, float t, float wet)
 	return GlassBlob(length(fract(q) - 0.5 - at), r) * life * here;
 }
 
-// where a running drop is across its column at a height in it
+// where a running drop is across its cell at a height in it: a wandering
+// path, its own for each drop
 float GlassPath(float y, vec3 n)
 {
-	return 0.5 + (n.x - 0.5) * 0.2 + sin(y * 7.0 + n.y * 6.283) * 0.1 * (n.z - 0.35);
+	return 0.5 + (n.x - 0.5) * 0.3 + sin(y * (4.0 + 6.0 * n.y) + n.z * 6.283) * 0.08 * (n.z - 0.3);
 }
 
-// drops running down: in a few of the cells of a column (the wetter the
-// more), starting high in it, going down in fits (it holds, then slips),
-// the beads of its trail above it, smaller and fewer the further back
+// drops running down, one in a few of the cells (the wetter the more), each
+// its own: how big, how long it sits before it goes, how fast and how much
+// it gathers speed, and whether it goes in fits or smoothly
 float GlassRunning(vec2 p, float t, float seed, float wet)
 {
-	const vec2 cell = vec2(1.0 / 9.0, 0.6); // in view heights at this scale
+	const vec2 cell = vec2(1.0 / 8.0, 0.7); // in view heights at this scale
 
 	float col = floor(p.x / cell.x);
 	vec3  cn  = GlassHash(vec2(col, seed));
@@ -89,35 +90,31 @@ float GlassRunning(vec2 p, float t, float seed, float wet)
 	vec2  id  = floor(q);
 	vec2  st  = fract(q);
 	vec3  n   = GlassHash(id + seed * 3.7);
+	vec3  m   = GlassHash(id * 1.31 + seed * 9.1 + 4.2);
 
-	float life = fract(t * (0.09 + 0.08 * n.y) + n.z);
-	float fits = 5.0;
-	float gone = (floor(life * fits) + smoothstep(0.55, 1.0, fract(life * fits))) / fits;
-	float y    = 0.85 - 0.72 * gone;
-	float show = smoothstep(0.0, 0.05, life) * smoothstep(1.0, 0.92, life) * step(n.y, 0.22 * wet);
-
+	float life = fract(t * (0.05 + 0.12 * m.x) + n.z);
+	float show = smoothstep(0.0, 0.04, life) * smoothstep(1.0, 0.94, life) * step(n.y, 0.22 * wet);
 	if (show <= 0.0)
 		return 0.0;
 
-	// the drop: longer than wide, fuller below, where the water gathers
-	float r  = 0.02 * (0.75 + 0.5 * n.x);
-	vec2  d  = vec2((st.x - GlassPath(y, n)) * cell.x, (st.y - y) * cell.y);
-	d.y     *= d.y > 0.0 ? 1.0 : 0.75;
-	float m  = GlassBlob(length(d * vec2(1.0, 0.8)), r);
-
-	// its trail: beads left where it went, above it
-	float back = (st.y - y) * cell.y;
-	if (back > 0.0)
+	// it sits, then goes: slow at first, gathering speed
+	float hold = 0.1 + 0.5 * m.y;
+	float go   = clamp((life - hold) / (1.0 - hold), 0.0, 1.0);
+	float gone = pow(go, 1.3 + 1.7 * m.z);
+	// some catch on the glass and slip on again
+	if (m.x > 0.5)
 	{
-		float gap   = r * 1.4;
-		float k     = back / gap;
-		float along = (fract(k) - 0.5) * gap;
-		float dx    = (st.x - GlassPath(st.y, n)) * cell.x;
-		float rb    = r * (0.55 - 0.3 * smoothstep(0.0, 0.25, back));
-		float fade  = smoothstep(0.3, 0.0, back);
-		m += GlassBlob(length(vec2(dx, along)), rb) * fade;
+		float fits = 2.0 + floor(m.y * 4.0);
+		gone = mix(gone, (floor(gone * fits) + smoothstep(0.5, 1.0, fract(gone * fits))) / fits, 0.8);
 	}
-	return m * show;
+	float y = 0.85 - 0.72 * gone;
+
+	// the drop: longer the faster it goes, fuller below, where the water
+	// gathers
+	float r  = 0.022 * (0.5 + 1.1 * n.x * n.x);
+	vec2  d  = vec2((st.x - GlassPath(y, n)) * cell.x, (st.y - y) * cell.y);
+	d.y     *= d.y > 0.0 ? 1.0 - 0.35 * go : 0.75;
+	return GlassBlob(length(d), r) * show;
 }
 
 // the water on the glass here, 0 to 1
