@@ -1046,42 +1046,48 @@ Added in OPM
 */
 static qboolean R_RainPuddleHeight(const vec3_t eye, const vec3_t forward, float *height)
 {
-    float    best = RAIN_COVER_NONE, yaw, d;
-    int      k;
-    qboolean found = qfalse;
+    const int cx = (int)floor((eye[0] - rainCover.x0) / rainCover.texel);
+    const int cy = (int)floor((eye[1] - rainCover.y0) / rainCover.texel);
+    const int most = (int)(1024.0f / rainCover.texel);
+    int       r, x, y;
 
+    (void)forward;
     if (!rainCover.puddle) {
         return qfalse;
     }
-    // Added in OPM: the highest of the puddles in view (out across the way
-    // the eye looks, and to either side of it), below the eye: every other
-    // one is at it or lower, and looks it up where the eye's ray through it
-    // crosses that height, over the ground (one higher than it looked under
-    // the ground, at the underside of what lay over the plane)
-    yaw = atan2(forward[1], forward[0]);
-    for (k = -6; k <= 6; k++) {
-        const float a  = yaw + k * DEG2RAD(9.0f);
-        const float dx = cos(a), dy = sin(a);
+    // Added in OPM: the puddle nearest the eye, whichever way it looks (the
+    // highest in view, or the one looked at, changed as the eye turned, and
+    // with it what a puddle gave back: a man's reflection off his feet).
+    // Puddles lower than it look it up where the eye's ray crosses its
+    // height; higher ones have the screen's (SsrTrace) alone. Out in rings
+    // from under the eye, the first ring with one in it
+    for (r = 0; r <= most; r++) {
+        float best = RAIN_COVER_NONE;
 
-        for (d = 0.0f; d <= 1536.0f; d += rainCover.texel) {
-            const int x = (int)floor((eye[0] + dx * d - rainCover.x0) / rainCover.texel);
-            const int y = (int)floor((eye[1] + dy * d - rainCover.y0) / rainCover.texel);
-            float     h;
+        for (y = cy - r; y <= cy + r; y++) {
+            const int step = (y == cy - r || y == cy + r) ? 1 : 2 * r;
 
-            if (x < 0 || y < 0 || x >= rainCover.width || y >= rainCover.rows) {
-                break;
+            if (y < 0 || y >= rainCover.rows) {
+                continue;
             }
-            h = rainCover.puddle[y * rainCover.width + x];
-            if (h > RAIN_COVER_NONE * 0.5f && h < eye[2] - 8.0f && h > best) {
-                best  = h;
-                found = qtrue;
+            for (x = cx - r; x <= cx + r; x += Q_max(step, 1)) {
+                float h;
+
+                if (x < 0 || x >= rainCover.width) {
+                    continue;
+                }
+                h = rainCover.puddle[y * rainCover.width + x];
+                if (h > RAIN_COVER_NONE * 0.5f && h < eye[2] - 8.0f && h > best) {
+                    best = h;
+                }
             }
         }
+        if (best > RAIN_COVER_NONE * 0.5f) {
+            *height = best;
+            return qtrue;
+        }
     }
-    if (found) {
-        *height = best;
-    }
-    return found;
+    return qfalse;
 }
 
 /*

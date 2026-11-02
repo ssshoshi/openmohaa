@@ -1266,7 +1266,7 @@ void main()
   #endif
 
 		// where the screen has nothing (off it, far off): the world drawn
-		// mirrored at the height of the highest puddle in view
+		// mirrored at the height of the puddle nearest the eye
 		// (R_RainPuddleHeight), off the screen too. A lower one looks it up
 		// where the eye's ray through it crosses that height, which gives
 		// back the same way: far off where it should be, what is near a
