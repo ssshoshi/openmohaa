@@ -3703,6 +3703,9 @@ void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
 void R_LightDirSummed( const vec3_t point, world_t *world, vec3_t summedDir ); // Added in OPM
+// Added in OPM: rounded brushwork edges (tr_bevel.c)
+void R_BevelRegisterCvars(void);
+void R_BevelWorld(world_t *world);
 int R_CubemapForPoint( vec3_t point );
 void R_PlaceEnvProbes( const lump_t *entityLump );
 int R_ViewCubemapForPoint( const vec3_t point );
