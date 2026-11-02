@@ -1252,40 +1252,42 @@ void main()
 				Pw = u_ViewOrigin + (var_WetPos - u_ViewOrigin) * ((u_ViewOrigin.z - hw) / (u_ViewOrigin.z - var_WetPos.z));
 		}
 
-		// the world drawn mirrored at the height of the puddle the eye looks
-		// at (R_RainPuddleHeight): all of it, off the screen too. Only for
-		// the puddles at that height, give or take a little (looked up where
-		// the eye's ray crosses it): one higher or lower saw what the
-		// mirror's plane did, a man's reflection far below his feet, or the
-		// underside of what lay over the plane. Those are the screen's
-		// (SsrTrace, below), right at any height
-		if (u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
+  #if defined(USE_SSR)
+		// what is on the screen: right at any height, so a man's reflection
+		// meets his feet
 		{
-			float near = 1.0 - smoothstep(3.0, 10.0, abs(Pw.z - u_RainReflect.y));
+			// the water lies level whatever the ground under it; only the
+			// rings tilt it, a little
+			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
+			vec4 world = SsrTrace(Pw, Nw, Ep, 0.08, 32.0, 3.0);
+			refl   = mix(refl, world.rgb, world.a);
+			wetHit = world.a;
+		}
+  #endif
+
+		// where the screen has nothing (off it, far off): the world drawn
+		// mirrored at the height of the highest puddle in view
+		// (R_RainPuddleHeight), off the screen too. A lower one looks it up
+		// where the eye's ray through it crosses that height, which gives
+		// back the same way: far off where it should be, what is near a
+		// little out (the screen has that). One higher than it would look
+		// under the ground (the underside of what lay over the plane)
+		if (wetHit < 0.99 && u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
+		{
+			float dh   = Pw.z - u_RainReflect.y;
+			float near = dh > 0.0 ? 1.0 - smoothstep(3.0, 10.0, dh) : 1.0 - smoothstep(96.0, 160.0, -dh);
 			if (near > 0.0)
 			{
 				vec3 Q    = u_ViewOrigin + (var_WetPos - u_ViewOrigin)
 					* ((u_ViewOrigin.z - u_RainReflect.y) / (u_ViewOrigin.z - var_WetPos.z));
 				vec4 clip = u_RainReflectMvp * vec4(Q + vec3(ring * 10.0, 0.0), 1.0);
 				vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
-				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, near);
-				wetHit = near;
+				float take = near * (1.0 - wetHit);
+				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, take);
+				wetHit += take;
 			}
 		}
 
-  #if defined(USE_SSR)
-		// elsewhere, what is on the screen
-		if (wetHit < 0.99)
-		{
-			// the water lies level whatever the ground under it; only the
-			// rings tilt it, a little
-			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
-			vec4 world = SsrTrace(Pw, Nw, Ep, 0.08, 32.0, 3.0);
-			float take = world.a * (1.0 - wetHit);
-			refl   = mix(refl, world.rgb, take);
-			wetHit += take;
-		}
-  #endif
 		// still water seen low gives back nearly all of what it mirrors
 		most = mix(most, 0.92, wetHit);
 
