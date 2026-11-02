@@ -1326,7 +1326,12 @@ void main()
 			}
 			if (near > 0.0)
 			{
-				vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
+				// (out of the mirror's view, the sky's colour, not its edge
+				// smeared)
+				vec2 at   = clip.xy / max(clip.w, 0.001) * 0.5 + 0.5;
+				vec2 in2  = min(at, vec2(1.0) - at);
+				near *= clip.w > 0.0 ? smoothstep(0.0, 0.04, min(in2.x, in2.y)) : 0.0;
+				at = clamp(at, 0.001, 0.999);
 				float take = near * (1.0 - wetHit);
 				refl   = mix(refl, texture2D(u_RainReflectMap, at * u_RainReflect.zw).rgb, take);
 				wetHit += take;
