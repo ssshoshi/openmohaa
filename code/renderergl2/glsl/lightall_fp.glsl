@@ -1237,16 +1237,31 @@ void main()
 		vec3  refl = u_WetSky.rgb * mix(0.55, 1.15, smoothstep(0.0, 0.6, R.z));
 		float most = 0.75;
 
-		// the world drawn mirrored at the puddles' height: all of it, off
-		// the screen too. A puddle higher or lower looks it up where the
-		// eye's ray through it crosses that height: there the mirror gave
-		// back the same way, so what is far off is where it should be, and
-		// only what is near is a little out (twice the difference). Faded
-		// only far off that height, as one at another height went grey and
-		// back as the height the mirror took changed underfoot
+		// the water lies level at the top of the ground under it (the
+		// cover's grid, which holds the highest of it there), not on its
+		// bumps: what it gives back is worked out from there, where the
+		// eye's ray through this pixel meets it. From the ground itself the
+		// ray ran into the bumps before a man's boots, his reflection a gap
+		// below them
+		vec3 Pw = var_WetPos;
+		{
+			vec2  uv = (var_WetPos.xy - u_RainCover.xy) * u_RainCover.zw;
+			float hw = texture2D(u_RainCoverMap, clamp(uv, 0.0, 1.0)).r;
+			hw = clamp(hw, var_WetPos.z, var_WetPos.z + 6.0);
+			if (u_ViewOrigin.z - hw > 1.0)
+				Pw = u_ViewOrigin + (var_WetPos - u_ViewOrigin) * ((u_ViewOrigin.z - hw) / (u_ViewOrigin.z - var_WetPos.z));
+		}
+
+		// the world drawn mirrored at the height of the puddle the eye looks
+		// at (R_RainPuddleHeight): all of it, off the screen too. Only for
+		// the puddles at that height, give or take a little (looked up where
+		// the eye's ray crosses it): one higher or lower saw what the
+		// mirror's plane did, a man's reflection far below his feet, or the
+		// underside of what lay over the plane. Those are the screen's
+		// (SsrTrace, below), right at any height
 		if (u_RainReflect.x > 0.5 && u_ViewOrigin.z - var_WetPos.z > 1.0)
 		{
-			float near = 1.0 - smoothstep(64.0, 128.0, abs(var_WetPos.z - u_RainReflect.y));
+			float near = 1.0 - smoothstep(3.0, 10.0, abs(Pw.z - u_RainReflect.y));
 			if (near > 0.0)
 			{
 				vec3 Q    = u_ViewOrigin + (var_WetPos - u_ViewOrigin)
@@ -1265,7 +1280,7 @@ void main()
 			// the water lies level whatever the ground under it; only the
 			// rings tilt it, a little
 			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
-			vec4 world = SsrTrace(var_WetPos, Nw, Ep, 0.08, 32.0, 8.0);
+			vec4 world = SsrTrace(Pw, Nw, Ep, 0.08, 32.0, 3.0);
 			float take = world.a * (1.0 - wetHit);
 			refl   = mix(refl, world.rgb, take);
 			wetHit += take;

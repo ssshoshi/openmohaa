@@ -1052,6 +1052,31 @@ static qboolean R_RainPuddleHeight(const vec3_t eye, const vec3_t forward, float
     if (!rainCover.puddle) {
         return qfalse;
     }
+    // Added in OPM: the puddle the eye looks at: along the way it looks, the
+    // first where it comes down to one (the mirror is right for those at its
+    // height only; the rest are the screen's, SsrTrace)
+    if (forward[2] < -0.02f) {
+        for (d = 8.0f; d <= 3072.0f; d += rainCover.texel * 0.5f) {
+            const float px = eye[0] + forward[0] * d, py = eye[1] + forward[1] * d, pz = eye[2] + forward[2] * d;
+            const int   x  = (int)floor((px - rainCover.x0) / rainCover.texel);
+            const int   y  = (int)floor((py - rainCover.y0) / rainCover.texel);
+            float       h, g;
+
+            if (x < 0 || y < 0 || x >= rainCover.width || y >= rainCover.rows) {
+                break;
+            }
+            g = rainCover.height[y * rainCover.width + x];
+            h = rainCover.puddle[y * rainCover.width + x];
+            if (h > RAIN_COVER_NONE * 0.5f && pz <= h + 2.0f && h < eye[2] - 8.0f) {
+                *height = h;
+                return qtrue;
+            }
+            // into the ground, or something in the way, short of a puddle
+            if (g > RAIN_COVER_NONE * 0.5f && pz < g - 4.0f) {
+                break;
+            }
+        }
+    }
     VectorSet2(dir, forward[0], forward[1]);
     len = sqrt(dir[0] * dir[0] + dir[1] * dir[1]);
     if (len < 0.01f) {
@@ -2170,7 +2195,9 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     parms.isPortal = qtrue;
     parms.isMirror = qtrue;
     VectorCopy(mirror.normal, parms.portalPlane.normal);
-    parms.portalPlane.dist = mirror.dist + (puddles ? 8.0f : -1.0f);
+    // (a puddle's cut just over it, for the ground about it: higher, it cut
+    // off a man's boots, his reflection a gap below his feet)
+    parms.portalPlane.dist = mirror.dist + (puddles ? 2.0f : -1.0f);
     parms.zFar             = 0.0f;
     parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
 
