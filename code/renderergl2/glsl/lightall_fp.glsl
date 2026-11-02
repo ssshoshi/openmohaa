@@ -1302,6 +1302,14 @@ void main()
 			// mirror's it was a grey cloud over the puddle as the eye moved
 			if (u_RainReflect.x > 0.5)
 				world.a *= 1.0 - smoothstep(200.0, 450.0, ssrHitT);
+			// and none at all on a puddle at the mirror's height (all of
+			// those within 10 units of it, which lie at it): the mirror is
+			// right there, near and far, and the screen's, its air and its
+			// misses, was a grey cloud over them as the eye moved. The screen
+			// is for the puddles higher or lower, which the mirror gives
+			// back only nearly
+			if (u_RainReflect.x > 0.5)
+				world.a *= smoothstep(1.0, 6.0, abs(Pw.z - u_RainReflect.y));
 			ssrCol = world.rgb;
 			ssrA   = world.a;
 			// the frame has the fog of the eye's straight way to what the ray
