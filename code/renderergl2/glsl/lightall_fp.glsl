@@ -501,6 +501,22 @@ vec3 Fog(vec3 c, vec3 fog, float f)
 	return mix(c, fog, f);
 }
 
+// Added in OPM: what the map's distance fog over the distance d makes of the
+// colour c, and what c was before the fog over d (Unfog): so a reflection
+// taken from the frame can have the fog of the way it went instead
+float FogAt(float d)
+{
+	return clamp((d - u_GlobalFogParams.x) * u_GlobalFogParams.y, 0.0, 1.0) * u_GlobalFogColor.a;
+}
+
+vec3 Unfog(vec3 c, float f)
+{
+	f = min(f, 0.95);
+	if (u_Linear > 0.5)
+		return Lin((pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)) - u_GlobalFogColor.rgb * f) / (1.0 - f));
+	return (c - u_GlobalFogColor.rgb * f) / (1.0 - f);
+}
+
 varying vec4      var_TexCoords;
 varying float     var_FogDist;
 
@@ -1288,6 +1304,17 @@ void main()
 				world.a *= 1.0 - smoothstep(200.0, 450.0, ssrHitT);
 			ssrCol = world.rgb;
 			ssrA   = world.a;
+			// the frame has the fog of the eye's straight way to what the ray
+			// met; the mirror's has the fog of the way the reflection goes,
+			// to the puddle and up from it: the same for both, so where one
+			// gives way to the other they match
+			if (ssrA > 0.0)
+			{
+				vec3  hit = Pw + reflect(-Ep, Nw) * ssrHitT;
+				float f1  = FogAt(distance(u_ViewOrigin, hit));
+				float f2  = FogAt(distance(u_ViewOrigin, Pw) + ssrHitT);
+				ssrCol = Fog(max(Unfog(ssrCol, f1), vec3(0.0)), u_GlobalFogColor.rgb, f2);
+			}
 		}
   #endif
 
