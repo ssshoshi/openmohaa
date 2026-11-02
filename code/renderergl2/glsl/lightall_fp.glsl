@@ -397,6 +397,10 @@ float SsrSceneDepth(vec2 uv)
 // most SSR_MAX_STEPS). What the ray meets or passes behind before it has
 // risen rise units off the surface is not seen: still water hides the
 // ground around it, the bumps a puddle lies among
+// how far along its ray the last SsrTrace met something (Added in OPM: the
+// puddles take what is near from the screen, what is far from their mirror)
+float ssrHitT = 0.0;
+
 vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness, float steps, float rise)
 {
 	if (u_SsrParams.x <= 0.0 || roughness >= SSR_ROUGHEST)
@@ -453,6 +457,7 @@ vec4 SsrTrace(vec3 P, vec3 N, vec3 E, float roughness, float steps, float rise)
 		}
 		t = b;
 	}
+	ssrHitT = t;
 
 	// there in the last frame
 	vec4 pc = u_SsrPrevViewProj * vec4(P + R * t, 1.0);
@@ -1261,6 +1266,12 @@ void main()
 			// rings tilt it, a little
 			vec3 Nw    = normalize(vec3(ring * 0.1, 1.0));
 			vec4 world = SsrTrace(Pw, Nw, Ep, 0.08, 32.0, 3.0);
+			// what is near only, where there is a mirror: what is far is the
+			// mirror's, which has its own air; the screen's has the air to
+			// the eye in it already, greyer, and faded in and out of the
+			// mirror's it was a grey cloud over the puddle as the eye moved
+			if (u_RainReflect.x > 0.5)
+				world.a *= 1.0 - smoothstep(200.0, 450.0, ssrHitT);
 			refl   = mix(refl, world.rgb, world.a);
 			wetHit = world.a;
 		}
