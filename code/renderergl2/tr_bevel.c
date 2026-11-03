@@ -33,16 +33,20 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 // - An edge is where two planes of opaque, plane mapped world faces meet at
 //   a convex angle (r_bevelMinAngle to 180 minus it), along the stretch
-//   where both planes' faces line it with nothing missing on either side.
-// - Each end of an edge must be one of: a corner of exactly three such
-//   planes whose three edges are all rounded (filled with a piece of
-//   sphere), or the edge running square into a wall (a third plane at right
-//   angles to both, facing back along it: the rounding simply stops at the
-//   wall). Anything else at an end leaves the edge sharp, so no crack opens.
-// - Every rounding has the radius r_bevelRadius. Each face piece along an
-//   edge is cut back to where the cylinder touches its plane, R tan(t/2) in
-//   for an angle t between the planes' normals. The cylinder's axis ends at
-//   the corners' sphere centres (R behind all three planes) or on the wall.
+//   where both planes' faces line it with nothing missing on either side,
+//   and no other surface touches it.
+// - Its radius is a share (r_bevelScale) of how far its faces reach from it,
+//   up to r_bevelRadius, and never so much that a face is cut back past 40%
+//   of its width: a building's corner gets the most, a crate a little. The
+//   edges of one box share the smallest of their radii, so its corners meet.
+// - Each end is a corner of three planes whose three edges are all rounded
+//   (filled with a piece of sphere), or the edge running square into a wall
+//   (the rounding stops on it), or anything else (a T junction, a ragged
+//   break, a fourth face): there the rounding fades out to the sharp end
+//   over r_bevelTaper times its radius, so nothing opens a crack.
+// - Each face piece along an edge is cut back to where the cylinder touches
+//   its plane, r tan(t/2) in for an angle t between the planes' normals; a
+//   fade adds back the triangle between the edge, the cut and the fade.
 //   Strip and sphere vertexes take the normalised blend of the planes'
 //   normals, so they meet exactly along their shared arcs.
 // - The half of a strip on plane A's side is drawn as part of the A face
@@ -50,10 +54,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //   coordinates carried on); a corner's triangles go to the plane they face
 //   most, drawn with that plane's piece at the corner.
 //
-// Known limits of this version: where the two halves of a strip meet, the
-// lightmap and the texture can step (each half carries its own face's); a
-// strip's row of vertexes is shared by both halves, but a face piece's cut
-// back side only has its own corners, which leaves T junctions along it.
+// Known limits: where the two halves of a strip meet, the lightmap and the
+// texture can step (each half carries its own face's); a cut back side only
+// has its own corners while the strip along it has every piece's, which
+// leaves T junctions along it.
 
 #include "tr_local.h"
 
@@ -107,8 +111,8 @@ typedef struct {
 	int      plane[2];  // -1 until seen
 	qboolean many;      // more than two planes have sides on it
 	qboolean ok;        // two planes meeting convexly, at an angle in range
-	vec3_t   axisOff;   // from the line to the rounding's axis
-	float    setback;
+	vec3_t   unitAxisOff; // from the line to the rounding's axis, for a radius of 1
+	float    unitSetback; // how far each face is cut back, for a radius of 1: tan(angle / 2)
 	int      firstSide; // bevelSide_t list
 	int      next;
 } bevelLine_t;
@@ -124,7 +128,13 @@ typedef struct {
 typedef struct {
 	int      line;
 	float    t0, t1;
-	int      end[2]; // corners at t0 and at t1
+	int      end[2];   // the corner (sphere or wall) at t0 and at t1, or -1: the rounding fades out there
+	float    taper[2]; // how long it takes to fade out at each end (when end is -1)
+	float    r;        // its radius
+	float    setback;  // how far its faces are cut back: r tan(angle / 2)
+	vec3_t   axisOff;  // from the line to its axis
+	float    extent;   // how far its faces reach from it (for the radius)
+	int      group;    // segments joined at rounded corners share a radius (union find)
 	qboolean ok;
 } bevelSeg_t;
 
@@ -138,6 +148,7 @@ typedef struct {
 	int      face[3];  // the piece of each plane at it (CORNER_SPHERE)
 	int      seg[3];   // CORNER_SPHERE: one for each pair; CORNER_WALL: seg[0]
 	vec3_t   center;
+	float    r;
 	qboolean ok;
 	int      next;
 } bevelCorner_t;
@@ -169,7 +180,6 @@ static bevelPoint_t  *points;
 static int            numPoints, maxPoints;
 static int           *pointHash;
 static world_t       *bevelWorld;
-static float          bevelRadius;
 
 static int stat_cornerPlanes[8], stat_cornerForeign, stat_cornerOpen, stat_cornerWall, stat_cornerNoPiece;
 
@@ -530,6 +540,9 @@ static void R_BevelVert(const bevelFace_t *f, const vec3_t p, const vec3_t norma
 	R_VaoPackNormal(out->normal, (float *)normal);
 }
 
+cvar_t *r_bevelScale;
+cvar_t *r_bevelTaper;
+
 /*
 =================
 R_BevelLineFor
@@ -589,11 +602,16 @@ static float R_BevelT(const bevelLine_t *l, const vec3_t p)
 	return DotProduct(rel, l->dir);
 }
 
-// the rounding's axis at t
-static void R_BevelAxis(const bevelLine_t *l, float t, vec3_t out)
+static void R_BevelAt(const bevelLine_t *l, float t, vec3_t out)
 {
 	VectorMA(l->origin, t, l->dir, out);
-	VectorAdd(out, l->axisOff, out);
+}
+
+// the segment's axis at t, its radius there scaled by g
+static void R_BevelAxis(const bevelSeg_t *sg, float t, float g, vec3_t out)
+{
+	R_BevelAt(&lines[sg->line], t, out);
+	VectorMA(out, g, sg->axisOff, out);
 }
 
 /*
@@ -615,60 +633,63 @@ static void R_BevelInward(const bevelFace_t *f, int s, vec3_t inward)
 	}
 }
 
+// a convex polygon cut by the half plane dot(inward, p) >= base
+static int R_BevelCut(vec3_t *a, int *av, int na, const vec3_t inward, float base, vec3_t *b, int *bv, int max)
+{
+	int i, nb = 0;
+
+	for (i = 0; i < na; i++) {
+		float *p0 = a[i], *p1 = a[(i + 1) % na];
+		float  d0 = DotProduct(inward, p0) - base, d1 = DotProduct(inward, p1) - base;
+
+		if (nb >= max - 2) {
+			return 0;
+		}
+		if (d0 >= -0.001f) {
+			VectorCopy(p0, b[nb]);
+			bv[nb++] = av ? av[i] : -1;
+		}
+		if ((d0 >= -0.001f) != (d1 >= -0.001f)) {
+			float t = d0 / (d0 - d1);
+
+			VectorLerp(p0, p1, t, b[nb]);
+			bv[nb++] = -1;
+		}
+	}
+	return nb;
+}
+
 /*
 =================
 R_BevelClip
 
-Face f's polygon cut back from each of its sides on a rounded segment, into
-f->clipped. Returns the number of points (0 when nothing is left).
+Face f's polygon cut back from each of its sides on a rounded segment
+(skip: a side not to cut, or -1), into out. Returns the number of points.
 =================
 */
-static int R_BevelClip(bevelFace_t *f)
+static int R_BevelClipPoly(const bevelFace_t *f, vec3_t *in, int *inv, int nin, int skip, vec3_t *out, int *outv)
 {
 	vec3_t a[BEVEL_MAX_POLY * 2], b[BEVEL_MAX_POLY * 2];
 	int    av[BEVEL_MAX_POLY * 2], bv[BEVEL_MAX_POLY * 2];
-	int    na, nb, i, s;
+	int    na = nin, i, s;
 
-	na = f->numPoly;
 	for (i = 0; i < na; i++) {
-		VectorCopy(f->poly[i], a[i]);
-		av[i] = f->polyVert[i];
+		VectorCopy(in[i], a[i]);
+		av[i] = inv ? inv[i] : -1;
 	}
 
 	for (s = 0; s < f->numPoly; s++) {
-		const bevelSeg_t *seg;
+		const bevelSeg_t *sg;
 		vec3_t            inward;
-		float             base;
+		int               nb;
 
-		if (f->sideEdge[s] < 0 || !segs[f->sideEdge[s]].ok) {
+		if (s == skip || f->sideEdge[s] < 0 || !segs[f->sideEdge[s]].ok) {
 			continue;
 		}
-		seg = &segs[f->sideEdge[s]];
+		sg = &segs[f->sideEdge[s]];
 		R_BevelInward(f, s, inward);
-		base = DotProduct(inward, f->poly[s]) + lines[seg->line].setback;
-
-		nb = 0;
-		for (i = 0; i < na; i++) {
-			float *p0 = a[i], *p1 = a[(i + 1) % na];
-			float  d0 = DotProduct(inward, p0) - base, d1 = DotProduct(inward, p1) - base;
-
-			if (d0 >= -0.001f) {
-				VectorCopy(p0, b[nb]);
-				bv[nb++] = av[i];
-			}
-			if ((d0 >= -0.001f) != (d1 >= -0.001f)) {
-				float t = d0 / (d0 - d1);
-
-				VectorLerp(p0, p1, t, b[nb]);
-				bv[nb++] = -1;
-			}
-			if (nb >= BEVEL_MAX_POLY * 2 - 2) {
-				f->numClipped = 0;
-				return 0;
-			}
-		}
+		nb = R_BevelCut(a, av, na, inward, DotProduct(inward, f->poly[s]) + sg->setback, b, bv, BEVEL_MAX_POLY * 2);
 		if (nb < 3) {
-			f->numClipped = 0;
 			return 0;
 		}
 		na = nb;
@@ -679,31 +700,113 @@ static int R_BevelClip(bevelFace_t *f)
 	}
 
 	for (i = 0; i < na; i++) {
-		VectorCopy(a[i], f->clipped[i]);
-		f->clippedVert[i] = av[i];
+		VectorCopy(a[i], out[i]);
+		outv[i] = av[i];
 	}
-	f->numClipped = na;
 	return na;
+}
+
+static int R_BevelClip(bevelFace_t *f)
+{
+	f->numClipped = R_BevelClipPoly(f, f->poly, f->polyVert, f->numPoly, -1, f->clipped, f->clippedVert);
+	return f->numClipped;
+}
+
+/*
+=================
+R_BevelFadePiece
+
+Where the rounding of face f's side s fades out at the end at t (one of the
+side's own ends): the triangle between the edge, the cut back line and the
+fade, which the cut back polygon left out, cut to the face and its other
+rounded sides. Returns its point count (0: none, or it does not fit, which
+fails the segment), with the fade's far point in *far.
+=================
+*/
+static int R_BevelFadePiece(const bevelFace_t *f, int s, int e, vec3_t *out, vec3_t farPoint)
+{
+	const bevelSeg_t  *sg = &segs[f->sideEdge[s]];
+	const bevelLine_t *l = &lines[sg->line];
+	vec3_t             tri[3], inward, end;
+	int                triv[3] = { -1, -1, -1 }, outv[BEVEL_MAX_POLY * 2], n, i;
+	float              tEnd = e ? sg->t1 : sg->t0, tFar = e ? sg->t1 - sg->taper[1] : sg->t0 + sg->taper[0];
+
+	R_BevelInward(f, s, inward);
+	R_BevelAt(l, tEnd, end);
+	VectorCopy(end, tri[0]);
+	VectorMA(end, sg->setback, inward, tri[1]);
+	R_BevelAt(l, tFar, tri[2]);
+	VectorMA(tri[2], sg->setback, inward, tri[2]);
+	VectorCopy(tri[2], farPoint);
+
+	// to the face (convex: each of its sides' half planes) and its other cuts
+	{
+		vec3_t a[BEVEL_MAX_POLY * 2], b[BEVEL_MAX_POLY * 2];
+		int    av[BEVEL_MAX_POLY * 2], bv[BEVEL_MAX_POLY * 2], na = 3, k;
+
+		for (i = 0; i < 3; i++) {
+			VectorCopy(tri[i], a[i]);
+			av[i] = triv[i];
+		}
+		for (k = 0; k < f->numPoly; k++) {
+			vec3_t in;
+			int    nb;
+
+			if (k == s) {
+				continue;
+			}
+			R_BevelInward(f, k, in);
+			nb = R_BevelCut(a, av, na, in, DotProduct(in, f->poly[k]) - 0.01f, b, bv, BEVEL_MAX_POLY * 2);
+			if (nb < 3) {
+				return 0;
+			}
+			na = nb;
+			for (i = 0; i < na; i++) {
+				VectorCopy(b[i], a[i]);
+				av[i] = bv[i];
+			}
+		}
+		n = R_BevelClipPoly(f, a, av, na, s, out, outv);
+	}
+
+	// its slanted side must be whole: the edge's end and the fade's far
+	// point both still there, or the strip would not meet it
+	{
+		qboolean haveEnd = qfalse, haveFar = qfalse;
+
+		for (i = 0; i < n; i++) {
+			if (Distance(out[i], end) < 0.05f) {
+				haveEnd = qtrue;
+			}
+			if (Distance(out[i], farPoint) < 0.05f) {
+				haveFar = qtrue;
+			}
+		}
+		if (!haveEnd || !haveFar) {
+			return 0;
+		}
+	}
+	return n;
 }
 
 /*
 =================
 R_BevelCutRange
 
-The stretch of f's cut back side s, as t along its line: where the strip
-starts on f. Returns qfalse when it is gone.
+The stretch of f's cut back side s, as t along its line, at the full
+radius. Returns qfalse when it is gone.
 =================
 */
 static qboolean R_BevelCutRange(const bevelFace_t *f, int s, float *tmin, float *tmax)
 {
-	const bevelSeg_t  *seg = &segs[f->sideEdge[s]];
-	const bevelLine_t *l = &lines[seg->line];
+	const bevelSeg_t  *sg = &segs[f->sideEdge[s]];
+	const bevelLine_t *l = &lines[sg->line];
 	vec3_t             inward;
 	float              base;
 	int                i, n = 0;
 
 	R_BevelInward(f, s, inward);
-	base = DotProduct(inward, f->poly[s]) + l->setback;
+	base = DotProduct(inward, f->poly[s]) + sg->setback;
 	*tmin = 1e30f;
 	*tmax = -1e30f;
 	for (i = 0; i < f->numClipped; i++) {
@@ -716,6 +819,15 @@ static qboolean R_BevelCutRange(const bevelFace_t *f, int s, float *tmin, float 
 		}
 	}
 	return n >= 2 && *tmax - *tmin > 0.1f;
+}
+
+// whether the side of f from poly[s] has end e of segment sg
+static qboolean R_BevelSideHasEnd(const bevelFace_t *f, int s, const bevelSeg_t *sg, int e)
+{
+	const bevelLine_t *l = &lines[sg->line];
+	float              ta = R_BevelT(l, f->poly[s]), tb = R_BevelT(l, f->poly[(s + 1) % f->numPoly]), t = e ? sg->t1 : sg->t0;
+
+	return fabs(ta - t) < 0.1f || fabs(tb - t) < 0.1f;
 }
 
 /*
@@ -771,33 +883,26 @@ static int R_BevelPlanesAt(const vec3_t p, const vec3_t out, int *found, qboolea
 			if (fabs(DotProduct(cv->cullPlane.normal, p) - cv->cullPlane.dist) > 0.1f) {
 				continue;
 			}
-			// on one of its triangles
 			for (k = 0; k + 2 < cv->numIndexes && !inside; k += 3) {
 				const float *a = cv->verts[cv->indexes[k]].xyz, *b = cv->verts[cv->indexes[k + 1]].xyz,
 							*c = cv->verts[cv->indexes[k + 2]].xyz;
-				vec3_t       e0, e1, e2, c0, c1, c2;
+				vec3_t       e0, e1, e2, c0, c1, c2, pa, pb, pc;
+				float        s0, s1, s2;
 
 				VectorSubtract(b, a, e0);
 				VectorSubtract(c, b, e1);
 				VectorSubtract(a, c, e2);
-				{
-					vec3_t pa, pb, pc;
-
-					VectorSubtract(p, a, pa);
-					VectorSubtract(p, b, pb);
-					VectorSubtract(p, c, pc);
-					CrossProduct(e0, pa, c0);
-					CrossProduct(e1, pb, c1);
-					CrossProduct(e2, pc, c2);
-				}
-				{
-					float s0 = DotProduct(c0, cv->cullPlane.normal) / Q_max(VectorLength(e0), 0.01f);
-					float s1 = DotProduct(c1, cv->cullPlane.normal) / Q_max(VectorLength(e1), 0.01f);
-					float s2 = DotProduct(c2, cv->cullPlane.normal) / Q_max(VectorLength(e2), 0.01f);
-
-					if ((s0 >= -0.1f && s1 >= -0.1f && s2 >= -0.1f) || (s0 <= 0.1f && s1 <= 0.1f && s2 <= 0.1f)) {
-						inside = qtrue;
-					}
+				VectorSubtract(p, a, pa);
+				VectorSubtract(p, b, pb);
+				VectorSubtract(p, c, pc);
+				CrossProduct(e0, pa, c0);
+				CrossProduct(e1, pb, c1);
+				CrossProduct(e2, pc, c2);
+				s0 = DotProduct(c0, cv->cullPlane.normal) / Q_max(VectorLength(e0), 0.01f);
+				s1 = DotProduct(c1, cv->cullPlane.normal) / Q_max(VectorLength(e1), 0.01f);
+				s2 = DotProduct(c2, cv->cullPlane.normal) / Q_max(VectorLength(e2), 0.01f);
+				if ((s0 >= -0.1f && s1 >= -0.1f && s2 >= -0.1f) || (s0 <= 0.1f && s1 <= 0.1f && s2 <= 0.1f)) {
+					inside = qtrue;
 				}
 			}
 			if (!inside) {
@@ -836,8 +941,8 @@ static int R_BevelSegBetween(int pa, int pb, const vec3_t p)
 		if (!((l->plane[0] == pa && l->plane[1] == pb) || (l->plane[0] == pb && l->plane[1] == pa))) {
 			continue;
 		}
-		VectorMA(l->origin, segs[i].t0, l->dir, e0);
-		VectorMA(l->origin, segs[i].t1, l->dir, e1);
+		R_BevelAt(l, segs[i].t0, e0);
+		R_BevelAt(l, segs[i].t1, e1);
 		if (R_BevelSame(e0, p) || R_BevelSame(e1, p)) {
 			return i;
 		}
@@ -862,7 +967,8 @@ static int R_BevelPieceAt(int plane, const vec3_t p)
 R_BevelCorner
 
 What is at end e (0 at t0, 1 at t1) of segment s: a corner of three
-rounded edges, or a wall. -1 for anything else.
+rounded edges, or a wall. -1 for anything else: the rounding fades out
+there. Only what it is, not its geometry (which waits for the radius).
 =================
 */
 static int R_BevelCorner(int s, int e)
@@ -875,7 +981,7 @@ static int R_BevelCorner(int s, int e)
 	qboolean           opaque[8];
 	bevelCorner_t     *c;
 
-	VectorMA(l->origin, e ? seg->t1 : seg->t0, l->dir, p);
+	R_BevelAt(l, e ? seg->t1 : seg->t0, p);
 
 	// a corner already made at p that has this segment
 	for (h = cornerHash[R_BevelHashPoint(p)]; h != -1; h = corners[h].next) {
@@ -914,8 +1020,6 @@ static int R_BevelCorner(int s, int e)
 	Com_Memset(c, 0, sizeof(*c));
 	VectorCopy(p, c->p);
 	c->seg[0] = c->seg[1] = c->seg[2] = -1;
-
-	// out along the edge, past this end
 	VectorScale(l->dir, e ? 1.0f : -1.0f, along);
 
 	{
@@ -923,14 +1027,13 @@ static int R_BevelCorner(int s, int e)
 		int          sAC = R_BevelSegBetween(l->plane[0], found[other], p);
 		int          sBC = R_BevelSegBetween(l->plane[1], found[other], p);
 
+		c->plane[0] = l->plane[0];
+		c->plane[1] = l->plane[1];
+		c->plane[2] = found[other];
 		if (sAC >= 0 && sBC >= 0 && planes[found[other]].eligible) {
-			// three rounded edges: a piece of sphere
-			float m[3][3], rhs[3], det;
+			float m[3][3], det;
 
 			c->type = CORNER_SPHERE;
-			c->plane[0] = l->plane[0];
-			c->plane[1] = l->plane[1];
-			c->plane[2] = found[other];
 			c->seg[0] = s;
 			c->seg[1] = sBC;
 			c->seg[2] = sAC;
@@ -941,7 +1044,6 @@ static int R_BevelCorner(int s, int e)
 					return -1;
 				}
 				VectorCopy(planes[c->plane[k]].n, m[k]);
-				rhs[k] = planes[c->plane[k]].d - bevelRadius;
 			}
 			det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
 				+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
@@ -949,24 +1051,10 @@ static int R_BevelCorner(int s, int e)
 				stat_cornerOpen++;
 				return -1;
 			}
-			c->center[0] = (rhs[0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
-							+ m[0][2] * (rhs[1] * m[2][1] - m[1][1] * rhs[2])) / det;
-			c->center[1] = (m[0][0] * (rhs[1] * m[2][2] - m[1][2] * rhs[2]) - rhs[0] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-							+ m[0][2] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])) / det;
-			c->center[2] = (m[0][0] * (m[1][1] * rhs[2] - rhs[1] * m[2][1]) - m[0][1] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])
-							+ rhs[0] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])) / det;
 		} else if (opaque[other] && fabs(DotProduct(nA, nC)) < 0.05f && fabs(DotProduct(nB, nC)) < 0.05f
 				   && DotProduct(nC, along) < -0.7f && sAC < 0 && sBC < 0) {
-			// square into a wall: the rounding stops on it
-			float denom = DotProduct(nC, l->dir), t;
-
 			c->type = CORNER_WALL;
-			c->plane[0] = l->plane[0];
-			c->plane[1] = l->plane[1];
-			c->plane[2] = found[other];
 			c->seg[0] = s;
-			t = (planes[found[other]].d - DotProduct(nC, l->origin) - DotProduct(nC, l->axisOff)) / denom;
-			R_BevelAxis(l, t, c->center);
 			stat_cornerWall++;
 		} else {
 			stat_cornerOpen++;
@@ -981,13 +1069,54 @@ static int R_BevelCorner(int s, int e)
 	return numCorners++;
 }
 
+// the centre of a corner, once its segments' radius is known
+static void R_BevelCornerCenter(bevelCorner_t *c)
+{
+	const bevelSeg_t *sg = &segs[c->seg[0]];
+
+	c->r = sg->r;
+	if (c->type == CORNER_SPHERE) {
+		float m[3][3], rhs[3], det;
+		int   k;
+
+		for (k = 0; k < 3; k++) {
+			VectorCopy(planes[c->plane[k]].n, m[k]);
+			rhs[k] = planes[c->plane[k]].d - c->r;
+		}
+		det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+			+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+		c->center[0] = (rhs[0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
+						+ m[0][2] * (rhs[1] * m[2][1] - m[1][1] * rhs[2])) / det;
+		c->center[1] = (m[0][0] * (rhs[1] * m[2][2] - m[1][2] * rhs[2]) - rhs[0] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+						+ m[0][2] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])) / det;
+		c->center[2] = (m[0][0] * (m[1][1] * rhs[2] - rhs[1] * m[2][1]) - m[0][1] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])
+						+ rhs[0] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])) / det;
+	} else {
+		const bevelLine_t *l = &lines[sg->line];
+		const float       *nC = planes[c->plane[2]].n;
+		float              t = (planes[c->plane[2]].d - DotProduct(nC, l->origin) - DotProduct(nC, sg->axisOff)) / DotProduct(nC, l->dir);
+
+		R_BevelAxis(sg, t, 1.0f, c->center);
+	}
+}
+
+static int R_BevelGroup(int s)
+{
+	while (segs[s].group != s) {
+		segs[s].group = segs[segs[s].group].group;
+		s = segs[s].group;
+	}
+	return s;
+}
+
 /*
 =================
 R_BevelSplits
 
-Where a segment's strip is cut across: its two ends (where the axis meets
-the corners) and every corner of a piece's cut back side along it, of
-either plane. Returns the count, sorted.
+Where a segment's strip is cut across, at the full radius: its ends there
+(where the axis meets a corner, or where a fade ends) and every corner of
+a piece's cut back side along it, of either plane. Returns the count,
+sorted.
 =================
 */
 static int R_BevelSplits(int s, float *out)
@@ -995,8 +1124,10 @@ static int R_BevelSplits(int s, float *out)
 	const bevelSeg_t  *seg = &segs[s];
 	const bevelLine_t *l = &lines[seg->line];
 	int                n = 0, i, j, k;
-	float              lo = R_BevelT(l, corners[seg->end[0]].center), hi = R_BevelT(l, corners[seg->end[1]].center);
+	float              lo, hi;
 
+	lo = seg->end[0] >= 0 ? R_BevelT(l, corners[seg->end[0]].center) : seg->t0 + seg->taper[0];
+	hi = seg->end[1] >= 0 ? R_BevelT(l, corners[seg->end[1]].center) : seg->t1 - seg->taper[1];
 	if (lo > hi) {
 		float t = lo;
 		lo = hi;
@@ -1021,7 +1152,6 @@ static int R_BevelSplits(int s, float *out)
 		}
 	}
 
-	// sort, and drop what is the same
 	for (i = 1; i < n; i++) {
 		float t = out[i];
 
@@ -1067,7 +1197,6 @@ static void R_BevelTri(bevelBuild_t *b, const bevelFace_t *f, int i0, int i1, in
 	if (VectorLengthSquared(cr) < 1e-8f) {
 		return;
 	}
-	// the face's own winding, whichever way the points came
 	if ((DotProduct(cr, facing) > 0 ? 1 : -1) != f->triSign) {
 		int t = i1;
 		i1 = i2;
@@ -1088,6 +1217,87 @@ static void R_BevelBlend(const vec3_t a, float wa, const vec3_t b, float wb, con
 	VectorNormalize(out);
 }
 
+// a convex polygon of face f as a fan, with extra points inserted where they
+// lie on its sides (the far ends of fades), so neighbours share vertexes
+static void R_BevelFan(bevelBuild_t *b, const bevelFace_t *f, const vec3_t *pts, const int *ptv, int n, const vec3_t *extra, int numExtra)
+{
+	vec3_t poly[BEVEL_MAX_POLY * 3];
+	int    polyv[BEVEL_MAX_POLY * 3], np = 0, i, k, first;
+	srfVert_t v;
+
+	for (i = 0; i < n; i++) {
+		const float *p0 = pts[i], *p1 = pts[(i + 1) % n];
+		vec3_t       d;
+		float        len;
+
+		VectorCopy(p0, poly[np]);
+		polyv[np++] = ptv ? ptv[i] : -1;
+		VectorSubtract(p1, p0, d);
+		len = VectorNormalize(d);
+		for (k = 0; k < numExtra && np < BEVEL_MAX_POLY * 3; k++) {
+			vec3_t rel, off;
+			float  t;
+
+			VectorSubtract(extra[k], p0, rel);
+			t = DotProduct(rel, d);
+			if (t <= 0.05f || t >= len - 0.05f) {
+				continue;
+			}
+			VectorMA(rel, -t, d, off);
+			if (VectorLength(off) < 0.02f) {
+				VectorCopy(extra[k], poly[np]);
+				polyv[np++] = -1;
+			}
+		}
+	}
+
+	first = b->numVerts;
+	for (i = 0; i < np; i++) {
+		if (polyv[i] >= 0) {
+			v = f->cv->verts[polyv[i]];
+		} else {
+			R_BevelVert(f, poly[i], f->n, &v);
+		}
+		R_BevelPush(b, &v);
+	}
+	for (i = 1; i + 1 < np; i++) {
+		R_BevelTri(b, f, first, first + i, first + i + 1, f->n);
+	}
+}
+
+// a stretch of strip on face f's side, from t0 to t1, its radius scaled by
+// g0 and g1 there
+static void R_BevelStrip(bevelBuild_t *b, const bevelFace_t *f, const bevelSeg_t *sg, const float *nOther, float t0, float g0,
+	float t1, float g1, int segments)
+{
+	int       row, base = b->numVerts;
+	srfVert_t v;
+
+	for (row = 0; row <= segments / 2; row++) {
+		vec3_t nrm, a0, a1, p0, p1;
+		float  u = (float)row / segments;
+
+		R_BevelBlend(f->n, 1.0f - u, nOther, u, NULL, 0, nrm);
+		R_BevelAxis(sg, t0, g0, a0);
+		R_BevelAxis(sg, t1, g1, a1);
+		VectorMA(a0, sg->r * g0, nrm, p0);
+		VectorMA(a1, sg->r * g1, nrm, p1);
+		R_BevelVert(f, p0, nrm, &v);
+		R_BevelPush(b, &v);
+		R_BevelVert(f, p1, nrm, &v);
+		R_BevelPush(b, &v);
+	}
+	for (row = 0; row < segments / 2; row++) {
+		int    a = base + row * 2, bb = a + 1, c = a + 2, d = a + 3;
+		vec3_t nrm;
+		float  u = (row + 0.5f) / segments;
+
+		R_BevelBlend(f->n, 1.0f - u, nOther, u, NULL, 0, nrm);
+		R_BevelTri(b, f, a, bb, d, nrm);
+		R_BevelTri(b, f, a, d, c, nrm);
+	}
+}
+
 /*
 =================
 R_BevelWorld
@@ -1099,9 +1309,9 @@ their vertexes' light directions are worked out.
 void R_BevelWorld(world_t *world)
 {
 	int           i, j, k, s, iter, firstSurface, numSurfaces, segments;
-	int           startTime = ri.Milliseconds(), bevelled = 0, sphereCorners = 0, wallEnds = 0, facesChanged = 0;
-	int           stat_lines = 0, stat_many = 0, stat_concave = 0, stat_angle = 0, stat_uncovered = 0, stat_touched = 0, stat_clip = 0;
-	float         minAngle, *splitPool;
+	int           startTime = ri.Milliseconds(), bevelled = 0, sphereCorners = 0, wallEnds = 0, fadeEnds = 0, facesChanged = 0;
+	int           stat_lines = 0, stat_many = 0, stat_concave = 0, stat_angle = 0, stat_uncovered = 0, stat_touched = 0, stat_clip = 0, stat_fade = 0;
+	float         maxRadius, minAngle, scale, taperLen, *splitPool;
 	int          *splitStart, *splitCount;
 	bevelBuild_t  build;
 
@@ -1113,14 +1323,16 @@ void R_BevelWorld(world_t *world)
 	}
 
 	bevelWorld = world;
-	bevelRadius = r_bevelRadius->value;
+	maxRadius = r_bevelRadius->value;
+	scale = r_bevelScale->value;
+	taperLen = r_bevelTaper->value;
 	segments = r_bevelSegments->integer;
 	minAngle = r_bevelMinAngle->value;
-	if (bevelRadius <= 0.1f) {
+	if (maxRadius <= 0.1f) {
 		return;
 	}
 	segments = Com_Clamp(2, 8, segments);
-	segments &= ~1; // even, so each side takes half
+	segments &= ~1;
 
 	firstSurface = world->bmodels[0].firstSurface;
 	numSurfaces = world->bmodels[0].numSurfaces;
@@ -1246,7 +1458,7 @@ void R_BevelWorld(world_t *world)
 		int          haveA = 0, haveB = 0;
 
 		if (l->plane[1] < 0) {
-			continue; // one plane only
+			continue;
 		}
 		stat_lines++;
 		if (l->many) {
@@ -1265,7 +1477,6 @@ void R_BevelWorld(world_t *world)
 				haveB = 1;
 			}
 		}
-		// convex: each plane's faces fall away behind the other's plane
 		if (DotProduct(nA, cB) - planes[l->plane[0]].d > -0.5f || DotProduct(nB, cA) - planes[l->plane[1]].d > -0.5f) {
 			stat_concave++;
 			continue;
@@ -1277,18 +1488,15 @@ void R_BevelWorld(world_t *world)
 			continue;
 		}
 		l->ok = qtrue;
-		l->setback = bevelRadius * tan(DEG2RAD(angle) * 0.5f);
-		VectorAdd(nA, nB, l->axisOff);
-		VectorScale(l->axisOff, -bevelRadius / (1.0f + cosn), l->axisOff);
+		l->unitSetback = tan(DEG2RAD(angle) * 0.5f);
+		VectorAdd(nA, nB, l->unitAxisOff);
+		VectorScale(l->unitAxisOff, -1.0f / (1.0f + cosn), l->unitAxisOff);
 
-		// each plane's sides merged into stretches; a segment where the two
-		// planes' stretches are the same
 		{
 			float lo[2][64], hi[2][64];
 			int   cnt[2] = { 0, 0 }, w, a, b;
 
 			for (w = 0; w < 2; w++) {
-				// repeatedly take the lowest side not yet in a stretch
 				qboolean used[256];
 				int      numW = 0, idx[256];
 
@@ -1314,7 +1522,6 @@ void R_BevelWorld(world_t *world)
 					used[best] = qtrue;
 					t0 = sides[idx[best]].t0;
 					t1 = sides[idx[best]].t1;
-					// grow it with every side that touches it
 					for (;;) {
 						qboolean grew = qfalse;
 
@@ -1342,12 +1549,13 @@ void R_BevelWorld(world_t *world)
 					if (fabs(lo[0][a] - lo[1][b]) < 0.1f && fabs(hi[0][a] - hi[1][b]) < 0.1f && numSegs < maxSegs) {
 						bevelSeg_t *sg = &segs[numSegs];
 
+						Com_Memset(sg, 0, sizeof(*sg));
 						sg->line = i;
 						sg->t0 = Q_max(lo[0][a], lo[1][b]);
 						sg->t1 = Q_min(hi[0][a], hi[1][b]);
 						sg->end[0] = sg->end[1] = -1;
+						sg->group = numSegs;
 						sg->ok = qtrue;
-						// the faces' sides along it
 						for (j = l->firstSide; j != -1; j = sides[j].next) {
 							if (sides[j].t0 >= sg->t0 - 0.1f && sides[j].t1 <= sg->t1 + 0.1f) {
 								faces[sides[j].face].sideEdge[sides[j].side] = numSegs;
@@ -1371,8 +1579,8 @@ void R_BevelWorld(world_t *world)
 		vec3_t             p0, p1, mins, maxs;
 		int                x, y, z;
 
-		VectorMA(l->origin, sg->t0, l->dir, p0);
-		VectorMA(l->origin, sg->t1, l->dir, p1);
+		R_BevelAt(l, sg->t0, p0);
+		R_BevelAt(l, sg->t1, p1);
 		for (k = 0; k < 3; k++) {
 			mins[k] = Q_min(p0[k], p1[k]) - 1;
 			maxs[k] = Q_max(p0[k], p1[k]) + 1;
@@ -1406,7 +1614,39 @@ void R_BevelWorld(world_t *world)
 		}
 	}
 
-	// what is at each end
+	// how far each segment's faces reach from it: how big what it rounds is
+	for (i = 0; i < numSegs; i++) {
+		bevelSeg_t        *sg = &segs[i];
+		const bevelLine_t *l = &lines[sg->line];
+		float              reach[2] = { 0, 0 };
+
+		for (j = l->firstSide; j != -1; j = sides[j].next) {
+			bevelFace_t *f = &faces[sides[j].face];
+			vec3_t       inward;
+			float        base;
+
+			if (f->sideEdge[sides[j].side] != i) {
+				continue;
+			}
+			R_BevelInward(f, sides[j].side, inward);
+			base = DotProduct(inward, f->poly[sides[j].side]);
+			for (k = 0; k < f->numPoly; k++) {
+				reach[sides[j].which] = Q_max(reach[sides[j].which], DotProduct(inward, f->poly[k]) - base);
+			}
+		}
+		sg->extent = Q_max(reach[0], reach[1]);
+		// the radius: a share of what it rounds, never past the most, and
+		// never cutting either face back past 40% of its width
+		sg->r = Q_min(maxRadius, scale * sg->extent);
+		if (l->unitSetback > 0.001f) {
+			sg->r = Q_min(sg->r, 0.4f * Q_min(reach[0], reach[1]) / l->unitSetback);
+		}
+		if (sg->r < 0.25f) {
+			sg->ok = qfalse;
+		}
+	}
+
+	// what is at each end; the segments of a box share one radius
 	maxCorners = numSegs * 2 + 16;
 	corners = ri.Hunk_AllocateTempMemory(maxCorners * sizeof(*corners));
 	numCorners = 0;
@@ -1416,12 +1656,52 @@ void R_BevelWorld(world_t *world)
 		}
 		segs[i].end[0] = R_BevelCorner(i, 0);
 		segs[i].end[1] = R_BevelCorner(i, 1);
-		if (segs[i].end[0] < 0 || segs[i].end[1] < 0) {
-			segs[i].ok = qfalse;
+	}
+	for (i = 0; i < numCorners; i++) {
+		if (corners[i].type == CORNER_SPHERE) {
+			int g0 = R_BevelGroup(corners[i].seg[0]);
+
+			for (k = 1; k < 3; k++) {
+				int g = R_BevelGroup(corners[i].seg[k]);
+
+				if (g != g0) {
+					segs[g].group = g0;
+				}
+			}
 		}
 	}
+	{
+		// the smallest radius of each group
+		float *groupR = ri.Hunk_AllocateTempMemory(Q_max(numSegs, 1) * sizeof(float));
 
-	// what fails takes what depends on it with it, until it holds
+		for (i = 0; i < numSegs; i++) {
+			groupR[i] = 1e30f;
+		}
+		for (i = 0; i < numSegs; i++) {
+			if (segs[i].ok) {
+				int g = R_BevelGroup(i);
+
+				groupR[g] = Q_min(groupR[g], segs[i].r);
+			}
+		}
+		for (i = 0; i < numSegs; i++) {
+			segs[i].r = Q_min(segs[i].r, groupR[R_BevelGroup(i)]);
+		}
+		ri.Hunk_FreeTempMemory(groupR);
+	}
+	for (i = 0; i < numSegs; i++) {
+		bevelSeg_t        *sg = &segs[i];
+		const bevelLine_t *l = &lines[sg->line];
+
+		sg->setback = sg->r * l->unitSetback;
+		VectorScale(l->unitAxisOff, sg->r, sg->axisOff);
+	}
+	for (i = 0; i < numCorners; i++) {
+		R_BevelCornerCenter(&corners[i]);
+	}
+
+	// what fails takes what depends on it with it, until it holds: a corner
+	// whose segments are not all there leaves its other segments fading out
 	for (iter = 0; iter < 32; iter++) {
 		qboolean changed = qfalse;
 
@@ -1438,12 +1718,43 @@ void R_BevelWorld(world_t *world)
 			}
 		}
 		for (i = 0; i < numSegs; i++) {
-			if (segs[i].ok && (segs[i].end[0] < 0 || segs[i].end[1] < 0 || !corners[segs[i].end[0]].ok || !corners[segs[i].end[1]].ok)) {
-				segs[i].ok = qfalse;
+			bevelSeg_t *sg = &segs[i];
+			int         e;
+
+			if (!sg->ok) {
+				continue;
+			}
+			for (e = 0; e < 2; e++) {
+				if (sg->end[e] >= 0 && !corners[sg->end[e]].ok) {
+					sg->end[e] = -1;
+					changed = qtrue;
+				}
+			}
+			// how long the fades are: a few radii, inside the end pieces
+			for (e = 0; e < 2; e++) {
+				float len = sg->t1 - sg->t0;
+
+				sg->taper[e] = 0;
+				if (sg->end[e] >= 0) {
+					continue;
+				}
+				sg->taper[e] = Q_min(taperLen * sg->r, 0.45f * len);
+				for (j = lines[sg->line].firstSide; j != -1; j = sides[j].next) {
+					if (faces[sides[j].face].sideEdge[sides[j].side] != i) {
+						continue;
+					}
+					if (fabs((e ? sides[j].t1 : sides[j].t0) - (e ? sg->t1 : sg->t0)) < 0.1f) {
+						sg->taper[e] = Q_min(sg->taper[e], 0.9f * (sides[j].t1 - sides[j].t0));
+					}
+				}
+			}
+			if ((sg->end[0] < 0 && sg->taper[0] < 0.5f) || (sg->end[1] < 0 && sg->taper[1] < 0.5f)) {
+				sg->ok = qfalse;
 				changed = qtrue;
+				stat_fade++;
 			}
 		}
-		// every piece cut back, each of its rounded sides still there
+		// every piece cut back, each of its rounded sides and fades still there
 		for (i = 0; i < numFaces; i++) {
 			bevelFace_t *f = &faces[i];
 			int          any = 0;
@@ -1468,12 +1779,30 @@ void R_BevelWorld(world_t *world)
 				continue;
 			}
 			for (s = 0; s < f->numPoly; s++) {
-				float tmin, tmax;
+				bevelSeg_t *sg;
+				float       tmin, tmax;
+				int         e;
 
-				if (f->sideEdge[s] >= 0 && segs[f->sideEdge[s]].ok && !R_BevelCutRange(f, s, &tmin, &tmax)) {
-					segs[f->sideEdge[s]].ok = qfalse;
+				if (f->sideEdge[s] < 0 || !segs[f->sideEdge[s]].ok) {
+					continue;
+				}
+				sg = &segs[f->sideEdge[s]];
+				if (!R_BevelCutRange(f, s, &tmin, &tmax)) {
+					sg->ok = qfalse;
 					changed = qtrue;
 					stat_clip++;
+					continue;
+				}
+				for (e = 0; e < 2 && sg->ok; e++) {
+					if (sg->end[e] < 0 && R_BevelSideHasEnd(f, s, sg, e)) {
+						vec3_t piece[BEVEL_MAX_POLY * 2], farPoint;
+
+						if (!R_BevelFadePiece(f, s, e, piece, farPoint)) {
+							sg->ok = qfalse;
+							changed = qtrue;
+							stat_fade++;
+						}
+					}
 				}
 			}
 		}
@@ -1491,30 +1820,12 @@ void R_BevelWorld(world_t *world)
 		splitCount[i] = segs[i].ok ? R_BevelSplits(i, splitPool + splitStart[i]) : 0;
 		if (segs[i].ok) {
 			bevelled++;
+			fadeEnds += (segs[i].end[0] < 0) + (segs[i].end[1] < 0);
 			for (j = lines[segs[i].line].firstSide; j != -1; j = sides[j].next) {
 				if (faces[sides[j].face].sideEdge[sides[j].side] == i) {
 					faces[sides[j].face].touched = qtrue;
 				}
 			}
-		}
-	}
-	if (r_bevel->integer >= 3) {
-		int shown = 0;
-
-		for (i = 0; i < numSegs && shown < 40; i++) {
-			const bevelLine_t *l = &lines[segs[i].line];
-			vec3_t             p0, p1;
-
-			if (!segs[i].ok) {
-				continue;
-			}
-			VectorMA(l->origin, segs[i].t0, l->dir, p0);
-			VectorMA(l->origin, segs[i].t1, l->dir, p1);
-			ri.Printf(PRINT_ALL, "bevel: edge %.0f %.0f %.0f to %.0f %.0f %.0f, normals %.2f %.2f %.2f / %.2f %.2f %.2f, ends %s %s\n",
-				p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], planes[l->plane[0]].n[0], planes[l->plane[0]].n[1], planes[l->plane[0]].n[2],
-				planes[l->plane[1]].n[0], planes[l->plane[1]].n[1], planes[l->plane[1]].n[2],
-				corners[segs[i].end[0]].type == CORNER_SPHERE ? "corner" : "wall", corners[segs[i].end[1]].type == CORNER_SPHERE ? "corner" : "wall");
-			shown++;
 		}
 	}
 	for (i = 0; i < numCorners; i++) {
@@ -1527,7 +1838,28 @@ void R_BevelWorld(world_t *world)
 		}
 	}
 
-	// build: each piece cut back, its stretches of strip, its corner pieces
+	if (r_bevel->integer >= 3) {
+		int shown = 0;
+
+		for (i = 0; i < numSegs && shown < 40; i++) {
+			const bevelLine_t *l = &lines[segs[i].line];
+			vec3_t             p0, p1;
+
+			if (!segs[i].ok) {
+				continue;
+			}
+			R_BevelAt(l, segs[i].t0, p0);
+			R_BevelAt(l, segs[i].t1, p1);
+			ri.Printf(PRINT_ALL, "bevel: edge %.0f %.0f %.0f to %.0f %.0f %.0f, radius %.1f (reach %.0f), ends %s %s\n", p0[0], p0[1],
+				p0[2], p1[0], p1[1], p1[2], segs[i].r, segs[i].extent,
+				segs[i].end[0] < 0 ? "fade" : corners[segs[i].end[0]].type == CORNER_SPHERE ? "corner" : "wall",
+				segs[i].end[1] < 0 ? "fade" : corners[segs[i].end[1]].type == CORNER_SPHERE ? "corner" : "wall");
+			shown++;
+		}
+	}
+
+	// build: each piece cut back, its fades, its stretches of strip, its
+	// corner pieces
 	build.maxVerts = 8192;
 	build.maxIndexes = 8192 * 3;
 	build.verts = ri.Hunk_AllocateTempMemory(build.maxVerts * sizeof(srfVert_t));
@@ -1537,77 +1869,76 @@ void R_BevelWorld(world_t *world)
 		bevelFace_t     *f = &faces[i];
 		srfBspSurface_t *cv = f->cv;
 		srfVert_t        v;
-		int              first;
+		vec3_t           farPoints[BEVEL_MAX_POLY * 2];
+		int              numFar = 0;
 
 		if (!f->touched || f->numClipped < 3) {
 			continue;
 		}
 		build.numVerts = build.numIndexes = 0;
 
-		// the piece, cut back: a fan (it is convex); corners it keeps keep
-		// their own vertex exactly
-		first = build.numVerts;
-		for (k = 0; k < f->numClipped; k++) {
-			if (f->clippedVert[k] >= 0) {
-				v = cv->verts[f->clippedVert[k]];
-			} else {
-				R_BevelVert(f, f->clipped[k], f->n, &v);
+		// the fades first (their far points go into the cut back polygon)
+		for (s = 0; s < f->numPoly; s++) {
+			bevelSeg_t        *sg;
+			const bevelLine_t *l;
+			const float       *nOther;
+			int                e;
+
+			if (f->sideEdge[s] < 0 || !segs[f->sideEdge[s]].ok) {
+				continue;
 			}
-			R_BevelPush(&build, &v);
-		}
-		for (k = 1; k + 1 < f->numClipped; k++) {
-			R_BevelTri(&build, f, first, first + k, first + k + 1, f->n);
+			sg = &segs[f->sideEdge[s]];
+			l = &lines[sg->line];
+			nOther = planes[l->plane[0] == f->plane ? l->plane[1] : l->plane[0]].n;
+			for (e = 0; e < 2; e++) {
+				vec3_t piece[BEVEL_MAX_POLY * 2];
+				int    n;
+				float  tEnd, tFar;
+
+				if (sg->end[e] >= 0 || !R_BevelSideHasEnd(f, s, sg, e)) {
+					continue;
+				}
+				n = R_BevelFadePiece(f, s, e, piece, farPoints[numFar]);
+				if (n < 3) {
+					continue;
+				}
+				tEnd = e ? sg->t1 : sg->t0;
+				tFar = e ? sg->t1 - sg->taper[1] : sg->t0 + sg->taper[0];
+				R_BevelFan(&build, f, (const vec3_t *)piece, NULL, n, NULL, 0);
+				numFar++;
+				// the strip, from nothing at the edge's end to its full radius
+				R_BevelStrip(&build, f, sg, nOther, tEnd, 0.0f, tFar, 1.0f, segments);
+			}
 		}
 
-		// its stretches of the strips
+		// the piece, cut back (convex): corners it keeps keep their own
+		// vertex, and the fades' far points are put in along its sides
+		R_BevelFan(&build, f, (const vec3_t *)f->clipped, f->clippedVert, f->numClipped, (const vec3_t *)farPoints, numFar);
+
+		// its stretches of the strips at the full radius
 		for (s = 0; s < f->numPoly; s++) {
 			const bevelSeg_t  *sg;
 			const bevelLine_t *l;
-			const float       *nSelf, *nOther, *splits;
+			const float       *nOther, *splits;
 			float              tmin, tmax;
-			int                numSplits, x, row;
+			int                numSplits, x;
 
 			if (f->sideEdge[s] < 0 || !segs[f->sideEdge[s]].ok || !R_BevelCutRange(f, s, &tmin, &tmax)) {
 				continue;
 			}
 			sg = &segs[f->sideEdge[s]];
 			l = &lines[sg->line];
-			nSelf = f->n;
 			nOther = planes[l->plane[0] == f->plane ? l->plane[1] : l->plane[0]].n;
 			splits = splitPool + splitStart[f->sideEdge[s]];
 			numSplits = splitCount[f->sideEdge[s]];
 
 			for (x = 0; x + 1 < numSplits; x++) {
-				float  mid = 0.5f * (splits[x] + splits[x + 1]);
-				int    base;
+				float mid = 0.5f * (splits[x] + splits[x + 1]);
 
 				if (mid < tmin || mid > tmax) {
-					continue; // another piece's stretch
+					continue;
 				}
-				base = build.numVerts;
-				for (row = 0; row <= segments / 2; row++) {
-					vec3_t nrm, a0, a1, p0, p1;
-					float  u = (float)row / segments;
-
-					R_BevelBlend(nSelf, 1.0f - u, nOther, u, NULL, 0, nrm);
-					R_BevelAxis(l, splits[x], a0);
-					R_BevelAxis(l, splits[x + 1], a1);
-					VectorMA(a0, bevelRadius, nrm, p0);
-					VectorMA(a1, bevelRadius, nrm, p1);
-					R_BevelVert(f, p0, nrm, &v);
-					R_BevelPush(&build, &v);
-					R_BevelVert(f, p1, nrm, &v);
-					R_BevelPush(&build, &v);
-				}
-				for (row = 0; row < segments / 2; row++) {
-					int    a = base + row * 2, b = a + 1, c = a + 2, d = a + 3;
-					vec3_t nrm;
-					float  u = (row + 0.5f) / segments;
-
-					R_BevelBlend(nSelf, 1.0f - u, nOther, u, NULL, 0, nrm);
-					R_BevelTri(&build, f, a, b, d, nrm);
-					R_BevelTri(&build, f, a, d, c, nrm);
-				}
+				R_BevelStrip(&build, f, sg, nOther, splits[x], 1.0f, splits[x + 1], 1.0f, segments);
 			}
 		}
 
@@ -1640,8 +1971,6 @@ void R_BevelWorld(world_t *world)
 					grid[a][b] = -1;
 				}
 			}
-			// (a, b): a steps towards plane 1, b towards plane 2, the rest
-			// is plane 0's, so a side of the patch is a strip's end
 			for (a = 0; a < segments; a++) {
 				for (b = 0; a + b < segments; b++) {
 					int tri[2][3][2] = { { { a, b }, { a + 1, b }, { a, b + 1 } }, { { a + 1, b }, { a + 1, b + 1 }, { a, b + 1 } } };
@@ -1677,7 +2006,7 @@ void R_BevelWorld(world_t *world)
 
 							if (grid[ga][gb] < 0) {
 								R_BevelBlend(nA, (float)(segments - ga - gb), nB, (float)ga, nC, (float)gb, nrm);
-								VectorMA(c->center, bevelRadius, nrm, pos);
+								VectorMA(c->center, c->r, nrm, pos);
 								R_BevelVert(f, pos, nrm, &v);
 								grid[ga][gb] = R_BevelPush(&build, &v);
 							}
@@ -1690,10 +2019,9 @@ void R_BevelWorld(world_t *world)
 		}
 
 		if (build.numVerts >= build.maxVerts || build.numIndexes + 3 > build.maxIndexes) {
-			continue; // too much for one face: it stays as it was
+			continue;
 		}
 
-		// tangents for the new triangles, as ParseFace does
 		for (k = 0; k < build.numIndexes; k += 3) {
 			srfVert_t *dv[3];
 
@@ -1710,7 +2038,6 @@ void R_BevelWorld(world_t *world)
 		cv->numVerts = build.numVerts;
 		cv->numIndexes = build.numIndexes;
 
-		// part of it no longer faces the plane's way: no plane culling
 		f->surf->cullinfo.type &= ~CULLINFO_PLANE;
 		for (k = 0; k < cv->numVerts; k++) {
 			AddPointToBounds(cv->verts[k].xyz, f->surf->cullinfo.bounds[0], f->surf->cullinfo.bounds[1]);
@@ -1730,16 +2057,17 @@ void R_BevelWorld(world_t *world)
 	ri.Hunk_FreeTempMemory(faces);
 	ri.Hunk_FreeTempMemory(planes);
 
-	ri.Printf(PRINT_ALL, "bevel: %d edges rounded (%d corners, %d ends at walls), %d faces changed, radius %.1f, in %d ms\n", bevelled,
-		sphereCorners, wallEnds, facesChanged, bevelRadius, ri.Milliseconds() - startTime);
+	ri.Printf(PRINT_ALL, "bevel: %d edges rounded (%d corners, %d ends at walls, %d fading out), %d faces changed, radius up to %.1f, in %d ms\n",
+		bevelled, sphereCorners, wallEnds, fadeEnds, facesChanged, maxRadius, ri.Milliseconds() - startTime);
 	if (r_bevel->integer >= 2) {
 		ri.Printf(PRINT_ALL, "bevel: %d faces taken; %d lines between two planes: %d with more planes, %d concave, %d at an angle out of "
-			"range, %d stretches lined on one side only; %d segments, %d with something touching, %d lost cutting back\n",
-			numFaces, stat_lines, stat_many, stat_concave, stat_angle, stat_uncovered, numSegs, stat_touched, stat_clip);
-		ri.Printf(PRINT_ALL, "bevel: ends failed: planes there (0-7) %d %d %d %d %d %d %d %d, not a planar face %d, neither corner nor wall %d, "
-			"no piece at a corner %d\n", stat_cornerPlanes[0], stat_cornerPlanes[1], stat_cornerPlanes[2], stat_cornerPlanes[3],
-			stat_cornerPlanes[4], stat_cornerPlanes[5], stat_cornerPlanes[6], stat_cornerPlanes[7], stat_cornerForeign, stat_cornerOpen,
-			stat_cornerNoPiece);
+			"range, %d stretches lined on one side only; %d segments, %d with something touching, %d lost cutting back, %d whose fade "
+			"did not fit\n",
+			numFaces, stat_lines, stat_many, stat_concave, stat_angle, stat_uncovered, numSegs, stat_touched, stat_clip, stat_fade);
+		ri.Printf(PRINT_ALL, "bevel: ends that fade (not a corner or a wall): planes there (0-7) %d %d %d %d %d %d %d %d, not a planar "
+			"face %d, neither corner nor wall %d, no piece at a corner %d\n", stat_cornerPlanes[0], stat_cornerPlanes[1],
+			stat_cornerPlanes[2], stat_cornerPlanes[3], stat_cornerPlanes[4], stat_cornerPlanes[5], stat_cornerPlanes[6],
+			stat_cornerPlanes[7], stat_cornerForeign, stat_cornerOpen, stat_cornerNoPiece);
 	}
 }
 
@@ -1747,9 +2075,15 @@ void R_BevelRegisterCvars(void)
 {
 	r_bevel = ri.Cvar_Get("r_bevel", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_bevel, "Rounds the convex edges of the world's brushwork as maps load (only what is drawn: collision is "
-		"unchanged); 2 also prints why edges were left sharp");
-	r_bevelRadius = ri.Cvar_Get("r_bevelRadius", "2", CVAR_ARCHIVE | CVAR_LATCH);
-	ri.Cvar_SetDescription(r_bevelRadius, "r_bevel: the rounded edges' radius, in world units");
+		"unchanged); 2 also prints why edges were left sharp, 3 lists some rounded ones");
+	r_bevelRadius = ri.Cvar_Get("r_bevelRadius", "8", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_bevelRadius, "r_bevel: the most an edge is rounded, in world units (big things: building corners)");
+	r_bevelScale = ri.Cvar_Get("r_bevelScale", "0.06", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_bevelScale, "r_bevel: an edge's radius as a share of how far its faces reach from it, up to "
+		"r_bevelRadius: a 48 unit crate's edges get 0.06 x 48 = 2.9");
+	r_bevelTaper = ri.Cvar_Get("r_bevelTaper", "4", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_bevelTaper, "r_bevel: where an edge ends in anything but a box corner or a wall, the rounding fades out "
+		"over this many times its radius");
 	r_bevelSegments = ri.Cvar_Get("r_bevelSegments", "4", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_bevelSegments, "r_bevel: the strips across a rounded edge (2 to 8, even)");
 	r_bevelMinAngle = ri.Cvar_Get("r_bevelMinAngle", "30", CVAR_ARCHIVE | CVAR_LATCH);
