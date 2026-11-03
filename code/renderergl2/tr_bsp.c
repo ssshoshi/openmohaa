@@ -4079,6 +4079,7 @@ void RE_LoadWorldMap( const char *name ) {
 	// Added in OPM: rounded brushwork edges (r_bevel), before the vertexes'
 	// light directions are worked out
 	R_BevelWorld(&s_worldData);
+	R_LoadStep( "R_BevelWorld" );
 
 	R_CalcVertexLightDirs();
 	R_LoadStep( "R_CalcVertexLightDirs" );
