@@ -5746,6 +5746,23 @@ void UI_ClearResource(void)
 UI_LoadResource
 ====================
 */
+/*
+====================
+UI_LoadingTick
+
+Added in OPM: the loading screen redrawn, without a resource to count, for
+the renderer's long load steps (refimport_t::LoadingTick).
+====================
+*/
+void UI_LoadingTick(void)
+{
+    if (cls.loading == LOAD_PROGRESS_FALSE) {
+        return;
+    }
+
+    UI_TestUpdateScreen(33);
+}
+
 void UI_LoadResource(const char *name)
 {
     if (cls.loading == LOAD_PROGRESS_FALSE) {

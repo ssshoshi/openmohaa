@@ -625,6 +625,19 @@ static void CL_RenderScene( const refdef_t *fd ) {
 CL_InitCGameDLL
 ====================
 */
+/*
+====================
+CL_LoadWorldProfiled
+
+Added in OPM: the renderer's world load, as a stage of the load profiler.
+====================
+*/
+static void CL_LoadWorldProfiled( const char *name ) {
+	Com_LoadProfileMark( "cl:load_world" );
+	re.LoadWorld( name );
+	Com_LoadProfileMark( "cl:load_world_done" );
+}
+
 void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 
 	*cge = ( clientGameExport_t * )Sys_GetCGameAPI( cgi );
@@ -734,7 +747,7 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 	cgi->R_ClearScene				= re.ClearScene;
 	cgi->R_RenderScene				= CL_RenderScene;
 
-	cgi->R_LoadWorldMap				= re.LoadWorld;
+	cgi->R_LoadWorldMap				= CL_LoadWorldProfiled;
 	cgi->R_PrintBSPFileSizes		= re.PrintBSPFileSizes;
 	cgi->R_MapVersion				= re.MapVersion;
 	cgi->R_RegisterModel			= re.RegisterModel;
@@ -967,8 +980,10 @@ void CL_InitCGame( void ) {
 		Com_sprintf(cl.mapname, sizeof(cl.mapname), "maps/%s_sml.bsp", mapname);
 	}
 
+	Com_LoadProfileMark( "cl:sound_registration" );
 	S_BeginRegistration();
 	CL_ShutdownCGame();
+	Com_LoadProfileMark( "cl:cgame_init" );
 	CL_InitCGameDLL( &cgi, &cge );
 	clc.state = CA_LOADING;
 
@@ -1001,6 +1016,7 @@ void CL_InitCGame( void ) {
 
 	// we will send a usercmd this frame, which
 	// will cause the server to send us the first snapshot
+	Com_LoadProfileMark( "cl:primed" );
 	clc.state = CA_PRIMED;
 
 	CL_EndRegistration();
@@ -1146,6 +1162,7 @@ CL_FirstSnapshot
 ==================
 */
 void CL_FirstSnapshot( void ) {
+	Com_LoadProfileMark( "cl:first_snapshot" );
 	// ignore snapshots that don't have entities
 	if ( cl.snap.snapFlags & SNAPFLAG_NOT_ACTIVE ) {
 		return;

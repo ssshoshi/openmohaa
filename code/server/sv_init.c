@@ -593,6 +593,10 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 	iStart = Sys_Milliseconds();
 	Com_Printf ("Server: %s\n",server);
 
+	// Added in OPM: the load profiler (com_loadProfile)
+	Com_LoadProfileBegin( server );
+	Com_LoadProfileMark( "sv:begin" );
+
 	sv.state = SS_LOADING;
 	svs.autosave = qfalse;
 	svs.soundsNeedLoad = qfalse;
@@ -671,9 +675,11 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 		SV_ShutdownGameProgs();
 
 		// clear the whole hunk because we're (re)loading the server
+		Com_LoadProfileMark( "sv:hunk_clear" );
 		Hunk_Clear();
 
 		// init game imports
+		Com_LoadProfileMark( "sv:game_init" );
 		SV_InitGameProgs();
 
 		// allocate the snapshot entities on the hunk
@@ -720,7 +726,9 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 			// Added in 2.0
 			Com_sprintf( filename, sizeof( filename ), "maps/%s_sml.bsp", mapname );
 		}
+		Com_LoadProfileMark( "sv:cm_loadmap" );
 		CM_LoadMap( filename, qfalse, &checksum );
+		Com_LoadProfileMark( "sv:cm_loadmap_done" );
 
 		// set checksum
 		Cvar_Set( "sv_mapChecksum", va( "%i", checksum ) );
@@ -798,7 +806,9 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 		UI_LoadResource( "*139a" );
 
 		// tell the game dll to spawn entities
+		Com_LoadProfileMark( "sv:spawn_entities" );
 		ge->SpawnEntities( CM_EntityString(), svs.time );
+		Com_LoadProfileMark( "sv:spawn_done" );
 
 		UI_LoadResource( "*140" );
 
@@ -824,6 +834,7 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 		g_gametype->modified = qfalse;
 
 		// run a few frames to allow everything to settle
+		Com_LoadProfileMark( "sv:settle" );
 		for( i = 0; i < 3; i++ )
 		{
 			svs.time += 100;
@@ -845,6 +856,7 @@ void SV_SpawnServer( const char *server, qboolean loadgame, qboolean restart, qb
 	if( differentmap )
 	{
 		// create a baseline for more efficient communications
+		Com_LoadProfileMark( "sv:baseline" );
 		SV_CreateBaseline();
 
 		for( i = 0; i < svs.iNumClients; i++ ) {
@@ -997,6 +1009,7 @@ void SV_ServerLoaded( void ) {
 		return;
 	}
 
+	Com_LoadProfileMark( "sv:game" );
 	sv.state = SS_GAME;
 	sv.timeResidual = 0;
 	svs.startTime = svs.time - svs.mapTime;
