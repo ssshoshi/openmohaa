@@ -30,7 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 
 // surface geometry should not exceed these limits
-#define	SHADER_MAX_VERTEXES		2048 // 1000 su44: I've increased it a bit...
+#define	SHADER_MAX_VERTEXES		4096 // 1000 su44: I've increased it a bit... (OPM: 4096, for meshes made smoother by tools/model-smooth)
 #define	SHADER_MAX_INDEXES		(6*SHADER_MAX_VERTEXES)
 #define	SHADER_MAX_TRIANGLES	(2*SHADER_MAX_VERTEXES)
 
