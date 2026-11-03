@@ -9,7 +9,7 @@ and compiled with MOH:AA's own tools.
 | Physics room | north | crates, chairs, tables, bottles, buckets and a ramp: physics props and impact sounds |
 | Firing range | north-east | 8 passive soldiers and gas barrels (`func_barrel`) behind sandbags: gore, blasts, ragdolls |
 | Gallery | east | 12 wall textures that have material maps, lamps raking down them: normal and parallax maps |
-| Yard | middle | a fixed crowd of soldiers (`techdemo_crowd`, default 24): the cost of a populated scene |
+| Yard | middle | one of every human model in the stock paks (54; `techdemo_crowd N` for N of them): the cost of a populated scene |
 | Field and pond | south | grass for the ground cover, trees, and a pond with dead men floating in it: water, ragdoll buoyancy |
 
 ## Building
