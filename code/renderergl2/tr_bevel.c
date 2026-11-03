@@ -542,6 +542,11 @@ static void R_BevelVert(const bevelFace_t *f, const vec3_t p, const vec3_t norma
 
 cvar_t *r_bevelScale;
 cvar_t *r_bevelTaper;
+cvar_t *r_bevelDisplace;
+cvar_t *r_bevelStep;
+
+// a face's vertexes, rebuilt, must still fit one batch (SHADER_MAX_VERTEXES)
+#define BEVEL_FACE_VERTS 4000
 
 /*
 =================
@@ -1265,36 +1270,213 @@ static void R_BevelFan(bevelBuild_t *b, const bevelFace_t *f, const vec3_t *pts,
 	}
 }
 
-// a stretch of strip on face f's side, from t0 to t1, its radius scaled by
-// g0 and g1 there
-static void R_BevelStrip(bevelBuild_t *b, const bevelFace_t *f, const bevelSeg_t *sg, const float *nOther, float t0, float g0,
-	float t1, float g1, int segments)
+/*
+=================
+Heights
+
+The relief of what a face shows: the alpha of its material's normal and
+height map (_nh, made by tools/matgen), which parallax mapping reads too:
+1 is the stone's face, 0 the bottom of the mortar between. Read back once a
+map for each map the edges use.
+=================
+*/
+typedef struct {
+	const image_t *image;
+	byte          *alpha;
+	int            width, height;
+} bevelHeight_t;
+
+#define BEVEL_MAX_HEIGHTS 512
+
+static bevelHeight_t bevelHeights[BEVEL_MAX_HEIGHTS];
+static int           numBevelHeights;
+static float         bevelDisplace; // how deep the mortar cuts in, as a share of the radius (0: none)
+static float         bevelStep;     // the strips' columns along an edge, in units
+
+static const bevelHeight_t *R_BevelHeightMap(const shader_t *sh)
 {
-	int       row, base = b->numVerts;
-	srfVert_t v;
+	const image_t *image = NULL;
+	byte          *pic = NULL;
+	int            i, w, h;
+	GLenum         format;
+	bevelHeight_t *bh;
 
-	for (row = 0; row <= segments / 2; row++) {
-		vec3_t nrm, a0, a1, p0, p1;
-		float  u = (float)row / segments;
+	for (i = 0; i < MAX_SHADER_STAGES && sh->stages[i] && !image; i++) {
+		const image_t *im = sh->stages[i]->bundle[TB_NORMALMAP].image[0];
 
-		R_BevelBlend(f->n, 1.0f - u, nOther, u, NULL, 0, nrm);
-		R_BevelAxis(sg, t0, g0, a0);
-		R_BevelAxis(sg, t1, g1, a1);
-		VectorMA(a0, sg->r * g0, nrm, p0);
-		VectorMA(a1, sg->r * g1, nrm, p1);
-		R_BevelVert(f, p0, nrm, &v);
-		R_BevelPush(b, &v);
-		R_BevelVert(f, p1, nrm, &v);
-		R_BevelPush(b, &v);
+		if (im && im->type == IMGTYPE_NORMALHEIGHT) {
+			image = im;
+		}
 	}
-	for (row = 0; row < segments / 2; row++) {
-		int    a = base + row * 2, bb = a + 1, c = a + 2, d = a + 3;
-		vec3_t nrm;
-		float  u = (row + 0.5f) / segments;
+	if (!image) {
+		return NULL;
+	}
+	for (i = 0; i < numBevelHeights; i++) {
+		if (bevelHeights[i].image == image) {
+			return bevelHeights[i].alpha ? &bevelHeights[i] : NULL;
+		}
+	}
+	if (numBevelHeights >= BEVEL_MAX_HEIGHTS) {
+		return NULL;
+	}
 
-		R_BevelBlend(f->n, 1.0f - u, nOther, u, NULL, 0, nrm);
-		R_BevelTri(b, f, a, bb, d, nrm);
-		R_BevelTri(b, f, a, d, c, nrm);
+	bh = &bevelHeights[numBevelHeights++];
+	Com_Memset(bh, 0, sizeof(*bh));
+	bh->image = image;
+	R_LoadImageUncompressed(image->imgName, &pic, &w, &h, &format);
+	if (!pic) {
+		return NULL;
+	}
+	if (format == GL_RGBA8 && w > 0 && h > 0) {
+		bh->alpha = ri.Malloc(w * h);
+		for (i = 0; i < w * h; i++) {
+			bh->alpha[i] = pic[i * 4 + 3];
+		}
+		bh->width = w;
+		bh->height = h;
+	}
+	ri.Free(pic);
+	return bh->alpha ? bh : NULL;
+}
+
+static void R_BevelFreeHeights(void)
+{
+	int i;
+
+	for (i = 0; i < numBevelHeights; i++) {
+		if (bevelHeights[i].alpha) {
+			ri.Free(bevelHeights[i].alpha);
+		}
+	}
+	numBevelHeights = 0;
+}
+
+// face f's relief at p (projected onto its plane), bilinear and wrapping: 1
+// (no relief) where it has no height map
+static float R_BevelHeightAt(const bevelFace_t *f, const vec3_t p)
+{
+	const bevelHeight_t *bh;
+	vec3_t               rel;
+	float                u, v, s, t, fx, fy, h00, h10, h01, h11;
+	int                  x0, y0, x1, y1;
+
+	if (!f || !(bh = R_BevelHeightMap(f->surf->shader))) {
+		return 1.0f;
+	}
+	VectorSubtract(p, f->origin, rel);
+	u = DotProduct(rel, f->axisU);
+	v = DotProduct(rel, f->axisV);
+	s = f->attr[0][0] * u + f->attr[0][1] * v + f->attr[0][2];
+	t = f->attr[1][0] * u + f->attr[1][1] * v + f->attr[1][2];
+	s = (s - floor(s)) * bh->width - 0.5f;
+	t = (t - floor(t)) * bh->height - 0.5f;
+	x0 = (int)floor(s);
+	y0 = (int)floor(t);
+	fx = s - x0;
+	fy = t - y0;
+	x0 = (x0 % bh->width + bh->width) % bh->width;
+	y0 = (y0 % bh->height + bh->height) % bh->height;
+	x1 = (x0 + 1) % bh->width;
+	y1 = (y0 + 1) % bh->height;
+	h00 = bh->alpha[y0 * bh->width + x0];
+	h10 = bh->alpha[y0 * bh->width + x1];
+	h01 = bh->alpha[y1 * bh->width + x0];
+	h11 = bh->alpha[y1 * bh->width + x1];
+	return ((h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy) / 255.0f;
+}
+
+// the piece of the other plane lining segment sg at t, or NULL
+static const bevelFace_t *R_BevelOtherPiece(const bevelSeg_t *sg, int plane, float t)
+{
+	int j;
+
+	for (j = lines[sg->line].firstSide; j != -1; j = sides[j].next) {
+		const bevelFace_t *f = &faces[sides[j].face];
+
+		if (f->plane != plane && f->sideEdge[sides[j].side] == (int)(sg - segs) && sides[j].t0 <= t + 0.05f && sides[j].t1 >= t - 0.05f) {
+			return f;
+		}
+	}
+	return NULL;
+}
+
+// where the segment's strip begins and ends along it
+static void R_BevelStripExtent(const bevelSeg_t *sg, float *a, float *b)
+{
+	const bevelLine_t *l = &lines[sg->line];
+
+	*a = sg->end[0] >= 0 ? R_BevelT(l, corners[sg->end[0]].center) : sg->t0;
+	*b = sg->end[1] >= 0 ? R_BevelT(l, corners[sg->end[1]].center) : sg->t1;
+	if (*a > *b) {
+		float x = *a;
+		*a = *b;
+		*b = x;
+	}
+}
+
+/*
+=================
+R_BevelStrip
+
+A stretch of strip on face f's side, from t0 to t1, its radius scaled by g0
+and g1 there. With displacement on, it is cut into columns every bevelStep
+and each vertex is pushed in by the relief where it is: the mortar between
+stones cuts into the edge, so its outline is the stones'. The push is
+nothing where the strip meets the flat face and most at the edge's crest,
+where the two faces' halves meet; there both halves take the same blend of
+both faces' relief, so they meet exactly. It also fades out towards the
+segment's ends, so corners and walls stay sealed.
+=================
+*/
+static void R_BevelStrip(bevelBuild_t *b, const bevelFace_t *f, const bevelSeg_t *sg, const float *nOther, float t0, float g0,
+	float t1, float g1, int segments, qboolean displace)
+{
+	const bevelFace_t *other = NULL;
+	int                row, col, numCols = 1, base = b->numVerts, rows = segments / 2 + 1;
+	float              ea, eb, depth = displace ? bevelDisplace * sg->r : 0;
+	srfVert_t          v;
+
+	if (depth > 0) {
+		const bevelLine_t *l = &lines[sg->line];
+
+		numCols = Q_max(1, (int)ceil(fabs(t1 - t0) / bevelStep));
+		other = R_BevelOtherPiece(sg, l->plane[0] == f->plane ? l->plane[1] : l->plane[0], 0.5f * (t0 + t1));
+	}
+	R_BevelStripExtent(sg, &ea, &eb);
+
+	for (col = 0; col <= numCols; col++) {
+		float  c = (float)col / numCols, t = t0 + (t1 - t0) * c, g = g0 + (g1 - g0) * c;
+		float  endFade = depth > 0 ? Com_Clamp(0, 1, Q_min(t - ea, eb - t) / (2.0f * sg->r)) : 0;
+		vec3_t axis;
+
+		R_BevelAxis(sg, t, g, axis);
+		for (row = 0; row < rows; row++) {
+			vec3_t nrm, p;
+			float  u = (float)row / segments;
+
+			R_BevelBlend(f->n, 1.0f - u, nOther, u, NULL, 0, nrm);
+			VectorMA(axis, sg->r * g, nrm, p);
+			if (depth > 0 && row > 0) {
+				float hSelf = R_BevelHeightAt(f, p), hOther = other ? R_BevelHeightAt(other, p) : hSelf;
+				float h = hSelf + (hOther - hSelf) * u;
+				float push = depth * g * endFade * sin(M_PI * u) * (1.0f - h);
+
+				VectorMA(p, -push, nrm, p);
+			}
+			R_BevelVert(f, p, nrm, &v);
+			R_BevelPush(b, &v);
+		}
+	}
+	for (col = 0; col < numCols; col++) {
+		for (row = 0; row + 1 < rows; row++) {
+			int    a = base + col * rows + row, bb = a + rows, c = a + 1, d = bb + 1;
+			vec3_t nrm;
+			float  u = (row + 0.5f) / segments;
+
+			R_BevelBlend(f->n, 1.0f - u, nOther, u, NULL, 0, nrm);
+			R_BevelTri(b, f, a, bb, d, nrm);
+			R_BevelTri(b, f, a, d, c, nrm);
+		}
 	}
 }
 
@@ -1310,6 +1492,7 @@ void R_BevelWorld(world_t *world)
 {
 	int           i, j, k, s, iter, firstSurface, numSurfaces, segments;
 	int           startTime = ri.Milliseconds(), bevelled = 0, sphereCorners = 0, wallEnds = 0, fadeEnds = 0, facesChanged = 0;
+	int           attempt, stat_plain = 0;
 	int           stat_lines = 0, stat_many = 0, stat_concave = 0, stat_angle = 0, stat_uncovered = 0, stat_touched = 0, stat_clip = 0, stat_fade = 0;
 	float         maxRadius, minAngle, scale, taperLen, *splitPool;
 	int          *splitStart, *splitCount;
@@ -1326,6 +1509,8 @@ void R_BevelWorld(world_t *world)
 	maxRadius = r_bevelRadius->value;
 	scale = r_bevelScale->value;
 	taperLen = r_bevelTaper->value;
+	bevelDisplace = Q_max(0, r_bevelDisplace->value);
+	bevelStep = Q_max(0.5f, r_bevelStep->value);
 	segments = r_bevelSegments->integer;
 	minAngle = r_bevelMinAngle->value;
 	if (maxRadius <= 0.1f) {
@@ -1841,7 +2026,7 @@ void R_BevelWorld(world_t *world)
 	if (r_bevel->integer >= 3) {
 		int shown = 0;
 
-		for (i = 0; i < numSegs && shown < 40; i++) {
+		for (i = 0; i < numSegs && (shown < 40 || r_bevel->integer >= 4); i++) {
 			const bevelLine_t *l = &lines[segs[i].line];
 			vec3_t             p0, p1;
 
@@ -1860,8 +2045,8 @@ void R_BevelWorld(world_t *world)
 
 	// build: each piece cut back, its fades, its stretches of strip, its
 	// corner pieces
-	build.maxVerts = 8192;
-	build.maxIndexes = 8192 * 3;
+	build.maxVerts = BEVEL_FACE_VERTS * 2;
+	build.maxIndexes = BEVEL_FACE_VERTS * 6;
 	build.verts = ri.Hunk_AllocateTempMemory(build.maxVerts * sizeof(srfVert_t));
 	build.indexes = ri.Hunk_AllocateTempMemory(build.maxIndexes * sizeof(glIndex_t));
 
@@ -1875,6 +2060,12 @@ void R_BevelWorld(world_t *world)
 		if (!f->touched || f->numClipped < 3) {
 			continue;
 		}
+		// displaced first; a face that comes out past one batch is built
+		// again with plain rounded edges
+		for (attempt = 0; attempt < 2; attempt++) {
+		qboolean displace = attempt == 0 && bevelDisplace > 0;
+
+		numFar = 0;
 		build.numVerts = build.numIndexes = 0;
 
 		// the fades first (their far points go into the cut back polygon)
@@ -1907,7 +2098,7 @@ void R_BevelWorld(world_t *world)
 				R_BevelFan(&build, f, (const vec3_t *)piece, NULL, n, NULL, 0);
 				numFar++;
 				// the strip, from nothing at the edge's end to its full radius
-				R_BevelStrip(&build, f, sg, nOther, tEnd, 0.0f, tFar, 1.0f, segments);
+				R_BevelStrip(&build, f, sg, nOther, tEnd, 0.0f, tFar, 1.0f, segments, displace);
 			}
 		}
 
@@ -1938,7 +2129,7 @@ void R_BevelWorld(world_t *world)
 				if (mid < tmin || mid > tmax) {
 					continue;
 				}
-				R_BevelStrip(&build, f, sg, nOther, splits[x], 1.0f, splits[x + 1], 1.0f, segments);
+				R_BevelStrip(&build, f, sg, nOther, splits[x], 1.0f, splits[x + 1], 1.0f, segments, displace);
 			}
 		}
 
@@ -2018,7 +2209,14 @@ void R_BevelWorld(world_t *world)
 			}
 		}
 
-		if (build.numVerts >= build.maxVerts || build.numIndexes + 3 > build.maxIndexes) {
+		if (build.numVerts < BEVEL_FACE_VERTS && build.numIndexes + 3 <= build.maxIndexes) {
+			break;
+		}
+		if (displace) {
+			stat_plain++;
+		}
+		}
+		if (build.numVerts >= BEVEL_FACE_VERTS || build.numIndexes + 3 > build.maxIndexes) {
 			continue;
 		}
 
@@ -2045,6 +2243,7 @@ void R_BevelWorld(world_t *world)
 		facesChanged++;
 	}
 
+	R_BevelFreeHeights();
 	ri.Hunk_FreeTempMemory(build.indexes);
 	ri.Hunk_FreeTempMemory(build.verts);
 	ri.Hunk_FreeTempMemory(splitPool);
@@ -2057,8 +2256,9 @@ void R_BevelWorld(world_t *world)
 	ri.Hunk_FreeTempMemory(faces);
 	ri.Hunk_FreeTempMemory(planes);
 
-	ri.Printf(PRINT_ALL, "bevel: %d edges rounded (%d corners, %d ends at walls, %d fading out), %d faces changed, radius up to %.1f, in %d ms\n",
-		bevelled, sphereCorners, wallEnds, fadeEnds, facesChanged, maxRadius, ri.Milliseconds() - startTime);
+	ri.Printf(PRINT_ALL, "bevel: %d edges rounded (%d corners, %d ends at walls, %d fading out), %d faces changed, radius up to %.1f, "
+		"%s%d faces too big to displace, in %d ms\n", bevelled, sphereCorners, wallEnds, fadeEnds, facesChanged, maxRadius,
+		bevelDisplace > 0 ? "displaced by their relief, " : "", stat_plain, ri.Milliseconds() - startTime);
 	if (r_bevel->integer >= 2) {
 		ri.Printf(PRINT_ALL, "bevel: %d faces taken; %d lines between two planes: %d with more planes, %d concave, %d at an angle out of "
 			"range, %d stretches lined on one side only; %d segments, %d with something touching, %d lost cutting back, %d whose fade "
@@ -2084,6 +2284,11 @@ void R_BevelRegisterCvars(void)
 	r_bevelTaper = ri.Cvar_Get("r_bevelTaper", "4", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_bevelTaper, "r_bevel: where an edge ends in anything but a box corner or a wall, the rounding fades out "
 		"over this many times its radius");
+	r_bevelDisplace = ri.Cvar_Get("r_bevelDisplace", "0.7", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_bevelDisplace, "r_bevel: how deep the mortar between stones cuts into a rounded edge, from the "
+		"texture's height map (_nh), as a share of its radius: the edge's outline follows the stones. 0: smooth");
+	r_bevelStep = ri.Cvar_Get("r_bevelStep", "2", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_bevelStep, "r_bevel: the displaced edges' detail along their length, in units (smaller: finer, more vertexes)");
 	r_bevelSegments = ri.Cvar_Get("r_bevelSegments", "4", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_bevelSegments, "r_bevel: the strips across a rounded edge (2 to 8, even)");
 	r_bevelMinAngle = ri.Cvar_Get("r_bevelMinAngle", "30", CVAR_ARCHIVE | CVAR_LATCH);
