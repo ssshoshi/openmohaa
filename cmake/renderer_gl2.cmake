@@ -29,6 +29,7 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_smaa.c
     ${SOURCE_DIR}/renderergl2/tr_taa.c
     ${SOURCE_DIR}/renderergl2/tr_motionblur.c
+    ${SOURCE_DIR}/renderergl2/tr_texalign.c
     ${SOURCE_DIR}/renderergl2/tr_image.c
     ${SOURCE_DIR}/renderergl2/tr_image_dds.c
     ${SOURCE_DIR}/renderergl2/tr_init.c
