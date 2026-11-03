@@ -4076,6 +4076,10 @@ void RE_LoadWorldMap( const char *name ) {
 	//=========================
 
 	// determine vertex light directions
+	// Added in OPM: textures that carry on round corners (r_texAlign)
+	R_TexAlignWorld(&s_worldData);
+	R_LoadStep( "R_TexAlignWorld" );
+
 	R_CalcVertexLightDirs();
 	R_LoadStep( "R_CalcVertexLightDirs" );
 
