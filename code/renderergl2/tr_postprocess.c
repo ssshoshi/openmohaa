@@ -612,6 +612,7 @@ cvar_t *r_bloomThreshold;
 cvar_t *r_bloomKnee;
 cvar_t *r_bloomEmissive;
 cvar_t *r_sharpen;
+cvar_t *r_smaa;
 
 void R_BloomRegisterCvars(void)
 {
@@ -620,6 +621,11 @@ void R_BloomRegisterCvars(void)
 	r_bloomThreshold = ri.Cvar_Get("r_bloomThreshold", "1.2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_bloomThreshold, "How bright a pixel must be, before the tone map, to glow (1: what the tone map makes white)");
 	r_sharpen = ri.Cvar_Get("r_sharpen", "0.3", CVAR_ARCHIVE);
+	// Added in OPM: SMAA 1x (tr_smaa.c)
+	r_smaa = ri.Cvar_Get("r_smaa", "0", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_smaa, "SMAA anti-aliasing after the tone map (needs r_hdr 1): 0 off, 1 low, 2 medium, 3 high, 4 ultra quality. "
+		"Smooths alpha tested fences and foliage and edges inside textures that MSAA leaves; about half the cost of MSAA 2x. "
+		"Can be used with or instead of r_ext_framebuffer_multisample. -1 shows the edges found, -2 the blend weights");
 	ri.Cvar_SetDescription(r_sharpen, "Sharpens the tone mapped frame where its contrast leaves room, without halos (0 to 1; 0: off; needs r_toneMap)");
 	r_bloomEmissive = ri.Cvar_Get("r_bloomEmissive", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_bloomEmissive, "How many times brighter than white the lamps' bulbs, flames and glass are, so that they bloom (1: as white as they were)");
