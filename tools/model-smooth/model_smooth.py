@@ -52,6 +52,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import paks  # noqa: E402
 
 MAX_VERTS = 2047
+
+# What the techdemo test (2026-11-02) wanted smooth: arms, hands, heads and
+# helmets (Bip01 Head). Kept as they were: the torso (Spine, Spine2: belts and
+# button lines went wavy), the clavicles (the front of the collar), the hips
+# and legs and feet (boots looked worse).
+DEFAULT_BONES = r"(upperarm|forearm|hand|finger|shoulder|elbow|neck|head)"
 MAX_TRIS = 4096
 
 HEADER = struct.Struct("<4si64siiiii10iiiii")  # up to ofsMorphTargets; v6 adds a float
@@ -94,6 +100,12 @@ def parse(data):
         raise ValueError("not an SKD 5/6")
     skd.numSurfaces, skd.ofsSurfaces, skd.ofsEnd = fields[3], fields[6], fields[7]
     skd.data = data
+    # the bones' names, in the order weights number them (boneFileData_t)
+    skd.boneNames = []
+    p = fields[5]
+    for _ in range(fields[4]):
+        skd.boneNames.append(data[p : p + 32].split(b"\0")[0].decode("latin-1"))
+        p += struct.unpack_from("<i", data, p + 80)[0]
     skd.surfaces = []
     ofs = skd.ofsSurfaces
     for _ in range(skd.numSurfaces):
@@ -226,7 +238,7 @@ def dot(a, b):
 # --- one Loop level
 
 
-def subdivide(s, crease_cos, decal_tris, min_weight):
+def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
     n = len(s.verts)
     tris = s.tris
     if n < 3 or not tris:
@@ -287,6 +299,15 @@ def subdivide(s, crease_cos, decal_tris, min_weight):
         r = find(topo[a])
         size[r] = size.get(r, 0) + 1
     flat = [size.get(find(t), 0) < decal_tris for t in range(nt)]
+    # vertexes whose strongest bone is not one to smooth keep their place
+    # (and an edge touching one is only cut in half)
+    if smooth_bone:
+        for t in range(nt):
+            strongest = max(s.verts[reps[t]].weights, key=lambda w: w[1])[0]
+            if not smooth_bone(strongest):
+                flat[t] = True
+        if all(flat):
+            return None  # nothing here to smooth: leave the surface alone
 
     skins = [skin_of(s.verts[reps[t]]) for t in range(nt)]
     morphs = [morphs_of(s.verts[reps[t]]) for t in range(nt)]
@@ -318,7 +339,7 @@ def subdivide(s, crease_cos, decal_tris, min_weight):
     edge_skin, edge_morph, edge_normal = {}, {}, {}
     for key, opp in edges.items():
         a, b = key
-        if flat[a] or len(opp) != 2:
+        if flat[a] or flat[b] or len(opp) != 2:
             terms = [(0.5, a), (0.5, b)]
         else:
             terms = [(0.375, a), (0.375, b), (0.125, opp[0]), (0.125, opp[1])]
@@ -393,6 +414,9 @@ def main():
     ap.add_argument("--crease", type=float, default=60.0, help="degrees between normals past which an edge stays a hard edge")
     ap.add_argument("--decal-tris", type=int, default=24, help="pieces apart from the rest under this are cut, not smoothed")
     ap.add_argument("--min-weight", type=float, default=0.01, help="weights under this are dropped from new vertexes")
+    ap.add_argument("--bones", default=DEFAULT_BONES,
+                    help="only vertexes whose strongest bone's name matches this are smoothed; the rest keep their place "
+                    "(default: shoulders, arms, hands, neck, head; '.' for everything)")
     args = ap.parse_args()
 
     if args.list:
@@ -430,8 +454,14 @@ def main():
                 continue
             before = sum(len(s.tris) for s in skd.surfaces)
             changed = 0
+            bone_rx = re.compile(args.bones, re.I)
+            names = skd.boneNames
+
+            def smooth_bone(b, names=names):
+                return 0 <= b < len(names) and bool(bone_rx.search(names[b]))
+
             for i, s in enumerate(skd.surfaces):
-                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight)
+                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight, smooth_bone)
                 if out:
                     skd.surfaces[i] = out
                     changed += 1
