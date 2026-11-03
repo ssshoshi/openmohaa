@@ -13,7 +13,7 @@ realtime lights and their shadows. The physics room is full of props the
 physics can knock about. The range has passive soldiers and gas barrels at
 the far end, to shoot and blow up (gore, ragdolls). The gallery's walls are
 textures with material maps, lit at a grazing angle (normal and parallax
-maps). The yard gets a fixed crowd of soldiers (the cost of a populated
+maps). The yard gets one of every human model (the cost of a populated
 scene). Its script (m0_techdemo.scr) spawns them, and with `techdemo_bench 1`
 flies a camera along the same path every time for benchmarks.
 
