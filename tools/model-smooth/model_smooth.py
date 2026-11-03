@@ -28,8 +28,8 @@ Level of detail stays: the original vertexes keep their order and collapse
 data, and the new ones go after them, each collapsing to an end of its edge
 at the lowest detail threshold, so a distant model drops them first.
 
-The engine (TIKI_MAX_VERTEXES 2048, TIKI_MAX_TRIANGLES 4096) takes a surface
-of up to 2047 vertexes and 4096 triangles; a surface that would go past that
+The engine (TIKI_MAX_VERTEXES 4096, TIKI_MAX_TRIANGLES 8192) takes a surface
+of up to 4095 vertexes and 8192 triangles; a surface that would go past that
 is left as it is.
 
 Reads the game's paks (tools/paks.py, MOHAA_GAME), writes a pk3 for main/.
@@ -51,14 +51,14 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import paks  # noqa: E402
 
-MAX_VERTS = 2047
+MAX_VERTS = 4095
 
 # What the techdemo test (2026-11-02) wanted smooth: arms, hands, heads and
 # helmets (Bip01 Head). Kept as they were: the torso (Spine, Spine2: belts and
 # button lines went wavy), the clavicles (the front of the collar), the hips
 # and legs and feet (boots looked worse).
 DEFAULT_BONES = r"(upperarm|forearm|hand|finger|shoulder|elbow|neck|head)"
-MAX_TRIS = 4096
+MAX_TRIS = 8192
 
 HEADER = struct.Struct("<4si64siiiii10iiiii")  # up to ofsMorphTargets; v6 adds a float
 SURF = struct.Struct("<4s64s8i")
@@ -414,6 +414,10 @@ def main():
     ap.add_argument("--crease", type=float, default=60.0, help="degrees between normals past which an edge stays a hard edge")
     ap.add_argument("--decal-tris", type=int, default=24, help="pieces apart from the rest under this are cut, not smoothed")
     ap.add_argument("--min-weight", type=float, default=0.01, help="weights under this are dropped from new vertexes")
+    ap.add_argument("--rule", action="append", default=[], metavar="REGEX=BONES",
+                    help="models whose path matches REGEX smooth the vertexes whose bone matches BONES instead of --bones "
+                    "(the first rule that matches wins), e.g. 'lifevest=.' for all of it, '^models/gear/=head' for only "
+                    "what sits on the head")
     ap.add_argument("--bones", default=DEFAULT_BONES,
                     help="only vertexes whose strongest bone's name matches this are smoothed; the rest keep their place "
                     "(default: shoulders, arms, hands, neck, head; '.' for everything)")
@@ -454,7 +458,13 @@ def main():
                 continue
             before = sum(len(s.tris) for s in skd.surfaces)
             changed = 0
-            bone_rx = re.compile(args.bones, re.I)
+            bones = args.bones
+            for rule in args.rule:
+                rx, _, b = rule.partition("=")
+                if re.search(rx, path, re.I):
+                    bones = b
+                    break
+            bone_rx = re.compile(bones, re.I)
             names = skd.boneNames
 
             def smooth_bone(b, names=names):
@@ -470,7 +480,7 @@ def main():
             if changed:
                 done += 1
                 z.writestr(path, write(skd))
-            print(f"{path}: {changed}/{len(skd.surfaces)} surfaces, {before} -> {after} triangles")
+            print(f"{path}: {changed}/{len(skd.surfaces)} surfaces, {before} -> {after} triangles (bones {bones})")
         z.close()
         print(f"{done} of {total} models written to {args.pk3}")
         return
