@@ -158,6 +158,10 @@ echo "bench: map       $MAP @ ${WIDTH}x${HEIGHT}, gpuTimers interval ${INTERVAL}
 echo "bench: clearing previous run"
 taskkill.exe /IM "$PROC.exe" /F >/dev/null 2>&1
 rm -f "$LOG" "$SHOTDIR"/*.jpg "$SHOTDIR"/*.tga 2>/dev/null
+# A run that was force-killed leaves its PID file, and the next start then
+# holds on a modal "didn't exit properly, start with safe video settings?"
+# dialog (Sys_InitPIDFile) until someone answers it: the map never loads.
+rm -f "$OUT/main/OpenMoHAA.pid" 2>/dev/null
 # cl_renderer is CVAR_ARCHIVE|CVAR_LATCH and defaults to opengl1; a stale value in this
 # homepath's omconfig.cfg silently loads GL1 (no r_gpuTimers) and outranks the launch +set.
 # Force GL2 in the persisted config so the GL2 renderer is what actually loads.
