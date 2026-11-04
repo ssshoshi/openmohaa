@@ -31,7 +31,13 @@ attribute vec4 attr_BoneWeights;
 #else
 attribute vec3 attr_Position;
 #endif
+#if defined(USE_PARALLAX_SILHOUETTE)
+// Added in OPM: w, where the face's outside corners are (tr_texalign.c)
+attribute vec4 attr_Normal;
+varying float  var_Silhouette;
+#else
 attribute vec3 attr_Normal;
+#endif
 #if defined(USE_TANGENT_FRAME) || defined(USE_GROUNDCOVER) || defined(USE_SKEL_GPU)
 attribute vec4 attr_Tangent;
 #endif
@@ -394,9 +400,12 @@ void main()
 	vec4 skelColor = SkelLight(position, normal);
 #else
 	vec3 position  = attr_Position;
-	vec3 normal    = attr_Normal;
+	vec3 normal    = attr_Normal.xyz;
   #if defined(USE_TANGENT_FRAME)
 	vec3 tangent   = attr_Tangent.xyz;
+  #endif
+  #if defined(USE_PARALLAX_SILHOUETTE)
+	var_Silhouette = attr_Normal.w;
   #endif
 #endif
 

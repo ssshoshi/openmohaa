@@ -941,6 +941,10 @@ RB_SurfaceFace
 ==============
 */
 static void RB_SurfaceFace( srfBspSurface_t *srf ) {
+	// Added in OPM: beside an outside corner (r_parallaxSilhouette)
+	if (srf->parallaxSilhouette)
+		tess.parallaxSilhouette = qtrue;
+
 	if (RB_SurfaceVaoCached(srf->numVerts, srf->verts, srf->numIndexes,
 		srf->indexes, srf->dlightBits, srf->pshadowBits))
 	{

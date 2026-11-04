@@ -53,6 +53,15 @@ uniform vec4      u_CubeMapInfo;
 
 uniform int       u_AlphaTest;
 
+#if defined(USE_PARALLAX_SILHOUETTE)
+// Added in OPM: across a face beside an outside corner, -1 and 1 at the
+// corners' edges (a face with one has it at one end and keeps the other
+// inside), 0 on any other face (tr_texalign.c); the depth prepass of a
+// batch with such a face stops once the relief is cut away
+varying float     var_Silhouette;
+uniform int       u_DepthOnly;
+#endif
+
 // Added in OPM: wet (tr_water.c). What has been in the sea or under the
 // spray, up to the mark the tide reached, is wet, after Lagarde's wet
 // surfaces in Remember Me: not a layer over the lit surface but the surface
@@ -836,8 +845,38 @@ void main()
 	float reliefPixels = length(offsetDir.xy) / max(max(length(parallaxGx), length(parallaxGy)), 1e-7);
 	bool  parallaxOn = reliefPixels >= 0.5;
 
+  #if defined(USE_PARALLAX_SILHOUETTE)
+	// Added in OPM: how the edge coordinate changes over the texture. Both
+	// are linear over the face, so from the pixel's own differences the
+	// gradient is exact (and 0 on a face beside no corner).
+	float silGx = dFdx(var_Silhouette), silGy = dFdy(var_Silhouette);
+	float silDet = parallaxGx.x * parallaxGy.y - parallaxGx.y * parallaxGy.x;
+	vec2  silGrad = silDet != 0.0 ? vec2(parallaxGy.y * silGx - parallaxGx.y * silGy, parallaxGx.x * silGy - parallaxGy.x * silGx) / silDet : vec2(0.0);
+  #endif
+
 	if (parallaxOn)
-		texCoords += offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap, parallaxGx, parallaxGy, clamp(ceil(reliefPixels), 4.0, 16.0));
+	{
+		vec2 parallaxOffset = offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap, parallaxGx, parallaxGy, clamp(ceil(reliefPixels), 4.0, 16.0));
+
+  #if defined(USE_PARALLAX_SILHOUETTE)
+		// Added in OPM: silhouette parallax. The ray went out past the
+		// corner's edge before it met the relief: beyond it there is no wall
+		// (the face round the corner faces away, or the ray could not have
+		// gone that way), so the mortar there is a notch in the outline
+		if (abs(var_Silhouette + dot(silGrad, parallaxOffset)) > 1.0)
+			discard;
+  #endif
+
+		texCoords += parallaxOffset;
+	}
+#endif
+
+#if defined(USE_PARALLAX_SILHOUETTE)
+	if (u_DepthOnly != 0)
+	{
+		gl_FragColor = vec4(0.0);
+		return;
+	}
 #endif
 
 	vec4 diffuse = texture2D(u_DiffuseMap, texCoords);

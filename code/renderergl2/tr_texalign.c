@@ -41,10 +41,20 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // - The slides spread from wall to wall over the corners they share,
 //   longest first; round a closed loop (a building) the wrap rarely comes
 //   out to whole repeats, so one corner keeps a seam, the shortest.
+//
+// The same corners give the parallax its silhouette (r_parallaxSilhouette):
+// at an outside corner the relief of a face is cut away where the ray into
+// it goes out past the edge before it meets the relief, so the mortar runs
+// out as notches in the outline instead of the wall ending in a straight
+// line. A face beside one gets a coordinate across it in its vertices'
+// normal[3] (unused: always 0), -1 and 1 at the corners' edges, which the
+// shader carries along the ray (lightall_fp.glsl); this works with or
+// without r_texAlign, which only lines the notches up on both sides.
 
 #include "tr_local.h"
 
 cvar_t *r_texAlign;
+cvar_t *r_parallaxSilhouette;
 
 static int ta_turned, ta_flat, ta_unfold, ta_scaleUp, ta_courses, ta_mirrored;
 
@@ -59,6 +69,9 @@ typedef struct {
 	vec3_t           grad[2];  // how s and t change with position (in the face's plane)
 	float            base[2];  // s and t at the origin
 	int              wall;     // the wall (union find root through walls[])
+	int              silEdges; // its ends at an outside corner: 1 the low end of across, 2 the high one
+	vec3_t           across;   // horizontal, in its plane
+	float            acrossMin, acrossMax;
 } taFace_t;
 
 typedef struct {
@@ -315,6 +328,90 @@ static int TA_CompareLinks(const void *x, const void *y)
 
 /*
 =================
+TA_ParallaxShader
+
+Whether the shader's surfaces are drawn with parallax at all.
+=================
+*/
+static qboolean TA_ParallaxShader(const shader_t *sh)
+{
+	const shaderStage_t *st = sh->stages[0];
+
+	return st && st->glslShaderGroup == tr.lightallShader && (st->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP) && !(st->stateBits & GLS_ATEST_BITS);
+}
+
+/*
+=================
+TA_SilhouetteSide
+
+Marks the end of the face a side of it is at as an outside corner.
+=================
+*/
+static void TA_SilhouetteSide(taFace_t *f, const taSide_t *sd)
+{
+	static const vec3_t up = { 0, 0, 1 };
+	float               x;
+	int                 i;
+
+	if (!f->silEdges) {
+		CrossProduct(up, f->n, f->across);
+		if (VectorNormalize(f->across) < 0.5f) {
+			return;
+		}
+		f->acrossMin = f->acrossMax = DotProduct(f->across, f->cv->verts[0].xyz);
+		for (i = 1; i < f->cv->numVerts; i++) {
+			x = DotProduct(f->across, f->cv->verts[i].xyz);
+			f->acrossMin = Q_min(f->acrossMin, x);
+			f->acrossMax = Q_max(f->acrossMax, x);
+		}
+		if (f->acrossMax - f->acrossMin < 1.0f) {
+			return;
+		}
+	}
+	x = f->across[0] * sd->x + f->across[1] * sd->y;
+	f->silEdges |= fabs(x - f->acrossMin) < fabs(x - f->acrossMax) ? 1 : 2;
+}
+
+/*
+=================
+TA_SilhouetteWrite
+
+The coordinate across a face beside an outside corner, -1 and 1 at its
+ends there; an end at no corner is kept just inside, at 0, so that the
+ray going out past it cuts nothing away (the gradient stays that of the
+whole width).
+=================
+*/
+static void TA_SilhouetteWrite(taFace_t *f)
+{
+	float lo, hi, width = f->acrossMax - f->acrossMin;
+	int   i;
+
+	switch (f->silEdges) {
+	case 1:
+		lo = -1.0f;
+		hi = 0.0f;
+		break;
+	case 2:
+		lo = 0.0f;
+		hi = 1.0f;
+		break;
+	default:
+		lo = -1.0f;
+		hi = 1.0f;
+		break;
+	}
+	for (i = 0; i < f->cv->numVerts; i++) {
+		float x = (DotProduct(f->across, f->cv->verts[i].xyz) - f->acrossMin) / width;
+		float w = lo + (hi - lo) * Com_Clamp(0.0f, 1.0f, x);
+
+		f->cv->verts[i].normal[3] = (int16_t)(w * 32767.0f + (w > 0.0f ? 0.5f : -0.5f));
+	}
+	f->cv->parallaxSilhouette = qtrue;
+}
+
+/*
+=================
 R_TexAlignWorld
 
 Called once the world's surfaces are loaded, before anything is drawn.
@@ -323,10 +420,11 @@ Called once the world's surfaces are loaded, before anything is drawn.
 void R_TexAlignWorld(world_t *world)
 {
 	int i, j, k, firstSurface, numSurfaces, numWalls = 0, moved = 0, aligned = 0, seams = 0, startTime = ri.Milliseconds();
-	int stat_unfold = 0, stat_pairs = 0;
+	int stat_unfold = 0, stat_pairs = 0, silCorners = 0, silFaces = 0;
+	qboolean doAlign = r_texAlign->integer != 0, doSilhouette = r_parallaxSilhouette->integer && r_parallaxMapping->integer;
 
 	ta_turned = ta_flat = ta_unfold = ta_scaleUp = ta_courses = ta_mirrored = 0;
-	if (!r_texAlign->integer || !world || !world->bmodels || world->numBModels < 1) {
+	if ((!doAlign && !doSilhouette) || !world || !world->bmodels || world->numBModels < 1) {
 		return;
 	}
 	firstSurface = world->bmodels[0].firstSurface;
@@ -467,6 +565,20 @@ void R_TexAlignWorld(world_t *world)
 			if (z1 - z0 < 1.0f) {
 				continue;
 			}
+			// Added in OPM: an outside corner, where the relief can be cut
+			// away (each face round it lies behind the other's plane)
+			if (doSilhouette && TA_ParallaxShader(fa->surf->shader) && DotProduct(sb->inward, fa->n) < -0.25f
+				&& DotProduct(sa->inward, fb->n) < -0.25f) {
+				TA_SilhouetteSide(&taFaces[sa->face], sa);
+				TA_SilhouetteSide(&taFaces[sb->face], sb);
+				silCorners++;
+				if (z1 - z0 >= 96.0f) {
+					ri.Printf(PRINT_DEVELOPER, "texalign: outside corner at %.0f %.0f, %.0f to %.0f, %s\n", sa->x, sa->y, z0, z1, fa->surf->shader->name);
+				}
+			}
+			if (!doAlign) {
+				continue;
+			}
 			stat_pairs++;
 			VectorSet(p, sa->x, sa->y, 0.5f * (z0 + z1));
 			if (!TA_Link(fa, sa, fb, sb, p, &comp, &delta)) {
@@ -511,6 +623,13 @@ void R_TexAlignWorld(world_t *world)
 		}
 	}
 
+	for (i = 0; i < taNumFaces; i++) {
+		if (taFaces[i].silEdges) {
+			TA_SilhouetteWrite(&taFaces[i]);
+			silFaces++;
+		}
+	}
+
 	// move each wall's faces
 	for (i = 0; i < taNumFaces; i++) {
 		taFace_t *f = &taFaces[i];
@@ -536,6 +655,12 @@ void R_TexAlignWorld(world_t *world)
 	ri.Hunk_FreeTempMemory(taWalls);
 	ri.Hunk_FreeTempMemory(taFaces);
 
+	if (doSilhouette) {
+		ri.Printf(PRINT_ALL, "texalign: %d outside corners of parallax textures cut their relief away (%d faces)\n", silCorners, silFaces);
+	}
+	if (!doAlign) {
+		return;
+	}
 	ri.Printf(PRINT_ALL, "texalign: %d walls of the same texture meet at %d vertical corners: %d carry the texture on (%d faces slid), "
 		"%d keep a seam (round a loop), %d could not, in %d ms\n",
 		numWalls, stat_pairs, aligned, moved, seams, stat_unfold, ri.Milliseconds() - startTime);
@@ -549,4 +674,7 @@ void R_TexAlignRegisterCvars(void)
 	r_texAlign = ri.Cvar_Get("r_texAlign", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_texAlign, "Slides textures along walls as maps load so that, where two walls of the same texture meet at a "
 		"vertical corner, the texture (and its normal and height map) carries on round it instead of jumping");
+	r_parallaxSilhouette = ri.Cvar_Get("r_parallaxSilhouette", "0", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_SetDescription(r_parallaxSilhouette, "With r_parallaxMapping: at outside vertical corners of the same parallax texture, the relief "
+		"is cut away where the view ray leaves the wall past the corner, so mortar shows as notches in the outline");
 }
