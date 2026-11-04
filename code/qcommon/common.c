@@ -2700,6 +2700,74 @@ void Com_LoadProfilePresent( qboolean loaded )
 
 /*
 =================
+Com_ReportFrameStats
+
+Added in OPM: every com_frameStats frames, the spread of their times:
+percentiles, the worst, and how many ran past 33, 50 and 100 ms.
+=================
+*/
+#define FRAMESTATS_MAX 8192
+
+static int QDECL Com_CompareFloats( const void *a, const void *b )
+{
+	const float x = *(const float *)a, y = *(const float *)b;
+
+	return x < y ? -1 : ( x > y ? 1 : 0 );
+}
+
+static float Com_Percentile( const float *sorted, int n, float p )
+{
+	int i = (int)( p * ( n - 1 ) + 0.5f );
+
+	return sorted[Q_min( Q_max( i, 0 ), n - 1 )];
+}
+
+static void Com_ReportFrameStats( double frameUsec, double sleepUsec )
+{
+	static cvar_t *com_frameStats;
+	static float   frame[FRAMESTATS_MAX], work[FRAMESTATS_MAX];
+	static int     count;
+	int            window, i, over33 = 0, over50 = 0, over100 = 0;
+	double         sumFrame = 0, sumWork = 0;
+
+	if ( !com_frameStats ) {
+		com_frameStats = Cvar_Get( "com_frameStats", "0", 0 );
+		Cvar_SetDescription( com_frameStats, "Every this many frames, print the spread of their times (percentiles, worst, "
+			"how many ran past 33/50/100 ms), with and without the com_maxfps sleep" );
+	}
+	window = Q_min( com_frameStats->integer, FRAMESTATS_MAX );
+	if ( window <= 0 || frameUsec <= 0 ) {
+		count = 0;
+		return;
+	}
+
+	frame[count] = frameUsec / 1000.0;
+	work[count] = ( frameUsec - sleepUsec ) / 1000.0;
+	count++;
+	if ( count < window ) {
+		return;
+	}
+
+	for ( i = 0; i < count; i++ ) {
+		sumFrame += frame[i];
+		sumWork += work[i];
+		over33 += frame[i] > 33.3f;
+		over50 += frame[i] > 50.0f;
+		over100 += frame[i] > 100.0f;
+	}
+	qsort( frame, count, sizeof( float ), Com_CompareFloats );
+	qsort( work, count, sizeof( float ), Com_CompareFloats );
+	Com_Printf( "framestats %d frames: frame mean %.2f p50 %.2f p90 %.2f p99 %.2f p99.9 %.2f max %.2f | "
+		"work mean %.2f p50 %.2f p99 %.2f max %.2f | over 33ms %d 50ms %d 100ms %d\n",
+		count, sumFrame / count, Com_Percentile( frame, count, 0.5f ), Com_Percentile( frame, count, 0.9f ),
+		Com_Percentile( frame, count, 0.99f ), Com_Percentile( frame, count, 0.999f ), frame[count - 1],
+		sumWork / count, Com_Percentile( work, count, 0.5f ), Com_Percentile( work, count, 0.99f ), work[count - 1],
+		over33, over50, over100 );
+	count = 0;
+}
+
+/*
+=================
 Com_ReportFrameTimers
 
 Averaged microsecond ledger of where Com_Frame went, printed every
@@ -2739,6 +2807,12 @@ void Com_ReportFrameTimers( void )
 				com_frameUsec[FRAMETIMER_CGAME] / 1000.0, com_frameUsec[FRAMETIMER_SOUND] / 1000.0 );
 		}
 	}
+
+	// Added in OPM: the spread of frame times over a window (com_frameStats,
+	// in frames): an average hides the hitches, a hitch log hides how often
+	// the frame merely runs slow. "work" is the frame without its sleep (the
+	// com_maxfps cap), which is what a feature costs.
+	Com_ReportFrameStats( com_frameUsec[FRAMETIMER_FRAME], com_frameUsec[FRAMETIMER_SLEEP] );
 
 	if ( !com_frameTimers->integer ) {
 		Com_Memset( com_frameUsec, 0, sizeof( com_frameUsec ) );
