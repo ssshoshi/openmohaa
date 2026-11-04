@@ -1173,6 +1173,7 @@ typedef enum
 	UNIFORM_MBPREVBONES,    // the last frame's bones
 	UNIFORM_MBVELOCITYMAP,  // each pixel's smear
 	UNIFORM_MBTILEMAP,      // the longest about each tile
+	UNIFORM_DEPTHONLY,      // Added in OPM: the depth prepass of a batch with parallax silhouettes (r_parallaxSilhouette)
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1527,6 +1528,10 @@ typedef struct srfBspSurface_s
 	// vertexes
 	int             numVerts;
 	srfVert_t      *verts;
+
+	// Added in OPM: a face beside an outside corner, its edge coordinate in
+	// its vertices' normal[3] (r_parallaxSilhouette, tr_texalign.c)
+	qboolean        parallaxSilhouette;
 	
 	// SF_GRID specific variables after here
 
@@ -3708,6 +3713,7 @@ typedef struct shaderCommands_s
 	// distance, wind)
 	qboolean    groundCover;
 	qboolean    terrain;    // Added in OPM: a terrain patch is in the batch (lamp shadows draw its one side)
+	qboolean    parallaxSilhouette; // Added in OPM: a face beside an outside corner is in it (r_parallaxSilhouette)
 	vec4_t      groundCoverParams;
 
 	// Added in OPM: the batch is a tree's or a bush's surface, drawn from
@@ -3820,6 +3826,7 @@ int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *w
 void R_LightDirSummed( const vec3_t point, world_t *world, vec3_t summedDir ); // Added in OPM
 // Added in OPM: textures that carry on round corners (tr_texalign.c)
 void R_TexAlignRegisterCvars(void);
+extern cvar_t *r_parallaxSilhouette;
 void R_TexAlignWorld(world_t *world);
 int R_CubemapForPoint( vec3_t point );
 void R_PlaceEnvProbes( const lump_t *entityLump );

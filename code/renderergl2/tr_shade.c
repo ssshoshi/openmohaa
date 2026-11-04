@@ -328,6 +328,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.groundCover = qfalse;
 	tess.flora = qfalse;
 	tess.terrain = qfalse;
+	tess.parallaxSilhouette = qfalse;
 	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 	tess.xstages = state->stages;
@@ -1576,13 +1577,24 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		qboolean rtLit;
 		int rtKind;
 		qboolean groundVary = qfalse; // Added in OPM: the stage is drawn by the ground's own lightall (r_groundVariation)
+		qboolean silhouetteFill;
 
 		if ( !pStage )
 		{
 			break;
 		}
 
-		if (backEnd.depthFill)
+		// Added in OPM: the main view's prepass of a batch with a face beside
+		// an outside corner (r_parallaxSilhouette) runs the stage's own
+		// program, which cuts the relief away there as the main pass will,
+		// and stops once it has: the sun's shadow mask and everything else
+		// that reads this depth must see the corner as it is drawn
+		silhouetteFill = backEnd.depthFill && tess.parallaxSilhouette && pStage->glslShaderGroup == tr.lightallShader
+			&& (pStage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP) && !(pStage->stateBits & GLS_ATEST_BITS)
+			&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+			&& (!backEnd.currentEntity || backEnd.currentEntity == &tr.worldEntity) && !backEnd.currentStaticModel;
+
+		if (backEnd.depthFill && !silhouetteFill)
 		{
 			if (pStage->glslShaderGroup == tr.lightallShader)
 			{
@@ -1740,6 +1752,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 
 		GLSL_BindProgram(sp);
+
+		// Added in OPM: r_parallaxSilhouette's prepass stops at the depth
+		GLSL_SetUniformInt(sp, UNIFORM_DEPTHONLY, silhouetteFill);
 
 		if (R_RtActive())
 		{
@@ -2045,7 +2060,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		//
 		// do multitexture
 		//
-		if ( backEnd.depthFill )
+		if ( backEnd.depthFill && !silhouetteFill )
 		{
 			if (!(pStage->stateBits & GLS_ATEST_BITS))
 				GL_BindToTMU( tr.whiteImage, TB_COLORMAP );
@@ -2858,6 +2873,7 @@ void RB_EndSurface( void ) {
 	tess.useInternalVao = qfalse;
 	tess.groundCover = qfalse;
 	tess.flora = qfalse;
+	tess.parallaxSilhouette = qfalse;
 	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 

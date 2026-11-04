@@ -336,6 +336,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_MbPrevBones",    GLSL_INT },
 	{ "u_MbVelocityMap",  GLSL_INT },
 	{ "u_MbTileMap",      GLSL_INT },
+	{ "u_DepthOnly",       GLSL_INT }
 };
 
 typedef enum
@@ -2308,6 +2309,10 @@ static qboolean GLSL_InitLightallShader(int i)
 
 				if (r_parallaxMapShadows->integer)
 					Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP_SHADOWS\n");
+
+				// Added in OPM: the relief cut away at outside corners
+				if (r_parallaxSilhouette->integer)
+					Q_strcat(extradefines, 1024, "#define USE_PARALLAX_SILHOUETTE\n");
 
 				Q_strcat(extradefines, 1024, va("#define r_parallaxMapOffset %f\n", r_parallaxMapOffset->value));
 			}
