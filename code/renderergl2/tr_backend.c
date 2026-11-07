@@ -2788,7 +2788,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 
 		switch ( *(const int *)data ) {
 		case RC_SET_COLOR:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_SetColor( data );
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_STRETCH_PIC:
 			R_CpuTimerBegin(CPUTIMER_2D);
@@ -2801,7 +2803,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			R_CpuTimerEnd(CPUTIMER_DRAWSURFS);
 			break;
 		case RC_DRAW_BUFFER:
+			R_CpuTimerBegin(CPUTIMER_DRAWBUFFER);
 			data = RB_DrawBuffer( data );
+			R_CpuTimerEnd(CPUTIMER_DRAWBUFFER);
 			break;
 		case RC_SWAP_BUFFERS:
 			data = RB_SwapBuffers( data );
@@ -2813,13 +2817,19 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			data = RB_TakeVideoFrameCmd( data );
 			break;
 		case RC_COLORMASK:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_ColorMask(data);
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_CLEARDEPTH:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_ClearDepth(data);
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_CAPSHADOWMAP:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_CapShadowMap(data);
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_POSTPROCESS:
 			R_CpuTimerBegin(CPUTIMER_POSTPROCESS);
