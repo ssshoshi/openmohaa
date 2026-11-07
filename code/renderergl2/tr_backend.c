@@ -473,6 +473,12 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	double			originalTime;
 	FBO_t*			fbo = NULL;
 	qboolean		bStaticModel, oldbStaticModel;
+	// Added in OPM: the depth prepass and the shadow views never sample a
+	// cubemap, so a surface's cubemap must not end their batches. With
+	// r_cubeMapping on, rooms get different probes and the same shader came
+	// out as many small draws in every cascade (~0.8 ms of sun pass).
+	const qboolean	cubemapsUsed = !backEnd.depthFill
+		&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP | VPF_NOCUBEMAPS));
 
 	// save original time for entity shader offsets
 	originalTime = backEnd.refdef.floatTime;
@@ -518,7 +524,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	//=========================
 
 	for (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {
-		if ( drawSurf->sort == (unsigned)oldSort && drawSurf->cubemapIndex == oldCubemapIndex) {
+		cubemapIndex = cubemapsUsed ? drawSurf->cubemapIndex : 0;
+		if ( drawSurf->sort == (unsigned)oldSort && cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
 				continue;
 			// Added in OPM: a model too small for the prepass (r_prepassFarModels)
@@ -554,7 +561,6 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			bStaticModel = qfalse;
         }
         //=========================
-		cubemapIndex = drawSurf->cubemapIndex;
 
 		// Added in OPM: the wet beach, over the opaque world and under
 		// anything blended (tr_water.c)
