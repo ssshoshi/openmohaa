@@ -65,6 +65,16 @@ player's own config, on three still scenes (m5l1a street with the camera pinned,
 m4l1 spawns) and a 30 s scripted firefight on m5l1a (`fight.scr`: six MP40 soldiers, a grenade
 every six seconds, the player in god mode holding fire). The "floor" arm turns everything off.
 
+The firefight never plays the same twice (where the AI goes, where rounds land, who dies when),
+so two runs of one build differ by up to 9 ms a frame: it can only show big effects, or
+hitches a minute over many reps. `hits` (`hits.scr`) is the same kind of damage with the
+chance taken out: six soldiers frozen with `ai_off` at the firefight's spots, each hit by five
+body rounds and then killed by a round through the head, on a fixed 7 s cycle, plus a grenade
+every 6 s. Every round is an `orch_shoot start end damage large` (a script command added for
+this: one real bullet, no spread, as the player's), so the same parts are hit at the same
+times every run. Four runs of one build agreed within 5% (14.9-15.7 ms). Measure gore,
+ragdoll and hitch work with `hits`; confirm with `fight`.
+
 ```sh
 OMFEAT_PLAYCFG="/path/to/omconfig.cfg" tools/win-bench/features.sh   # ~6 h for 3 reps
 OMFEAT_ARMS=sunShadows,cubemaps OMFEAT_SCENES=street OMFEAT_REPS=3 ... # just one change's arms

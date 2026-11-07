@@ -13,7 +13,7 @@
 #                    rerun into the same dir skips runs that already finished
 #   OMFEAT_ARMS      comma list of arm names to run (default all); base and
 #                    base2 always run, they are what every arm is measured from
-#   OMFEAT_SCENES    comma list of scenes (default fight,street,m1l2a,m4l1)
+#   OMFEAT_SCENES    comma list of scenes (default fight,hits,street,m1l2a,m4l1)
 #   OMFEAT_REPS      repetitions of the whole matrix (default 3)
 #   OMBENCH_*        passed through to bench.sh (install, out dir, resolution)
 #
@@ -22,6 +22,10 @@
 # - more than 32 `+` commands on a command line are silently dropped, so the
 #   floor arm (everything off) goes into its seed cfg instead.
 # - a run started while another openmohaa.exe is up measures both: stop.
+# - the firefight plays differently every run (AI, aim, who dies where): two
+#   runs of one build differ by up to 9 ms a frame. hits (hits.scr) is the
+#   same damage scripted with no AI and no spread, within ~5%: measure the
+#   gore/ragdoll/hitch work with it; use fight for hitches/min over many reps.
 # - some runs land in a slow state (~2x everything); featan.py drops runs over
 #   1.5x the base median.
 set -uo pipefail
@@ -81,6 +85,7 @@ FLOOR="r_sunShadows 0; r_realtimeLighting 0; r_volumetric 0; r_gtao 0; r_ext_fra
 # name|map|precmds|measure ms|scope
 SCENES=(
 "fight|m5l1a|orch 1; dog 1; wuss; orch_runscript orch/scripts/fight.scr; +attackprimary|30000|dyn"
+"hits|m5l1a|orch 1; dog 1; notarget 1; orch_runscript orch/scripts/hits.scr|30000|dyn"
 "street|m5l1a|orch 1; orch_campos -1870 -1344 178 0 0; wait 100; orch_campos -1870 -1344 178 0 0|16000|all"
 "m1l2a|m1l2a|dog 1; notarget 1|16000|all"
 "m4l1|m4l1|dog 1; notarget 1|16000|all"
@@ -100,9 +105,9 @@ sed -e 's/^seta com_maxfps .*/seta com_maxfps "0"/' -e 's/^seta r_fullscreen .*/
 	"$OMFEAT_PLAYCFG" | tr -d '\r' > "$SEED"
 { cat "$SEED"; tr ';' '\n' <<< "$FLOOR" | sed -n 's/^ *\([^ ]*\) \(.*\)$/seta \1 "\2"/p'; } > "$FLOORSEED"
 
-# The firefight script goes where orch_runscript looks in bench's homepath.
+# The scene scripts go where orch_runscript looks in bench's homepath.
 mkdir -p "$OMBENCH_OUT/main/orch/scripts"
-cp tools/win-bench/fight.scr "$OMBENCH_OUT/main/orch/scripts/fight.scr"
+cp tools/win-bench/fight.scr tools/win-bench/hits.scr "$OMBENCH_OUT/main/orch/scripts/"
 
 for rep in $(seq 1 "$REPS"); do
 	for sc in "${SCENES[@]}"; do

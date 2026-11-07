@@ -1,0 +1,72 @@
+// Benchmark damage scene on m5l1a by the player's start: the firefight's
+// gore, deaths, ragdolls and grenades, but the same every run. No AI decides
+// anything: the soldiers stand frozen (ai_off) where fight.scr puts them, and
+// every round is an orch_shoot with no spread, at the same part of the same
+// soldier at the same time. A soldier's life (7 s):
+//   0.0   spawned, frozen
+//   0.5   five body rounds 0.15 s apart (chest, chest side, arm, belly, thigh)
+//   2.0   AI back on, a heavy round through the head: he dies and falls
+//   6.0   the corpse removed; 1 s later he is spawned again
+// The six soldiers start 1 s apart, so a hit, a death or a removal lands
+// most seconds. Every 6 s a grenade goes off between soldiers 2 and 5.
+// The player is in god mode and does not fire.
+level.hits_pts[1] = ( 4700 -4790 0 )
+level.hits_pts[2] = ( 4620 -4700 0 )
+level.hits_pts[3] = ( 4540 -4620 0 )
+level.hits_pts[4] = ( 4760 -4660 0 )
+level.hits_pts[5] = ( 4660 -4560 0 )
+level.hits_pts[6] = ( 4560 -4800 0 )
+
+for (local.i = 1; local.i <= 6; local.i++)
+{
+	thread soldier local.i
+	wait 1
+}
+thread grenades
+end
+
+soldier local.k:
+	// facing yaw 315: rounds come from 60 units in front of him, level
+	local.front = ( 42.4 -42.4 0 )
+	local.side = ( 8 8 0 )
+	while (1)
+	{
+		local.s = spawn models/human/german_wehrmact_soldier.tik "origin" level.hits_pts[local.k] "angle" "315" "weapon" "MP40"
+		local.s ai_off
+		wait 0.5
+		// where he settled (the floor is not at 0)
+		local.o = local.s.origin
+		local.t[1] = local.o + ( 0 0 50 )
+		local.t[2] = local.o + ( 0 0 50 ) + local.side
+		local.t[3] = local.o + ( 0 0 48 ) - local.side * 1.6
+		local.t[4] = local.o + ( 0 0 38 )
+		local.t[5] = local.o + ( 0 0 24 ) + local.side * 0.6
+		for (local.n = 1; local.n <= 5; local.n++)
+		{
+			orch_shoot (local.t[local.n] + local.front) local.t[local.n] 12 0
+			wait 0.15
+		}
+		wait 0.75
+		if (local.s != NULL && isalive local.s)
+		{
+			local.s ai_on
+			local.h = local.o + ( 0 0 64 )
+			orch_shoot (local.h + local.front) local.h 2000 1
+		}
+		wait 4
+		if (local.s != NULL)
+			local.s remove
+		wait 1
+	}
+end
+
+grenades:
+	while (1)
+	{
+		wait 6
+		local.g = spawn models/projectiles/M2FGrenade.tik
+		local.g.origin = (level.hits_pts[2] + level.hits_pts[5]) * 0.5 + ( 0 0 16 )
+		wait 0.1
+		local.g explode
+	}
+end
