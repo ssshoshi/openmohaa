@@ -1796,11 +1796,42 @@ static void R_AddEntitySurface (int entityNum)
 
 /*
 =============
+R_SunCascadeSkips
+
+Added in OPM: what a sun cascade leaves out, by the rule the realtime lights'
+shadows already follow (R_RtTrackCasters): only models cast, not what hangs
+off the view, the sky room's or what asks for none, and not spent cases and
+chips (r_rtCasterMinRadius). Each was posed, culled and added to every
+cascade that takes entities, a fight's brass among them.
+=============
+*/
+static qboolean R_SunCascadeSkips(const trRefEntity_t *ent)
+{
+	const model_t *model;
+	float radius;
+
+	if (ent->e.reType != RT_MODEL)
+		return qtrue;
+	if (ent->e.renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK | RF_NOSHADOW | RF_SKYENTITY))
+		return qtrue;
+
+	model = R_GetModelByHandle(ent->e.hModel);
+	if (!model || model->type != MOD_TIKI)
+		return qfalse;
+
+	radius = R_GetRadius((refEntity_t *)&ent->e);
+	return radius > 0 && radius < r_rtCasterMinRadius->value;
+}
+
+/*
+=============
 R_AddEntitySurfaces
 =============
 */
 void R_AddEntitySurfaces (void) {
 	int i;
+	// Added in OPM: a sun cascade (or the sky's depth), orthographic
+	const qboolean sunCascade = (tr.viewParms.flags & (VPF_ORTHOGRAPHIC | VPF_DEPTHSHADOW)) == (VPF_ORTHOGRAPHIC | VPF_DEPTHSHADOW);
 
 	if ( !r_drawentities->integer ) {
 		return;
@@ -1823,6 +1854,8 @@ void R_AddEntitySurfaces (void) {
 				continue;
 			if ((tr.viewParms.flags & VPF_RTDYNAMIC) && (!(tr.refdef.entities[i].rtCaster & RT_CASTS_MOVING)
 				|| !(tr.refdef.entities[i].rtLights & ((uint64_t)1 << tr.rtCandidate))))
+				continue;
+			if (sunCascade && R_SunCascadeSkips(&tr.refdef.entities[i]))
 				continue;
 
 			R_AddEntitySurface(i);

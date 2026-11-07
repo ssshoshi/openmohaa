@@ -3066,6 +3066,7 @@ extern  cvar_t  *r_rtMaxLights;
 extern  cvar_t  *r_rtAmbient;
 extern  cvar_t  *r_rtDynamicLights;
 extern  cvar_t  *r_rtShadowCharacters;
+extern  cvar_t  *r_rtCasterMinRadius;	// Added in OPM: also what a sun cascade leaves out (R_SunCascadeSkips)
 extern  cvar_t  *r_rtDarkest;
 extern  cvar_t  *r_rtDlights;
 extern  cvar_t  *r_rtLightsAtFixtures;
