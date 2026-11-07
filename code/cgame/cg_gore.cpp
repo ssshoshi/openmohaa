@@ -1348,14 +1348,19 @@ typedef struct {
 // The shot's line through the skinned body: the first skin facing it, from
 // GORE_RAY_BACK before the reported hit to GORE_ENTRY_SLACK past it, and the
 // first facing away beyond that, if the round came out.
-static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, const vec3_t dir, goreTrace_t *tr)
+// With a list (CG_GoreTrisNearLine), only the triangles in it are tried.
+static qboolean CG_GoreTraceSkinList(
+    const goreLayout_t *lay, const vec3_t start, const vec3_t dir, goreTrace_t *tr, const int *list, int numList
+)
 {
-    int i;
+    const int count = list ? numList : gore_numTris;
+    int       n, i;
 
     tr->entryTri = tr->exitTri = -1;
     tr->tEntry = tr->tExit = 0;
 
-    for (i = 0; i < gore_numTris; i++) {
+    for (n = 0; n < count; n++) {
+        i = list ? list[n] : n;
         const float *a = gore_verts[gore_tris[i * 3 + 0]].xyz;
         const float *b = gore_verts[gore_tris[i * 3 + 1]].xyz;
         const float *c = gore_verts[gore_tris[i * 3 + 2]].xyz;
@@ -1380,7 +1385,8 @@ static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, co
         return qfalse;
     }
 
-    for (i = 0; i < gore_numTris; i++) {
+    for (n = 0; n < count; n++) {
+        i = list ? list[n] : n;
         const float *a = gore_verts[gore_tris[i * 3 + 0]].xyz;
         const float *b = gore_verts[gore_tris[i * 3 + 1]].xyz;
         const float *c = gore_verts[gore_tris[i * 3 + 2]].xyz;
@@ -1404,10 +1410,60 @@ static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, co
     return qtrue;
 }
 
+static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, const vec3_t dir, goreTrace_t *tr)
+{
+    return CG_GoreTraceSkinList(lay, start, dir, tr, NULL, 0);
+}
+
+// The triangles of the scratch buffer that a line along dir, started up to
+// radius across from start, can meet within reach: all CG_GoreTraceSkin can
+// find for the nudged lines of one hit, in the same order. A body is a few
+// thousand triangles and a hit tries up to 17 lines, each two passes.
+static int gore_nearTris[GORE_SKIN_TRIS];
+
+static int CG_GoreTrisNearLine(const vec3_t start, const vec3_t dir, float radius, float reach)
+{
+    vec3_t right, up;
+    int    i, k, n = 0;
+
+    PerpendicularVector(right, dir);
+    CrossProduct(dir, right, up);
+
+    for (i = 0; i < gore_numTris; i++) {
+        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+
+        for (k = 0; k < 3; k++) {
+            const float *p = gore_verts[gore_tris[i * 3 + k]].xyz;
+            vec3_t       d;
+            float        c[3];
+            int          j;
+
+            VectorSubtract(p, start, d);
+            c[0] = DotProduct(d, dir);
+            c[1] = DotProduct(d, right);
+            c[2] = DotProduct(d, up);
+            for (j = 0; j < 3; j++) {
+                lo[j] = Q_min(lo[j], c[j]);
+                hi[j] = Q_max(hi[j], c[j]);
+            }
+        }
+
+        if (hi[0] < 0 || lo[0] > reach || lo[1] > radius || hi[1] < -radius || lo[2] > radius || hi[2] < -radius) {
+            continue;
+        }
+        gore_nearTris[n++] = i;
+    }
+
+    return n;
+}
+
 // The server hits a man by boxes about his bones, a little fuller than he is,
 // so a round can graze the box and pass beside the skin. Such a line is moved
 // across, a little and then a little more, until it meets him.
 #define GORE_NUM_NUDGES 17
+#define GORE_NUDGE_MAX  4.0f
+// the farthest along its line a trace looks: the way in, then the way out
+#define GORE_TRACE_REACH (GORE_RAY_BACK + GORE_ENTRY_SLACK + GORE_EXIT_DEPTH + 1.0f)
 
 static void CG_GoreNudge(const vec3_t start, const vec3_t dir, int nudge, vec3_t out)
 {
@@ -1421,7 +1477,7 @@ static void CG_GoreNudge(const vec3_t start, const vec3_t dir, int nudge, vec3_t
 
     PerpendicularVector(right, dir);
     CrossProduct(dir, right, up);
-    r   = nudge <= 8 ? 2.0f : 4.0f;
+    r   = nudge <= 8 ? 2.0f : GORE_NUDGE_MAX;
     ang = ((nudge - 1) % 8) * (M_PI / 4);
     VectorMA(out, r * cos(ang), right, out);
     VectorMA(out, r * sin(ang), up, out);
@@ -1455,7 +1511,7 @@ static goreHitResult_t CG_GorePlaceHit(const goreHit_t *hit)
     goreTrace_t         tr, bestTr;
     vec3_t              start, ray, entry, exitPos;
     float               scale = cg_gore_scale->value;
-    int                 n, k, nudge;
+    int                 n, k, nudge, numNearTris;
 
     VectorMA(hit->pos, -GORE_RAY_BACK, hit->dir, start);
 
@@ -1496,12 +1552,13 @@ static goreHitResult_t CG_GorePlaceHit(const goreHit_t *hit)
             continue;
         }
         skinned = d;
+        numNearTris = CG_GoreTrisNearLine(start, hit->dir, GORE_NUDGE_MAX + 0.5f, GORE_TRACE_REACH);
 
         for (nudge = 0; nudge < GORE_NUM_NUDGES; nudge++) {
             float err;
 
             CG_GoreNudge(start, hit->dir, nudge, ray);
-            if (!CG_GoreTraceSkin(lay, ray, hit->dir, &tr)) {
+            if (!CG_GoreTraceSkinList(lay, ray, hit->dir, &tr, gore_nearTris, numNearTris)) {
                 continue;
             }
 
