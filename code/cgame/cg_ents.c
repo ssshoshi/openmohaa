@@ -707,7 +707,25 @@ void CG_AddPacketEntities(void)
         if (!processed[child]) {
             // now add the children if not processed
             processed[child] = qtrue;
-            CG_AddCEntity(cent);
+            {
+                double cgm0_[CGM_COUNT], cge0_[CGE_COUNT];
+                memcpy(cgm0_, cgmAccum, sizeof(cgm0_));
+                memcpy(cge0_, cgEntAccum, sizeof(cge0_));
+                PROBE_BEGIN(ae);
+                CG_AddCEntity(cent);
+                {
+                    double d_ = (CG_Microseconds() - probe_ae) * 0.001;
+                    if (d_ > 3.0) {
+                        cgi.Printf("probe add entity %d type %d model %s eflags 0x%x %.1f ms = animparms %.1f attach %.1f shadow %.1f animflags %.1f footik %.1f addref %.1f ragdoll %.1f emitters %.1f | lerp %.1f effects %.1f soundpos %.1f splash %.1f modelanim %.1f\n", cent->currentState.number, cent->currentState.eType,
+                            "x",
+                            cent->currentState.eFlags, d_,
+                            (cgmAccum[0]-cgm0_[0])*0.001, (cgmAccum[1]-cgm0_[1])*0.001, (cgmAccum[2]-cgm0_[2])*0.001, (cgmAccum[3]-cgm0_[3])*0.001,
+                            (cgmAccum[4]-cgm0_[4])*0.001, (cgmAccum[5]-cgm0_[5])*0.001, (cgmAccum[6]-cgm0_[6])*0.001, (cgmAccum[7]-cgm0_[7])*0.001,
+                            (cgEntAccum[CGE_LERP]-cge0_[CGE_LERP])*0.001, (cgEntAccum[CGE_EFFECTS]-cge0_[CGE_EFFECTS])*0.001, (cgEntAccum[CGE_SOUNDPOS]-cge0_[CGE_SOUNDPOS])*0.001,
+                            (cgEntAccum[CGE_SPLASH]-cge0_[CGE_SPLASH])*0.001, (cgEntAccum[CGE_MODELANIM]-cge0_[CGE_MODELANIM])*0.001);
+                    }
+                }
+            }
         }
     }
 

@@ -10222,7 +10222,10 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
         rd->lastTime   = cg.time;
         rd->quietSince = cg.time;
 
-        if (!CG_RagdollSeed(rd, cent, model)) {
+        PROBE_BEGIN(seed);
+        qboolean seeded = CG_RagdollSeed(rd, cent, model);
+        PROBE_END(seed, "ragdoll seed");
+        if (!seeded) {
             if (cg_ragdoll_log->integer) {
                 cgi.Printf("ragdoll %d: entity %d (%s) not seeded: %s\n", cg.time, cent->currentState.number,
                     model->tiki->a->name, rd_seedFailure ? rd_seedFailure : "?");
@@ -10231,10 +10234,12 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             return;
         }
 
+        PROBE_BEGIN(after);
         CG_RagdollNoteEnclosingProps(rd);
 
         CG_RagdollFindImpulse(rd);
         CG_RagdollFindBlast(rd);
+        PROBE_END(after, "ragdoll props/impulse/blast");
 
         rd->state     = RD_BLENDING;
         rd->entityNum = cent->currentState.number;
@@ -10322,9 +10327,11 @@ void CG_RagdollUpdateEntity(centity_t *cent, refEntity_t *model)
             // The hold on the death pose lasts as long as the particles' would.
             rd->hasJoltKick = qfalse;
             memset(rd->joltKick, 0, sizeof(rd->joltKick));
+            PROBE_BEGIN(jc);
             rd->jolt = CG_JoltRagdollCreate(
                 p, v, rd->jointRadius, Q_max(0.0f, (cg_ragdoll_limptime->integer - (cg.time - rd->startTime)) * 0.001f)
             );
+            PROBE_END(jc, "jolt create");
             CG_RagdollLog(rd, rd->jolt ? "carried by a Jolt ragdoll" : "no Jolt ragdoll could be made; the particles carry on");
         }
 

@@ -754,6 +754,9 @@ extern int    cgEntCount;
 
 double CG_Microseconds(void);
 
+
+#define PROBE_BEGIN(n) double probe_##n = CG_Microseconds()
+#define PROBE_END(n, what) do { double d_ = (CG_Microseconds() - probe_##n) * 0.001; if (d_ > 1.0) cgi.Printf("probe %s %.1f ms\n", what, d_); } while (0)
 #define CG_ENT_TIMER_BEGIN(id) (cgEntOpen[id] = CG_Microseconds())
 #define CG_ENT_TIMER_END(id)   (cgEntAccum[id] += CG_Microseconds() - cgEntOpen[id])
 #define CG_ENT_TIMER_COUNT()   (cgEntCount++)

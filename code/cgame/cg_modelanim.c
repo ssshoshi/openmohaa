@@ -1509,6 +1509,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     entityState_t *sNext = NULL;
     refEntity_t    model;
     int            i;
+    double pck_t[32]; int pck_l[32]; int pck_n = 0;
+#define PCK(ln) do { if (pck_n < 32) { pck_t[pck_n] = CG_Microseconds(); pck_l[pck_n++] = ln; } } while (0)
+    PCK(1506);
     vec3_t         vMins, vMaxs, vTmp;
     const char    *szTagName;
     int            iAnimFlags;
@@ -1577,6 +1580,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     }
 
     // set the entity number
+    PCK(1580);
     model.entityNumber = s1->number;
 
     // take the results of CL_InterpolateEntities
@@ -1591,6 +1595,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     VectorSubtract(vMins, vMaxs, vTmp);
     model.radius = VectorLength(vTmp) * 0.5;
 
+    PCK(1594);
     if (s1->number == cg.snap->ps.clientNum) {
         if (!bThirdPerson) {
             PmoveAdjustAngleSettings_Client(
@@ -1620,6 +1625,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         model.bone_tag  = s1->bone_tag;
     }
 
+    PCK(1623);
     // convert angles to axis
     AnglesToAxis(cent->lerpAngles, model.axis);
 
@@ -1646,12 +1652,14 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     }
 
     // Interpolated state variables
+    PCK(1649);
     if (cent->interpolate) {
         model.scale = s1->scale + cg.frameInterpolation * (cent->nextState.scale - s1->scale);
     } else {
         model.scale = s1->scale;
     }
 
+    PCK(1655);
     model.hOldModel = 0;
     model.tiki      = cgi.R_Model_GetHandle(cgs.model_draw[s1->modelindex]);
 
@@ -1661,6 +1669,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     //  allied player model. cg_forceModelAllowed cannot be relied on to catch
     //  this, because it is only recomputed when dm_playermodel changes and so
     //  can still be set from a previous multiplayer session.
+    PCK(1664);
     if (s1->number != cg.snap->ps.clientNum
         && (s1->eType == ET_PLAYER
             || ((s1->eFlags & EF_DEAD) && model.tiki && model.tiki->a
@@ -1701,16 +1710,20 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         model.hModel = cgs.model_draw[s1->modelindex];
     }
 
+    PCK(1704);
     if (!model.tiki) {
         // still no model
         return;
     }
 
     // set skin
+    PCK(1710);
     model.skinNum = s1->skinNum;
     model.renderfx |= s1->renderfx;
+    PCK(1712);
     cgi.TIKI_SetEyeTargetPos(model.tiki, model.entityNumber, s1->eyeVector);
 
+    PCK(1714);
     CGM_BEGIN(CGM_ANIMPARMS);
     CG_InterpolateAnimParms(s1, sNext, &model);
     CGM_END(CGM_ANIMPARMS);
@@ -1720,9 +1733,10 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     //  after the animation parameters are final and before anything queries a
     //  tag, so that attached entities and the shadow follow the simulated pose.
     CGM_BEGIN(CGM_RAGDOLL);
-    CG_RagdollUpdateEntity(cent, &model);
+    { PROBE_BEGIN(ru); CG_RagdollUpdateEntity(cent, &model); PROBE_END(ru, "ragdoll update entity"); }
     CGM_END(CGM_RAGDOLL);
 
+    PCK(1726);
     CGM_BEGIN(CGM_ATTACH);
     if (cent->currentState.parent != ENTITYNUM_NONE) {
         if (s1->parent == cg.snap->ps.clientNum && !bThirdPerson && cg_firstPersonShadow->integer
@@ -1820,6 +1834,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     }
     CGM_END(CGM_ATTACH);
 
+    PCK(1823);
     for (i = 0; i < 3; i++) {
         model.shaderRGBA[i] = cent->color[i] * 255;
     }
@@ -1845,6 +1860,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         CGM_END(CGM_SHADOW);
     }
 
+    PCK(1848);
     CGM_BEGIN(CGM_ANIMFLAGS);
     iAnimFlags = 0;
 
@@ -1857,6 +1873,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
 
     CGM_END(CGM_ANIMFLAGS);
 
+    PCK(1860);
     CGM_BEGIN(CGM_FOOTIK);
     if (iAnimFlags & TAF_AUTOSTEPS) {
         int iTagNum;
@@ -1918,10 +1935,12 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     }
     CGM_END(CGM_FOOTIK);
 
+    PCK(1921);
     if (cent->currentState.eType == ET_PLAYER && !(cent->currentState.eFlags & EF_DEAD)) {
         CG_PlayerTeamIcon(&model, &cent->currentState);
     }
 
+    PCK(1925);
     if (s1->number == cg.snap->ps.clientNum) {
         if ((!cg.bFPSModelLastFrame && !bThirdPerson) || (cg.bFPSModelLastFrame && bThirdPerson)) {
             // reset the animations when toggling 3rd person
@@ -2091,6 +2110,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         }
     }
 
+    PCK(2094);
     model.reType = RT_MODEL;
     // Added in OPM
     //  A rifle in a hand that is gone goes with it.
@@ -2098,6 +2118,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         && CG_GoreHidesAttachment(s1->parent, s1->tag_num & TAG_MASK)) {
         model.renderfx |= RF_DONTDRAW;
     }
+    PCK(2101);
     if (!(s1->renderfx & RF_DONTDRAW) && !(model.renderfx & RF_DONTDRAW)) {
         cgi.R_Model_GetHandle(model.hModel);
         if (VectorCompare(model.origin, vec3_origin)) {
@@ -2112,10 +2133,10 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         CG_MG42BarrelGlow(&model, s1);
         // Added in OPM
         //  The parts he has lost folded away, and his head dented.
-        CG_GoreModifyEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse);
+        { PROBE_BEGIN(gm); CG_GoreModifyEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse); PROBE_END(gm, "gore modify entity"); }
         cgi.R_AddRefEntityToScene(&model, s1->parent);
         // Added in OPM
-        CG_GoreAddEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse);
+        { PROBE_BEGIN(ga); CG_GoreAddEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse); PROBE_END(ga, "gore add entity"); }
 
         if (bShadowAttach) {
             refEntity_t shadowModel = model;
@@ -2146,9 +2167,11 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         CGM_END(CGM_ADDREF);
     }
 
+    PCK(2149);
     CGM_BEGIN(CGM_EMITTERS);
     CG_UpdateEntityEmitters(s1->number, &model, cent);
     CGM_END(CGM_EMITTERS);
+    PCK(2152);
 
     if (s1->usageIndex == cent->usageIndexLast) {
         // process the exit commands of the last animations
@@ -2188,4 +2211,5 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     }
 
     cent->usageIndexLast = cent->currentState.usageIndex;
+    PCK(2191); if ((pck_t[pck_n-1]-pck_t[0]) > 3000) { char b_[512]=""; int q_; for (q_=1;q_<pck_n;q_++) Q_strcat(b_,sizeof(b_),va(" %d:%.1f", pck_l[q_-1], (pck_t[q_]-pck_t[q_-1])*0.001)); cgi.Printf("probe modelanim %.1f ms:%s\n", (pck_t[pck_n-1]-pck_t[0])*0.001, b_); }
 }

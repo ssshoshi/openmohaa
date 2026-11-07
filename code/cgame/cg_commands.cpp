@@ -3880,6 +3880,7 @@ void ClientGameCommandManager::EmitterOff(Event *ev)
 //===============
 // Sound
 //===============
+static double snd_tA;
 void ClientGameCommandManager::PlaySound(
     str sound_name, const vec3_t origin, int channel, float volume, float min_distance, float pitch, int argstype
 )
@@ -3900,11 +3901,11 @@ void ClientGameCommandManager::PlaySound(
 
     // Get the real sound to play
     if (current_tiki && current_tiki->a->alias_list) {
-        name = cgi.Alias_ListFindRandom((AliasList_t *)current_tiki->a->alias_list, sound_name.c_str(), &soundAlias);
+        { double t_ = CG_Microseconds(); name = cgi.Alias_ListFindRandom((AliasList_t *)current_tiki->a->alias_list, sound_name.c_str(), &soundAlias); snd_tA += CG_Microseconds() - t_; }
     }
 
     if (!name) {
-        name = cgi.Alias_FindRandom(sound_name.c_str(), &soundAlias);
+        { double t_ = CG_Microseconds(); name = cgi.Alias_FindRandom(sound_name.c_str(), &soundAlias); snd_tA += CG_Microseconds() - t_; }
     }
 
     if (!name || !soundAlias) {
@@ -4006,18 +4007,24 @@ void ClientGameCommandManager::PlaySound(
             soundAlias->streamed
         );
     } else {
+        double t0_ = CG_Microseconds();
+        sfxHandle_t h_ = cgi.S_RegisterSound(name, soundAlias->streamed);
+        double t1_ = CG_Microseconds();
         cgi.S_StartSound(
             origin,
             current_entity_number,
             channel,
-            cgi.S_RegisterSound(name, soundAlias->streamed),
+            h_,
             volume,
             min_distance,
             pitch,
             soundAlias->maxDist,
             soundAlias->streamed
         );
+        double t2_ = CG_Microseconds();
+        if (t2_ - t0_ + snd_tA > 2000) cgi.Printf("probe snd %s -> %s streamed %d: alias %.1f register %.1f start %.1f ms\n", sound_name.c_str(), name, soundAlias->streamed, snd_tA*0.001, (t1_-t0_)*0.001, (t2_-t1_)*0.001);
     }
+    snd_tA = 0;
 }
 
 //===============
@@ -5854,7 +5861,15 @@ void ClientGameCommandManager::CGEvent(centity_t *cent)
 qboolean ClientGameCommandManager::SelectProcessEvent(Event *ev)
 {
     if (!m_fEventWait) {
-        return ProcessEvent(ev);
+        char   name_[256];
+        double t0_ = CG_Microseconds();
+        Q_strncpyz(name_, ev->getName(), sizeof(name_));
+        if (ev->NumArgs() >= 1) Q_strcat(name_, sizeof(name_), va(" %s", ev->GetString(1).c_str()));
+        if (ev->NumArgs() >= 2) Q_strcat(name_, sizeof(name_), va(" %s", ev->GetString(2).c_str()));
+        qboolean r_ = ProcessEvent(ev);
+        double d_ = (CG_Microseconds() - t0_) * 0.001;
+        if (d_ > 2.0) cgi.Printf("probe tikicmd %.1f ms: %s (%s)\n", d_, name_, current_tiki ? current_tiki->name : "-");
+        return r_;
     } else {
         return PostEventForEntity(ev, m_fEventWait);
     }
