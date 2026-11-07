@@ -3,7 +3,8 @@
 
     python3 tools/win-bench/featan.py ~/.cache/omfeat/<date>
 
-For each scene, every arm's median frame time, p99, worst frame and hitches a
+For each scene, every arm's mean frame time over the measured window (from
+com_frameStats; without it, the last r_gpuTimers sample), p99, worst frame and hitches a
 minute (from com_frameStats), and what turning the feature off saved, overall
 and per GPU pass (from r_gpuTimers), against the median of the base and base2
 runs. Runs in the slow state (wall over 1.5x the base median) are dropped and
@@ -46,6 +47,10 @@ for txt in sorted(glob.glob(D+'/*__*__r*.txt')):
             r['p99']=st.median(g(r' p99 ([\d.]+) p99\.9'))
             r['max']=max(g(r'frame mean.*? max ([\d.]+) \|'))
             secs=sum(g(r'frame mean ([\d.]+)'))*250/1000  # windows of 250
+            # The mean over the whole window: the cpu line is one 100-frame
+            # sample at the end, a fixed moment of a scripted scene, and once
+            # read 2.8 ms slow for a build faster in every window.
+            r['wall']=st.mean(g(r'frame mean ([\d.]+)'))
             ov=[re.search(r'over 33ms (\d+) 50ms (\d+) 100ms (\d+)',l).groups() for l in fs]
             for i,th in enumerate((33,50,100)):
                 r[f'h{th}']=sum(int(o[i]) for o in ov)/secs*60
