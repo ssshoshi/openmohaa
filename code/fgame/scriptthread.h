@@ -344,6 +344,7 @@ public:
     void TeamGetScore(Event *ev);
     void TeamSetScore(Event *ev);
     void TraceDetails(Event *ev);
+    void OrchShoot(Event *ev);
     void TypeOfVariable(Event *ev);
     void UnregisterEvent(Event *ev);
     void VisionGetNaked(Event *ev);
