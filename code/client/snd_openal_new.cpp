@@ -1583,6 +1583,23 @@ void S_OPENAL_StartSound(
 
     bOnlyUpdate = false;
     pSfx        = &s_knownSfx[sfxHandle];
+
+    // Added in OPM
+    //  An alias marked streamed (the soldiers' dialogue, most of it) whose
+    //  sound is already in memory, loaded whole by the level's aliascache, is
+    //  played from there. Streamed, each play opened the file in its pak and
+    //  filled the stream's buffers before returning: 8-27 ms a line, every
+    //  time, in the middle of a firefight. It still plays as a 2D sound, as a
+    //  streamed one does.
+    if (bStreamed && pSfx->data && pSfx->length && !(pSfx->iFlags & (SFX_FLAG_STREAMED | SFX_FLAG_MP3))) {
+        if (!S_OPENAL_ShouldPlay(pSfx)) {
+            Com_DPrintf("OpenAL: ^~^~^ Not playing sound '%s'\n", pSfx->name);
+            return;
+        }
+        S_OPENAL_Start2DSound(vOrigin, iEntNum, iEntChannel, pSfx, fVolume, fMinDist, fPitch, fMaxDist);
+        return;
+    }
+
     if (bStreamed) {
         pSfx->iFlags |= SFX_FLAG_STREAMED;
     }
