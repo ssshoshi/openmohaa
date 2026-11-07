@@ -30,6 +30,8 @@
 //                            // shade: the ceiling over it takes a fifth); with
 //                            // ring after it, a lampshade open at both ends round
 //                            // that axis, which stops what leaves by its sides
+//         lathe bulbcover    // remodelled: these surfaces' turned parts (a shade, a socket
+//                            // drawn as polygons) made round (tools/lamps/lathe.py)
 //         spot x y z 60      // a lamp that shines one way: that way in its
 //                            // frame, and the cone's whole angle
 //     }
@@ -179,6 +181,7 @@ models/lights/wallsconce-single.tik
 models/static/lightbulb_covered_nowire.tik
 {
 	kind shaded
+	lathe material1 material2
 	intensity 150
 	shade 0 0 1 0.9
 	glass 1 0.93 0.81
@@ -188,6 +191,7 @@ models/static/lightbulb_covered_nowire.tik
 models/static/lightbulb_covered_on_wire.tik
 {
 	kind shaded
+	lathe bulbcover
 	intensity 150
 	shade 0 0 1 0.9
 	glass 1 0.95 0.9
@@ -197,6 +201,7 @@ models/static/lightbulb_covered_on_wire.tik
 models/static/lightbulb_covered_on_wire_short.tik
 {
 	kind shaded
+	lathe bulbcover
 	intensity 150
 	shade 0 0 1 0.9
 	glass 1 0.95 0.9
