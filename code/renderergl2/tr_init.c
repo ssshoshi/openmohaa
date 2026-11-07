@@ -193,6 +193,7 @@ cvar_t  *r_shadowCascadeZBias;
 cvar_t  *r_sunEntityShadowCascades;
 cvar_t  *r_sunCascade2CacheDist;
 cvar_t  *r_sunCascade2CacheAngle;
+cvar_t  *r_sunCascadeStagger;
 cvar_t  *r_skelCull;
 cvar_t  *r_prepassFarModels;
 cvar_t  *r_skinCache;
@@ -1764,6 +1765,9 @@ void R_Register( void )
 	// stock behaviour.
 	r_sunCascade2CacheDist = ri.Cvar_Get( "r_sunCascade2CacheDist", "48", CVAR_ARCHIVE );
 	r_sunCascade2CacheAngle = ri.Cvar_Get( "r_sunCascade2CacheAngle", "0.97", CVAR_ARCHIVE );
+	// Added in OPM: 1 draws sun cascades 1 and 2 on alternate frames (see
+	// RE_RenderScene); a cascade not drawn keeps its map and matrix.
+	r_sunCascadeStagger = ri.Cvar_Get( "r_sunCascadeStagger", "0", CVAR_ARCHIVE );
 	// Leave a skeletal model out of a sun cascade it lies wholly outside of,
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.

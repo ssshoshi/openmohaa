@@ -2787,6 +2787,12 @@ typedef struct {
 	vec3_t                  lastCascade2Origin;
 	vec3_t                  lastCascade2Forward;
 	float                   lastCascade2Mvp[16];
+	// r_sunCascadeStagger: when each of cascades 1-2 was last drawn
+	int                     cascadeStaggerFrame;
+	qboolean                haveCascadeKept[3];
+	vec3_t                  cascadeKeptOrigin[3];
+	vec3_t                  cascadeKeptForward[3];
+	float                   cascadeKeptMvp[3][16];
 
 	frontEndCounters_t		pc;
 	int						frontEndMsec;		// not in pc due to clearing issue
@@ -3086,6 +3092,7 @@ extern  cvar_t  *r_shadowCascadeZBias;
 extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
+extern  cvar_t  *r_sunCascadeStagger;
 extern  cvar_t  *r_skelCull;
 extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;

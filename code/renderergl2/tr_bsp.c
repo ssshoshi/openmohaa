@@ -3884,6 +3884,7 @@ void RE_LoadWorldMap( const char *name ) {
 	tr.sunShadows = qfalse;
 	VectorClear(tr.sunLight);
 	tr.haveCascade2Cache = qfalse;
+	memset(tr.haveCascadeKept, 0, sizeof(tr.haveCascadeKept));
 
 	R_FreeWorldImages();
 	//=========================
