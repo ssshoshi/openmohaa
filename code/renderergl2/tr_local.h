@@ -2361,6 +2361,13 @@ typedef enum {
 	CPUTIMER_POSTPROCESS,	// RC_POSTPROCESS
 	CPUTIMER_SPRITES,		// RC_SPRITE_SURFS
 	CPUTIMER_2D,			// RC_STRETCH_PIC + the flush that actually draws it
+	// Added in OPM: RC_DRAW_BUFFER, the frame's first touch of the default
+	// framebuffer (bind, draw buffer, the render target clear). A driver
+	// holding the CPU back for its frame queue can block here, not at swap.
+	CPUTIMER_DRAWBUFFER,
+	// Added in OPM: the small commands (set color, color mask, clear depth,
+	// cap shadow map), so backend has nothing left unattributed but the loop.
+	CPUTIMER_SMALLCMDS,
 	CPUTIMER_PRESENT,		// RB_PresentToScreen
 	// The buffer swap and the optional qglFinish before it. This is where a
 	// main thread waiting on the GPU ends up, so it is the bucket that
@@ -2379,6 +2386,10 @@ typedef enum {
 	// Nested deeper still, inside whichever pass is drawing.
 	CPUTIMER_TESSBUILD,		// deform, colour and alpha gen per batch
 	CPUTIMER_TESSUPLOAD,	// RB_UpdateTessVao: the per-batch buffer uploads
+	// Added in OPM: the main thread blocked on a fence because the card is
+	// still reading a stream ring part or a skin arena (c_streamWaits counts
+	// them). Inside whichever command was drawing, or swap for the arena.
+	CPUTIMER_GPUWAIT,
 
 	CPUTIMER_COUNT
 } cpuTimerId_t;

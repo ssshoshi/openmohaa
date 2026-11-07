@@ -397,6 +397,8 @@ const char *const cpuTimerNames[CPUTIMER_COUNT] = {
 	"post",
 	"sprites",
 	"2d",
+	"drawbuffer",
+	"smallcmds",
 	"present",
 	"swapbuffers",
 	"sunshadow",
@@ -405,7 +407,8 @@ const char *const cpuTimerNames[CPUTIMER_COUNT] = {
 	"shadowmask",
 	"main3d",
 	"tessbuild",
-	"tessupload"
+	"tessupload",
+	"gpuwait"
 };
 
 static double   cpuFrame[CPUTIMER_COUNT];	// the frame being built
