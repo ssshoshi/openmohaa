@@ -1661,7 +1661,11 @@ static goreHitResult_t CG_GorePlaceHit(const goreHit_t *hit)
 }
 
 // Lays a decal of kind about a point, on the triangle of the body nearest it.
-static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius)
+// skinned: the scratch buffer already holds this body as drawn (all of it
+// that shows), as for the second and later dents of one pass.
+static qboolean CG_GoreLayNearSkinned(
+    goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius, qboolean skinned
+)
 {
     const goreLayout_t *lay = CG_GoreLayout(&drawn->ref);
     float               bary[3] = {1.0f / 3, 1.0f / 3, 1.0f / 3};
@@ -1669,7 +1673,7 @@ static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int k
     size_t              before = body->decals.size();
     int                 i, best = -1;
 
-    if (!lay || !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay))) {
+    if (!lay || (!skinned && !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay)))) {
         return qfalse;
     }
 
@@ -1703,6 +1707,11 @@ static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int k
 
     CG_GoreLay(body, lay, kind, at, normal, NULL, best, bary, radius, 0);
     return body->decals.size() > before && body->decals.back().kind == kind ? qtrue : qfalse;
+}
+
+static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius)
+{
+    return CG_GoreLayNearSkinned(body, drawn, kind, at, normal, radius, qfalse);
 }
 
 //=============================================================
@@ -3911,6 +3920,9 @@ static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
     body->stumpPending = 0;
 
     rig = CG_GoreRig(drawn->ref.tiki);
+    // the body is skinned once for all its new dents (a round into the head
+    // leaves two, the way in and the way out)
+    qboolean skinned = qfalse;
     for (p = 0; p < body->numDents && rig; p++) {
         refEntity_t ref = drawn->ref;
         float       m[4][3];
@@ -3937,7 +3949,15 @@ static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
             }
             CG_GoreModelToWorldDir(&ref, out, wout);
             VectorNormalize(wout);
-            CG_GoreLayNear(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.15f);
+            if (!skinned) {
+                const goreLayout_t *lay = CG_GoreLayout(&drawn->ref);
+
+                if (!lay || !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay))) {
+                    break;
+                }
+                skinned = qtrue;
+            }
+            CG_GoreLayNearSkinned(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.15f, qtrue);
         }
     }
     body->dentPending = 0;
