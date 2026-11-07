@@ -943,6 +943,13 @@ static unsigned int CG_GorePoseHash(const refEntity_t *ref)
         }
     } else {
         for (i = 0; i < MAX_FRAMEINFOS; i++) {
+            // A slot of no weight adds nothing to the pose, but its time goes
+            // on: hashed, it had every wounded man skinned again each frame
+            // standing still (most of the reposes in a firefight).
+            if (ref->frameInfo[i].weight == 0.0f) {
+                continue;
+            }
+            GORE_HASH_INT(i);
             GORE_HASH_INT(ref->frameInfo[i].index);
             GORE_HASH_INT((int)floorf(ref->frameInfo[i].time * 1000.0f));
             GORE_HASH_INT((int)floorf(ref->frameInfo[i].weight * 1000.0f));
