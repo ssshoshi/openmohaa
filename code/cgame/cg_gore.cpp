@@ -3972,6 +3972,7 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
     float              range    = ranges[blast->kind & 3];
     float              scale    = cg_gore_scale->value;
     int                n;
+    double bq0 = CG_Microseconds(), bqt, bq[6] = {0}; int bqn = 0, bqlays = 0, bqtris = 0;
 
     for (n = 0; n < gore_numDrawn; n++) {
         const goreDrawn_t  *d = &gore_drawn[n];
@@ -3984,10 +3985,15 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
             continue;
         }
 
+        bqn++;
+        bqt = CG_Microseconds();
         lay = CG_GoreLayout(&d->ref);
+        bq[0] += CG_Microseconds() - bqt; bqt = CG_Microseconds();
         if (!lay || !CG_GoreSkin(&d->ref, lay, CG_GoreVisibleMask(&d->ref, lay))) {
+            bq[1] += CG_Microseconds() - bqt;
             continue;
         }
+        bq[1] += CG_Microseconds() - bqt; bqtris += gore_numTris;
 
         // close enough to take him apart, if it kills him or he is dead
         if (dist < range * 0.5f) {
@@ -3998,7 +4004,9 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
             body->blastNear = 1.0f - dist / (range * 0.5f);
             VectorCopy(blast->pos, body->blastPos);
             if (d->dead && !body->gib) {
+                bqt = CG_Microseconds();
                 CG_GoreBlastBody(body);
+                bq[2] += CG_Microseconds() - bqt;
                 body->blastTime = cg.time; // for which way the parts fly
             }
         }
@@ -4036,18 +4044,24 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
             }
 
             if (burnt) {
+                bqt = CG_Microseconds();
                 CG_GoreLay(body, lay, GK_BURN, centroid, nt, NULL, tri, bary, GoreRand(7, 11) * scale, 0);
+                bq[3] += CG_Microseconds() - bqt; bqlays++;
                 burnt = 0;
                 continue;
             }
 
+            bqt = CG_Microseconds();
             CG_GoreLay(body, lay, GK_FRAG, centroid, nt, NULL, tri, bary, GoreRand(2.5f, 3.5f) * scale, 0);
+            bq[3] += CG_Microseconds() - bqt; bqlays++; bqt = CG_Microseconds();
             if (!body->decals.empty() && body->decals.back().born == cg.time && body->decals.back().kind == GK_FRAG) {
                 CG_GoreBleed(body, &d->ref, tri, GK_FRAG);
             }
+            bq[4] += CG_Microseconds() - bqt;
             frags--;
         }
-    }
+    }    cgi.Printf("probe blast %.1f ms: %d bodies in range | layout %.1f skin %.1f sever %.1f lay %.1f (%d, %d tris) bleed %.1f\n",
+        (CG_Microseconds()-bq0)*0.001, bqn, bq[0]*0.001, bq[1]*0.001, bq[2]*0.001, bq[3]*0.001, bqlays, bqtris, bq[4]*0.001);
 }
 
 void CG_GoreNoteHit(const vec3_t pos, const vec3_t dir, int large)
@@ -4084,7 +4098,9 @@ void CG_GoreNoteExplosion(const vec3_t pos, int kind)
     blast->kind = kind;
     blast->time = cg.time;
 
+    { double g0 = CG_Microseconds();
     CG_GoreBlastGibs(pos, kind);
+    cgi.Printf("probe blastgibs %.1f ms\n", (CG_Microseconds()-g0)*0.001); }
 }
 
 //=============================================================
