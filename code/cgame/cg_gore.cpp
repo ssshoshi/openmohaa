@@ -1162,7 +1162,25 @@ static void CG_GoreLay(
         goreFrag_t   frag;
 
         for (k = 0; k < 3; k++) {
+            vec3_t d;
+
             p[k] = gore_verts[gore_tris[i * 3 + k]].xyz;
+            VectorSubtract(p[k], centre, d);
+            x[k] = DotProduct(d, axisRight);
+            y[k] = DotProduct(d, axisUp);
+            z[k] = DotProduct(d, normal);
+        }
+
+        // Out of the decal's box first: that is nearly every triangle of the
+        // body, and the tests below cost a cross product and a square root.
+        if (Q_min(z[0], Q_min(z[1], z[2])) > depth || Q_max(z[0], Q_max(z[1], z[2])) < -depth) {
+            continue;
+        }
+        if (Q_max(x[0], Q_max(x[1], x[2])) < -hw || Q_min(x[0], Q_min(x[1], x[2])) > hw) {
+            continue;
+        }
+        if (Q_max(y[0], Q_max(y[1], y[2])) < -hdown || Q_min(y[0], Q_min(y[1], y[2])) > hup) {
+            continue;
         }
 
         // folded away with a part that is gone
@@ -1183,25 +1201,6 @@ static void CG_GoreLay(
         CG_GoreTriNormal(p[0], p[1], p[2], lay->winding, nt);
         // a stump or a hollow is laid over whatever is there
         if (fabs(DotProduct(nt, normal)) < (kind == GK_BRAIN ? 0.0f : (kind == GK_STUMP ? 0.15f : 0.2f))) {
-            continue;
-        }
-
-        for (k = 0; k < 3; k++) {
-            vec3_t d;
-
-            VectorSubtract(p[k], centre, d);
-            x[k] = DotProduct(d, axisRight);
-            y[k] = DotProduct(d, axisUp);
-            z[k] = DotProduct(d, normal);
-        }
-
-        if (Q_min(z[0], Q_min(z[1], z[2])) > depth || Q_max(z[0], Q_max(z[1], z[2])) < -depth) {
-            continue;
-        }
-        if (Q_max(x[0], Q_max(x[1], x[2])) < -hw || Q_min(x[0], Q_min(x[1], x[2])) > hw) {
-            continue;
-        }
-        if (Q_max(y[0], Q_max(y[1], y[2])) < -hdown || Q_min(y[0], Q_min(y[1], y[2])) > hup) {
             continue;
         }
 
