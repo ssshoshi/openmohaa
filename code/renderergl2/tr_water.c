@@ -121,6 +121,10 @@ static waterParams_t water;
 // the clouds of blood round bodies in water: x, y, radius, strength
 static vec4_t waterSpots[WATER_MAX_SPOTS];
 static int    numWaterSpots;
+// Added in OPM: whether any surface of the map is water (R_WaterLoadWorld).
+// The ripple simulation is only read by the water's shader, so a dry map
+// skips its 1024x1024 steps.
+static qboolean waterOnMap;
 
 // the sand soaked under bodies on a beach: x, y, the ground's height, radius
 static vec4_t sandStains[WATER_MAX_SPOTS];
@@ -1673,6 +1677,10 @@ void R_WaterLoadWorld(const char *mapName)
     }
     R_WaterBuildSky();
     R_WaterBuildBeach();
+    waterOnMap = qfalse;
+    if (tr.world) {
+        R_WaterWorldSky(&waterOnMap);
+    }
 }
 
 /*
@@ -1795,7 +1803,7 @@ static void RB_WaterRipples(void)
     vec4_t sources[WATER_MAX_SPOTS], foam[WATER_MAX_SPOTS];
     int    steps, step, x, y, i;
 
-    if (!sp->program || !tr.waterRippleFbo[0] || !tr.waterRippleFbo[1] || now == ripples.time
+    if (!waterOnMap || !sp->program || !tr.waterRippleFbo[0] || !tr.waterRippleFbo[1] || now == ripples.time
         || backEnd.projection2D || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
         || (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || backEnd.viewParms.isPortal
         || glState.currentFBO != tr.renderFbo) {

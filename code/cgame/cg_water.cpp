@@ -910,6 +910,11 @@ static void CG_WaterRings(float dt)
     }
 }
 
+static qboolean CG_WaterWet(const vec3_t p)
+{
+    return (CG_PointContents(p, 0) & MASK_WATER) != 0;
+}
+
 // A man (or anything about his size) in the water to his waist or so: he
 // rocks it as he sways and strides, more the faster he goes, and as he goes
 // pushes the water in front of him, which trails off behind him as a wake.
@@ -922,6 +927,13 @@ static void CG_WaterWade(int who, const vec3_t origin, const vec3_t velocity, fl
     float           deep, speed, push;
 
     VectorSet(feet, origin[0], origin[1], origin[2] + 2.0f);
+    // Wading needs the water's top at least WATER_WADE_MIN over the feet, so
+    // a point there not in water rules it out with one contents test instead
+    // of the sample's two long traces (every actor, every frame, dry or not).
+    VectorSet(at, origin[0], origin[1], origin[2] + WATER_WADE_MIN);
+    if (!CG_WaterWet(at)) {
+        return;
+    }
     if (!CG_WaterSample(feet, &water)) {
         return;
     }
@@ -980,6 +992,10 @@ static void CG_WaterHull(const vec3_t origin, const vec3_t angles, const vec3_t 
 
     // in the water: its keel under it, its top out of it
     VectorSet(low, centre[0], centre[1], centre[2] - half[2] + 2.0f);
+    // a keel not in the water is not floating: one contents test, not two traces
+    if (!CG_WaterWet(low)) {
+        return;
+    }
     if (!CG_WaterSample(low, &water) || water.surface > centre[2] + half[2] || water.depth <= 0.0f) {
         return;
     }
@@ -1009,11 +1025,6 @@ static void CG_WaterHull(const vec3_t origin, const vec3_t angles, const vec3_t 
     if (fabs(velocity[2]) > 2.0f) {
         CG_WaterRipple(centre, Q_max(half[0], half[1]) * 0.6f, -velocity[2] * 0.05f * dt, 0.0f);
     }
-}
-
-static qboolean CG_WaterWet(const vec3_t p)
-{
-    return (CG_PointContents(p, 0) & MASK_WATER) != 0;
 }
 
 void CG_WaterRipplesFrame(void)
