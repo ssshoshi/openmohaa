@@ -816,6 +816,7 @@ void CG_PrepRefresh(void)
     }
 
     CG_PrecacheCharacterVariants();
+    CG_PrecacheVoices();
 }
 
 //===========================================================================

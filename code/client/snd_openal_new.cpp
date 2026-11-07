@@ -1586,7 +1586,7 @@ void S_OPENAL_StartSound(
 
     // Added in OPM
     //  An alias marked streamed (the soldiers' dialogue, most of it) whose
-    //  sound is already in memory, loaded whole by the level's aliascache, is
+    //  sound is already in memory (loaded with the level, cg_precacheVoices) is
     //  played from there. Streamed, each play opened the file in its pak and
     //  filled the stream's buffers before returning: 8-27 ms a line, every
     //  time, in the middle of a firefight. It still plays as a 2D sound, as a
