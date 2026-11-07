@@ -4,8 +4,12 @@
 // every round is an orch_shoot with no spread, at the same part of the same
 // soldier at the same time. A soldier's life (7 s):
 //   0.0   spawned, frozen
-//   0.5   five body rounds 0.15 s apart (chest, chest side, arm, belly, thigh)
-//   2.0   AI back on, a heavy round through the head: he dies and falls
+//   0.5   soldiers 1, 3, 5: five body rounds 0.15 s apart (chest, chest
+//         side, arm, belly, thigh)
+//         soldiers 2, 4, 6: seven light rounds into the head 0.15 s apart,
+//         aimed at its bone; each one breaks it (a dent and bits flying)
+//         and by the last it is shot off (cg_gore: ten dents)
+//   2.0   AI back on, a heavy round through the chest: he dies and falls
 //   6.0   the corpse removed; 1 s later he is spawned again
 // The six soldiers start 1 s apart, so a hit, a death or a removal lands
 // most seconds. Every 6 s a grenade goes off between soldiers 2 and 5.
@@ -36,21 +40,41 @@ soldier local.k:
 		wait 0.5
 		// where he settled (the floor is not at 0)
 		local.o = local.s.origin
-		local.t[1] = local.o + ( 0 0 50 )
-		local.t[2] = local.o + ( 0 0 50 ) + local.side
-		local.t[3] = local.o + ( 0 0 48 ) - local.side * 1.6
-		local.t[4] = local.o + ( 0 0 38 )
-		local.t[5] = local.o + ( 0 0 24 ) + local.side * 0.6
-		for (local.n = 1; local.n <= 5; local.n++)
+		if (local.k % 2)
 		{
-			orch_shoot (local.t[local.n] + local.front) local.t[local.n] 12 0
-			wait 0.15
+			local.t[1] = local.o + ( 0 0 50 )
+			local.t[2] = local.o + ( 0 0 50 ) + local.side
+			local.t[3] = local.o + ( 0 0 48 ) - local.side * 1.6
+			local.t[4] = local.o + ( 0 0 38 )
+			local.t[5] = local.o + ( 0 0 24 ) + local.side * 0.6
+			for (local.n = 1; local.n <= 5; local.n++)
+			{
+				orch_shoot (local.t[local.n] + local.front) local.t[local.n] 12 0
+				wait 0.15
+			}
+		}
+		else
+		{
+			// light rounds, so he lives through all of them
+			local.hp = (local.s gettagposition "Bip01 Head") + ( 0 0 3 )
+			local.u[1] = ( 0 0 0 )
+			local.u[2] = ( 0 0 2 )
+			local.u[3] = local.side * 0.3
+			local.u[4] = ( 0 0 -1.5 )
+			local.u[5] = local.side * -0.3
+			local.u[6] = ( 0 0 4 )
+			local.u[7] = ( 0 0 1 ) + local.side * 0.2
+			for (local.n = 1; local.n <= 7; local.n++)
+			{
+				orch_shoot (local.hp + local.u[local.n] + local.front) (local.hp + local.u[local.n]) 1 (local.n % 2)
+				wait 0.15
+			}
 		}
 		wait 0.75
 		if (local.s != NULL && isalive local.s)
 		{
 			local.s ai_on
-			local.h = local.o + ( 0 0 64 )
+			local.h = local.o + ( 0 0 56 )
 			orch_shoot (local.h + local.front) local.h 2000 1
 		}
 		wait 4

@@ -69,7 +69,9 @@ The firefight never plays the same twice (where the AI goes, where rounds land, 
 so two runs of one build differ by up to 9 ms a frame: it can only show big effects, or
 hitches a minute over many reps. `hits` (`hits.scr`) is the same kind of damage with the
 chance taken out: six soldiers frozen with `ai_off` at the firefight's spots, each hit by five
-body rounds and then killed by a round through the head, on a fixed 7 s cycle, plus a grenade
+body rounds (soldiers 1, 3, 5) or seven light rounds into the head until it is shot off
+(2, 4, 6, aimed at the head bone), then killed by a round through the chest, on a fixed cycle,
+plus a grenade
 every 6 s. Every round is an `orch_shoot start end damage large` (a script command added for
 this: one real bullet, no spread, as the player's), so the same parts are hit at the same
 times every run. Four runs of one build agreed within 5% (14.9-15.7 ms). Measure gore,
