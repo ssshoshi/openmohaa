@@ -1942,12 +1942,19 @@ void RB_GroundCoverBindVao(void)
     R_BindVao(&gc.chunks[gc.batchChunk]->vao);
 }
 
-// R_DrawElements for that batch: a draw for each cell, nothing set between them
+// R_DrawElements for that batch: a draw for each cell, nothing set between
+// them, so one call for all of them where the driver has it (3.2); each was a
+// draw call of its own, up to GC_MAX_BATCH of them, in every view
 void RB_GroundCoverDrawElements(void)
 {
+    static const void *const firstIndex[GC_MAX_BATCH]; // all from the start
     int i;
 
     R_BindVao(&gc.chunks[gc.batchChunk]->vao);
+    if (qglMultiDrawElementsBaseVertex) {
+        qglMultiDrawElementsBaseVertex(GL_TRIANGLES, gc.batchCounts, GL_INDEX_TYPE, firstIndex, gc.batchSize, gc.batchBases);
+        return;
+    }
     for (i = 0; i < gc.batchSize; i++) {
         qglDrawElementsBaseVertex(GL_TRIANGLES, gc.batchCounts[i], GL_INDEX_TYPE, BUFFER_OFFSET(0), gc.batchBases[i]);
     }

@@ -178,6 +178,7 @@ extern void (APIENTRYP qglUnlockArraysEXT) (void);
 	GLE(GLenum, ClientWaitSync, GLsync sync, GLbitfield flags, GLuint64 timeout) \
 	GLE(void, DeleteSync, GLsync sync) \
 	GLE(void, DrawElementsBaseVertex, GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex) \
+	GLE(void, MultiDrawElementsBaseVertex, GLenum mode, const GLsizei *count, GLenum type, const void *const *indices, GLsizei drawcount, const GLint *basevertex) \
 
 // OpenGL 1.5, was GL_ARB_vertex_buffer_object
 #define QGL_1_5_PROCS \
