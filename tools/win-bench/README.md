@@ -58,6 +58,24 @@ The boot intro videos (EA / title / legal) are suppressed with `+set cl_playintr
 
 Exit status is 0 only if a `gpu … ms =` line was captured.
 
+## What each feature costs (features.sh)
+
+`features.sh` runs the leave-one-out matrix: each fork feature turned off in turn, against a
+player's own config, on three still scenes (m5l1a street with the camera pinned, the m1l2a and
+m4l1 spawns) and a 30 s scripted firefight on m5l1a (`fight.scr`: six MP40 soldiers, a grenade
+every six seconds, the player in god mode holding fire). The "floor" arm turns everything off.
+
+```sh
+OMFEAT_PLAYCFG="/path/to/omconfig.cfg" tools/win-bench/features.sh   # ~6 h for 3 reps
+OMFEAT_ARMS=sunShadows,cubemaps OMFEAT_SCENES=street OMFEAT_REPS=3 ... # just one change's arms
+python3 tools/win-bench/featan.py ~/.cache/omfeat/<date>
+```
+
+Results go to `OMFEAT_RESULTS` (default `~/.cache/omfeat/<date>`); rerunning into the same dir
+picks up where a stopped run left off. Hitches a minute and p99 need `com_frameStats`.
+Compare a change against main built the same way, and run an A/A pair (base, base2) first:
+a few runs land in a slow state where everything is about 2x, which featan.py drops.
+
 ## The report
 
 `r_gpuTimers` passes (from `tr_gputimer.c`): `frame` (total) = `sunshadow` (`sun0..sun3`
