@@ -496,6 +496,7 @@ typedef struct {
 	vec3_t   spotDir;
 	float    spotAngle;
 	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
+	qboolean casts; // an open frame round its flame (a lantern's bars): it casts its own light's shadows
 } rtLampDef_t;
 
 static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
@@ -614,6 +615,8 @@ static void R_RtLoadLampDefs(void)
 				token = (p && *p && *p != '\n' && *p != '\r') ? COM_ParseExt(&text, qfalse) : "";
 			}
 			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops) + (!Q_stricmp(token, "ring") ? 1.0f : 0.0f), def->shade);
+		} else if (!Q_stricmp(token, "casts")) {
+			def->casts = qtrue;
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;
 
@@ -868,6 +871,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		}
 		isLamp[i]       = 1;
 		sm->rtFixture   = qtrue;
+		sm->rtCastsOwn  = def->casts;
 		if (def->kind == RT_LAMP_OFF) {
 			continue;
 		}
@@ -1286,7 +1290,8 @@ static void R_RtLightsAtFixtures(void)
 
 	Com_Memset(isLamp, 0, Q_max(1, tr.world->numStaticModels));
 	for (i = 0; i < tr.world->numStaticModels; i++) {
-		tr.world->staticModels[i].rtHidden = qfalse;
+		tr.world->staticModels[i].rtHidden   = qfalse;
+		tr.world->staticModels[i].rtCastsOwn = qfalse;
 	}
 	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
 		R_RtLightsAtLamps(isLamp);
