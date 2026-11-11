@@ -253,11 +253,19 @@ typedef struct {
     int    time;
 } goreHit_t;
 
+// A blast's shrapnel goes onto the bodies by it over a few frames, nearest
+// first (GORE_BLAST_BUDGET): on the fine meshes each wound covers hundreds
+// of triangles, and a grenade among a dozen bodies cost 10-20 ms at once.
 typedef struct {
     vec3_t pos;
     int    kind;
     int    time;
+    int    numDone;
+    int    done[GORE_MAX_DRAWN]; // entity numbers it has been laid on
 } goreBlast_t;
+
+#define GORE_BLAST_BUDGET 2000 // us a frame for shrapnel, past the first body
+#define GORE_BLAST_TTL    250  // ms a blast waits for bodies drawn late
 
 typedef struct {
     qboolean active;
@@ -341,7 +349,11 @@ static gorePool_t  gore_pools[GORE_MAX_POOLS];
 static goreGib_t   gore_gibs[GORE_MAX_GIBS];
 static float       gore_splatTokens;
 
-static std::map<dtiki_t *, goreLayout_t> gore_layouts;
+// Layouts by the meshes a model is made of: the soldiers of one kind differ
+// in head, skin and uniform, and only the head is a different mesh, so most
+// of them share one. Found by the model each time after the first.
+static std::map<std::vector<int>, goreLayout_t> gore_layouts;
+static std::map<dtiki_t *, std::pair<std::vector<int>, goreLayout_t *> > gore_layoutOf;
 
 // A model's skeleton as far as cutting it goes: for each part, the bone cut
 // off at its joint (the first) and every bone that goes with it.
@@ -375,6 +387,11 @@ static int           gore_numVerts, gore_numTris;
 static vec3_t        gore_normals[GORE_SKIN_VERTS]; // smooth, by CG_GoreSmoothNormals
 static int           gore_vertOfs[MAX_MODEL_SURFACES]; // -1: not in the buffer
 static int           gore_triOfs[MAX_MODEL_SURFACES];
+// Each triangle of the scratch buffer as a sphere (centre, radius), for
+// CG_GoreLay to pass over what is nowhere near a wound without its box test;
+// made again the first time it is needed after the buffer is skinned again.
+static vec4_t        gore_triSpheres[GORE_SKIN_TRIS];
+static int           gore_skinGen, gore_triSpheresGen = -1;
 
 static float GoreRand(float lo, float hi)
 {
@@ -438,6 +455,7 @@ void CG_GoreClear(void)
     memset(gore_gibs, 0, sizeof(gore_gibs));
     gore_rigs.clear();
     gore_layouts.clear();
+    gore_layoutOf.clear();
     gore_numDrawn  = 0;
     gore_numHits   = 0;
     gore_numBlasts = 0;
@@ -631,18 +649,44 @@ static void CG_GoreTriNormal(const float *a, const float *b, const float *c, flo
 // gives the way the triangles wind.
 static const goreLayout_t *CG_GoreLayout(const refEntity_t *model)
 {
-    std::map<dtiki_t *, goreLayout_t>::iterator it = gore_layouts.find(model->tiki);
-    goreLayout_t                               *lay;
-    refEntity_t                                 ent;
-    vec3_t                                      mid;
-    float                                       facing;
-    int                                         s, k, total, n, numTris;
+    std::map<dtiki_t *, std::pair<std::vector<int>, goreLayout_t *> >::iterator it =
+        gore_layoutOf.find(model->tiki);
+    goreLayout_t    *lay;
+    std::vector<int> meshes;
+    refEntity_t      ent;
+    vec3_t           mid;
+    float            facing;
+    int              s, k, total, n, numTris;
 
-    if (it != gore_layouts.end()) {
-        return it->second.numSurfs ? &it->second : NULL;
+    // A model freed and loaded again can be at the address of another: the
+    // one found by it is checked against its meshes.
+    if (it != gore_layoutOf.end()) {
+        const std::vector<int> &had = it->second.first;
+        qboolean                same = (int)had.size() == model->tiki->numMeshes + 1 && had[0] == model->tiki->num_surfaces;
+
+        for (k = 0; same && k < model->tiki->numMeshes; k++) {
+            same = had[k + 1] == model->tiki->mesh[k];
+        }
+        if (same) {
+            return it->second.second->numSurfs ? it->second.second : NULL;
+        }
     }
 
-    lay = &gore_layouts[model->tiki];
+    meshes.push_back(model->tiki->num_surfaces);
+    for (k = 0; k < model->tiki->numMeshes; k++) {
+        meshes.push_back(model->tiki->mesh[k]);
+    }
+    {
+        std::map<std::vector<int>, goreLayout_t>::iterator same = gore_layouts.find(meshes);
+
+        if (same != gore_layouts.end()) {
+            gore_layoutOf[model->tiki] = std::make_pair(meshes, &same->second);
+            return same->second.numSurfs ? &same->second : NULL;
+        }
+    }
+
+    lay                        = &gore_layouts[meshes];
+    gore_layoutOf[model->tiki] = std::make_pair(meshes, lay);
     lay->numSurfs = 0;
     lay->winding  = 1.0f;
     lay->weld.clear();
@@ -652,12 +696,16 @@ static const goreLayout_t *CG_GoreLayout(const refEntity_t *model)
 
     ent   = *model;
     total = 0;
-    for (s = 0; s < MAX_MODEL_SURFACES; s++) {
+    // each surface on its own (a skeleton evaluated each time), but only the
+    // ones the model has: the rest skin to nothing
+    for (s = 0; s < Q_min(model->tiki->num_surfaces, MAX_MODEL_SURFACES); s++) {
         for (k = 0; k < MAX_MODEL_SURFACES; k++) {
             ent.surfaces[k] = (model->surfaces[k] & ~MDL_SURFACE_NODRAW) | (k == s ? 0 : MDL_SURFACE_NODRAW);
         }
 
         n = cgi.R_GetSkinnedMesh(&ent, gore_verts, GORE_SKIN_VERTS, gore_tris, GORE_SKIN_TRIS, &numTris);
+
+        gore_skinGen++;
         lay->numVerts[s] = n;
         lay->numTris[s]  = n ? numTris : 0;
         total += n;
@@ -671,6 +719,8 @@ static const goreLayout_t *CG_GoreLayout(const refEntity_t *model)
     }
 
     n = cgi.R_GetSkinnedMesh(&ent, gore_verts, GORE_SKIN_VERTS, gore_tris, GORE_SKIN_TRIS, &numTris);
+
+    gore_skinGen++;
     if (!n || n != total) {
         lay->numSurfs = 0;
         return NULL;
@@ -769,6 +819,7 @@ static qboolean CG_GoreSkin(const refEntity_t *model, const goreLayout_t *lay, u
 
     gore_numVerts =
         cgi.R_GetSkinnedMesh(&ent, gore_verts, GORE_SKIN_VERTS, gore_tris, GORE_SKIN_TRIS, &gore_numTris);
+        gore_skinGen++;
 
     return gore_numVerts == verts && gore_numTris == tris && verts ? qtrue : qfalse;
 }
@@ -943,6 +994,13 @@ static unsigned int CG_GorePoseHash(const refEntity_t *ref)
         }
     } else {
         for (i = 0; i < MAX_FRAMEINFOS; i++) {
+            // A slot of no weight adds nothing to the pose, but its time goes
+            // on: hashed, it had every wounded man skinned again each frame
+            // standing still (most of the reposes in a firefight).
+            if (ref->frameInfo[i].weight == 0.0f) {
+                continue;
+            }
+            GORE_HASH_INT(i);
             GORE_HASH_INT(ref->frameInfo[i].index);
             GORE_HASH_INT((int)floorf(ref->frameInfo[i].time * 1000.0f));
             GORE_HASH_INT((int)floorf(ref->frameInfo[i].weight * 1000.0f));
@@ -1094,7 +1152,7 @@ static void CG_GoreLay(
 {
     goreDecal_t decal;
     vec3_t      axisUp, axisRight;
-    float       hw, hup, hdown, depth;
+    float       hw, hup, hdown, depth, boxReach;
     int         i, k;
 
     if (up) {
@@ -1155,14 +1213,62 @@ static void CG_GoreLay(
     decal.bleedUntil = decal.nextDrop = decal.spurtUntil = decal.nextSpurt = 0;
     decal.lightTime                                                         = 0;
 
+    // A wound's box is a few units across and the body some thousands of
+    // triangles: the box test on each cost ~0.4 ms a wound, 10 ms for the
+    // shrapnel of one grenade. A triangle whose sphere is clear of the
+    // sphere round the box cannot reach it.
+    if (gore_triSpheresGen != gore_skinGen) {
+        for (i = 0; i < gore_numTris; i++) {
+            const float *a = gore_verts[gore_tris[i * 3 + 0]].xyz;
+            const float *b = gore_verts[gore_tris[i * 3 + 1]].xyz;
+            const float *c = gore_verts[gore_tris[i * 3 + 2]].xyz;
+            float       *sp = gore_triSpheres[i];
+
+            for (k = 0; k < 3; k++) {
+                sp[k] = (a[k] + b[k] + c[k]) * (1.0f / 3.0f);
+            }
+            sp[3] = sqrtf(Q_max(DistanceSquared(sp, a), Q_max(DistanceSquared(sp, b), DistanceSquared(sp, c))));
+        }
+        gore_triSpheresGen = gore_skinGen;
+    }
+    boxReach = sqrtf(hw * hw + Q_max(hup, hdown) * Q_max(hup, hdown) + depth * depth);
+
     for (i = 0; i < gore_numTris; i++) {
         const float *p[3];
         float        x[3], y[3], z[3];
         vec3_t       nt;
         goreFrag_t   frag;
 
+        {
+            const float *sp    = gore_triSpheres[i];
+            float        dx    = sp[0] - centre[0], dy = sp[1] - centre[1], dz = sp[2] - centre[2];
+            float        reach = boxReach + sp[3];
+
+            if (dx * dx + dy * dy + dz * dz > reach * reach) {
+                continue;
+            }
+        }
+
         for (k = 0; k < 3; k++) {
+            vec3_t d;
+
             p[k] = gore_verts[gore_tris[i * 3 + k]].xyz;
+            VectorSubtract(p[k], centre, d);
+            x[k] = DotProduct(d, axisRight);
+            y[k] = DotProduct(d, axisUp);
+            z[k] = DotProduct(d, normal);
+        }
+
+        // Out of the decal's box first: that is nearly every triangle of the
+        // body, and the tests below cost a cross product and a square root.
+        if (Q_min(z[0], Q_min(z[1], z[2])) > depth || Q_max(z[0], Q_max(z[1], z[2])) < -depth) {
+            continue;
+        }
+        if (Q_max(x[0], Q_max(x[1], x[2])) < -hw || Q_min(x[0], Q_min(x[1], x[2])) > hw) {
+            continue;
+        }
+        if (Q_max(y[0], Q_max(y[1], y[2])) < -hdown || Q_min(y[0], Q_min(y[1], y[2])) > hup) {
+            continue;
         }
 
         // folded away with a part that is gone
@@ -1183,25 +1289,6 @@ static void CG_GoreLay(
         CG_GoreTriNormal(p[0], p[1], p[2], lay->winding, nt);
         // a stump or a hollow is laid over whatever is there
         if (fabs(DotProduct(nt, normal)) < (kind == GK_BRAIN ? 0.0f : (kind == GK_STUMP ? 0.15f : 0.2f))) {
-            continue;
-        }
-
-        for (k = 0; k < 3; k++) {
-            vec3_t d;
-
-            VectorSubtract(p[k], centre, d);
-            x[k] = DotProduct(d, axisRight);
-            y[k] = DotProduct(d, axisUp);
-            z[k] = DotProduct(d, normal);
-        }
-
-        if (Q_min(z[0], Q_min(z[1], z[2])) > depth || Q_max(z[0], Q_max(z[1], z[2])) < -depth) {
-            continue;
-        }
-        if (Q_max(x[0], Q_max(x[1], x[2])) < -hw || Q_min(x[0], Q_min(x[1], x[2])) > hw) {
-            continue;
-        }
-        if (Q_max(y[0], Q_max(y[1], y[2])) < -hdown || Q_min(y[0], Q_min(y[1], y[2])) > hup) {
             continue;
         }
 
@@ -1348,14 +1435,19 @@ typedef struct {
 // The shot's line through the skinned body: the first skin facing it, from
 // GORE_RAY_BACK before the reported hit to GORE_ENTRY_SLACK past it, and the
 // first facing away beyond that, if the round came out.
-static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, const vec3_t dir, goreTrace_t *tr)
+// With a list (CG_GoreTrisNearLine), only the triangles in it are tried.
+static qboolean CG_GoreTraceSkinList(
+    const goreLayout_t *lay, const vec3_t start, const vec3_t dir, goreTrace_t *tr, const int *list, int numList
+)
 {
-    int i;
+    const int count = list ? numList : gore_numTris;
+    int       n, i;
 
     tr->entryTri = tr->exitTri = -1;
     tr->tEntry = tr->tExit = 0;
 
-    for (i = 0; i < gore_numTris; i++) {
+    for (n = 0; n < count; n++) {
+        i = list ? list[n] : n;
         const float *a = gore_verts[gore_tris[i * 3 + 0]].xyz;
         const float *b = gore_verts[gore_tris[i * 3 + 1]].xyz;
         const float *c = gore_verts[gore_tris[i * 3 + 2]].xyz;
@@ -1380,7 +1472,8 @@ static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, co
         return qfalse;
     }
 
-    for (i = 0; i < gore_numTris; i++) {
+    for (n = 0; n < count; n++) {
+        i = list ? list[n] : n;
         const float *a = gore_verts[gore_tris[i * 3 + 0]].xyz;
         const float *b = gore_verts[gore_tris[i * 3 + 1]].xyz;
         const float *c = gore_verts[gore_tris[i * 3 + 2]].xyz;
@@ -1404,10 +1497,60 @@ static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, co
     return qtrue;
 }
 
+static qboolean CG_GoreTraceSkin(const goreLayout_t *lay, const vec3_t start, const vec3_t dir, goreTrace_t *tr)
+{
+    return CG_GoreTraceSkinList(lay, start, dir, tr, NULL, 0);
+}
+
+// The triangles of the scratch buffer that a line along dir, started up to
+// radius across from start, can meet within reach: all CG_GoreTraceSkin can
+// find for the nudged lines of one hit, in the same order. A body is a few
+// thousand triangles and a hit tries up to 17 lines, each two passes.
+static int gore_nearTris[GORE_SKIN_TRIS];
+
+static int CG_GoreTrisNearLine(const vec3_t start, const vec3_t dir, float radius, float reach)
+{
+    vec3_t right, up;
+    int    i, k, n = 0;
+
+    PerpendicularVector(right, dir);
+    CrossProduct(dir, right, up);
+
+    for (i = 0; i < gore_numTris; i++) {
+        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+
+        for (k = 0; k < 3; k++) {
+            const float *p = gore_verts[gore_tris[i * 3 + k]].xyz;
+            vec3_t       d;
+            float        c[3];
+            int          j;
+
+            VectorSubtract(p, start, d);
+            c[0] = DotProduct(d, dir);
+            c[1] = DotProduct(d, right);
+            c[2] = DotProduct(d, up);
+            for (j = 0; j < 3; j++) {
+                lo[j] = Q_min(lo[j], c[j]);
+                hi[j] = Q_max(hi[j], c[j]);
+            }
+        }
+
+        if (hi[0] < 0 || lo[0] > reach || lo[1] > radius || hi[1] < -radius || lo[2] > radius || hi[2] < -radius) {
+            continue;
+        }
+        gore_nearTris[n++] = i;
+    }
+
+    return n;
+}
+
 // The server hits a man by boxes about his bones, a little fuller than he is,
 // so a round can graze the box and pass beside the skin. Such a line is moved
 // across, a little and then a little more, until it meets him.
 #define GORE_NUM_NUDGES 17
+#define GORE_NUDGE_MAX  4.0f
+// the farthest along its line a trace looks: the way in, then the way out
+#define GORE_TRACE_REACH (GORE_RAY_BACK + GORE_ENTRY_SLACK + GORE_EXIT_DEPTH + 1.0f)
 
 static void CG_GoreNudge(const vec3_t start, const vec3_t dir, int nudge, vec3_t out)
 {
@@ -1421,7 +1564,7 @@ static void CG_GoreNudge(const vec3_t start, const vec3_t dir, int nudge, vec3_t
 
     PerpendicularVector(right, dir);
     CrossProduct(dir, right, up);
-    r   = nudge <= 8 ? 2.0f : 4.0f;
+    r   = nudge <= 8 ? 2.0f : GORE_NUDGE_MAX;
     ang = ((nudge - 1) % 8) * (M_PI / 4);
     VectorMA(out, r * cos(ang), right, out);
     VectorMA(out, r * sin(ang), up, out);
@@ -1429,39 +1572,80 @@ static void CG_GoreNudge(const vec3_t start, const vec3_t dir, int nudge, vec3_t
 
 // A round into one of the drawn bodies: which, where it went in, and where it
 // came out. Returns qfalse if it went into none of them.
-static qboolean CG_GorePlaceHit(const goreHit_t *hit)
+// What became of a hit: on a body, still waiting for its body to be drawn, or
+// met none of the bodies drawn by it (it will not next frame either).
+typedef enum {
+    GORE_HIT_PLACED,
+    GORE_HIT_WAIT,
+    GORE_HIT_MISSED
+} goreHitResult_t;
+
+// A line that meets the skin within this of where the server said it hit,
+// unmoved, is taken without trying the bodies further off.
+#define GORE_HIT_EXACT 2.0f
+
+static goreHitResult_t CG_GorePlaceHit(const goreHit_t *hit)
 {
     const goreDrawn_t  *best      = NULL;
+    const goreDrawn_t  *skinned   = NULL; // whose skin the scratch buffer holds
+    const goreDrawn_t  *near[MAX_GENTITIES];
+    float               nearDist[MAX_GENTITIES];
+    int                 numNear   = 0;
     int                 bestNudge = 0;
     float               bestErr   = 0;
     const goreLayout_t *lay;
     goreBody_t         *body;
-    goreTrace_t         tr;
+    goreTrace_t         tr, bestTr;
     vec3_t              start, ray, entry, exitPos;
     float               scale = cg_gore_scale->value;
-    int                 n, nudge;
+    int                 n, k, nudge, numNearTris;
 
     VectorMA(hit->pos, -GORE_RAY_BACK, hit->dir, start);
 
-    // The body whose skin the line meets nearest the reported hit, moved
-    // across as little as it takes.
-    for (n = 0; n < gore_numDrawn; n++) {
+    // The bodies by it, nearest across the ground first: the one hit is
+    // nearly always under the round, and skinning and tracing a body is what
+    // a hit costs (a few ms for each).
+    for (n = 0; n < gore_numDrawn && numNear < MAX_GENTITIES; n++) {
         const goreDrawn_t *d = &gore_drawn[n];
+        float              dx, dy, dist;
 
         if (Distance(d->ref.origin, hit->pos) > 128) {
             continue;
         }
+        dx   = d->ref.origin[0] - hit->pos[0];
+        dy   = d->ref.origin[1] - hit->pos[1];
+        dist = dx * dx + dy * dy;
+        for (k = numNear; k > 0 && nearDist[k - 1] > dist; k--) {
+            near[k]     = near[k - 1];
+            nearDist[k] = nearDist[k - 1];
+        }
+        near[k]     = d;
+        nearDist[k] = dist;
+        numNear++;
+    }
+
+    if (!numNear) {
+        return GORE_HIT_WAIT;
+    }
+
+    // The body whose skin the line meets nearest the reported hit, moved
+    // across as little as it takes.
+    for (n = 0; n < numNear; n++) {
+        const goreDrawn_t *d = near[n];
 
         lay = CG_GoreLayout(&d->ref);
         if (!lay || !CG_GoreSkin(&d->ref, lay, CG_GoreVisibleMask(&d->ref, lay))) {
+            skinned = NULL;
             continue;
         }
+        skinned = d;
+        numNearTris = CG_GoreTrisNearLine(start, hit->dir, GORE_NUDGE_MAX + 0.5f, GORE_TRACE_REACH);
 
         for (nudge = 0; nudge < GORE_NUM_NUDGES; nudge++) {
             float err;
 
             CG_GoreNudge(start, hit->dir, nudge, ray);
-            if (!CG_GoreTraceSkin(lay, ray, hit->dir, &tr)) {
+            if (!CG_GoreTraceSkinList(lay, ray, hit->dir, &tr, gore_nearTris, numNearTris)) {
                 continue;
             }
 
@@ -1470,7 +1654,12 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
                 best      = d;
                 bestErr   = err;
                 bestNudge = nudge;
+                bestTr    = tr;
             }
+            break;
+        }
+
+        if (best && bestErr <= GORE_HIT_EXACT) {
             break;
         }
     }
@@ -1478,18 +1667,20 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
     if (!best) {
         if (cg_gore_debug->integer) {
             Com_Printf(
-                "gore: hit at %.0f %.0f %.0f going %.2f %.2f %.2f met no body (%d drawn)\n", hit->pos[0], hit->pos[1],
-                hit->pos[2], hit->dir[0], hit->dir[1], hit->dir[2], gore_numDrawn
+                "gore: hit at %.0f %.0f %.0f going %.2f %.2f %.2f met none of the %d bodies by it\n", hit->pos[0],
+                hit->pos[1], hit->pos[2], hit->dir[0], hit->dir[1], hit->dir[2], numNear
             );
         }
-        return qfalse;
+        return GORE_HIT_MISSED;
     }
 
-    // Skinned again, as the last one skinned need not be it.
+    // Skinned again unless the last one skinned is it.
     lay = CG_GoreLayout(&best->ref);
     CG_GoreNudge(start, hit->dir, bestNudge, ray);
-    if (!CG_GoreSkin(&best->ref, lay, CG_GoreVisibleMask(&best->ref, lay)) || !CG_GoreTraceSkin(lay, ray, hit->dir, &tr)) {
-        return qfalse;
+    if (skinned == best) {
+        tr = bestTr;
+    } else if (!CG_GoreSkin(&best->ref, lay, CG_GoreVisibleMask(&best->ref, lay)) || !CG_GoreTraceSkin(lay, ray, hit->dir, &tr)) {
+        return GORE_HIT_MISSED;
     }
 
     VectorMA(ray, tr.tEntry, hit->dir, entry);
@@ -1547,11 +1738,15 @@ static qboolean CG_GorePlaceHit(const goreHit_t *hit)
         }
     }
 
-    return qtrue;
+    return GORE_HIT_PLACED;
 }
 
 // Lays a decal of kind about a point, on the triangle of the body nearest it.
-static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius)
+// skinned: the scratch buffer already holds this body as drawn (all of it
+// that shows), as for the second and later dents of one pass.
+static qboolean CG_GoreLayNearSkinned(
+    goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius, qboolean skinned
+)
 {
     const goreLayout_t *lay = CG_GoreLayout(&drawn->ref);
     float               bary[3] = {1.0f / 3, 1.0f / 3, 1.0f / 3};
@@ -1559,7 +1754,7 @@ static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int k
     size_t              before = body->decals.size();
     int                 i, best = -1;
 
-    if (!lay || !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay))) {
+    if (!lay || (!skinned && !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay)))) {
         return qfalse;
     }
 
@@ -1593,6 +1788,11 @@ static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int k
 
     CG_GoreLay(body, lay, kind, at, normal, NULL, best, bary, radius, 0);
     return body->decals.size() > before && body->decals.back().kind == kind ? qtrue : qfalse;
+}
+
+static qboolean CG_GoreLayNear(goreBody_t *body, const goreDrawn_t *drawn, int kind, const vec3_t at, const vec3_t normal, float radius)
+{
+    return CG_GoreLayNearSkinned(body, drawn, kind, at, normal, radius, qfalse);
 }
 
 //=============================================================
@@ -2482,6 +2682,8 @@ static qboolean CG_GoreBitBounds(qhandle_t hModel, vec3_t mid, vec3_t half)
     }
 
     n = cgi.R_GetSkinnedMesh(&ent, gore_verts, GORE_SKIN_VERTS, gore_tris, GORE_SKIN_TRIS, &numTris);
+
+    gore_skinGen++;
     ClearBounds(mins, maxs);
     for (i = 0; i < n; i++) {
         AddPointToBounds(gore_verts[i].xyz, mins, maxs);
@@ -3801,6 +4003,9 @@ static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
     body->stumpPending = 0;
 
     rig = CG_GoreRig(drawn->ref.tiki);
+    // the body is skinned once for all its new dents (a round into the head
+    // leaves two, the way in and the way out)
+    qboolean skinned = qfalse;
     for (p = 0; p < body->numDents && rig; p++) {
         refEntity_t ref = drawn->ref;
         float       m[4][3];
@@ -3827,35 +4032,47 @@ static void CG_GoreLayPending(goreBody_t *body, goreDrawn_t *drawn)
             }
             CG_GoreModelToWorldDir(&ref, out, wout);
             VectorNormalize(wout);
-            CG_GoreLayNear(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.15f);
+            if (!skinned) {
+                const goreLayout_t *lay = CG_GoreLayout(&drawn->ref);
+
+                if (!lay || !CG_GoreSkin(&drawn->ref, lay, CG_GoreVisibleMask(&drawn->ref, lay))) {
+                    break;
+                }
+                skinned = qtrue;
+            }
+            CG_GoreLayNearSkinned(body, drawn, GK_BRAIN, w, wout, body->dents[p].radius * scale * 1.15f, qtrue);
         }
     }
     body->dentPending = 0;
 }
 
-// Shrapnel from a blast close by, on the side of each body facing it, and soot
-// on one very close.
-static void CG_GorePlaceBlast(const goreBlast_t *blast)
+static float CG_GoreBlastRange(const goreBlast_t *blast)
 {
     static const float ranges[] = {220, 300, 400, 400};
-    float              range    = ranges[blast->kind & 3];
-    float              scale    = cg_gore_scale->value;
-    int                n;
 
-    for (n = 0; n < gore_numDrawn; n++) {
-        const goreDrawn_t  *d = &gore_drawn[n];
+    return ranges[blast->kind & 3];
+}
+
+// Shrapnel from a blast close by on one body, on the side of it facing the
+// blast, and soot if it is very close.
+static void CG_GoreBlastOn(const goreBlast_t *blast, const goreDrawn_t *d)
+{
+    float range = CG_GoreBlastRange(blast);
+    float scale = cg_gore_scale->value;
+
+    {
         const goreLayout_t *lay;
         goreBody_t         *body = NULL;
         float               dist = Distance(d->ref.origin, blast->pos);
         int                 frags, tries, burnt = 0;
 
         if (dist > range) {
-            continue;
+            return;
         }
 
         lay = CG_GoreLayout(&d->ref);
         if (!lay || !CG_GoreSkin(&d->ref, lay, CG_GoreVisibleMask(&d->ref, lay))) {
-            continue;
+            return;
         }
 
         // close enough to take him apart, if it kills him or he is dead
@@ -3872,7 +4089,7 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
             }
         }
         if (d->spared) {
-            continue;
+            return;
         }
 
         frags = (int)((1.0f - dist / range) * 7.0f + random());
@@ -3919,6 +4136,50 @@ static void CG_GorePlaceBlast(const goreBlast_t *blast)
     }
 }
 
+// Each blast on the nearest body it has not been laid on, then on more while
+// the frame's budget lasts; done when none is left in range.
+static qboolean CG_GorePlaceBlast(goreBlast_t *blast, double *spent)
+{
+    float range = CG_GoreBlastRange(blast);
+
+    for (;;) {
+        const goreDrawn_t *best = NULL;
+        float              bestDist = range;
+        double             start;
+        int                n, k;
+
+        for (n = 0; n < gore_numDrawn; n++) {
+            const goreDrawn_t *d    = &gore_drawn[n];
+            float              dist = Distance(d->ref.origin, blast->pos);
+
+            if (dist > bestDist) {
+                continue;
+            }
+            for (k = 0; k < blast->numDone; k++) {
+                if (blast->done[k] == d->entityNum) {
+                    break;
+                }
+            }
+            if (k < blast->numDone) {
+                continue;
+            }
+            best     = d;
+            bestDist = dist;
+        }
+        if (!best || blast->numDone >= GORE_MAX_DRAWN) {
+            return qtrue;
+        }
+        if (*spent >= GORE_BLAST_BUDGET) {
+            return qfalse;
+        }
+
+        blast->done[blast->numDone++] = best->entityNum;
+        start = CG_Microseconds();
+        CG_GoreBlastOn(blast, best);
+        *spent += CG_Microseconds() - start;
+    }
+}
+
 void CG_GoreNoteHit(const vec3_t pos, const vec3_t dir, int large)
 {
     goreHit_t *hit;
@@ -3950,8 +4211,9 @@ void CG_GoreNoteExplosion(const vec3_t pos, int kind)
 
     blast = &gore_blasts[gore_numBlasts++];
     VectorCopy(pos, blast->pos);
-    blast->kind = kind;
-    blast->time = cg.time;
+    blast->kind    = kind;
+    blast->time    = cg.time;
+    blast->numDone = 0;
 
     CG_GoreBlastGibs(pos, kind);
 }
@@ -4415,19 +4677,35 @@ void CG_GoreAddToScene(void)
     CG_GoreAddBits();
 
     // New wounds, on the bodies as they are this frame. A hit waits a little
-    // for its body, which may not have been drawn yet.
+    // for its body, which may not have been drawn yet; one that met the
+    // bodies by it and missed them is let go (tried again each frame, a
+    // round into a head already shot off cost ~5 ms a frame for 250 ms).
     for (i = 0, j = 0; i < gore_numHits; i++) {
-        if (CG_GorePlaceHit(&gore_hits[i]) || cg.time - gore_hits[i].time > GORE_HIT_TTL || cg.time < gore_hits[i].time) {
+        if (CG_GorePlaceHit(&gore_hits[i]) != GORE_HIT_WAIT || cg.time - gore_hits[i].time > GORE_HIT_TTL
+            || cg.time < gore_hits[i].time) {
             continue;
         }
         gore_hits[j++] = gore_hits[i];
     }
     gore_numHits = j;
 
-    for (i = 0; i < gore_numBlasts; i++) {
-        CG_GorePlaceBlast(&gore_blasts[i]);
+    {
+        // the first body each frame whatever it costs, so a blast always
+        // moves on
+        double spent = 0;
+
+        for (i = 0, j = 0; i < gore_numBlasts; i++) {
+            if (CG_GorePlaceBlast(&gore_blasts[i], &spent) || cg.time - gore_blasts[i].time > GORE_BLAST_TTL
+                || cg.time < gore_blasts[i].time) {
+                continue;
+            }
+            if (j != i) {
+                gore_blasts[j] = gore_blasts[i];
+            }
+            j++;
+        }
+        gore_numBlasts = j;
     }
-    gore_numBlasts = 0;
 
     CG_GoreStreaks();
 
