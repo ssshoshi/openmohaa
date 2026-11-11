@@ -443,6 +443,36 @@ qboolean S_LoadSound(const char *fileName, sfx_t *sfx, int streamed, qboolean fo
     }
 
     if (streamed) {
+        // Added in OPM
+        //  A short streamed sound (a soldier's line: 50-300 KB) is loaded whole
+        //  instead: each play of a streamed one opened its file in the pak and
+        //  filled the stream before it returned, 8-27 ms a line in a fight. It
+        //  still plays as a 2D sound (S_OPENAL_StartSound). Long ones (music,
+        //  long speeches) and MP3s are still streamed, and so is a stereo
+        //  file, which the whole load does not take.
+        static cvar_t *s_streamMinKB;
+
+        if (!s_streamMinKB) {
+            s_streamMinKB = Cvar_Get("s_streamMinKB", "1024", CVAR_ARCHIVE);
+        }
+        if (s_streamMinKB->integer > 0 && !strstr(fileName, ".mp3")) {
+            size = FS_FOpenFileRead(fileName, &file_handle, qfalse, qtrue);
+            if (file_handle) {
+                FS_FCloseFile(file_handle);
+            }
+            if (size > 0 && size <= s_streamMinKB->integer * 1024) {
+                sfx_t whole = *sfx;
+
+                if (S_LoadSound(fileName, &whole, qfalse, qtrue) && whole.data) {
+                    *sfx = whole;
+                    return qtrue;
+                }
+                *sfx = whole;
+                sfx->data = NULL;
+                sfx->buffer = 0;
+            }
+        }
+
         sfx->length = 5000;
         sfx->width  = 1;
         sfx->iFlags |= SFX_FLAG_STREAMED;

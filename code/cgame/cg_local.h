@@ -590,6 +590,7 @@ extern "C" {
     void     CG_UpdateTestEmitter(void);
     void     CG_InitializeCommandManager(void);
     void     CG_ProcessInitCommands(dtiki_t *tiki, refEntity_t *ent);
+    void     CG_PrecacheVoices(void);
     void     CG_ProcessCacheInitCommands(dtiki_t *tiki);
     void     CG_EndTiki(dtiki_t *tiki);
     qboolean CG_Command_ProcessFile(const char *filename, qboolean quiet, dtiki_t *curTiki);

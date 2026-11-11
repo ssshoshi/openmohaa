@@ -6534,3 +6534,155 @@ void ClientGameCommandManager::RemovePendingEventsForEntity(int number)
         event = tmp;
     }
 }
+
+/*
+=================
+CG_PrecacheVoiceAlias
+
+Registers every variant of one alias a model's animation plays, if it is
+streamed: the alias picks one at random each play.
+=================
+*/
+static int CG_PrecacheVoiceAlias(AliasList_t *list, const char *alias, int room, byte *done)
+{
+    int   minIndex, maxIndex;
+    float totalWeight;
+    int   i;
+    int   count = 0;
+
+    if (!list || !list->num_in_list) {
+        return 0;
+    }
+
+    cgi.Alias_ListFindRandomRange(list, alias, &minIndex, &maxIndex, &totalWeight);
+    if (minIndex < 0 || maxIndex < 0) {
+        return 0;
+    }
+
+    for (i = minIndex; i <= maxIndex; i++) {
+        AliasListNode_t *node = list->sorted_list[i];
+
+        if (count >= room) {
+            break;
+        }
+        // an alias many animations play is registered once
+        if (done) {
+            if (done[i]) {
+                continue;
+            }
+            done[i] = 1;
+        }
+        if (node->streamed && node->real_name[0]) {
+            cgi.S_RegisterSound(node->real_name, qtrue);
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/*
+=================
+CG_PrecacheVoices
+
+Added in OPM
+  The soldiers' voice lines (pain, death, alarms, orders) are aliases marked
+  streamed, and the level's aliascache does not load them: each one was read
+  from its pak the first time it played, 5-27 ms in the middle of a fight.
+  Every variant of every streamed alias that a loaded model's animations
+  play is registered here instead; with the sound system loading short
+  streamed sounds whole (s_streamMinKB), a play is then from memory. One
+  kind of German soldier says ~1000 (49 MB); m5l1a loads 1914 in 3.9 s
+  cold, 0.3 s with the files in the OS cache.
+  cg_precacheVoices 0 turns this off.
+=================
+*/
+#define CG_PRECACHE_MAX_ANIMS 512
+// The sound system holds 4096 sounds (MAX_SFX) and a level's own stay
+// under the stock 1400: the precache stops well before the table is full,
+// which is a fatal error.
+#define CG_PRECACHE_MAX_VOICES 2048
+
+void CG_PrecacheVoices(void)
+{
+    static cvar_t     *cg_precacheVoices;
+    const dtikianim_t *seen[CG_PRECACHE_MAX_ANIMS];
+    int                numSeen   = 0;
+    int                numSounds = 0;
+    int                numModels = 0;
+    int                start;
+    int                i, j, k, n;
+    AliasList_t       *global;
+    byte              *done;
+
+    if (!cg_precacheVoices) {
+        cg_precacheVoices = cgi.Cvar_Get("cg_precacheVoices", "1", CVAR_ARCHIVE);
+    }
+    if (!cg_precacheVoices->integer) {
+        return;
+    }
+
+    start  = cgi.Milliseconds();
+    global = cgi.Alias_GetGlobalList();
+    if (!global || !global->num_in_list) {
+        return;
+    }
+    done = (byte *)cgi.Malloc(global->num_in_list);
+    memset(done, 0, global->num_in_list);
+
+    for (i = 1; i < MAX_MODELS; i++) {
+        const dtiki_t     *tiki;
+        const dtikianim_t *a;
+
+        if (!cgs.model_draw[i]) {
+            continue;
+        }
+        tiki = cgi.R_Model_GetHandle(cgs.model_draw[i]);
+        if (!tiki || !tiki->a) {
+            continue;
+        }
+        a = tiki->a;
+
+        for (n = 0; n < numSeen; n++) {
+            if (seen[n] == a) {
+                break;
+            }
+        }
+        if (n < numSeen) {
+            continue;
+        }
+        if (numSeen == CG_PRECACHE_MAX_ANIMS) {
+            break;
+        }
+        seen[numSeen++] = a;
+        numModels++;
+
+        for (j = 0; j < a->num_anims; j++) {
+            const dtikianimdef_t *def = a->animdefs[j];
+
+            if (!def) {
+                continue;
+            }
+            for (k = 0; k < def->num_client_cmds; k++) {
+                const dtikicmd_t *cmd = &def->client_cmds[k];
+
+                if (cmd->num_args < 2 || Q_stricmp(cmd->args[0], "sound")) {
+                    continue;
+                }
+                // a model's own aliases come first, as in PlaySound
+                if (a->alias_list) {
+                    numSounds += CG_PrecacheVoiceAlias(
+                        (AliasList_t *)a->alias_list, cmd->args[1], CG_PRECACHE_MAX_VOICES - numSounds, NULL
+                    );
+                }
+                numSounds += CG_PrecacheVoiceAlias(global, cmd->args[1], CG_PRECACHE_MAX_VOICES - numSounds, done);
+            }
+        }
+    }
+
+    cgi.Free(done);
+
+    cgi.Printf(
+        "Precached %d streamed voice sounds of %d models in %d ms\n", numSounds, numModels, cgi.Milliseconds() - start
+    );
+}
