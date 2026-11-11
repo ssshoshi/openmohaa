@@ -1,0 +1,9 @@
+# The crouch idles the player model plays (models/player/base/anims_*.txt) are
+# held poses; these breathe and shift as the standing idle of the same weapon does.
+# <path in the pak>                              <crouch pose>                                      <standing idle>
+models/human/animation/opm/crouch_idle_rifle.skc     models/human/animation/weapon_rifle/crouch/rifle_crouch.skc        models/human/animation/multiplayer/mp_rifle_stand_curious.skc
+models/human/animation/opm/crouch_idle_pistol.skc    models/human/animation/weapon_pistol/pistol_crouch_idle.skc        models/human/animation/weapon_pistol/curious/pistol_stand_curious(basic_loop).skc
+models/human/animation/opm/crouch_idle_mg.skc        models/human/animation/multiplayer/mp_bar_crouch_idle.skc          models/human/animation/multiplayer/mp_bar_stand_alert.skc
+models/human/animation/opm/crouch_idle_grenade.skc   models/human/animation/multiplayer/mp_grenade_crouch_idle.skc      models/human/animation/weapon_pistol/curious/pistol_stand_curious(basic_loop).skc
+models/human/animation/opm/crouch_idle_stielhandgranate.skc models/human/animation/weapon_pistol/idles/idle_crouch_pistol.skc models/human/animation/weapon_pistol/curious/pistol_stand_curious(basic_loop).skc
+models/human/animation/opm/crouch_idle_bazooka.skc   models/human/animation/multiplayer/mp_bazooka_crouch_bored.skc     models/human/animation/multiplayer/mp_bazooka_stand_idle.skc

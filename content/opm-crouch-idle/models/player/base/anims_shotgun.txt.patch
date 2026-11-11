@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_shotgun.txt
++++ b/models/player/base/anims_shotgun.txt
+@@ -55,7 +55,7 @@
+ 	//========================
+ 	// Crouching
+ 	//========================
+-	shotgun_crouch_idle			weapon_rifle/crouch/rifle_crouch.skc			crossblend 0.2
++	shotgun_crouch_idle			opm/crouch_idle_rifle.skc			crossblend 0.2
+ 	shotgun_crouch_walk_fwd		multiplayer/mp_rifle_crouch_walk_forwards.skc		crossblend 0.1 //autosteps_walk
+ 	shotgun_crouch_walk_back	multiplayer/mp_rifle_crouch_walk_back.skc		crossblend 0.1 //autosteps_walk
+ 	shotgun_crouch_walk_left	multiplayer/mp_rifle_crouch_walk_left.skc		crossblend 0.1 //autosteps_walk
