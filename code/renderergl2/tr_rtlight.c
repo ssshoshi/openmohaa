@@ -67,6 +67,7 @@ cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
 cvar_t *r_rtBatchSplit;
 cvar_t *r_rtCutoff;
+cvar_t *r_rtSoftFull;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
@@ -316,6 +317,9 @@ void R_RtRegister(void)
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
+	r_rtSoftFull = ri.Cvar_Get("r_rtSoftFull", "0.04", CVAR_ARCHIVE | CVAR_LATCH);
+	ri.Cvar_CheckRange(r_rtSoftFull, 0, 10, qfalse);
+	ri.Cvar_SetDescription(r_rtSoftFull, "A soft lamp's shadow (lamps.txt soft) takes twelve taps in its penumbra where its light there is more than this (1 is full brightness), four elsewhere: fewer is faster and grainier (0: twelve everywhere, 10: four)");
 	r_rtDynamicFull = ri.Cvar_Get("r_rtDynamicFull", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtDynamicFull, "How many of the nearest realtime lights draw the shadows of what moves every frame; the rest of r_rtDynamicLights every r_rtDynamicEvery frames");
 	r_rtDynamicEvery = ri.Cvar_Get("r_rtDynamicEvery", "2", CVAR_ARCHIVE);
