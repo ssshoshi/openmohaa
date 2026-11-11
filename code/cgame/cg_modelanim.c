@@ -733,6 +733,154 @@ static void CG_FreezeIdleAnims(refEntity_t *model)
 
 /*
 ======================
+CG_IdleGesture
+
+Added in OPM
+  The idles (the *_idle animations: breathing, shifting the weight, looking
+  over the weapon) the player's own body and view weapon play. Mostly calm:
+  the idle the server plays, only vm_idle_calm as much, so the hands only
+  stir. Every vm_idle_every_min to vm_idle_every_max seconds of idling the
+  idle plays once whole, from its first frame to its last, on a clock of its
+  own; it begins and ends at the first frame, the pose the calm one keeps
+  close to, and eases in and out over vm_idle_gesture_fade. Idling anew
+  starts calm.
+======================
+*/
+static int   idleGestureStart = -1;
+static int   idleGestureNext;
+static float idleGestureTime;   // seconds into the whole idle
+static float idleGestureWeight; // 0 calm, 1 the whole idle
+
+static qboolean CG_IsIdleAnim(dtiki_t *tiki, int index)
+{
+    const char *name = cgi.Anim_NameForNum(tiki, index);
+    size_t      len;
+
+    if (!name) {
+        return qfalse;
+    }
+
+    len = strlen(name);
+    return len >= 5 && !Q_stricmp(name + len - 5, "_idle");
+}
+
+static void CG_IdleGestureSchedule(void)
+{
+    float lo = Q_max(0.0f, vm_idle_every_min->value);
+    float hi = Q_max(lo, vm_idle_every_max->value);
+
+    idleGestureStart  = -1;
+    idleGestureNext   = cg.time + (int)((lo + random() * (hi - lo)) * 1000);
+    idleGestureTime   = 0;
+    idleGestureWeight = 0;
+}
+
+static void CG_IdleGesture(const refEntity_t *model, qboolean idling)
+{
+    float fade, length, w;
+    int   i;
+
+    if (!idling || !model->tiki) {
+        CG_IdleGestureSchedule();
+        return;
+    }
+
+    if (idleGestureStart < 0) {
+        if (cg.time < idleGestureNext) {
+            return;
+        }
+        idleGestureStart = cg.time;
+    }
+
+    // as long as the idle playing now
+    length = 0;
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        if (model->frameInfo[i].weight && CG_IsIdleAnim(model->tiki, model->frameInfo[i].index)) {
+            length = Q_max(length, cgi.Anim_Time(model->tiki, model->frameInfo[i].index));
+        }
+    }
+
+    idleGestureTime = (cg.time - idleGestureStart) / 1000.0f;
+    if (length <= 0 || idleGestureTime >= length) {
+        CG_IdleGestureSchedule();
+        return;
+    }
+
+    fade = Q_clamp_float(vm_idle_gesture_fade->value, 0.01f, length / 2);
+    w    = Q_min(1.0f, Q_min(idleGestureTime, length - idleGestureTime) / fade);
+
+    idleGestureWeight = w * w * (3.0f - 2.0f * w);
+}
+
+/*
+======================
+CG_DampIdleAnims
+
+Added in OPM
+  The idles as CG_IdleGesture has them: each idle slot split into the one the
+  server plays (vm_idle_calm of the calm part), its first frame (the rest of
+  it, the pose CG_FreezeIdleAnims holds) and, during a gesture, the whole
+  idle on its own clock. The two added go in free frame slots.
+======================
+*/
+static int CG_AddIdleSlot(refEntity_t *model, const frameInfo_t *from, float time, float weight)
+{
+    int j;
+
+    if (weight <= 0) {
+        return 1;
+    }
+
+    for (j = 0; j < MAX_FRAMEINFOS; j++) {
+        if (!model->frameInfo[j].weight) {
+            model->frameInfo[j]        = *from;
+            model->frameInfo[j].time   = time;
+            model->frameInfo[j].weight = weight;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void CG_DampIdleAnims(refEntity_t *model)
+{
+    frameInfo_t idle;
+    qboolean    played[MAX_FRAMEINFOS];
+    float       calm, g, w;
+    int         i;
+
+    calm = Q_clamp_float(vm_idle_calm->value, 0, 1);
+    g    = idleGestureWeight;
+    if (calm >= 1 && g <= 0) {
+        return;
+    }
+
+    // only the slots played: the ones added below are not split again
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        played[i] = model->frameInfo[i].weight && CG_IsIdleAnim(model->tiki, model->frameInfo[i].index);
+    }
+
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        if (!played[i]) {
+            continue;
+        }
+
+        idle = model->frameInfo[i];
+        w    = idle.weight;
+
+        model->frameInfo[i].weight = w * (1 - g) * calm;
+        if (!CG_AddIdleSlot(model, &idle, 0, w * (1 - g) * (1 - calm))
+            || !CG_AddIdleSlot(model, &idle, idleGestureTime, w * g)) {
+            // no slot free: hold it still rather than play it all
+            model->frameInfo[i].weight = w;
+            model->frameInfo[i].time   = 0;
+        }
+    }
+}
+
+/*
+======================
 CG_IdleViewModelSway
 
 Added in OPM
@@ -797,6 +945,8 @@ static void CG_IdleViewModelSway(const refEntity_t *model)
         idleSwayFrac = Q_max(target, idleSwayFrac - step);
     }
 
+    CG_IdleGesture(model, idleSwayFrac > 0);
+
     VectorClear(idleSwayMove);
     QuatSet(idleSwayQuat, 0, 0, 0, 1);
 
@@ -815,6 +965,7 @@ static void CG_IdleViewModelSway(const refEntity_t *model)
     live.entityNumber = ENTITYNUM_NONE;
     still             = live;
     CG_FreezeIdleAnims(&still);
+    CG_DampIdleAnims(&live);
 
     handLive  = cgi.TIKI_Orientation(&live, hand & TAG_MASK);
     neckLive  = cgi.TIKI_Orientation(&live, neck & TAG_MASK);
@@ -1064,6 +1215,7 @@ static void CG_AddFirstPersonBody(const refEntity_t *model, const vec3_t eyeBase
         // shadow and the reflection sit off the feet. It plays the idles
         // the body seen through the eyes holds still, as others see them.
         cg.playerShadowBody = body;
+        CG_DampIdleAnims(&cg.playerShadowBody);
         VectorAdd(cg.playerShadowBody.origin, shift, cg.playerShadowBody.origin);
         VectorAdd(cg.playerShadowBody.oldorigin, shift, cg.playerShadowBody.oldorigin);
         VectorAdd(cg.playerShadowBody.lightingOrigin, shift, cg.playerShadowBody.lightingOrigin);
