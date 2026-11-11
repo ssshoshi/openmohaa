@@ -10,7 +10,7 @@ shade, and no bulb in it. Made again here, from the game's own model:
     lamps' shaders light from inside (data/opm-lamps/scripts/opm_lampglass.shader);
     rounded by subdivision when it has room under the engine's limits;
   - a bulb (or a flame) at each bulb lamps.txt gives, a surface opm_bulb
-    (opm_candleflame) that glows;
+    (opm_flame) that glows;
   - the rest is the frame, as it was.
 
 A surface the TIKI names no shader for takes the shader of its own name, so
@@ -161,28 +161,26 @@ def named_material(base, shader):
 
 
 def bulb_points(shape, radius):
-    """A bulb (an egg, its narrow end up) or a flame, in units round its middle:
-    its vertexes, faces and each vertex's UV. A flame is a quad standing up,
-    twice as tall as wide, that turns round its upright to the viewer
-    (autosprite2 in opm_candleflame) and plays the frames of tools/lamps/flame.py,
-    whose foot (FOOT of the frame's height) is the old teardrop's."""
-    if shape == "flame":
-        height = 5.2 * radius
-        width = height / 2
-        bottom = -1.2 * radius - 0.14 * height
-        verts = [(-width / 2, 0.0, bottom), (width / 2, 0.0, bottom),
-                 (width / 2, 0.0, bottom + height), (-width / 2, 0.0, bottom + height)]
-        return np.array(verts), [[0, 1, 2, 3]], [(0, 0), (1, 0), (1, 1), (0, 1)]
+    """A bulb (an egg, its narrow end up) or a flame (a teardrop), in units round
+    its middle: its vertexes and faces."""
     bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=7, radius=1.0)
+    if shape == "flame":
+        bmesh.ops.create_uvsphere(bm, u_segments=8, v_segments=6, radius=1.0)
+    else:
+        bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=7, radius=1.0)
     verts = []
     for v in bm.verts:
         x, y, z = v.co
-        k = 1.0 - 0.3 * max(0.0, z)
-        verts.append((x * radius * k, y * radius * k, z * radius * 1.3))
+        if shape == "flame":
+            # narrow and drawn up above, round below
+            k = 1.0 - 0.75 * max(0.0, z)
+            verts.append((x * radius * k, y * radius * k, z * radius * (2.6 if z > 0 else 1.2)))
+        else:
+            k = 1.0 - 0.3 * max(0.0, z)
+            verts.append((x * radius * k, y * radius * k, z * radius * 1.3))
     faces = [[v.index for v in f.verts] for f in bm.faces]
     bm.free()
-    return np.array(verts), faces, None
+    return np.array(verts), faces
 
 
 def add_bulbs(arm, frame_obj, bulbs, radius, shape, shader):
@@ -205,7 +203,7 @@ def add_bulbs(arm, frame_obj, bulbs, radius, shape, shader):
             weights[ge.group] = weights.get(ge.group, 0.0) + ge.weight
     group = max(weights, key=weights.get) if weights else None
 
-    pts, faces, uvs = bulb_points(shape, radius)
+    pts, faces = bulb_points(shape, radius)
     bm = bmesh.new()
     bm.from_mesh(me)
     deform = bm.verts.layers.deform.verify()
@@ -220,9 +218,9 @@ def add_bulbs(arm, frame_obj, bulbs, radius, shape, shader):
                 v[deform][group] = 1.0
         for f in faces:
             face = bm.faces.new([new[i] for i in f])
-            face.smooth = uvs is None
-            for loop, vi in zip(face.loops, f):
-                loop[uv].uv = uvs[vi] if uvs else (0.5, 0.5)
+            face.smooth = True
+            for loop in face.loops:
+                loop[uv].uv = (0.5, 0.5)
     bm.faces.ensure_lookup_table()
     added = set(range(first_face, len(bm.faces)))
     bm.to_mesh(me)
@@ -381,7 +379,7 @@ def main():
     shape = "flame" if spec.get("kind") in ("candle", "lantern") else "bulb"
     if spec.get("kind") not in ("bulb", "off") and frame is not None:
         radius = float(spec.get("bulbSize", 0.9 if shape == "flame" else 1.4))
-        add_bulbs(arm, frame, spec.get("bulb", []), radius, shape, "opm_candleflame" if shape == "flame" else "opm_bulb")
+        add_bulbs(arm, frame, spec.get("bulb", []), radius, shape, "opm_flame" if shape == "flame" else "opm_bulb")
         report["bulbs"] = len(spec.get("bulb", []))
 
     # the .skd alone: the game's .tik names the frame's shader, the new

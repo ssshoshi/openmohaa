@@ -515,7 +515,7 @@ static const char *rt_glsl =
 	"\n"
 	// info: x the static tiles, y the dynamic ones (< 0: none), z near, w far;
 	// v: from the light to the point
-	"float RtShadowHard(vec4 info, vec3 v, bool baked)\n"
+	"float RtShadow(vec4 info, vec3 v, bool baked)\n"
 	"{\n"
 	"	vec3  a = abs(v);\n"
 	"	float face, fwd, left, up;\n"
@@ -547,112 +547,6 @@ static const char *rt_glsl =
 	"	return vis;\n"
 	"}\n"
 	"\n"
-	// A light with a size (a lamp's soft, lamps.txt; the fraction of info.x,
-	// R_RtLightData): its shadow looked up round the way to it, as wide as
-	// the light is over the distance from it to what is in its way. A
-	// lantern's bars are near its flame, so a width the same from the light
-	// is about right, and the shadow softens with the distance from it as
-	// a real one does. Each tap finds its own face: no seam where they meet.
-	"vec3 rt_shadowPlane = vec3(0.0);\n"
-	// how much the light gives here unshadowed (RtLight): a soft light's
-	// penumbra takes all its taps only where its grain would show
-	"float rt_shadowLight = 1.0;\n"
-	// one filtered lookup in the static tiles (the four texels of a
-	// shadow2D): a soft light's taps, each the cost of a quarter of
-	// RtShadowAtlas and an eighth of RtShadowHard
-	"float RtShadowTap(float tile, vec3 v, float f)\n"
-	"{\n"
-	"	vec3  a = abs(v);\n"
-	"	float face, fwd, left, up;\n"
-	"	if (a.x >= a.y && a.x >= a.z) {\n"
-	"		if (v.x > 0.0) { face = 0.0; fwd =  v.x; left =  v.y; up = v.z; }\n"
-	"		else           { face = 1.0; fwd = -v.x; left = -v.y; up = v.z; }\n"
-	"	} else if (a.y >= a.z) {\n"
-	"		if (v.y > 0.0) { face = 2.0; fwd =  v.y; left = -v.x; up = v.z; }\n"
-	"		else           { face = 3.0; fwd = -v.y; left =  v.x; up = v.z; }\n"
-	"	} else {\n"
-	"		if (v.z > 0.0) { face = 4.0; fwd =  v.z; left = -v.y; up = v.x; }\n"
-	"		else           { face = 5.0; fwd = -v.z; left =  v.y; up = v.x; }\n"
-	"	}\n"
-	"	vec2  faceUV = vec2(-left, up) / fwd * 0.5 + 0.5;\n"
-	"	float n = RT_ZNEAR;\n"
-	"	float depth = ((f + n) / (f - n) - 2.0 * f * n / ((f - n) * fwd)) * 0.5 + 0.5;\n"
-	"	tile += face;\n"
-	"	float tiles  = RT_TILES;\n"
-	"	float texels = RT_TILE_TEXELS;\n"
-	"	if (tile >= RT_SMALL_CODE)\n"
-	"	{\n"
-	"		tiles  = 2.0 * RT_TILES;\n"
-	"		texels = 0.5 * RT_TILE_TEXELS;\n"
-	"		tile   = tile - RT_SMALL_CODE + 2.0 * RT_SMALL_ROW * tiles;\n"
-	"	}\n"
-	"	vec2  origin = vec2(mod(tile, tiles), floor(tile / tiles));\n"
-	"	float guard  = floor(u_RtSurface.w / 16.0);\n"
-	"	float texel  = 1.0 / texels;\n"
-	"	vec2  st     = (faceUV - 0.5) * (1.0 - 2.0 * guard * texel) + 0.5;\n"
-	"	st           = clamp(st, vec2(texel), vec2(1.0 - texel));\n"
-	"	return shadow2D(u_RtShadowStatic, vec3((origin + st) / tiles, depth));\n"
-	"}\n"
-	"\n"
-	// A light with a size (a lamp's soft, lamps.txt; the fraction of info.x,
-	// R_RtLightData): its shadow looked up round the way to it, as wide as
-	// the light is over the distance from it to what is in its way. A
-	// lantern's bars are near its flame, so a width the same from the light
-	// is about right, and the shadow softens with the distance from it as
-	// a real one does. Each tap finds its own face: no seam where they meet.
-	// Four taps first; only where they disagree (the penumbra) and the light
-	// is bright enough for four taps' grain to show (RT_SOFT_FULL), eight more:
-	// all twelve everywhere cost 3.7 ms at m1l2a's lanterns, four nothing.
-	// What moves keeps its hard shadow, once. Vertex programs: hard only.
-	"float RtShadow(vec4 info, vec3 v, bool baked)\n"
-	"{\n"
-	"	float soft = info.x >= 0.0 ? fract(info.x) : 0.0;\n"
-	"	info.x = info.x >= 0.0 ? floor(info.x) : info.x;\n"
-	"#if defined(RT_VERTEX)\n"
-	"	return RtShadowHard(info, v, baked);\n"
-	"#else\n"
-	"	if (soft <= 0.0 || baked)\n"
-	"		return RtShadowHard(info, v, baked);\n"
-	"	vec3  w  = normalize(v);\n"
-	"	vec3  t1 = normalize(cross(w, abs(w.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));\n"
-	"	vec3  t2 = cross(w, t1);\n"
-	"	float len = length(v) * soft;\n"
-	// turned a different way at each point: grain, not copies of the shadow
-	"	float turn = 6.2831853 * fract(sin(dot(v, vec3(12.9898, 78.233, 37.719))) * 43758.5453);\n"
-	"	float vis = 0.0;\n"
-	"	int   k = 0;\n"
-	"	for (; k < 4; k++)\n"
-	"	{\n"
-	// a Vogel disk: the taps spread evenly over it (the first four already
-	// round all of it: 0..3 of 12 sit a quarter turn and more apart)
-	"		float r = sqrt((float(k * 3) + 0.5) / 12.0);\n"
-	"		float a = float(k * 3) * 2.3999632 + turn;\n"
-	"		vec3  o = (t1 * cos(a) + t2 * sin(a)) * r * len;\n"
-	// along the surface (rt_shadowPlane, its face), not into it: a tap
-	// inside the wall was the wall's own shadow
-	"		o -= rt_shadowPlane * dot(o, rt_shadowPlane);\n"
-	"		vis += RtShadowTap(info.x, v + o, info.w);\n"
-	"	}\n"
-	"	if (vis > 0.01 && vis < 3.99 && rt_shadowLight > RT_SOFT_FULL)\n"
-	"	{\n"
-	"		for (int j = 0; j < 12; j++)\n"
-	"		{\n"
-	"			if (j - (j / 3) * 3 == 0) continue;\n"
-	"			float r = sqrt((float(j) + 0.5) / 12.0);\n"
-	"			float a = float(j) * 2.3999632 + turn;\n"
-	"			vec3  o = (t1 * cos(a) + t2 * sin(a)) * r * len;\n"
-	"			o -= rt_shadowPlane * dot(o, rt_shadowPlane);\n"
-	"			vis += RtShadowTap(info.x, v + o, info.w);\n"
-	"		}\n"
-	"		vis /= 12.0;\n"
-	"	}\n"
-	"	else\n"
-	"		vis *= 0.25;\n"
-	"	info.x = -1.0;\n"
-	"	return vis * RtShadowHard(info, v, false);\n"
-	"#endif\n"
-	"}\n"
-"\n"
 	// delta: the change from the map's own lighting, what the lights bring now
 	// less what they brought where the map was compiled (r_realtimeLighting 1)
 	"#if !defined(RT_VERTEX)\n"
@@ -847,7 +741,6 @@ static const char *rt_glsl =
 	// a shadow looked up off the surface's own face, not the normal map's:
 	// its edge followed the bumps
 	"	vec3  shadowN = dot(rt_geomN, rt_geomN) > 0.5 ? rt_geomN : N;\n"
-	"	rt_shadowPlane = shadowN;\n"
 	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
 	"		if (k >= count) break;\n"
@@ -869,7 +762,6 @@ static const char *rt_glsl =
 	"		if (max(most.r, max(most.g, most.b)) < u_RtAmbient.w) continue;\n"
 	"		vec4 l3 = u_RtLights[i * 4 + 3];\n"
 	"		float shine = att;\n"
-	"		rt_shadowLight = max(most.r, max(most.g, most.b));\n"
 	"		if (u_RtParams.z > 0.5 && (l3.x >= 0.0 || l3.y >= 0.0))\n"
 	"		{\n"
 	"			vec3  v = RtShadowAt(l0, l3, P, shadowN, toLight, d, RT_TILE_TEXELS);\n"
@@ -1364,7 +1256,6 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 			RT_MAX_LIGHTS, RT_ATLAS_TILES, r_rtShadowTile->integer, RT_ZNEAR));
 		Q_strcat(dest, size, va("#define RT_SMALL_CODE %d.0\n#define RT_SMALL_ROW %d.0\n#define RT_BAKED_TEXELS %d.0\n", RT_SMALL_CODE,
 			RT_SMALL_FIRST / RT_ATLAS_TILES, R_RtBakedTile()));
-		Q_strcat(dest, size, va("#define RT_SOFT_FULL %f\n", r_rtSoftFull->value));
 		Q_strcat(dest, size, va("#define RT_SKY_DIRS %d\n#define RT_SKY_TILES %d.0\n#define RT_SKY_TEXELS %d.0\n",
 			RT_SKY_DIRS, RT_SKY_TILES, r_rtSkyTile->integer));
 		// the bodies' capsules are fetched texel by texel (GLSL 1.30)

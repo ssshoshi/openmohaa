@@ -392,9 +392,8 @@ void R_AddStaticModelSurfaces(void)
 
         // Added in OPM
         //  The realtime lights' shadows: what stands still, and what moves;
-        //  never the lamps, which the lights are in, but for a lantern's open
-        //  bars (its flame's light through them throws their shadows).
-        if ((tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)) && SM->rtFixture && !SM->rtCastsOwn) {
+        //  never the lamps, which the lights are in.
+        if ((tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)) && SM->rtFixture) {
             continue;
         }
         if ((tr.viewParms.flags & VPF_RTSTATIC) && SM->moved && !(SM->rtCaster & RT_CASTS_STANDING)) {

@@ -67,7 +67,6 @@ cvar_t *r_rtDebug;
 cvar_t *r_rtLightLists;
 cvar_t *r_rtBatchSplit;
 cvar_t *r_rtCutoff;
-cvar_t *r_rtSoftFull;
 cvar_t *r_rtSky;
 cvar_t *r_rtSpecular;
 cvar_t *r_rtShadowSoft;
@@ -179,7 +178,6 @@ typedef struct {
 	int      dynamicDrawn; // the faces drawn into it when last drawn, a bit each
 	int      dynamicFrame; // the frame they were drawn
 	float    flicker;      // a flame's: how much it dips
-	float    soft;         // its size over the distance to what shadows it near it (lamps.txt soft): its shadows' softness
 	float    seed;
 } rtLight_t;
 
@@ -317,9 +315,6 @@ void R_RtRegister(void)
 	r_rtCutoff = ri.Cvar_Get("r_rtCutoff", "0.0005", CVAR_ARCHIVE);
 	ri.Cvar_CheckRange(r_rtCutoff, 0, 0.05, qfalse);
 	ri.Cvar_SetDescription(r_rtCutoff, "A realtime light that would add less than this to a pixel (1 is full brightness), shadow or not, is passed over there without its shadow being looked up (0: none passed over)");
-	r_rtSoftFull = ri.Cvar_Get("r_rtSoftFull", "0.04", CVAR_ARCHIVE | CVAR_LATCH);
-	ri.Cvar_CheckRange(r_rtSoftFull, 0, 10, qfalse);
-	ri.Cvar_SetDescription(r_rtSoftFull, "A soft lamp's shadow (lamps.txt soft) takes twelve taps in its penumbra where its light there is more than this (1 is full brightness), four elsewhere: fewer is faster and grainier (0: twelve everywhere, 10: four)");
 	r_rtDynamicFull = ri.Cvar_Get("r_rtDynamicFull", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtDynamicFull, "How many of the nearest realtime lights draw the shadows of what moves every frame; the rest of r_rtDynamicLights every r_rtDynamicEvery frames");
 	r_rtDynamicEvery = ri.Cvar_Get("r_rtDynamicEvery", "2", CVAR_ARCHIVE);
@@ -501,8 +496,6 @@ typedef struct {
 	vec3_t   spotDir;
 	float    spotAngle;
 	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
-	qboolean casts; // an open frame round its flame (a lantern's bars): it casts its own light's shadows
-	float    soft;  // its shadows' softness: its size over the distance to its bars
 } rtLampDef_t;
 
 static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
@@ -621,10 +614,6 @@ static void R_RtLoadLampDefs(void)
 				token = (p && *p && *p != '\n' && *p != '\r') ? COM_ParseExt(&text, qfalse) : "";
 			}
 			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops) + (!Q_stricmp(token, "ring") ? 1.0f : 0.0f), def->shade);
-		} else if (!Q_stricmp(token, "casts")) {
-			def->casts = qtrue;
-		} else if (!Q_stricmp(token, "soft")) {
-			def->soft = Com_Clamp(0.0f, 0.95f, atof(COM_ParseExt(&text, qfalse)));
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;
 
@@ -879,7 +868,6 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		}
 		isLamp[i]       = 1;
 		sm->rtFixture   = qtrue;
-		sm->rtCastsOwn  = def->casts;
 		if (def->kind == RT_LAMP_OFF) {
 			continue;
 		}
@@ -913,8 +901,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		l->lamp       = qtrue;
 		l->cluster    = R_RtClusterAt(lamp->centre);
 		l->seed       = (float)(lamp->model % 97) * 0.37f;
-		l->soft       = lamp->def->soft;
-		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.08f : lamp->def->kind == RT_LAMP_LANTERN ? 0.05f : 0.0f;
+		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.14f : lamp->def->kind == RT_LAMP_LANTERN ? 0.08f : 0.0f;
 		VectorCopy(lamp->centre, l->origin);
 		if (lamp->def->spot) {
 			l->spot = qtrue;
@@ -1299,8 +1286,7 @@ static void R_RtLightsAtFixtures(void)
 
 	Com_Memset(isLamp, 0, Q_max(1, tr.world->numStaticModels));
 	for (i = 0; i < tr.world->numStaticModels; i++) {
-		tr.world->staticModels[i].rtHidden   = qfalse;
-		tr.world->staticModels[i].rtCastsOwn = qfalse;
+		tr.world->staticModels[i].rtHidden = qfalse;
 	}
 	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
 		R_RtLightsAtLamps(isLamp);
@@ -5893,10 +5879,8 @@ static qboolean R_RtMarkSeenLights(const vec3_t vieworg)
 	return qtrue;
 }
 
-// A flame's light: a few slow waves out of step, as a candle's flame sways
-// and stretches, with a little quick flutter over them (a deep quick wave
-// read as a bulb blinking); never brighter than the lamp, and down by
-// flicker at the most
+// A flame's light: a few waves out of step, mostly slow, with a quick one
+// over them, never brighter than the lamp, and down by flicker at the most
 static float R_RtFlicker(const rtLight_t *l, int time)
 {
 	float t, w;
@@ -5905,7 +5889,7 @@ static float R_RtFlicker(const rtLight_t *l, int time)
 		return 1.0f;
 	}
 	t = time * 0.001f + l->seed;
-	w = 0.45f * sin(t * 1.1f) + 0.35f * sin(t * 2.7f + 1.3f) + 0.12f * sin(t * 6.3f + 0.4f) + 0.08f * sin(t * 11.9f + 2.1f);
+	w = 0.45f * sin(t * 2.3f) + 0.3f * sin(t * 5.9f + 1.3f) + 0.25f * sin(t * 13.7f + 0.4f);
 	return 1.0f - l->flicker * (0.5f + 0.5f * w);
 }
 
@@ -6325,10 +6309,6 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight) * R_RtFlicker(l, fd->time), data[1]);
 		data[1][3] = l->range;
 		data[3][0] = r_rtShadows->integer && !l->noShadow ? R_RtSlotCode(l->staticSlot) : -1.0f;
-		// its shadows' softness in the fraction (RtShadow), the tiles whole
-		if (data[3][0] >= 0 && l->soft > 0) {
-			data[3][0] += l->soft;
-		}
 		data[3][1] = dynamicTile;
 		// the people are in its shadow faces as they are, or else capsules
 		data[3][2] = r_rtShadowCharacters->integer && dynamicTile >= 0 ? -1.0f : R_RtLightCapsules(l, bodies, numBodies);
