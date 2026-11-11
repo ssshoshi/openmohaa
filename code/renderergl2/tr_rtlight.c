@@ -901,7 +901,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		l->lamp       = qtrue;
 		l->cluster    = R_RtClusterAt(lamp->centre);
 		l->seed       = (float)(lamp->model % 97) * 0.37f;
-		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.14f : lamp->def->kind == RT_LAMP_LANTERN ? 0.08f : 0.0f;
+		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.08f : lamp->def->kind == RT_LAMP_LANTERN ? 0.05f : 0.0f;
 		VectorCopy(lamp->centre, l->origin);
 		if (lamp->def->spot) {
 			l->spot = qtrue;
@@ -5879,8 +5879,10 @@ static qboolean R_RtMarkSeenLights(const vec3_t vieworg)
 	return qtrue;
 }
 
-// A flame's light: a few waves out of step, mostly slow, with a quick one
-// over them, never brighter than the lamp, and down by flicker at the most
+// A flame's light: a few slow waves out of step, as a candle's flame sways
+// and stretches, with a little quick flutter over them (a deep quick wave
+// read as a bulb blinking); never brighter than the lamp, and down by
+// flicker at the most
 static float R_RtFlicker(const rtLight_t *l, int time)
 {
 	float t, w;
@@ -5889,7 +5891,7 @@ static float R_RtFlicker(const rtLight_t *l, int time)
 		return 1.0f;
 	}
 	t = time * 0.001f + l->seed;
-	w = 0.45f * sin(t * 2.3f) + 0.3f * sin(t * 5.9f + 1.3f) + 0.25f * sin(t * 13.7f + 0.4f);
+	w = 0.45f * sin(t * 1.1f) + 0.35f * sin(t * 2.7f + 1.3f) + 0.12f * sin(t * 6.3f + 0.4f) + 0.08f * sin(t * 11.9f + 2.1f);
 	return 1.0f - l->flicker * (0.5f + 0.5f * w);
 }
 

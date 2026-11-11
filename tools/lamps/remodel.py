@@ -255,7 +255,7 @@ def cmd_sheet(work, out):
         tris = []
         for name, verts, faces in surfaces:
             colour = flat((0.2, 0.8, 0.2)) if name.endswith("_glass") else \
-                flat((1.0, 0.9, 0.2)) if name in ("opm_bulb", "opm_flame") else flat((0.75, 0.15, 0.12))
+                flat((1.0, 0.9, 0.2)) if name in ("opm_bulb", "opm_flame", "opm_candleflame") else flat((0.75, 0.15, 0.12))
             pts = []
             for weights, _uv in verts:
                 p = np.zeros(3)
