@@ -385,7 +385,8 @@ void R_AddStaticModelSurfaces(void)
 
         tiki = SM->tiki;
 
-        if (!tiki) {
+        // Added in OPM: a corona the lamp's own flame stands in for
+        if (!tiki || SM->rtHidden) {
             continue;
         }
 
