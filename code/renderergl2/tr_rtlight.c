@@ -178,6 +178,7 @@ typedef struct {
 	int      dynamicDrawn; // the faces drawn into it when last drawn, a bit each
 	int      dynamicFrame; // the frame they were drawn
 	float    flicker;      // a flame's: how much it dips
+	float    soft;         // its size over the distance to what shadows it near it (lamps.txt soft): its shadows' softness
 	float    seed;
 } rtLight_t;
 
@@ -497,6 +498,7 @@ typedef struct {
 	float    spotAngle;
 	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
 	qboolean casts; // an open frame round its flame (a lantern's bars): it casts its own light's shadows
+	float    soft;  // its shadows' softness: its size over the distance to its bars
 } rtLampDef_t;
 
 static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
@@ -617,6 +619,8 @@ static void R_RtLoadLampDefs(void)
 			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops) + (!Q_stricmp(token, "ring") ? 1.0f : 0.0f), def->shade);
 		} else if (!Q_stricmp(token, "casts")) {
 			def->casts = qtrue;
+		} else if (!Q_stricmp(token, "soft")) {
+			def->soft = Com_Clamp(0.0f, 0.95f, atof(COM_ParseExt(&text, qfalse)));
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;
 
@@ -905,6 +909,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		l->lamp       = qtrue;
 		l->cluster    = R_RtClusterAt(lamp->centre);
 		l->seed       = (float)(lamp->model % 97) * 0.37f;
+		l->soft       = lamp->def->soft;
 		l->flicker    = lamp->def->kind == RT_LAMP_CANDLE ? 0.08f : lamp->def->kind == RT_LAMP_LANTERN ? 0.05f : 0.0f;
 		VectorCopy(lamp->centre, l->origin);
 		if (lamp->def->spot) {
@@ -6316,6 +6321,10 @@ void R_RtRenderShadows(const refdef_t *fd)
 		VectorScale(l->color, scale * l->weight * l->weight * (3.0f - 2.0f * l->weight) * R_RtFlicker(l, fd->time), data[1]);
 		data[1][3] = l->range;
 		data[3][0] = r_rtShadows->integer && !l->noShadow ? R_RtSlotCode(l->staticSlot) : -1.0f;
+		// its shadows' softness in the fraction (RtShadow), the tiles whole
+		if (data[3][0] >= 0 && l->soft > 0) {
+			data[3][0] += l->soft;
+		}
 		data[3][1] = dynamicTile;
 		// the people are in its shadow faces as they are, or else capsules
 		data[3][2] = r_rtShadowCharacters->integer && dynamicTile >= 0 ? -1.0f : R_RtLightCapsules(l, bodies, numBodies);

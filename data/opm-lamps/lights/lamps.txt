@@ -34,6 +34,8 @@
 //                            // drawn as polygons) made round (tools/lamps/lathe.py)
 //         casts              // an open frame round its flame (a lantern's bars,
 //                            // its roof): the frame casts its own light's shadows
+//         soft 0.6           // its shadows soft: its light's size over the distance
+//                            // to what shadows it near it (a flame's glow, its bars)
 //         spot x y z 60      // a lamp that shines one way: that way in its
 //                            // frame, and the cone's whole angle
 //     }
@@ -383,6 +385,7 @@ models/static/lightbulb_desertcage.tik
 	intensity 60
 	bulb 2.4 0.06 4.6
 	casts
+	soft 0.6
 }
 
 models/lights/swinging_lantern.tik

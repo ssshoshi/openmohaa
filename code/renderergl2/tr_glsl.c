@@ -515,7 +515,7 @@ static const char *rt_glsl =
 	"\n"
 	// info: x the static tiles, y the dynamic ones (< 0: none), z near, w far;
 	// v: from the light to the point
-	"float RtShadow(vec4 info, vec3 v, bool baked)\n"
+	"float RtShadowHard(vec4 info, vec3 v, bool baked)\n"
 	"{\n"
 	"	vec3  a = abs(v);\n"
 	"	float face, fwd, left, up;\n"
@@ -545,6 +545,41 @@ static const char *rt_glsl =
 	"			vis *= RtShadowAtlas(u_RtShadowDynamic, floor(info.y) + face, faceUV, depth, RT_TILE_TEXELS);\n"
 	"	}\n"
 	"	return vis;\n"
+	"}\n"
+	"\n"
+	// A light with a size (a lamp's soft, lamps.txt; the fraction of info.x,
+	// R_RtLightData): its shadow looked up round the way to it, as wide as
+	// the light is over the distance from it to what is in its way. A
+	// lantern's bars are near its flame, so a width the same from the light
+	// is about right, and the shadow softens with the distance from it as
+	// a real one does. Each tap finds its own face: no seam where they meet.
+	"vec3 rt_shadowPlane = vec3(0.0);\n"
+	"float RtShadow(vec4 info, vec3 v, bool baked)\n"
+	"{\n"
+	"	float soft = info.x >= 0.0 ? fract(info.x) : 0.0;\n"
+	"	info.x = info.x >= 0.0 ? floor(info.x) : info.x;\n"
+	"	if (soft <= 0.0 || baked)\n"
+	"		return RtShadowHard(info, v, baked);\n"
+	"	vec3  w  = normalize(v);\n"
+	"	vec3  t1 = normalize(cross(w, abs(w.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));\n"
+	"	vec3  t2 = cross(w, t1);\n"
+	"	float len = length(v);\n"
+	// turned a different way at each point: grain, not copies of the shadow
+	// (from where it is, not gl_FragCoord: this is in vertex programs too)
+	"	float turn = 6.2831853 * fract(sin(dot(v, vec3(12.9898, 78.233, 37.719))) * 43758.5453);\n"
+	"	float vis = 0.0;\n"
+	"	for (int k = 0; k < 12; k++)\n"
+	"	{\n"
+	// a Vogel disk: the taps spread evenly over it
+	"		float r = sqrt((float(k) + 0.5) / 12.0) * soft;\n"
+	"		float a = float(k) * 2.3999632 + turn;\n"
+	"		vec3  o = (t1 * cos(a) + t2 * sin(a)) * r * len;\n"
+	// along the surface (rt_shadowPlane, its face), not into it: a tap
+	// inside the wall was the wall's own shadow
+	"		o -= rt_shadowPlane * dot(o, rt_shadowPlane);\n"
+	"		vis += RtShadowHard(info, v + o, false);\n"
+	"	}\n"
+	"	return vis / 12.0;\n"
 	"}\n"
 	"\n"
 	// delta: the change from the map's own lighting, what the lights bring now
@@ -741,6 +776,7 @@ static const char *rt_glsl =
 	// a shadow looked up off the surface's own face, not the normal map's:
 	// its edge followed the bumps
 	"	vec3  shadowN = dot(rt_geomN, rt_geomN) > 0.5 ? rt_geomN : N;\n"
+	"	rt_shadowPlane = shadowN;\n"
 	"	for (int k = 0; k < RT_MAX_LIGHTS; k++)\n"
 	"	{\n"
 	"		if (k >= count) break;\n"

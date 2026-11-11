@@ -173,7 +173,7 @@ float LampShadow(vec4 info, vec3 v)
 	float vis = 1.0;
 	if (info.x >= 0.0)
 	{
-		float tile = info.x + face, tiles = RT_TILES;
+		float tile = floor(info.x) + face, tiles = RT_TILES;
 		if (tile >= RT_SMALL_CODE)
 		{
 			tiles = 2.0 * RT_TILES;
