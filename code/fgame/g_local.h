@@ -167,7 +167,7 @@ float G_Random(float n);
 float G_CRandom(void);
 float G_CRandom(float n);
 
-int        G_ModelIndex(const char *name);
+int        G_ModelIndex(char *name);
 int        G_SoundIndex(const char *name);
 void       G_TeamCommand(teamtype_t team, char *cmd);
 void       G_KillBox(gentity_t *ent);
