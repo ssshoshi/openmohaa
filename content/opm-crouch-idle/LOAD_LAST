@@ -1,0 +1,1 @@
+Loads after the MOHAIM addon, whose anims_*.txt would otherwise win (see tools/content/pack.py).

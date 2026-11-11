@@ -28,6 +28,7 @@ import glob
 import hashlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CONTENT = os.path.join(ROOT, "content")
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 PREFIX = "zzzzzzzzz-"
+# A pak whose folder holds a file named LOAD_LAST goes in under this prefix
+# instead: after the mod paks that sort later than PREFIX (the MOHAIM addon,
+# zzzzzzzzzzzzzzz-HRRTM_addon_MOHAIM.pk3, has its own player anims_*.txt).
+LATE_PREFIX = "zzzzzzzzzzzzzzzz-"
+LOAD_LAST = "LOAD_LAST"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "openmohaa-content")
 
 
@@ -50,7 +56,7 @@ class Skip(Exception):
 def game_paks(game):
     """The game's paks in load order (later ones win), ours left out."""
     paks = sorted(glob.glob(os.path.join(game, "main", "*.pk3")), key=lambda p: os.path.basename(p).lower())
-    return [p for p in paks if not os.path.basename(p).lower().startswith(PREFIX + "opm-")]
+    return [p for p in paks if not re.match(r"z+-opm-", os.path.basename(p).lower())]
 
 
 def game_file(game, path):
@@ -223,7 +229,7 @@ def build(name, game, out):
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, folder).replace(os.sep, "/")
-            if rel == "README.md":
+            if rel in ("README.md", LOAD_LAST):
                 continue
             if fn.endswith(".patch"):
                 path = patch_target(full)
@@ -263,7 +269,8 @@ def build(name, game, out):
                 print(f"  {rel}")
 
     os.makedirs(out, exist_ok=True)
-    target = os.path.join(out, PREFIX + name + ".pk3")
+    prefix = LATE_PREFIX if os.path.isfile(os.path.join(folder, LOAD_LAST)) else PREFIX
+    target = os.path.join(out, prefix + name + ".pk3")
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
         for path in sorted(files):
             z.writestr(path, files[path])
