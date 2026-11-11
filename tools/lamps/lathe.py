@@ -35,6 +35,7 @@ import model_smooth as ms  # noqa: E402
 RING_TOL = 0.02     # of the piece's size: vertexes this close in height are one ring
 ROUND_TOL = 0.12    # a ring is a regular polygon when its corners are within this of one radius
 ON_FACE = 0.98      # a vertex this close to the polygon (the original's sides) lies on a side
+KEEP = 32767        # a collapse index above any LOD cutoff (the engine's is a short)
 
 
 def _pos(v):
@@ -144,7 +145,7 @@ def turned_pieces(s):
     out = []
     for piece in _pieces(s):
         points = list({tuple(round(c, 4) for c in _pos(s.verts[i])) for i in piece})
-        if len(points) < 10:
+        if len(points) < 6:  # a cone is a rim of 5 or more and its point (a shade's inside)
             continue
         found = None
         for axis in range(3):
@@ -223,7 +224,14 @@ def lathe_surface(s, sides=32, min_weight=0.01):
                 v.normal = tuple(c if d > 0 else -c for c in n)
             moved += 1
             break
-    return s if moved else None
+    if not moved:
+        return None
+    # no level of detail: the cut's new vertexes collapse first (to the corners they lie
+    # between), so a lamp seen from a few metres away was the polygon again. Every vertex
+    # stays at every distance (a lamp's few hundred triangles are nothing).
+    s.collapse = list(range(len(s.verts)))
+    s.collapseIndex = [KEEP] * len(s.verts)
+    return s
 
 
 def lathe_skd(data, surfaces, sides=32):
