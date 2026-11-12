@@ -926,11 +926,20 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 					if ( !stage->bundle[cntBundle].image[num] )
 					{
 						ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
-						return qfalse;
+						// Changed in OPM: a missing frame is left out and the
+						// stage parsed on. Stopping here lost the rest of the
+						// stage: fgrenexplosion names expl0017-0021, which no
+						// pak has, and in GL2 its fireballs came out opaque,
+						// black squares, without their blendFunc
+						continue;
 					}
 					stage->bundle[cntBundle].numImageAnimations++;
 				}
 				totalImages++;
+			}
+
+			if ( !stage->bundle[cntBundle].numImageAnimations ) {
+				return qfalse;
 			}
 
 			if ( totalImages > MAX_IMAGE_ANIMATIONS ) {
@@ -1910,10 +1919,18 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 					if ( !stage->bundle[cntBundle].image[num] )
 					{
 						ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
-						return qfalse;
+						// Changed in OPM: a missing frame is left out and the
+						// stage parsed on. Stopping here lost the rest of the
+						// stage: fgrenexplosion names expl0017-0021, which no
+						// pak has, and in GL2 its fireballs came out opaque,
+						// black squares, without their blendFunc
+						continue;
 					}
 					stage->bundle[cntBundle].numImageAnimations++;
 				}
+			}
+			if ( !stage->bundle[cntBundle].numImageAnimations ) {
+				return qfalse;
 			}
 		}
 		else if (!Q_stricmp(token, "nofog"))
