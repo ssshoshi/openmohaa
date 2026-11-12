@@ -155,6 +155,16 @@ def remodel(model, entry, work, args):
     margs = argparse.Namespace(game=args.game, ta=False, tt=False)
     tmp = os.path.join(out, "game")
     tik = mb.materialize(model, margs, tmp)
+    # its mesh and pose the game's own, beside the .tik (the importer takes
+    # those first): the paks Blender reads hold the remodelled lamps too
+    t = lamps.parse_tiki(model)
+    for path in t["skel"] + ([t["anim"]] if t["anim"] else []):
+        data = lamps.read(path)
+        if data is not None:
+            dest = os.path.join(tmp, "game", *re.sub("/+", "/", path).split("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(data)
     folders = ";".join(mb.to_host(f, win) for f in mb.game_folders(margs))
     cmd = [exe, "-b", "--factory-startup", "--python", mb.to_host(os.path.join(HERE, "remodel_blender.py"), win), "--",
            mb.to_host(tik, win), mb.to_host(os.path.join(out, "export"), win), mb.to_host(spec_path, win),

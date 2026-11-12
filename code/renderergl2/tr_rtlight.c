@@ -472,6 +472,7 @@ light makes to it: there the lights stay where the map compiled them.
 #define RT_LAMP_BULBS  12
 #define RT_LAMP_REACH  512.0f // a light further than this from every lamp is a fill
 #define RT_LAMP_SEEN   16.0f  // a trace that stops this near a lamp got to it
+#define RT_FLAME_CORONA 16.0f // a map's corona this near a flame is the flame's (hidden)
 #define RT_LAMP_MOST   1.5f   // a lamp takes up to this much of what its kind gives
 #define RT_LAMP_NEAR   48.0f  // a lamp's light stops growing this near it: its shade glows, it is no point
 #define RT_LAMP_SPOT_BACK 128.0f // a spot light this far down its cone from a lamp is the lamp's
@@ -848,7 +849,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		const rtLampDef_t *def;
 	} lamp_t;
 	lamp_t *lamps;
-	int     numLamps = 0, taken = 0, fills = 0, added = 0, spots = 0;
+	int     numLamps = 0, taken = 0, fills = 0, added = 0, spots = 0, coronas = 0;
 	int     numMapLights = rt.numLights;
 	int     i, j, k;
 
@@ -1050,9 +1051,28 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		l->range = R_RtRangeOf(l->color);
 	}
 
+	// The map's corona sprites on a flame (m1l2a's desert lanterns): the
+	// designer's stand-in for a light, a still white glow over the flame the
+	// lamp has now, which flickers with its light
+	for (j = 0; j < tr.world->numStaticModels; j++) {
+		cStaticModelUnpacked_t *sm = &tr.world->staticModels[j];
+
+		if (!sm->tiki || !Q_stristr(sm->model, "corona")) {
+			continue;
+		}
+		for (i = 0; i < numLamps; i++) {
+			if ((lamps[i].def->kind == RT_LAMP_CANDLE || lamps[i].def->kind == RT_LAMP_LANTERN)
+				&& Distance(sm->origin, lamps[i].centre) < RT_FLAME_CORONA) {
+				sm->rtHidden = qtrue;
+				coronas++;
+				break;
+			}
+		}
+	}
+
 	ri.Hunk_FreeTempMemory(lamps);
-	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps, %d of the map's lights went to them (%d spot lights), %d lit their own, %d fills\n",
-		numLamps, taken + spots, spots, added, fills);
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps, %d of the map's lights went to them (%d spot lights), %d lit their own, %d fills, %d coronas on flames hidden\n",
+		numLamps, taken + spots, spots, added, fills, coronas);
 }
 
 /*
@@ -1268,6 +1288,9 @@ static void R_RtLightsAtFixtures(void)
 	byte *isLamp = ri.Hunk_AllocateTempMemory(Q_max(1, tr.world->numStaticModels));
 
 	Com_Memset(isLamp, 0, Q_max(1, tr.world->numStaticModels));
+	for (i = 0; i < tr.world->numStaticModels; i++) {
+		tr.world->staticModels[i].rtHidden = qfalse;
+	}
 	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
 		R_RtLightsAtLamps(isLamp);
 	}
