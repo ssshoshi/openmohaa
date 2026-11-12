@@ -1791,6 +1791,39 @@ static qboolean RB_WaterCopyView(void)
 
 /*
 ===============
+RB_ParticleCopyView
+
+Added in OPM: the view as it is before its first dust or smoke that is blended
+as shown (r_linearParticleBlend, generic_fp.glsl), into the water's copy: what
+each puff covers is worked out from it. The water's own copy, made before its
+water, does as well. Copied for them alone, the water still copies again, so
+that it shows what was drawn since (a puff beyond it).
+===============
+*/
+qboolean RB_ParticleCopyView(void)
+{
+    FBO_t *fbo = glState.currentFBO;
+
+    if (backEnd.waterScene || backEnd.particleScene) {
+        return qtrue;
+    }
+    if (!tr.waterSceneFbo || !glRefConfig.framebufferBlit || fbo != tr.renderFbo) {
+        return qfalse;
+    }
+
+    FBO_FastBlit(fbo, NULL, tr.waterSceneFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    FBO_Bind(fbo);
+    qglViewport(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+    qglScissor(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+
+    backEnd.particleScene = qtrue;
+    return qtrue;
+}
+
+/*
+===============
 RB_WaterRipples
 
 Steps the ripples on to now, once a frame, after the opaque surfaces of the

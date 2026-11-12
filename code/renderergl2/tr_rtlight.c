@@ -85,6 +85,7 @@ cvar_t *r_rtDynamicEvery;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 cvar_t *r_linearLighting;
+cvar_t *r_linearParticleBlend;
 cvar_t *r_linearLightRef;
 cvar_t *r_linearExposure;
 static cvar_t *r_rtBounce;
@@ -361,6 +362,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake); 3: of the bounce, the lamps' alone; 4: the daylight's alone. Not archived: a test switch");
 	r_linearLighting = ri.Cvar_Get("r_linearLighting", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_linearLighting, "With r_realtimeLighting 2 and r_hdr 1: the light is added up as light (linear), and the frame made fit to show after the tone map. A texture and a lamp at its middle distance look as before; nearer a lamp is less burnt out, further it falls off more gently, and light from several places adds up as it does in a room. Needs vid_restart");
+	r_linearParticleBlend = ri.Cvar_Get("r_linearParticleBlend", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_linearParticleBlend, "With r_linearLighting: dust and smoke cover what is behind them as they did without it (blended as shown, not as light, where thin white smoke over a darker view was a glowing cloud). It reads the view behind them, a copy of it each view they are in. 0: blended as light");
 	r_linearLightRef = ri.Cvar_Get("r_linearLightRef", "0.5", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_linearLightRef, 0.05f, 1.0f, qfalse);
 	ri.Cvar_SetDescription(r_linearLightRef, "With r_linearLighting: how bright (of white) a lamp is where it looks as it did without: nearer it is dimmer than it was, further brighter. Needs vid_restart");

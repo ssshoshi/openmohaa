@@ -3267,6 +3267,17 @@ static int CollapseStagesToGLSL(void)
 		skip = qtrue;
 	}
 
+	// Added in OPM: sprites (spriteGen) stay with the generic program, which
+	// lights dust and smoke as particles (R_RtStageKind), fades them where
+	// they meet the world (r_softParticles), blends them as shown
+	// (r_linearParticleBlend) and draws MOH:AA's nextBundle, which lightall
+	// has no room for. There a puff's "rgbGen vertex" made it a surface lit
+	// by all of the light live (r_realtimeLighting 2)
+	if (shader.rtParticle)
+	{
+		skip = qtrue;
+	}
+
 	if (!skip)
 	{
 		// if 2+ stages and first stage is lightmap, switch them

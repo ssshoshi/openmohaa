@@ -249,6 +249,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
+	{ "u_ParticleSceneMap", GLSL_INT },
+	{ "u_ParticleBlend",   GLSL_FLOAT },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
 	{ "u_SkelParams",      GLSL_VEC4 },
@@ -2541,6 +2543,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
+	GLSL_SetUniformInt(sp, UNIFORM_PARTICLESCENEMAP, TMU_PARTICLESCENE);
 
 	GLSL_FinishGPUShader(sp);
 
