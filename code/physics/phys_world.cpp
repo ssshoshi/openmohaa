@@ -40,6 +40,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define PW_POINT_EPSILON  0.1f
 #define PW_PATCH_STEPS    8
 #define PW_CONVEX_RADIUS  0.005f // metres; brushes can be a unit thick
+#define PW_FLOOR_CLIP_TOL 12.0f   // units between a clip brush's top and the patch drawn on it
 
 //=============================================================
 // Cells
@@ -238,6 +239,181 @@ static void Phys_PatchPoint(const drawVert_t *cp, int width, int i0, int j0, flo
 }
 
 //=============================================================
+// Floor clips
+//=============================================================
+
+// A drawn patch that is not solid, which the player walks on only because
+// clip brushes under it are: its upward facing triangles.
+typedef struct {
+    float mins[2], maxs[2];
+    int   firstTri, numTris;
+} pwCover_t;
+
+typedef struct {
+    std::vector<pwCover_t> covers;
+    std::vector<float>     tris; // nine a triangle
+} pwCovers_t;
+
+static void Phys_CollectCovers(
+    pwCovers_t *out, const dshader_t *shaders, int numShaders, const dsurface_t *surfaces, int numSurfaces,
+    const drawVert_t *verts, int numVerts
+)
+{
+    int i;
+
+    for (i = 0; i < numSurfaces; i++) {
+        const dsurface_t *surf = &surfaces[i];
+        const int         width = surf->patchWidth, height = surf->patchHeight;
+        pwCover_t         cover;
+        int               pi, pj, a, b;
+
+        if (surf->surfaceType != MST_PATCH || surf->shaderNum < 0 || surf->shaderNum >= numShaders
+            || (shaders[surf->shaderNum].contentFlags & CONTENTS_SOLID)
+            || (shaders[surf->shaderNum].surfaceFlags & (SURF_NODRAW | SURF_SKY)) || width < 3 || height < 3
+            || surf->firstVert < 0 || surf->firstVert + width * height > numVerts) {
+            continue;
+        }
+
+        cover.mins[0] = cover.mins[1] = 1e9f;
+        cover.maxs[0] = cover.maxs[1] = -1e9f;
+        cover.firstTri                = (int)out->tris.size() / 9;
+
+        for (pj = 0; pj + 2 < height; pj += 2) {
+            for (pi = 0; pi + 2 < width; pi += 2) {
+                vec3_t grid[PW_PATCH_STEPS + 1][PW_PATCH_STEPS + 1];
+                vec3_t n;
+
+                for (b = 0; b <= PW_PATCH_STEPS; b++) {
+                    for (a = 0; a <= PW_PATCH_STEPS; a++) {
+                        Phys_PatchPoint(
+                            &verts[surf->firstVert], width, pi, pj, (float)a / PW_PATCH_STEPS, (float)b / PW_PATCH_STEPS,
+                            grid[b][a], n
+                        );
+                    }
+                }
+
+                for (b = 0; b < PW_PATCH_STEPS; b++) {
+                    for (a = 0; a < PW_PATCH_STEPS; a++) {
+                        const float *tri[2][3] = {
+                            {grid[b][a], grid[b][a + 1], grid[b + 1][a + 1]},
+                            {grid[b][a], grid[b + 1][a + 1], grid[b + 1][a]}
+                        };
+                        int t, k;
+
+                        for (t = 0; t < 2; t++) {
+                            vec3_t e1, e2, cross;
+                            float  len;
+
+                            VectorSubtract(tri[t][1], tri[t][0], e1);
+                            VectorSubtract(tri[t][2], tri[t][0], e2);
+                            CrossProduct(e1, e2, cross);
+                            len = VectorLength(cross);
+
+                            // Ground, either way up: walls and pipe sides are not.
+                            if (len < 1e-3f || fabsf(cross[2]) < 0.5f * len) {
+                                continue;
+                            }
+
+                            for (k = 0; k < 3; k++) {
+                                const float *v = tri[t][k];
+
+                                out->tris.push_back(v[0]);
+                                out->tris.push_back(v[1]);
+                                out->tris.push_back(v[2]);
+                                cover.mins[0] = Q_min(cover.mins[0], v[0]);
+                                cover.mins[1] = Q_min(cover.mins[1], v[1]);
+                                cover.maxs[0] = Q_max(cover.maxs[0], v[0]);
+                                cover.maxs[1] = Q_max(cover.maxs[1], v[1]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        cover.numTris = (int)out->tris.size() / 9 - cover.firstTri;
+        if (cover.numTris > 0) {
+            out->covers.push_back(cover);
+        }
+    }
+}
+
+// The height of a triangle at x, y, if it is over that point.
+static qboolean Phys_TriangleHeight(const vec3_t *tri, float x, float y, float *z)
+{
+    const float d = (tri[1][1] - tri[2][1]) * (tri[0][0] - tri[2][0]) + (tri[2][0] - tri[1][0]) * (tri[0][1] - tri[2][1]);
+    float       l0, l1, l2;
+
+    if (fabsf(d) < 1e-6f) {
+        return qfalse;
+    }
+
+    l0 = ((tri[1][1] - tri[2][1]) * (x - tri[2][0]) + (tri[2][0] - tri[1][0]) * (y - tri[2][1])) / d;
+    l1 = ((tri[2][1] - tri[0][1]) * (x - tri[2][0]) + (tri[0][0] - tri[2][0]) * (y - tri[2][1])) / d;
+    l2 = 1.0f - l0 - l1;
+    if (l0 < -1e-4f || l1 < -1e-4f || l2 < -1e-4f) {
+        return qfalse;
+    }
+
+    *z = l0 * tri[0][2] + l1 * tri[1][2] + l2 * tri[2][2];
+    return qtrue;
+}
+
+// Whether a clip brush is the ground under a cover: its top, somewhere over
+// its footprint, is where the cover is drawn.
+static qboolean Phys_ClipIsFloor(
+    const pwCovers_t *covers, const dplane_t *planes, const int *sides, int numSides, const vec3_t mins, const vec3_t maxs
+)
+{
+    static const float fractions[3] = {0.25f, 0.5f, 0.75f};
+    size_t             c;
+    int                fx, fy, s, t;
+
+    for (c = 0; c < covers->covers.size(); c++) {
+        const pwCover_t *cover = &covers->covers[c];
+
+        if (mins[0] > cover->maxs[0] || maxs[0] < cover->mins[0] || mins[1] > cover->maxs[1] || maxs[1] < cover->mins[1]) {
+            continue;
+        }
+
+        for (fy = 0; fy < 3; fy++) {
+            for (fx = 0; fx < 3; fx++) {
+                const float x   = mins[0] + (maxs[0] - mins[0]) * fractions[fx];
+                const float y   = mins[1] + (maxs[1] - mins[1]) * fractions[fy];
+                float       top = 1e9f;
+
+                if (x < cover->mins[0] || x > cover->maxs[0] || y < cover->mins[1] || y > cover->maxs[1]) {
+                    continue;
+                }
+
+                // The lowest of the upward faces over x, y is the top there.
+                for (s = 0; s < numSides; s++) {
+                    const dplane_t *p = &planes[sides[s]];
+
+                    if (p->normal[2] > 0.1f) {
+                        top = Q_min(top, (p->dist - p->normal[0] * x - p->normal[1] * y) / p->normal[2]);
+                    }
+                }
+                if (top > 1e8f) {
+                    continue;
+                }
+
+                for (t = 0; t < cover->numTris; t++) {
+                    const vec3_t *tri = (const vec3_t *)&covers->tris[(size_t)(cover->firstTri + t) * 9];
+                    float         z;
+
+                    if (Phys_TriangleHeight(tri, x, y, &z) && fabsf(z - top) <= PW_FLOOR_CLIP_TOL) {
+                        return qtrue;
+                    }
+                }
+            }
+        }
+    }
+
+    return qfalse;
+}
+
+//=============================================================
 // Building
 //=============================================================
 
@@ -292,6 +468,12 @@ void Phys_BuildBspWorld(
     verts      = (const drawVert_t *)Phys_Lump(bsp, len, &header, LUMP_DRAWVERTS, sizeof(drawVert_t), &numVerts);
     terrain    = (const cTerraPatch_t *)Phys_Lump(bsp, len, &header, LUMP_TERRAIN, sizeof(cTerraPatch_t), &numTerrain);
 
+    pwCovers_t covers;
+
+    if (opt->floorClipContents && shaders && surfaces && verts) {
+        Phys_CollectCovers(&covers, shaders, numShaders, surfaces, numSurfaces, verts, numVerts);
+    }
+
     //
     // The world model's brushes. Those of the other models are doors, lifts
     // and the like, which move and are handled with the entities that own them.
@@ -307,9 +489,16 @@ void Phys_BuildBspWorld(
             static vec3_t   corners[1024];
             vec3_t          centre;
             int             numCorners;
+            int             contents;
+            qboolean        floorClip;
 
-            if (brush->shaderNum < 0 || brush->shaderNum >= numShaders
-                || !(shaders[brush->shaderNum].contentFlags & opt->contents)) {
+            if (brush->shaderNum < 0 || brush->shaderNum >= numShaders) {
+                continue;
+            }
+
+            contents  = shaders[brush->shaderNum].contentFlags;
+            floorClip = !(contents & opt->contents) && (contents & opt->floorClipContents) && !covers.covers.empty();
+            if (!(contents & opt->contents) && !floorClip) {
                 continue;
             }
 
@@ -325,8 +514,24 @@ void Phys_BuildBspWorld(
 
             numCorners = Phys_BrushCorners(planes, sides, numSides, corners, ARRAY_LEN(corners));
             if (numCorners < 4) {
-                stats->brushFails++;
+                if (!floorClip) {
+                    stats->brushFails++;
+                }
                 continue;
+            }
+
+            if (floorClip) {
+                vec3_t bmins, bmaxs;
+
+                ClearBounds(bmins, bmaxs);
+                for (j = 0; j < numCorners; j++) {
+                    AddPointToBounds(corners[j], bmins, bmaxs);
+                }
+
+                if (!Phys_ClipIsFloor(&covers, planes, sides, numSides, bmins, bmaxs)) {
+                    continue;
+                }
+                stats->floorClips++;
             }
 
             VectorClear(centre);
@@ -371,7 +576,7 @@ void Phys_BuildBspWorld(
                 // by their user data: solid to props, which should not fall
                 // through a window grate, where the engine lets rays through
                 // the holes in the texture.
-                const qboolean  fence = (shaders[brush->shaderNum].contentFlags & CONTENTS_SOLID) ? qfalse : qtrue;
+                const qboolean  fence = (!(contents & CONTENTS_SOLID) && (contents & CONTENTS_FENCE)) ? qtrue : qfalse;
                 const long long key   = Phys_CellKey(centre) | (fence ? (1LL << 62) : 0);
                 pwCell_t      *&cell = cells[key];
 
