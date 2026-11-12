@@ -535,6 +535,10 @@ extern "C" {
     extern cvar_t *vm_idle;
     extern cvar_t *vm_idle_scale;
     extern cvar_t *vm_idle_speed;
+    extern cvar_t *vm_idle_calm;
+    extern cvar_t *vm_idle_every_min;
+    extern cvar_t *vm_idle_every_max;
+    extern cvar_t *vm_idle_gesture_fade;
     extern cvar_t *vm_crawl_pitch;
     extern cvar_t *vm_crawl_yaw;
     extern cvar_t *vm_crawl_roll;

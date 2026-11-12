@@ -134,6 +134,10 @@ cvar_t *vm_crawl;
 cvar_t *vm_idle;
 cvar_t *vm_idle_scale;
 cvar_t *vm_idle_speed;
+cvar_t *vm_idle_calm;
+cvar_t *vm_idle_every_min;
+cvar_t *vm_idle_every_max;
+cvar_t *vm_idle_gesture_fade;
 cvar_t *vm_crawl_pitch;
 cvar_t *vm_crawl_yaw;
 cvar_t *vm_crawl_roll;
@@ -257,6 +261,11 @@ void CG_RegisterCvars(void)
     vm_idle                       = cgi.Cvar_Get("vm_idle", "1", CVAR_ARCHIVE);
     vm_idle_scale                 = cgi.Cvar_Get("vm_idle_scale", "0.5", 0);
     vm_idle_speed                 = cgi.Cvar_Get("vm_idle_speed", "3", 0);
+    // Added in OPM: the idles calm, with a full one now and then (CG_IdleGesture)
+    vm_idle_calm                  = cgi.Cvar_Get("vm_idle_calm", "0.2", 0);
+    vm_idle_every_min             = cgi.Cvar_Get("vm_idle_every_min", "5", 0);
+    vm_idle_every_max             = cgi.Cvar_Get("vm_idle_every_max", "10", 0);
+    vm_idle_gesture_fade          = cgi.Cvar_Get("vm_idle_gesture_fade", "0.5", 0);
     // Added in OPM: the view weapon's pose while crawling (CG_CrawlViewModel)
     vm_crawl                      = cgi.Cvar_Get("vm_crawl", "1", CVAR_ARCHIVE);
     vm_crawl_pitch                = cgi.Cvar_Get("vm_crawl_pitch", "8", 0);
