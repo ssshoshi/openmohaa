@@ -537,7 +537,8 @@ enum
 #define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
 #define TMU_RAINREFLECT      29 // and the view the puddles mirror (R_WaterReflectView)
 #define TMU_RAINREFLECTDEPTH 30 // and its depth, to tell what is under a higher puddle
-#define NUM_TEXTURE_UNITS    31
+#define TMU_PARTICLESCENE    31 // Added in OPM: the view behind its dust and smoke, to blend them as shown (r_linearParticleBlend)
+#define NUM_TEXTURE_UNITS    32
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -1080,6 +1081,8 @@ typedef enum
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
+	UNIFORM_PARTICLESCENEMAP, // Added in OPM: the view behind dust and smoke (r_linearParticleBlend)
+	UNIFORM_PARTICLEBLEND,    // and 1 to blend them as shown, from it
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
 	UNIFORM_SKELPARAMS,
@@ -2561,6 +2564,7 @@ typedef struct {
 	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
+	qboolean    particleScene; // Added in OPM: the view as it was before its first dust or smoke is in tr.waterSceneImage
 	float       greyscale;
 
 	//
@@ -3305,6 +3309,9 @@ void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
 qboolean R_RtLinear(void);
 extern cvar_t *r_linearExposure;
+extern cvar_t *r_linearLighting;
+extern cvar_t *r_linearParticleBlend;
+qboolean RB_ParticleCopyView(void);
 qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);

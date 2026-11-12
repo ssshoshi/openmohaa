@@ -1761,6 +1761,25 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec4(sp, UNIFORM_SOFTPARTICLE, soft);
 		}
 
+		// Added in OPM: with r_linearLighting, dust and smoke blended over the
+		// view cover it as they did without (generic_fp.glsl): blended as
+		// light, thin white smoke over a darker view was a glowing cloud
+		if (pStage->glslShaderGroup != tr.lightallShader)
+		{
+			float blend = 0.0f;
+
+			if (r_linearParticleBlend->integer && tess.shader->rtParticle && R_RtLinear()
+				&& (pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) == (GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA)
+				&& !(pStage->stateBits & GLS_DEPTHMASK_TRUE) && !backEnd.projection2D && !backEnd.depthFill
+				&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && RB_ParticleCopyView())
+			{
+				blend = 1.0f;
+				GL_BindToTMU(tr.waterSceneImage, TMU_PARTICLESCENE);
+			}
+			GLSL_SetUniformFloat(sp, UNIFORM_PARTICLEBLEND, blend);
+		}
+
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);
 		GLSL_SetUniformVec3(sp, UNIFORM_LOCALVIEWORIGIN, backEnd.ori.viewOrigin);

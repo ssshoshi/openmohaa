@@ -1474,6 +1474,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 	// Added in OPM: no air for what it draws until it is summed (tr_froxel.c)
 	RB_FroxelBeginView();
 	backEnd.waterScene = qfalse;
+	backEnd.particleScene = qfalse;
 	backEnd.depthPrepassed = qfalse;
 
 	// clear the z buffer, set the modelview, etc

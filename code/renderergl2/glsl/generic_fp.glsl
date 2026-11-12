@@ -31,6 +31,30 @@ vec3 Fog(vec3 c, vec3 fog, float f)
 	return mix(c, fog, f);
 }
 
+// Added in OPM: r_linearParticleBlend. Dust and smoke blended over the view
+// (u_ParticleBlend 1) cover it as they did blended as shown: u_ParticleSceneMap
+// is the view behind them, as light. Blended as light, a little white over a
+// darker view adds far more than it showed, and thin smoke was a glowing cloud
+uniform sampler2D u_ParticleSceneMap;
+uniform float     u_ParticleBlend;
+
+// How much of what is behind (as light) the fragment's colour (as light) is to
+// cover, blended as light, to show as alpha of it blended as shown did. Of
+// their brightness, as one cover takes all three colours
+float ParticleShownAlpha(vec3 colour, float alpha)
+{
+	const vec3 lum   = vec3(0.2126, 0.7152, 0.0722);
+	vec3  behind = texture2D(u_ParticleSceneMap, gl_FragCoord.xy * r_FBufScale).rgb;
+	float d      = max(dot(behind, lum), 0.0);
+	float c      = max(dot(colour, lum), 0.0);
+	float shown  = pow(mix(pow(d, 1.0 / 2.2), pow(c, 1.0 / 2.2), alpha), 2.2);
+
+	// as bright as what is behind it: any cover shows the same
+	if (abs(c - d) < 0.0001)
+		return alpha;
+	return clamp((shown - d) / (c - d), 0.0, 1.0);
+}
+
 varying vec2      var_DiffuseTex;
 
 varying vec4      var_Color;
@@ -199,4 +223,8 @@ void main()
 	// Added in OPM: the light in the air between it and the eye
 	gl_FragColor.rgb = FroxelFog(gl_FragColor.rgb, gl_FragColor.a);
 #endif
+
+	// Added in OPM: blended as shown, from its colour as it is now (fogged)
+	if (u_ParticleBlend > 0.5)
+		gl_FragColor.a = ParticleShownAlpha(gl_FragColor.rgb, gl_FragColor.a);
 }
