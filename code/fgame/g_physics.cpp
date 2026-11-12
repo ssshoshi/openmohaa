@@ -745,7 +745,8 @@ void G_PhysicsInitLevel(const char *mapfile)
 
     // Solid brushes, and fences; the clip brushes that stand in for the
     // client's static model furniture are solid too, which is what the
-    // server's props should rest on. Player clip stays out.
+    // server's props should rest on. Player clip stays out, but where it is
+    // the ground under a patch that is drawn but not solid (a path, a road).
     std::vector<physFurniture_t> furniture;
 
     Phys_FindFurniture(buf, len, &furniture);
@@ -756,8 +757,9 @@ void G_PhysicsInitLevel(const char *mapfile)
     }
 
     memset(&opt, 0, sizeof(opt));
-    opt.contents  = CONTENTS_SOLID | CONTENTS_FENCE;
-    opt.skipBrush = G_PhysicsSkipFurniture;
+    opt.contents          = CONTENTS_SOLID | CONTENTS_FENCE;
+    opt.floorClipContents = CONTENTS_PLAYERCLIP;
+    opt.skipBrush         = G_PhysicsSkipFurniture;
 
     Phys_BuildBspWorld(gphys_world.system, buf, len, &opt, &gphys_worldBodies, &stats);
     Phys_ReadInlineModels(buf, len, &gphys_models);
