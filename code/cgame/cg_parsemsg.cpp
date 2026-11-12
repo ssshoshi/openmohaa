@@ -1278,12 +1278,11 @@ void CG_MakeExplosionEffect(const vec3_t vPos, int iType)
 
     iSurfType = trace.surfaceFlags & MASK_SURF_TYPE;
 
-    // OPM: earth thrown up only outdoors, never from a floor inside a
-    //  building (opm-explosions: the bases no longer carry it). Maps tag
-    //  floors and ground alike (m3l2: "rock" both), so what tells is the sky
-    //  above; built surfaces (wood, metal, carpet...) never throw earth.
-    if (!(iSurfType
-          & (SURF_WOOD | SURF_METAL | SURF_CARPET | SURF_PAPER | SURF_GRILL | SURF_GLASS | SURF_PUDDLE | SURF_FOLIAGE))
+    // OPM: earth thrown up only from dirt and grass, and only outdoors, never
+    //  from a floor inside a building (opm-explosions: the bases no longer
+    //  carry it). Stone, cobbles and untagged surfaces throw none, though
+    //  some maps tag their ground "rock" too (m3l2).
+    if ((iSurfType & (SURF_DIRT | SURF_GRASS))
         && (iBaseEffect == SFX_EXP_GREN_BASE || iBaseEffect == SFX_EXP_BAZOOKA_BASE)) {
         trace_t sky;
         vec3_t  vUp, vTop;
