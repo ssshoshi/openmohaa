@@ -269,15 +269,6 @@ models/static/static_domelight.tik
 	bulb 0 0 5
 }
 
-models/static/lightbulb_desertcage.tik
-{
-	kind shaded
-	intensity 120
-	shade 0 0 1 0.8
-	glass 1 0.85 0.6
-	bulb 2.4 0 7
-}
-
 // ---------------------------------------------------------------- bare bulbs
 
 models/lights/lightbulb_caged.tik
@@ -380,6 +371,15 @@ models/lights/wallsconce-candle.tik
 	intensity 45
 	bulb 1.1 -5.6 21.5
 	bulb 1.1 5.6 21.5
+}
+
+// a lantern of open bars round a candle (its name says bulb): no glass, the
+// flame on the wick
+models/static/lightbulb_desertcage.tik
+{
+	kind candle
+	intensity 60
+	bulb 2.4 0.06 4.6
 }
 
 models/lights/swinging_lantern.tik

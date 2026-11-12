@@ -119,6 +119,12 @@ static float EvalWaveForm( const waveForm_t *wf )
 
 	RB_ResolveWaveForm( wf, &rwf );
 
+	// Added in OPM: noise has no table (an alphaGen wave noise, a candle's
+	// flicker, dropped the game to the console)
+	if ( rwf.func == GF_NOISE ) {
+		return rwf.base + R_NoiseGet4f( 0, 0, 0, ( tess.shaderTime + rwf.phase ) * rwf.frequency ) * rwf.amplitude;
+	}
+
 	table = TableForFunc( rwf.func );
 
 	return WAVEVALUE( table, rwf.base, rwf.amplitude, rwf.phase, rwf.frequency );
