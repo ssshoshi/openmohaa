@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_mg.txt
++++ b/models/player/base/anims_mg.txt
+@@ -43,7 +43,7 @@
+ 	//========================
+ 	// Crouching
+ 	//========================
+-	mg_crouch_idle			multiplayer/mp_bar_crouch_idle.skc				crossblend 0.2
++	mg_crouch_idle			opm/crouch_idle_mg.skc				crossblend 0.2
+ 	mg_crouch_walk_fwd		multiplayer/mp_rifle_crouch_walk_forwards.skc			crossblend 0.2 //autosteps_walk
+ 	mg_crouch_walk_back		multiplayer/mp_bar_crouch_walk_backwards.skc	        	 crossblend 0.2 //autosteps_walk
+ 	mg_crouch_walk_left		multiplayer/mp_rifle_crouch_walk_left.skc			crossblend 0.2 //autosteps_walk
