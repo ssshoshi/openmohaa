@@ -74,8 +74,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 // tiki limitations
 #define TIKI_MAX_BONES       100
-#define TIKI_MAX_VERTEXES    1000
-#define TIKI_MAX_TRIANGLES   2000
+// Added in OPM: raised from 1000 and 2000, for meshes made smoother by
+// tools/model-smooth; a surface is drawn in one batch, so the vertexes stay
+// within SHADER_MAX_VERTEXES (4096) and the indexes within its six times
+#define TIKI_MAX_VERTEXES    4096
+#define TIKI_MAX_TRIANGLES   8192
 #define TIKI_MAX_SKELCACHE   1024
 #define TIKI_MAX_COMMANDS    128
 

@@ -568,6 +568,7 @@ qboolean CL_CDKeyValidate( const char *key, const char *checksum );
 int CL_ServerStatus( const char *serverAddress, char *serverStatusString, int maxLen );
 void UI_ClearResource( void );
 void UI_LoadResource( const char *name );
+void UI_LoadingTick( void ); // Added in OPM
 
 qboolean CL_CheckPaused(void);
 

@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_grenade.txt
++++ b/models/player/base/anims_grenade.txt
+@@ -45,7 +45,7 @@
+ 	// Crouching
+ 	//========================
+ 
+-	grenade_crouch_idle		multiplayer/mp_grenade_crouch_idle.skc		crossblend 0.2		
++	grenade_crouch_idle		opm/crouch_idle_grenade.skc		crossblend 0.2		
+ 	
+ 	grenade_crouch_walk_fwd		weapon_grenade/walks_runs/walk_crouch_grenade.skc	//autosteps_walk
+ 	grenade_crouch_walk_back	weapon_grenade/walks_runs/walk_crouch_grenade.skc	//autosteps_walk

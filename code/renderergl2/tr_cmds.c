@@ -195,8 +195,8 @@ static void R_ReportCpuTimers( int interval )
 	// the passes above is drawing -- so they are a share of those, not an
 	// addition to them. r_vaoCache 0 is what routes static world geometry
 	// through both, once per batch, per pass, every frame.
-	ri.Printf( PRINT_ALL, "%s | per batch: tessbuild %.2f tessupload %.2f\n",
-		line, cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD] );
+	ri.Printf( PRINT_ALL, "%s | per batch: tessbuild %.2f tessupload %.2f | gpuwait %.2f\n",
+		line, cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD], cpu[CPUTIMER_GPUWAIT] );
 
 	// Added in OPM: each pass by what it drew (surfaces a frame in brackets)
 	R_SurfProfReport( numFrames );
@@ -228,13 +228,15 @@ static void R_ReportCpuHitch( void )
 	ri.Printf( PRINT_ALL,
 		"cpu HITCH %.2fms = backend %.2f (drawsurfs %.2f: sunshadow %.2f rtshadow %.2f prepass %.2f"
 		" shadowmask %.2f main3d %.2f; tessbuild %.2f tessupload %.2f)"
-		" post %.2f sprites %.2f 2d %.2f present %.2f swap %.2f | other %.2f\n",
+		" post %.2f sprites %.2f 2d %.2f drawbuffer %.2f smallcmds %.2f present %.2f swap %.2f"
+		" | gpuwait %.2f | other %.2f\n",
 		cpu[CPUTIMER_FRAME], cpu[CPUTIMER_BACKEND], cpu[CPUTIMER_DRAWSURFS],
 		cpu[CPUTIMER_SUNSHADOW], cpu[CPUTIMER_RTSHADOW], cpu[CPUTIMER_DEPTHPREPASS],
 		cpu[CPUTIMER_SHADOWMASK], cpu[CPUTIMER_MAIN3D],
 		cpu[CPUTIMER_TESSBUILD], cpu[CPUTIMER_TESSUPLOAD],
 		cpu[CPUTIMER_POSTPROCESS], cpu[CPUTIMER_SPRITES], cpu[CPUTIMER_2D],
-		cpu[CPUTIMER_PRESENT], cpu[CPUTIMER_SWAPBUFFERS],
+		cpu[CPUTIMER_DRAWBUFFER], cpu[CPUTIMER_SMALLCMDS],
+		cpu[CPUTIMER_PRESENT], cpu[CPUTIMER_SWAPBUFFERS], cpu[CPUTIMER_GPUWAIT],
 		cpu[CPUTIMER_FRAME] - cpu[CPUTIMER_BACKEND] );
 }
 

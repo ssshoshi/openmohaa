@@ -276,8 +276,9 @@ void CG_PhysicsLoadWorld(void)
     }
 
     memset(&opt, 0, sizeof(opt));
-    opt.contents  = CONTENTS_SOLID | CONTENTS_FENCE;
-    opt.skipBrush = CG_PhysicsSkipBrush;
+    opt.contents          = CONTENTS_SOLID | CONTENTS_FENCE;
+    opt.floorClipContents = CONTENTS_PLAYERCLIP;
+    opt.skipBrush         = CG_PhysicsSkipBrush;
     opt.outline   = CG_PhysicsOutline;
 
     CG_PhysicsFindFurniture(buf, len);
@@ -289,11 +290,12 @@ void CG_PhysicsLoadWorld(void)
 
     if (cg_physics_log->integer) {
         cgi.Printf(
-            "physics: %s: %d brushes (%d failed, %d clip brushes standing in for props), %d patches, %d terrain patches, %d triangles, %d bodies in %d ms\n",
+            "physics: %s: %d brushes (%d failed, %d clip brushes standing in for props, %d clip floors), %d patches, %d terrain patches, %d triangles, %d bodies in %d ms\n",
             cgs.mapname,
             stats.brushes,
             stats.brushFails,
             pw_standIns,
+            stats.floorClips,
             stats.patches,
             stats.terrain,
             stats.triangles,

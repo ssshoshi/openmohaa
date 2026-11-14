@@ -44,6 +44,16 @@ RENDERER="${OMBENCH_RENDERER:-opengl2}"
 # OMBENCH_CMDS="saveshot save/test.tga 256 256; wait 500" to exercise the saved
 # game thumbnail path.
 CMDS="${OMBENCH_CMDS:-}"
+# Console commands run once the map is up and before the first measurement
+# window, semicolon separated. Pins what the window measures, e.g. a view
+# facing the sun (OMBENCH_PRECMDS="orch 1; orch_campos x y z pitch yaw") or a
+# camera turning at a steady rate (see OMBENCH_SPIN).
+PRECMDS="${OMBENCH_PRECMDS:-}"
+# Spin test: degrees a second the view turns during the measurement windows
+# (cl_yawspeed with +right held). Turning is what makes a renderer re-upload
+# or re-batch what a still view keeps, so compare one still run with spin runs
+# at a few rates (5, 100, 700): healthy frame time is within ~1.25x of still.
+SPIN="${OMBENCH_SPIN:-}"
 # Repeated measurement windows inside ONE process, to reproduce effects that
 # only appear after the renderer has been up a while. OMBENCH_RESTART picks
 # what happens between windows: none, vid_restart (tears down and rebuilds the
@@ -91,6 +101,14 @@ mkdir -p "$OUT/main" "$SHOTDIR"
   echo "echo OMBENCH_MAPLOADED"
   echo "finishloadingscreen"
   echo "wait 3000"
+  if [ -n "$PRECMDS" ]; then
+    echo "$PRECMDS" | tr ';' '\n' | sed 's/^ *//'
+    echo "wait 1000"
+  fi
+  if [ -n "$SPIN" ]; then
+    echo "seta cl_yawspeed $SPIN"
+    echo "+right"
+  fi
   i=1
   while [ "$i" -le "$REPEATS" ]; do
     echo "echo OMBENCH_WIN_$i"
@@ -134,10 +152,16 @@ echo "bench: install   $INSTALL"
 echo "bench: map       $MAP @ ${WIDTH}x${HEIGHT}, gpuTimers interval ${INTERVAL} frames"
 [ "$REPEATS" -gt 1 ] && echo "bench: repeats   $REPEATS windows, '$RESTART' between"
 [ -n "$CVARS" ] && echo "bench: cvars     $CVARS"
+[ -n "$PRECMDS" ] && echo "bench: precmds   $PRECMDS"
+[ -n "$SPIN" ] && echo "bench: spin      $SPIN deg/s"
 [ -n "$SEEDCFG" ] && echo "bench: seedcfg   $SEEDCFG"
 echo "bench: clearing previous run"
 taskkill.exe /IM "$PROC.exe" /F >/dev/null 2>&1
 rm -f "$LOG" "$SHOTDIR"/*.jpg "$SHOTDIR"/*.tga 2>/dev/null
+# A run that was force-killed leaves its PID file, and the next start then
+# holds on a modal "didn't exit properly, start with safe video settings?"
+# dialog (Sys_InitPIDFile) until someone answers it: the map never loads.
+rm -f "$OUT/main/OpenMoHAA.pid" 2>/dev/null
 # cl_renderer is CVAR_ARCHIVE|CVAR_LATCH and defaults to opengl1; a stale value in this
 # homepath's omconfig.cfg silently loads GL1 (no r_gpuTimers) and outranks the launch +set.
 # Force GL2 in the persisted config so the GL2 renderer is what actually loads.
@@ -235,6 +259,7 @@ echo "renderer : ${renderer:-<not found>}"
 echo "gl       : ${glver:-<not found>}"
 echo "map      : $MAP @ ${WIDTH}x${HEIGHT}"
 [ -n "$CVARS" ] && echo "cvars    : $CVARS"
+[ -n "$SPIN" ] && echo "spin     : $SPIN deg/s"
 [ -n "$SEEDCFG" ] && echo "seedcfg  : $SEEDCFG"
 if [ -n "$gpu_line" ]; then
   frame_ms="$(sed -E 's/^gpu +([0-9.]+)ms.*/\1/' <<<"$gpu_line")"

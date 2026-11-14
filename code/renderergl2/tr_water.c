@@ -86,6 +86,18 @@ static cvar_t *r_rainMist;
 cvar_t        *r_rainBeads;
 cvar_t        *r_rainDebug;
 cvar_t        *r_waterReflect;
+cvar_t        *r_waterReflectStagger;
+
+// the mirror view last drawn, for r_waterReflectStagger
+static struct {
+    int      frame; // tr.frameCount it was drawn in, -1 none
+    qboolean puddles;
+    int      width, height; // the view's
+    vec3_t   origin, forward;
+    vec4_t   plane;
+    vec2_t   share;
+    mat4_t   mvp;
+} waterReflectKept = {-1};
 static cvar_t *r_waterBlood;
 
 typedef struct {
@@ -173,6 +185,8 @@ void R_WaterRegisterCvars(void)
     ri.Cvar_SetDescription(r_rainPuddles, "In the rain, how much of the open ground holds puddles, with the rain ringing them: 0 none, 1 most of it");
     ri.Cvar_SetDescription(r_rainBeads, "In the rain, drops beaded on the hands and the weapon in view: 0 none, 1 as many as hold");
     r_waterReflect = ri.Cvar_Get("r_waterReflect", "1", CVAR_ARCHIVE);
+    r_waterReflectStagger = ri.Cvar_Get("r_waterReflectStagger", "0", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_waterReflectStagger, "1: the water's mirror view is drawn every other frame, and between them the last one is shown as it was seen (what moves in it is a frame behind)");
     ri.Cvar_SetDescription(r_waterReflect, "Water mirrors the world from under its surface, a second view drawn first: 0 only what is on the screen, 1 at half the screen's size, 2 at all of it (the size needs vid_restart), 3 as 1 and shows it in a corner");
     ri.Cvar_SetDescription(r_waterWet, "What stands in the water or on a beach below the tide's mark looks wet: darker, glossy, with the sky in it");
     ri.Cvar_SetDescription(r_waterRipples, "Ripples and wakes on water from men wading, boats, bullets and things falling in (needs vid_restart)");
@@ -1663,6 +1677,7 @@ void R_WaterLoadWorld(const char *mapName)
 {
     int i;
 
+    waterReflectKept.frame = -1; // the last map's
     R_RainFreeCover();
 
     R_WaterReadFile(mapName);
@@ -1771,6 +1786,39 @@ static qboolean RB_WaterCopyView(void)
         backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
 
     backEnd.waterScene = qtrue;
+    return qtrue;
+}
+
+/*
+===============
+RB_ParticleCopyView
+
+Added in OPM: the view as it is before its first dust or smoke that is blended
+as shown (r_linearParticleBlend, generic_fp.glsl), into the water's copy: what
+each puff covers is worked out from it. The water's own copy, made before its
+water, does as well. Copied for them alone, the water still copies again, so
+that it shows what was drawn since (a puff beyond it).
+===============
+*/
+qboolean RB_ParticleCopyView(void)
+{
+    FBO_t *fbo = glState.currentFBO;
+
+    if (backEnd.waterScene || backEnd.particleScene) {
+        return qtrue;
+    }
+    if (!tr.waterSceneFbo || !glRefConfig.framebufferBlit || fbo != tr.renderFbo) {
+        return qfalse;
+    }
+
+    FBO_FastBlit(fbo, NULL, tr.waterSceneFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    FBO_Bind(fbo);
+    qglViewport(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+    qglScissor(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+
+    backEnd.particleScene = qtrue;
     return qtrue;
 }
 
@@ -2170,6 +2218,27 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
         return;
     }
 
+    // r_waterReflectStagger: the frame after one is drawn, it is shown again
+    // as it was seen (its matrix places it), if the eye has not gone far
+    // and the water is the same: a second view of the world, 1.5 ms on m5l1a.
+    if (r_waterReflectStagger->integer && waterReflectKept.frame == tr.frameCount - 1
+        && waterReflectKept.puddles == puddles && fabs(waterReflectKept.plane[3] - mirror.dist) < 0.5f
+        && DotProduct(waterReflectKept.plane, mirror.normal) > 0.9999f
+        && waterReflectKept.width == tr.viewParms.viewportWidth && waterReflectKept.height == tr.viewParms.viewportHeight
+        && DistanceSquared(waterReflectKept.origin, tr.viewParms.ori.origin) < 24.0f * 24.0f
+        && DotProduct(waterReflectKept.forward, tr.viewParms.ori.axis[0]) > 0.99f) {
+        waterReflectKept.frame                = -1; // drawn again on the next
+        tr.viewParms.waterReflect           = !puddles;
+        tr.viewParms.rainReflect            = puddles;
+        Vector4Copy(waterReflectKept.plane, tr.viewParms.waterReflectPlane);
+        tr.viewParms.waterReflectShare[0] = waterReflectKept.share[0];
+        tr.viewParms.waterReflectShare[1] = waterReflectKept.share[1];
+        Mat4Copy(waterReflectKept.mvp, tr.viewParms.waterReflectMvp);
+        waterReflectInfo.height = tr.viewParms.ori.origin[2] - above / mirror.normal[2];
+        waterReflectInfo.frame  = tr.frameCount;
+        return;
+    }
+
     oldParms = tr.viewParms;
     parms    = tr.viewParms;
 
@@ -2216,6 +2285,17 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     tr.viewParms.waterReflectShare[0] = parms.viewportWidth / (float)tr.waterReflectFbo->width;
     tr.viewParms.waterReflectShare[1] = parms.viewportHeight / (float)tr.waterReflectFbo->height;
     Mat4Copy(mvp, tr.viewParms.waterReflectMvp);
+
+    waterReflectKept.frame   = tr.frameCount;
+    waterReflectKept.puddles = puddles;
+    waterReflectKept.width   = oldParms.viewportWidth;
+    waterReflectKept.height  = oldParms.viewportHeight;
+    VectorCopy(oldParms.ori.origin, waterReflectKept.origin);
+    VectorCopy(oldParms.ori.axis[0], waterReflectKept.forward);
+    Vector4Copy(tr.viewParms.waterReflectPlane, waterReflectKept.plane);
+    waterReflectKept.share[0] = tr.viewParms.waterReflectShare[0];
+    waterReflectKept.share[1] = tr.viewParms.waterReflectShare[1];
+    Mat4Copy(mvp, waterReflectKept.mvp);
 }
 
 // Reads the map's water file again: for working on one

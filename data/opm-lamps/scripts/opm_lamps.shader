@@ -36,7 +36,8 @@ opm_flame
 	surfaceparm nolightmap
 	{
 		map $whiteimage
-		blendFunc GL_ONE GL_ONE
-		rgbGen wave noise 0.8 0.2 0 7
+		blendFunc GL_SRC_ALPHA GL_ONE
+		rgbGen const 1 0.78 0.45
+		alphaGen wave noise 0.8 0.2 0 7
 	}
 }

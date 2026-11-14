@@ -535,6 +535,10 @@ extern "C" {
     extern cvar_t *vm_idle;
     extern cvar_t *vm_idle_scale;
     extern cvar_t *vm_idle_speed;
+    extern cvar_t *vm_idle_calm;
+    extern cvar_t *vm_idle_every_min;
+    extern cvar_t *vm_idle_every_max;
+    extern cvar_t *vm_idle_gesture_fade;
     extern cvar_t *vm_crawl_pitch;
     extern cvar_t *vm_crawl_yaw;
     extern cvar_t *vm_crawl_roll;
@@ -590,6 +594,7 @@ extern "C" {
     void     CG_UpdateTestEmitter(void);
     void     CG_InitializeCommandManager(void);
     void     CG_ProcessInitCommands(dtiki_t *tiki, refEntity_t *ent);
+    void     CG_PrecacheVoices(void);
     void     CG_ProcessCacheInitCommands(dtiki_t *tiki);
     void     CG_EndTiki(dtiki_t *tiki);
     qboolean CG_Command_ProcessFile(const char *filename, qboolean quiet, dtiki_t *curTiki);

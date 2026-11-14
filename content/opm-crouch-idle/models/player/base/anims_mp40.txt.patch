@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_mp40.txt
++++ b/models/player/base/anims_mp40.txt
+@@ -41,7 +41,7 @@
+ 	//========================
+ 	// Crouching
+ 	//========================
+-	mp40_crouch_idle		weapon_rifle/crouch/rifle_crouch.skc		crossblend 0.2
++	mp40_crouch_idle		opm/crouch_idle_rifle.skc		crossblend 0.2
+ 	mp40_crouch_walk_fwd		viewmodel/mp40/walk_mp40_crouch.skc		crossblend 0.2 //autosteps_walk
+ 	mp40_crouch_walk_back		multiplayer/mp_rifle_crouch_walk_back.skc	crossblend 0.2 //autosteps_walk
+ 	mp40_crouch_walk_left		multiplayer/mp_rifle_crouch_walk_left.skc	crossblend 0.2 //autosteps_walk

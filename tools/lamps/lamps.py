@@ -44,12 +44,19 @@ LAMP_MODELS = r"^models/(lights|static)/.*(light|lamp|lantern|bulb|chand|sconce|
 _idx = None
 
 
+# our own lamp paks (the remodelled models, their glass): left out, so that what
+# is read is the game's own lamp, not one remodelled before
+OWN_PAKS = re.compile(r"opm-lamp", re.I)
+
+
 def _files():
-    """{lowercase path: pak that wins}"""
+    """{lowercase path: pak that wins}, the game's own paks"""
     global _idx
     if _idx is None:
         _idx = {}
         for pak, files in paks.index().items():  # in load order: a later pak wins
+            if OWN_PAKS.search(pak):
+                continue
             for f in files:
                 _idx[re.sub("/+", "/", f.lower())] = (pak, f)
     return _idx

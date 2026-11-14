@@ -41,8 +41,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <map>
 #include <vector>
 
-#define MODELMARK_MAX_VERTS 8192
-#define MODELMARK_MAX_TRIS  12288
+#define MODELMARK_MAX_VERTS 32768 // (a body smoothed by tools/model-smooth has four times the vertexes)
+#define MODELMARK_MAX_TRIS  49152
 #define MODELMARK_OFFSET    0.5f // off the surface, against z-fighting
 #define MODELMARK_BEHIND    48.f // how far behind the hit point: a prop is hit on
                                  // its clip brush, which stands a little off it

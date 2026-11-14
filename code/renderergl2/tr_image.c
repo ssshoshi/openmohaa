@@ -3039,14 +3039,18 @@ void R_CreateBuiltinImages( void ) {
 		if (r_shadowBlur->integer || r_hdr->integer)
 			tr.screenScratchImage = R_CreateImage("screenScratch", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, rgbFormat);
 
+		// Added in OPM: SMAA's edges, weights and lookup textures (tr_smaa.c)
+		R_SmaaCreateImages(width, height);
+
 		// Added in OPM: soft particles read the view's depth from it too
 		// and water, to see how deep it is (tr_water.c)
 		if (r_shadowBlur->integer || r_ssao->integer || r_softParticles->value > 0 || r_water->integer
 			|| (r_gtao->integer && r_realtimeLighting->integer == 2))
 			tr.hdrDepthImage = R_CreateImage("*hdrDepth", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
 
-		// Added in OPM: the view before its water, which the water shows through (tr_water.c)
-		if (r_water->integer)
+		// Added in OPM: the view before its water, which the water shows through (tr_water.c),
+		// and before its dust and smoke, which are blended as shown from it (r_linearParticleBlend)
+		if (r_water->integer || (r_linearLighting->integer && r_realtimeLighting->integer == 2))
 			tr.waterSceneImage = R_CreateImage("*waterScene", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
 
 		// Added in OPM: the view water mirrors (tr_water.c), at half the

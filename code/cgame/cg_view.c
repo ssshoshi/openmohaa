@@ -911,6 +911,9 @@ typedef enum {
     CGT_EFFECTS,
     CGT_TEMPMODELS,
     CGT_VSS,
+    CGT_IMPACTS,
+    CGT_GORE,
+    CGT_TOOLS,
     CGT_RENDERSCENE,
 
     CGT_COUNT
@@ -918,7 +921,7 @@ typedef enum {
 
 static const char *const cgTimerNames[CGT_COUNT] = {
     "total", "snapshots", "predict", "viewvalues", "playermodel",
-    "entities", "marks", "effects", "tempmodels", "vss", "renderscene"
+    "entities", "marks", "effects", "tempmodels", "vss", "impacts", "gore", "tools", "renderscene"
 };
 
 double cgEntAccum[CGE_COUNT];
@@ -1388,11 +1391,15 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
         CG_TIMER_END(CGT_VSS);
     }
 
+    CG_TIMER_BEGIN(CGT_IMPACTS);
     CG_AddBulletTracers();
     CG_AddBulletImpacts();
+    CG_TIMER_END(CGT_IMPACTS);
     // Added in OPM
     //  After the impacts, which note the hits, and every entity.
+    CG_TIMER_BEGIN(CGT_GORE);
     CG_GoreAddToScene();
+    CG_TIMER_END(CGT_GORE);
     CG_AddBeams();
 
     if (cg_acidtrip->integer) {
@@ -1402,8 +1409,10 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
 
     // actually issue the rendering calls
     // Added in OPM
+    CG_TIMER_BEGIN(CGT_TOOLS);
     CG_BugReportFrame();
     CG_OrchFrame();
+    CG_TIMER_END(CGT_TOOLS);
 
     CG_TIMER_BEGIN(CGT_RENDERSCENE);
     CG_DrawActive(stereoView);

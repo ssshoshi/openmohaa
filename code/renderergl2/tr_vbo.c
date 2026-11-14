@@ -496,9 +496,11 @@ static void R_TessRingWait(tessRing_t *ring, int part)
 	result = qglClientWaitSync(fence, 0, 0);
 	if (result == GL_TIMEOUT_EXPIRED) {
 		backEnd.pc.c_streamWaits++;
+		R_CpuTimerBegin(CPUTIMER_GPUWAIT);
 		do {
 			result = qglClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
 		} while (result == GL_TIMEOUT_EXPIRED && ++tries < 5);
+		R_CpuTimerEnd(CPUTIMER_GPUWAIT);
 	}
 	qglDeleteSync(fence);
 }
@@ -931,9 +933,11 @@ void RB_SkinArenaFrameEnd(void)
 
 		if (result == GL_TIMEOUT_EXPIRED) {
 			backEnd.pc.c_streamWaits++;
+			R_CpuTimerBegin(CPUTIMER_GPUWAIT);
 			do {
 				result = qglClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
 			} while (result == GL_TIMEOUT_EXPIRED && ++tries < 5);
+			R_CpuTimerEnd(CPUTIMER_GPUWAIT);
 		}
 		qglDeleteSync(fence);
 		skinArena.fences[skinArena.arena] = NULL;

@@ -3322,6 +3322,7 @@ void CL_InitRef( void ) {
 	// Added in OPM
 	//
 	ri.UI_LoadResource = UI_LoadResource;
+	ri.LoadingTick = UI_LoadingTick;
 	ri.CM_PointLeafnum = CM_PointLeafnum;
 	ri.CM_LeafCluster = CM_LeafCluster;
 

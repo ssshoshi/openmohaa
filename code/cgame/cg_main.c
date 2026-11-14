@@ -134,6 +134,10 @@ cvar_t *vm_crawl;
 cvar_t *vm_idle;
 cvar_t *vm_idle_scale;
 cvar_t *vm_idle_speed;
+cvar_t *vm_idle_calm;
+cvar_t *vm_idle_every_min;
+cvar_t *vm_idle_every_max;
+cvar_t *vm_idle_gesture_fade;
 cvar_t *vm_crawl_pitch;
 cvar_t *vm_crawl_yaw;
 cvar_t *vm_crawl_roll;
@@ -257,6 +261,11 @@ void CG_RegisterCvars(void)
     vm_idle                       = cgi.Cvar_Get("vm_idle", "1", CVAR_ARCHIVE);
     vm_idle_scale                 = cgi.Cvar_Get("vm_idle_scale", "0.5", 0);
     vm_idle_speed                 = cgi.Cvar_Get("vm_idle_speed", "3", 0);
+    // Added in OPM: the idles calm, with a full one now and then (CG_IdleGesture)
+    vm_idle_calm                  = cgi.Cvar_Get("vm_idle_calm", "0.2", 0);
+    vm_idle_every_min             = cgi.Cvar_Get("vm_idle_every_min", "5", 0);
+    vm_idle_every_max             = cgi.Cvar_Get("vm_idle_every_max", "10", 0);
+    vm_idle_gesture_fade          = cgi.Cvar_Get("vm_idle_gesture_fade", "0.5", 0);
     // Added in OPM: the view weapon's pose while crawling (CG_CrawlViewModel)
     vm_crawl                      = cgi.Cvar_Get("vm_crawl", "1", CVAR_ARCHIVE);
     vm_crawl_pitch                = cgi.Cvar_Get("vm_crawl_pitch", "8", 0);
@@ -603,6 +612,164 @@ void CG_ProcessConfigString(int num, qboolean modelOnly)
 
 /*
 =================
+CG_PrecacheCharacterVariants
+
+Added in OPM
+A soldier's uniform, helmet and gear are chosen by the weapon he carries, and
+his head by its model and skin: cases of his .tik, each a model of its own,
+loaded the first time one is seen. A variant whose textures no one on the map
+had worn yet held the frame 110-120 ms while they loaded (the cost is all
+textures: the model itself takes no time). At level load, for each character
+the map's soldiers are (the ones the server has given a head), each weapon
+case of its .tik, each head skin and each head model are loaded once and let
+go: what stays are their shaders and images, so the variant's own load finds
+them. The skin is what picks a head's textures and the head only its mesh, so
+each is loaded once rather than every pair.
+=================
+*/
+#define CG_PRECACHE_MAX_VARIANTS 1024 // each lets its model slot go at once: this bounds the load time
+#define CG_PRECACHE_MAX_BASES    32
+
+static int CG_PrecacheVariant(const char *name)
+{
+    qhandle_t h;
+    int       i;
+
+    // One the server has sent is the map's own: registering it again returns
+    // its handle, and letting it go would unload it.
+    for (i = 1; i < MAX_MODELS; i++) {
+        if (!Q_stricmp(CG_ConfigString(CS_MODELS + i), name)) {
+            return 0;
+        }
+    }
+
+    h = cgi.R_RegisterServerModel(name);
+
+    if (!h) {
+        return 0;
+    }
+    cgi.R_UnregisterServerModel(h);
+    return 1;
+}
+
+// The values of the "case weapon" lines of a .tik.
+static int CG_TikiWeaponCases(const char *path, char values[][64], int max)
+{
+    char *buf, *p, *tok;
+    int   n = 0;
+
+    if (cgi.FS_ReadFile(path, (void **)&buf, qtrue) <= 0 || !buf) {
+        return 0;
+    }
+
+    p = buf;
+    while ((tok = COM_ParseExt(&p, qtrue)) && tok[0]) {
+        if (Q_stricmp(tok, "case")) {
+            continue;
+        }
+        tok = COM_ParseExt(&p, qtrue);
+        if (Q_stricmp(tok, "weapon")) {
+            continue;
+        }
+        while ((tok = COM_ParseExt(&p, qtrue)) && tok[0] && strcmp(tok, "{") && Q_stricmp(tok, "case")) {
+            int k;
+
+            for (k = 0; k < n && Q_stricmp(values[k], tok); k++) {
+            }
+            if (k == n && n < max) {
+                Q_strncpyz(values[n++], tok, sizeof(values[0]));
+            }
+        }
+    }
+
+    cgi.FS_FreeFile(buf);
+    return n;
+}
+
+// The lines of a head model or head skin list (newline separated).
+static int CG_TikiList(const char *list, char values[][64], int max)
+{
+    int n = 0;
+
+    if (!list || list == (char *)1) {
+        return 0;
+    }
+    while (*list && n < max) {
+        const char *end = strchr(list, '\n');
+        size_t      len = end ? (size_t)(end - list) : strlen(list);
+
+        if (len && len < sizeof(values[0])) {
+            memcpy(values[n], list, len);
+            values[n][len] = 0;
+            n++;
+        }
+        if (!end) {
+            break;
+        }
+        list = end + 1;
+    }
+    return n;
+}
+
+static void CG_PrecacheCharacterVariants(void)
+{
+    static char bases[CG_PRECACHE_MAX_BASES][MAX_QPATH];
+    static char weapons[48][64], heads[32][64], skins[32][64];
+    int         numBases = 0, loaded = 0, i, b, w, h, k;
+    int         startedAt = cgi.Milliseconds();
+
+    // about a second of load on a map with many kinds of soldier (m5l1a)
+    if (!cgi.Cvar_Get("cg_precacheCharacters", "1", CVAR_ARCHIVE)->integer) {
+        return;
+    }
+
+    for (i = 1; i < MAX_MODELS; i++) {
+        const char *str = CG_ConfigString(CS_MODELS + i);
+        const char *base;
+        dtiki_t    *tiki;
+
+        // soldiers: the server names their head
+        if (!str || !str[0] || !cgs.model_draw[i] || !Q_stristr(str, "headmodel|")) {
+            continue;
+        }
+        tiki = cgi.R_Model_GetHandle(cgs.model_draw[i]);
+        if (!tiki || !tiki->a || !tiki->a->bIsCharacter) {
+            continue;
+        }
+
+        base = strrchr(str, '|');
+        base = base ? base + 1 : str;
+        for (b = 0; b < numBases && Q_stricmp(bases[b], base); b++) {
+        }
+        if (b < numBases || numBases >= CG_PRECACHE_MAX_BASES) {
+            continue;
+        }
+        Q_strncpyz(bases[numBases++], base, sizeof(bases[0]));
+
+        {
+            const int numWeapons = CG_TikiWeaponCases(base, weapons, 48);
+            const int numHeads   = CG_TikiList(tiki->a->headmodels, heads, 32);
+            const int numSkins   = CG_TikiList(tiki->a->headskins, skins, 32);
+
+            for (w = 0; w < numWeapons && loaded < CG_PRECACHE_MAX_VARIANTS; w++) {
+                loaded += CG_PrecacheVariant(va("weapon|%s|%s", weapons[w], base));
+            }
+            for (k = 0; k < numSkins && numHeads && loaded < CG_PRECACHE_MAX_VARIANTS; k++) {
+                loaded += CG_PrecacheVariant(va("headmodel|%s|headskin|%s|%s", heads[0], skins[k], base));
+            }
+            for (h = 1; h < numHeads && numSkins && loaded < CG_PRECACHE_MAX_VARIANTS; h++) {
+                loaded += CG_PrecacheVariant(va("headmodel|%s|headskin|%s|%s", heads[h], skins[0], base));
+            }
+        }
+    }
+
+    if (loaded) {
+        cgi.Printf("Precached %d character variants of %d characters in %d ms\n", loaded, numBases, cgi.Milliseconds() - startedAt);
+    }
+}
+
+/*
+=================
 CG_PrepRefresh
 
 Call before entering a new level, or after changing renderers
@@ -656,6 +823,9 @@ void CG_PrepRefresh(void)
     for (i = CS_SYSTEMINFO + 1; i < MAX_CONFIGSTRINGS; i++) {
         CG_ProcessConfigString(i, qfalse);
     }
+
+    CG_PrecacheCharacterVariants();
+    CG_PrecacheVoices();
 }
 
 //===========================================================================

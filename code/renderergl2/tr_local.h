@@ -537,7 +537,8 @@ enum
 #define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
 #define TMU_RAINREFLECT      29 // and the view the puddles mirror (R_WaterReflectView)
 #define TMU_RAINREFLECTDEPTH 30 // and its depth, to tell what is under a higher puddle
-#define NUM_TEXTURE_UNITS    31
+#define TMU_PARTICLESCENE    31 // Added in OPM: the view behind its dust and smoke, to blend them as shown (r_linearParticleBlend)
+#define NUM_TEXTURE_UNITS    32
 
 // Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
 // FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
@@ -1080,6 +1081,8 @@ typedef enum
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
+	UNIFORM_PARTICLESCENEMAP, // Added in OPM: the view behind dust and smoke (r_linearParticleBlend)
+	UNIFORM_PARTICLEBLEND,    // and 1 to blend them as shown, from it
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
 	UNIFORM_SKELPARAMS,
@@ -1798,6 +1801,7 @@ typedef struct cStaticModelUnpacked_s {
     int rtCaster; // once moved, RT_CASTS_*
     uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
+    qboolean rtHidden; // a map's corona on a lamp's flame, not drawn (R_RtLightsAtLamps)
     int rtProbeState; // its bounce (R_RtStaticModelProbe): 0 not yet, 1 worked out, 2 no probe sees it
     vec4_t rtProbe[3];
 
@@ -2361,6 +2365,13 @@ typedef enum {
 	CPUTIMER_POSTPROCESS,	// RC_POSTPROCESS
 	CPUTIMER_SPRITES,		// RC_SPRITE_SURFS
 	CPUTIMER_2D,			// RC_STRETCH_PIC + the flush that actually draws it
+	// Added in OPM: RC_DRAW_BUFFER, the frame's first touch of the default
+	// framebuffer (bind, draw buffer, the render target clear). A driver
+	// holding the CPU back for its frame queue can block here, not at swap.
+	CPUTIMER_DRAWBUFFER,
+	// Added in OPM: the small commands (set color, color mask, clear depth,
+	// cap shadow map), so backend has nothing left unattributed but the loop.
+	CPUTIMER_SMALLCMDS,
 	CPUTIMER_PRESENT,		// RB_PresentToScreen
 	// The buffer swap and the optional qglFinish before it. This is where a
 	// main thread waiting on the GPU ends up, so it is the bucket that
@@ -2379,6 +2390,10 @@ typedef enum {
 	// Nested deeper still, inside whichever pass is drawing.
 	CPUTIMER_TESSBUILD,		// deform, colour and alpha gen per batch
 	CPUTIMER_TESSUPLOAD,	// RB_UpdateTessVao: the per-batch buffer uploads
+	// Added in OPM: the main thread blocked on a fence because the card is
+	// still reading a stream ring part or a skin arena (c_streamWaits counts
+	// them). Inside whichever command was drawing, or swap for the arena.
+	CPUTIMER_GPUWAIT,
 
 	CPUTIMER_COUNT
 } cpuTimerId_t;
@@ -2550,6 +2565,7 @@ typedef struct {
 	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
+	qboolean    particleScene; // Added in OPM: the view as it was before its first dust or smoke is in tr.waterSceneImage
 	float       greyscale;
 
 	//
@@ -2627,6 +2643,11 @@ typedef struct {
 	image_t					*renderDepthImage;
 	image_t					*pshadowMaps[MAX_DRAWN_PSHADOWS];
 	image_t					*screenScratchImage;
+	// Added in OPM: SMAA (tr_smaa.c)
+	image_t					*smaaEdgesImage;
+	image_t					*smaaBlendImage;
+	image_t					*smaaAreaImage;
+	image_t					*smaaSearchImage;
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
 	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
@@ -2664,6 +2685,8 @@ typedef struct {
 	FBO_t					*depthFbo;
 	FBO_t					*pshadowFbos[MAX_DRAWN_PSHADOWS];
 	FBO_t					*screenScratchFbo;
+	FBO_t					*smaaEdgesFbo;	// Added in OPM: SMAA (tr_smaa.c)
+	FBO_t					*smaaBlendFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
 	FBO_t                   *bloomFbo[BLOOM_LEVELS];
@@ -2744,6 +2767,7 @@ typedef struct {
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
+	shaderProgram_t smaaShader[3]; // Added in OPM: SMAA's edges, weights, blend (tr_smaa.c)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
@@ -2779,6 +2803,12 @@ typedef struct {
 	vec3_t                  lastCascade2Origin;
 	vec3_t                  lastCascade2Forward;
 	float                   lastCascade2Mvp[16];
+	// r_sunCascadeStagger: when each of cascades 1-2 was last drawn
+	int                     cascadeStaggerFrame;
+	qboolean                haveCascadeKept[3];
+	vec3_t                  cascadeKeptOrigin[3];
+	vec3_t                  cascadeKeptForward[3];
+	float                   cascadeKeptMvp[3][16];
 
 	frontEndCounters_t		pc;
 	int						frontEndMsec;		// not in pc due to clearing issue
@@ -3078,6 +3108,7 @@ extern  cvar_t  *r_shadowCascadeZBias;
 extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
+extern  cvar_t  *r_sunCascadeStagger;
 extern  cvar_t  *r_skelCull;
 extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
@@ -3279,6 +3310,9 @@ void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
 qboolean R_RtLinear(void);
 extern cvar_t *r_linearExposure;
+extern cvar_t *r_linearLighting;
+extern cvar_t *r_linearParticleBlend;
+qboolean RB_ParticleCopyView(void);
 qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
@@ -3694,6 +3728,7 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent );
 void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
+void R_LightDirSummed( const vec3_t point, world_t *world, vec3_t summedDir ); // Added in OPM
 int R_CubemapForPoint( vec3_t point );
 void R_PlaceEnvProbes( const lump_t *entityLump );
 int R_ViewCubemapForPoint( const vec3_t point );
@@ -4154,6 +4189,12 @@ void R_BloomRegisterCvars(void);
 void RB_Bloom(FBO_t *fbo, ivec4_t box);
 qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox);
 extern cvar_t *r_sharpen;
+// Added in OPM: SMAA 1x (tr_smaa.c)
+extern cvar_t *r_smaa;
+qboolean R_SmaaWanted(void);
+void R_SmaaCreateImages(int width, int height);
+void R_SmaaCreateFbos(void);
+qboolean RB_Smaa(FBO_t *src, ivec4_t box, FBO_t *dst);
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);

@@ -1986,6 +1986,18 @@ Event EV_ScriptThread_CreateHUD
     "Create a new HUD element. Optionally for a particular client",
     EV_RETURN
 );
+// Added in OPM
+//  One round with no spread, for benchmark scenes that must play the same
+//  every run (tools/win-bench/hits.scr).
+Event EV_ScriptThread_OrchShoot(
+    "orch_shoot",
+    EV_DEFAULT,
+    "vvFI",
+    "start end damage large",
+    "Fires one bullet from start towards end with no spread, as the player's (damage 50 by default; large 1 for a"
+    " heavy round)",
+    EV_NORMAL
+);
 Event EV_ScriptThread_TraceDetails(
     "traced",
     EV_DEFAULT,
@@ -2349,6 +2361,7 @@ CLASS_DECLARATION(Listener, ScriptThread, NULL) {
     {&EV_ScriptThread_TeamGetScore,            &ScriptThread::TeamGetScore            },
     {&EV_ScriptThread_TeamSetScore,            &ScriptThread::TeamSetScore            },
     {&EV_ScriptThread_TraceDetails,            &ScriptThread::TraceDetails            },
+    {&EV_ScriptThread_OrchShoot,               &ScriptThread::OrchShoot               },
     {&EV_ScriptThread_VisionGetNaked,          &ScriptThread::VisionGetNaked          },
     {&EV_ScriptThread_VisionSetNaked,          &ScriptThread::VisionSetNaked          },
     {&EV_ScriptThread_IsBot,                   &ScriptThread::IsPlayerBot             },
@@ -7335,6 +7348,31 @@ void ScriptThread::GetTime(Event *ev)
     Com_sprintf(buff, sizeof(buff), "%02i:%02i:%02i", (int)timearray[0], (int)timearray[1], (int)timearray[2]);
 
     ev->AddString(buff);
+}
+
+void ScriptThread::OrchShoot(Event *ev)
+{
+    Vector  start  = ev->GetVector(1);
+    Vector  end    = ev->GetVector(2);
+    float   damage = ev->NumArgs() > 2 ? ev->GetFloat(3) : 50.0f;
+    int     large  = ev->NumArgs() > 3 ? ev->GetInteger(4) : 0;
+    Vector  dir, right, up, angles;
+    Entity *owner = g_entities[0].entity ? g_entities[0].entity : world;
+    int     tracers = 0;
+    float   range;
+
+    dir   = end - start;
+    range = dir.normalize() + 64.0f;
+    if (range <= 64.0f) {
+        return;
+    }
+    angles = dir.toAngles();
+    angles.AngleVectors(NULL, &right, &up);
+
+    BulletAttack(
+        start, start, dir, right, up, range, damage, large, 0, 0, MOD_BULLET, vec_zero, 1, owner, 0, &tracers, 0, 0,
+        NULL, 0
+    );
 }
 
 void ScriptThread::TraceDetails(Event *ev)

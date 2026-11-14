@@ -65,6 +65,9 @@ extern const char *fallbackShader_lens_vp;
 extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_bloom_vp;
 extern const char *fallbackShader_bloom_fp;
+extern const char *fallbackShader_smaa_vp;
+extern const char *fallbackShader_smaa_fp;
+extern const char *fallbackShader_smaa_lib;
 extern const char *fallbackShader_ripple_fp;
 extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
@@ -246,6 +249,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
+	{ "u_ParticleSceneMap", GLSL_INT },
+	{ "u_ParticleBlend",   GLSL_FLOAT },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
 	{ "u_SkelParams",      GLSL_VEC4 },
@@ -1560,6 +1565,39 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	return result;
 }
 
+/*
+====================
+GLSL_SmaaSource
+
+Added in OPM: an SMAA wrapper (glsl/smaa_vp.glsl, smaa_fp.glsl) with the SMAA
+library (glsl/smaa_lib.glsl) put in at its marker, the line
+//SMAA_LIB_HERE: the library needs the wrapper's defines before it, and the
+wrapper's main needs the library's functions.
+====================
+*/
+static qboolean GLSL_SmaaSource(const char *wrapper, char *dest, int size)
+{
+	const char *marker = "//SMAA_LIB_HERE";
+	const char *at = strstr(wrapper, marker);
+	int         head;
+
+	if (!at) {
+		return qfalse;
+	}
+
+	head = at - wrapper;
+	if (head + (int)strlen(fallbackShader_smaa_lib) + (int)strlen(at) + 2 > size) {
+		return qfalse;
+	}
+
+	Com_Memcpy(dest, wrapper, head);
+	dest[head] = '\0';
+	Q_strcat(dest, size, fallbackShader_smaa_lib);
+	Q_strcat(dest, size, "\n");
+	Q_strcat(dest, size, at + strlen(marker));
+	return qtrue;
+}
+
 void GLSL_InitUniforms(shaderProgram_t *program)
 {
 	int i, size;
@@ -2505,6 +2543,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
+	GLSL_SetUniformInt(sp, UNIFORM_PARTICLESCENEMAP, TMU_PARTICLESCENE);
 
 	GLSL_FinishGPUShader(sp);
 
@@ -3108,6 +3147,42 @@ void GLSL_InitGPUShaders(void)
 			numEtcShaders++;
 		}
 
+		// SMAA's three passes (tr_smaa.c), at the r_smaa quality
+		if (R_SmaaWanted())
+		{
+			static const char *presets[4] = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
+			static char        smaaVp[65536], smaaFp[65536];
+			int                level = abs(r_smaa->integer);
+
+			if (level < 1 || level > 4)
+				level = 3;
+
+			if (GLSL_SmaaSource(fallbackShader_smaa_vp, smaaVp, sizeof(smaaVp))
+				&& GLSL_SmaaSource(fallbackShader_smaa_fp, smaaFp, sizeof(smaaFp)))
+			{
+				for (i = 0; i < 3; i++)
+				{
+					attribs = ATTR_POSITION | ATTR_TEXCOORD;
+					extradefines[0] = '\0';
+					Q_strcat(extradefines, 1024, va("#define SMAA_PASS %d\n#define SMAA_PRESET_%s\n", i, presets[level - 1]));
+					// not "smaa": r_externalGLSL would read the wrappers alone
+					if (GLSL_InitGPUShader(&tr.smaaShader[i], "smaa_spliced", attribs, qtrue, extradefines, qtrue, smaaVp, smaaFp))
+					{
+						GLSL_InitUniforms(&tr.smaaShader[i]);
+						GLSL_SetUniformInt(&tr.smaaShader[i], UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+						GLSL_SetUniformInt(&tr.smaaShader[i], UNIFORM_LIGHTMAP, TB_LIGHTMAP);
+						GLSL_SetUniformInt(&tr.smaaShader[i], UNIFORM_NORMALMAP, TB_NORMALMAP);
+						GLSL_FinishGPUShader(&tr.smaaShader[i]);
+						numEtcShaders++;
+					}
+				}
+			}
+			else
+			{
+				ri.Printf(PRINT_WARNING, "WARNING: SMAA shader source could not be put together, r_smaa does nothing\n");
+			}
+		}
+
 		// its ripples, a step of them
 		if (r_waterRipples->integer)
 		{
@@ -3226,6 +3301,8 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.bloomShader);
+	for (i = 0; i < 3; i++)
+		GLSL_DeleteGPUShader(&tr.smaaShader[i]);
 	GLSL_DeleteGPUShader(&tr.beachShader[0]);
 	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 

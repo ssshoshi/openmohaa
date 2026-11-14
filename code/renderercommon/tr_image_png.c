@@ -23,6 +23,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "puff.h"
 
+// Added in OPM: zlib inflates the IDATs, puff (a slow reference inflater) is
+// kept for a stream zlib turns down
+#include <zlib.h>
+
 // we could limit the png size to a lower value here
 #ifndef INT_MAX
 #define INT_MAX 0x1fffffff
@@ -504,7 +508,59 @@ static qboolean FindChunk(struct BufferedFile *BF, uint32_t ChunkType)
  *  Decompress all IDATs
  */
 
-static uint32_t DecompressIDATs(struct BufferedFile *BF, uint8_t **Buffer)
+/*
+ *  Added in OPM: the length the IDATs inflate to, from the header: each
+ *  scanline is a filter byte and its pixels, packed; an interlaced image is
+ *  its seven passes' scanlines one after the other. 0 when the header is
+ *  not one this decoder takes.
+ */
+
+static uint32_t PNG_InflatedLength(const struct PNG_Chunk_IHDR *IHDR)
+{
+	static const int passX0[7] = { 0, 4, 0, 2, 0, 1, 0 };
+	static const int passY0[7] = { 0, 0, 4, 0, 2, 0, 1 };
+	static const int passDX[7] = { 8, 8, 4, 4, 2, 2, 1 };
+	static const int passDY[7] = { 8, 8, 8, 4, 4, 2, 2 };
+	uint64_t width, height, bits, total;
+	int      channels, pass;
+
+	switch(IHDR->ColourType)
+	{
+		case 0: channels = 1; break; /* grey */
+		case 2: channels = 3; break; /* true colour */
+		case 3: channels = 1; break; /* indexed */
+		case 4: channels = 2; break; /* grey and alpha */
+		case 6: channels = 4; break; /* true colour and alpha */
+		default: return 0;
+	}
+
+	width  = BigLong(IHDR->Width);
+	height = BigLong(IHDR->Height);
+	bits   = (uint64_t)channels * IHDR->BitDepth;
+
+	if(IHDR->InterlaceMethod == PNG_InterlaceMethod_NonInterlaced)
+	{
+		total = height * (1 + (width * bits + 7) / 8);
+	}
+	else
+	{
+		total = 0;
+		for(pass = 0; pass < 7; pass++)
+		{
+			uint64_t pw = width  > (uint64_t)passX0[pass] ? (width  - passX0[pass] + passDX[pass] - 1) / passDX[pass] : 0;
+			uint64_t ph = height > (uint64_t)passY0[pass] ? (height - passY0[pass] + passDY[pass] - 1) / passDY[pass] : 0;
+
+			if(pw && ph)
+			{
+				total += ph * (1 + (pw * bits + 7) / 8);
+			}
+		}
+	}
+
+	return total < 0x7fffffff ? (uint32_t)total : 0;
+}
+
+static uint32_t DecompressIDATs(struct BufferedFile *BF, uint8_t **Buffer, uint32_t InflatedLength)
 {
 	uint8_t  *DecompressedData;
 	uint32_t  DecompressedDataLength;
@@ -693,6 +749,66 @@ static uint32_t DecompressIDATs(struct BufferedFile *BF, uint8_t **Buffer)
 			memcpy(CompressedDataPtr, OrigCompressedData, Length);
 			CompressedDataPtr += Length;
 		} 
+	}
+
+	/*
+	 *  Added in OPM: with the length known from the header, inflate once
+	 *  into a buffer that size, with zlib. Stock inflated twice with puff(),
+	 *  the first time only to learn the length, and puff() is a slow
+	 *  reference inflater: on the 1024x1024 material maps that was most of a
+	 *  map's load (60 ms an image). Anything unexpected falls back to puff().
+	 */
+
+	if(InflatedLength)
+	{
+		DecompressedData = ri.Malloc(InflatedLength);
+		if(DecompressedData)
+		{
+			// the whole zlib stream, header and check value included (the
+			// bundled zlib has inflate but not uncompress)
+			z_stream zs;
+			int      zres;
+
+			Com_Memset(&zs, 0, sizeof(zs));
+			zs.next_in   = CompressedData;
+			zs.avail_in  = CompressedDataLength;
+			zs.next_out  = DecompressedData;
+			zs.avail_out = InflatedLength;
+
+			zres = inflateInit(&zs);
+			if(zres == Z_OK)
+			{
+				zres = inflate(&zs, Z_FINISH);
+				inflateEnd(&zs);
+			}
+
+			if(zres == Z_STREAM_END && zs.total_out == InflatedLength)
+			{
+				ri.Free(CompressedData);
+
+				*Buffer = DecompressedData;
+
+				return(InflatedLength);
+			}
+
+			puffDest    = DecompressedData;
+			puffDestLen = InflatedLength;
+			puffSrc     = CompressedData + PNG_ZlibHeader_Size;
+			puffSrcLen  = CompressedDataLength - PNG_ZlibHeader_Size - PNG_ZlibCheckValue_Size;
+
+			puffResult = puff(puffDest, &puffDestLen, puffSrc, &puffSrcLen);
+			if(puffResult == 0 && puffDestLen == InflatedLength)
+			{
+				ri.Free(CompressedData);
+
+				*Buffer = DecompressedData;
+
+				return(InflatedLength);
+			}
+
+			ri.Free(DecompressedData);
+			DecompressedData = NULL;
+		}
 	}
 
 	/*
@@ -2386,7 +2502,7 @@ void R_LoadPNG(const char *name, byte **pic, int *width, int *height)
 	 *  Decompress all IDAT chunks
 	 */
 
-	DecompressedDataLength = DecompressIDATs(ThePNG, &DecompressedData);
+	DecompressedDataLength = DecompressIDATs(ThePNG, &DecompressedData, PNG_InflatedLength(IHDR));
 	if(!(DecompressedDataLength && DecompressedData))
 	{
 		CloseBufferedFile(ThePNG);

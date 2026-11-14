@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_pistol.txt
++++ b/models/player/base/anims_pistol.txt
+@@ -66,7 +66,7 @@
+ 	// Crouching
+ 	//========================
+ //	pistol_crouch_idle		viewmodel/pistol/crouch_coltpose.skc	crossblend 0.2
+-	pistol_crouch_idle		weapon_pistol/pistol_crouch_idle.skc			crossblend 0.2
++	pistol_crouch_idle		opm/crouch_idle_pistol.skc			crossblend 0.2
+ 	
+ 	pistol_crouch_walk_fwd		weapon_pistol/walks_runs/pistol_crouch_walk_forward.skc	 //autosteps_walk
+ 	pistol_crouch_walk_back		weapon_pistol/pistol_crouch_walk_backwards.skc		 //autosteps_walk
