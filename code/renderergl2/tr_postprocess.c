@@ -200,6 +200,17 @@ void RB_ToneMap(FBO_t *hdrFbo, ivec4_t hdrBox, FBO_t *ldrFbo, ivec4_t ldrBox, in
 	else
 		GL_BindToTMU(tr.fixedLevelsImage, TB_LEVELSMAP);
 
+	// Added in OPM: the grade, done by the same program (r_grade, tr_atmos.c)
+	{
+		vec4_t lift, gamma, gain, misc;
+
+		R_GradeUniforms(lift, gamma, gain, misc);
+		GLSL_SetUniformVec4(&tr.tonemapShader, UNIFORM_GRADELIFT, lift);
+		GLSL_SetUniformVec4(&tr.tonemapShader, UNIFORM_GRADEGAMMA, gamma);
+		GLSL_SetUniformVec4(&tr.tonemapShader, UNIFORM_GRADEGAIN, gain);
+		GLSL_SetUniformVec4(&tr.tonemapShader, UNIFORM_GRADEMISC, misc);
+	}
+
 	FBO_Blit(hdrFbo, hdrBox, NULL, ldrFbo, ldrBox, &tr.tonemapShader, color, 0);
 }
 

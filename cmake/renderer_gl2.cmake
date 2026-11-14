@@ -24,6 +24,7 @@ set(RENDERER_GL2_SOURCES
     ${SOURCE_DIR}/renderergl2/tr_groundcover.c
     ${SOURCE_DIR}/renderergl2/tr_water.c
     ${SOURCE_DIR}/renderergl2/tr_froxel.c
+    ${SOURCE_DIR}/renderergl2/tr_atmos.c
     ${SOURCE_DIR}/renderergl2/tr_lens.c
     ${SOURCE_DIR}/renderergl2/tr_smaa.c
     ${SOURCE_DIR}/renderergl2/tr_image.c
