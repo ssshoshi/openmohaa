@@ -1140,7 +1140,6 @@ typedef enum
 	UNIFORM_RAINREFLECTDEPTHMAP,
 	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
 	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
-	UNIFORM_SNOW,           // Added in OPM: the snow (r_snow, tr_water.c): how much lies on it, how much it glitters, -, whether it is snow itself
 
 	UNIFORM_COUNT
 } uniform_t;

@@ -2526,7 +2526,6 @@ void R_WaterSetDry(shaderProgram_t *sp)
 
     VectorClear4(v);
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
-    GLSL_SetUniformVec4(sp, UNIFORM_SNOW, v);
 }
 
 /*
@@ -2612,7 +2611,9 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
     qboolean    beach;
     float       rain, snow;
 
-    if (!tr.world || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+    // (nor where only the depth is drawn: the view's own depth pass ran all
+    // of the rain's and the snow's look for a colour nobody sees)
+    if (!tr.world || backEnd.depthFill || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
         R_WaterSetDry(sp);
         return;
     }
@@ -2649,30 +2650,41 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
             v[3] += r_rainDebug->integer == 2 ? 20.0f : 10.0f;
         }
     }
-    GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
-
-    // the snow: how much of it lies on what is not snow, how much it
-    // glitters, and whether what is drawn is snow itself (which only glitters)
-    if (snow > 0.0f) {
+    // the snow rides the rain's place in it (a map has one or the other),
+    // so that the shaders test nothing more on a dry map: what is drawn -1
+    // for what is snow itself, which only glitters, -2 for what snow lies
+    // on, with how much of it where the rain's wetness goes
+    if (snow > 0.0f && rain <= 0.0f) {
         const qboolean own = tess.shader && (tess.shader->surfaceFlags & SURF_SNOW);
 
-        VectorSet4(v, own ? 0.0f : snow * Com_Clamp(0.0f, 1.0f, r_snowCover->value), snow * Q_max(0.0f, r_snowSparkle->value), 0.0f,
-            own ? 1.0f : 0.0f);
+        v[2] = own ? 0.0f : snow * Com_Clamp(0.0f, 1.0f, r_snowCover->value);
+        v[3] = own ? -1.0f : -2.0f;
     } else {
-        VectorClear4(v);
+        snow = 0.0f;
     }
-    GLSL_SetUniformVec4(sp, UNIFORM_SNOW, v);
+    GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
 
-    // what is out under the sky, for both
+    // what is out under the sky, for both (and for the snow, how much it
+    // glitters where the rain has how much ground holds puddles)
     if (rain > 0.0f || snow > 0.0f) {
         VectorSet4(v, rainCover.x0, rainCover.y0, 1.0f / (rainCover.width * rainCover.texel),
             1.0f / (rainCover.rows * rainCover.texel));
         GLSL_SetUniformVec4(sp, UNIFORM_RAINCOVER, v);
-        VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
-            (rain > 0.0f && R_RainPuddleShader(tess.shader)) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,
-            Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+        if (snow > 0.0f) {
+            VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel, snow * Q_max(0.0f, r_snowSparkle->value), 0.0f);
+        } else {
+            VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
+                R_RainPuddleShader(tess.shader) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,
+                Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+        }
         GLSL_SetUniformVec4(sp, UNIFORM_RAINPARAMS, v);
         GL_BindToTMU(tr.rainCoverImage, TMU_RAINCOVER);
+    }
+    // (no puddles' mirror and no lightning in the snow)
+    if (snow > 0.0f) {
+        VectorClear4(v);
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINREFLECT, v);
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINFLASH, v);
     }
 
     if (rain > 0.0f) {
