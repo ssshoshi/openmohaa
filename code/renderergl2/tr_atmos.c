@@ -84,11 +84,25 @@ static void R_GradeNeutral(grade_t *g)
 	g->grain      = 0.0f;
 }
 
+// Whether the line has anything more on it. (COM_ParseExt asked for a token
+// the line does not have steps onto the next line, which was then passed
+// over whole: `grade lift 0.02` took the line after it with it.)
+static qboolean R_AtmosMoreOnLine(const char *p)
+{
+	if (!p) {
+		return qfalse;
+	}
+	while (*p == ' ' || *p == '\t') {
+		p++;
+	}
+	return *p && *p != '\n' && *p != '\r' && !(p[0] == '/' && p[1] == '/');
+}
+
 static int R_AtmosNumbers(char **text, float *out, int count)
 {
 	int i;
 
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < count && R_AtmosMoreOnLine(*text); i++) {
 		const char *token = COM_ParseExt(text, qfalse);
 		if (!token[0]) {
 			break;
@@ -132,7 +146,7 @@ static qboolean R_AtmosColour(char **text, vec3_t out)
 
 static void R_AtmosGradeLine(char **text)
 {
-	const char *token = COM_ParseExt(text, qfalse);
+	const char *token = R_AtmosMoreOnLine(*text) ? COM_ParseExt(text, qfalse) : "";
 	grade_t    *g     = &atmos.grade;
 	float       v;
 	qboolean    ok = qtrue;
