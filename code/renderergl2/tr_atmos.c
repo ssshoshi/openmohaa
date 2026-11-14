@@ -289,8 +289,8 @@ void R_AtmosLoadWorld(const char *mapName)
 		float  strength;
 
 		R_AtmosWind(dir, &strength);
-		ri.Cvar_Set("vss_wind_x", va("%g", dir[0] * 9.0f * strength));
-		ri.Cvar_Set("vss_wind_y", va("%g", dir[1] * 9.0f * strength));
+		ri.Cvar_Set("vss_wind_x", va("%.2f", dir[0] * 9.0f * strength));
+		ri.Cvar_Set("vss_wind_y", va("%.2f", dir[1] * 9.0f * strength));
 		atmos.windGiven = qtrue;
 	} else if (atmos.windGiven) {
 		ri.Cvar_Set("vss_wind_x", "8");
