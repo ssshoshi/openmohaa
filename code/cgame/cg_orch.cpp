@@ -27,7 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 // The game's half is small. orch (F10) turns orchestrator mode on. The player
 // talks while holding a key the sidecar watches (MOUSE4). orch_shot
-// (MOUSE3) then takes a screenshot and writes what is under the crosshair to
+// (HOME) then takes a screenshot and writes what is under the crosshair to
 // orch/events/<id>.json in the home path, which the voice sidecar puts on the
 // same timeline as what was said. orch_mark (MOUSE5) writes the same without
 // a screenshot or a save: several things pointed at in one breath. Replies come back as orch_msg commands,
@@ -1517,7 +1517,7 @@ void CG_OrchInit(void)
         const int bound = cgi.Cvar_Get("orch_bound", "0", CVAR_ARCHIVE)->integer;
 
         if (bound < 1) {
-            cgi.Cmd_Execute(EXEC_APPEND, "bind F10 orch\nbind MOUSE3 orch_shot\n");
+            cgi.Cmd_Execute(EXEC_APPEND, "bind F10 orch\nbind HOME orch_shot\n");
         }
         if (bound < 2) {
             cgi.Cmd_Execute(EXEC_APPEND, "bind F11 orch_freeze\nbind n orch_fly\n");
@@ -1527,6 +1527,23 @@ void CG_OrchInit(void)
         }
         if (bound < 4) {
             cgi.Cmd_Execute(EXEC_APPEND, "bind MOUSE5 +orch_mark\nseta orch_bound 4\n");
+        }
+        // The screenshot was on MOUSE3 first, the middle button the stock
+        // config uses for the secondary attack: MOUSE3 goes back to that,
+        // and the screenshot moves to HOME (stock leaves it free) unless
+        // another key already takes it.
+        if (bound < 5) {
+            const int mouse3 = cgi.Key_StringToKeynum("MOUSE3");
+            int       key1 = -1, key2 = -1;
+
+            cgi.Key_GetKeysForCommand("orch_shot", &key1, &key2);
+            if (key1 == mouse3 || key2 == mouse3) {
+                cgi.Cmd_Execute(EXEC_APPEND, "bind MOUSE3 +attacksecondary\n");
+            }
+            if ((key1 == -1 || key1 == mouse3) && (key2 == -1 || key2 == mouse3)) {
+                cgi.Cmd_Execute(EXEC_APPEND, "bind HOME orch_shot\n");
+            }
+            cgi.Cmd_Execute(EXEC_APPEND, "seta orch_bound 5\n");
         }
     }
 
