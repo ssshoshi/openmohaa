@@ -186,9 +186,11 @@ vec3 WetAmount(out vec3 surfN)
 	// (none on a cut-out, a tree line, a hedge, a fence: R_WaterSetWet)
 	if (u_Wet.z > 0.0)
 	{
-		// (snow: how much sky is over it, for SnowLies)
+		// (snow: how much sky is over it, for SnowLies; none lies on what
+		// stands too steep to hold it, a wall or a tree's trunk, and the
+		// sky is not looked for there)
 		if (u_Wet.w < -0.5)
-			return vec3(RainExposed(var_WetPos, surfN), 0.0, 0.0);
+			return vec3(surfN.z > 0.3 ? RainExposed(var_WetPos, surfN) : 0.0, 0.0, 0.0);
 
 		float open  = RainExposed(var_WetPos, surfN) * u_Wet.z;
 		float under = smoothstep(-0.75, -0.3, surfN.z);
@@ -1483,7 +1485,7 @@ void main()
 		{
 			float lum    = dot(gl_FragColor.rgb, vec3(0.2125, 0.7154, 0.0721));
 			float shown  = u_Linear > 0.5 ? pow(max(lum, 0.0), 1.0 / 2.2) : lum;
-			float bright = smoothstep(0.15, 0.6, shown);
+			float bright = smoothstep(0.25, 0.65, shown);
 			if (bright > 0.0)
 			{
 				float lies = snowLie;
