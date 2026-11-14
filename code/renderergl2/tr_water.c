@@ -76,6 +76,13 @@ cvar_t        *r_water;
 cvar_t        *r_waterRipples;
 cvar_t        *r_waterWet;
 cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map has rained (cg_lens.cpp)
+// Added in OPM: snow. The cgame sets r_snowFall once it has snowed on a map
+// (snow falls by the rain's means, with a snowflake for its shader); what is
+// out under the sky then has snow lying on it, and glitters.
+static cvar_t *r_snowFall;
+static cvar_t *r_snow;
+static cvar_t *r_snowCover;
+static cvar_t *r_snowSparkle;
 cvar_t        *r_rainPuddles;
 static cvar_t *r_rainPuddleShaders;
 static cvar_t *r_rainRoofShaders;
@@ -166,6 +173,14 @@ void R_WaterRegisterCvars(void)
     r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterWet = ri.Cvar_Get("r_waterWet", "1", CVAR_ARCHIVE);
     r_rainWet     = ri.Cvar_Get("r_rainWet", "0", CVAR_TEMP);
+    r_snowFall    = ri.Cvar_Get("r_snowFall", "0", CVAR_TEMP);
+    ri.Cvar_SetDescription(r_snowFall, "Whether it has snowed on the map, 0 or 1 (the game sets it on a map with falling snow; r_snow 0 turns the snow's look off)");
+    r_snow        = ri.Cvar_Get("r_snow", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_snow, "On a map where snow falls, snow lies on what is out under the sky and glitters in the light (r_snowCover, r_snowSparkle): 0 off");
+    r_snowCover   = ri.Cvar_Get("r_snowCover", "0.7", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_snowCover, "In the snow, how much of it lies on the tops of what is out under the sky and is not snow already (crates, walls, roofs, rocks): 0 none, 1 thick");
+    r_snowSparkle = ri.Cvar_Get("r_snowSparkle", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_snowSparkle, "In the snow, how much the snow glitters in the light as the eye moves over it: 0 not at all");
     r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
     r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
     r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
@@ -1624,10 +1639,13 @@ static void R_RainFreeCover(void)
 // Once a scene, in the front end: the cover, the first time it rains
 void R_RainFrame(const refdef_t *fd)
 {
-    if (!rainCover.tried && r_rainWet->value > 0.0f && r_waterWet->integer && tr.world) {
+    if (!rainCover.tried && tr.world
+        && ((r_rainWet->value > 0.0f && r_waterWet->integer) || (r_snowFall->value > 0.0f && r_snow->integer))) {
         R_RainBuildCover();
     }
-    if (rainCover.on && (!rainCover.puddle || rainCover.puddleCount != r_rainPuddleShaders->modificationCount)) {
+    // (the snow's cover holds no puddles)
+    if (rainCover.on && r_rainWet->value > 0.0f
+        && (!rainCover.puddle || rainCover.puddleCount != r_rainPuddleShaders->modificationCount)) {
         R_RainBuildPuddles();
     }
 
@@ -1655,6 +1673,12 @@ void R_RainFrame(const refdef_t *fd)
 static float R_RainAmount(void)
 {
     return rainCover.on ? Com_Clamp(0.0f, 1.0f, r_rainWet->value) : 0.0f;
+}
+
+// Added in OPM: whether snow lies on the map (the cover is the rain's)
+static float R_SnowAmount(void)
+{
+    return (rainCover.on && r_snow->integer) ? Com_Clamp(0.0f, 1.0f, r_snowFall->value) : 0.0f;
 }
 
 /*
@@ -2585,20 +2609,25 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
 {
     vec4_t      v;
     qboolean    beach;
-    float       rain;
+    float       rain, snow;
 
-    if (!r_waterWet->integer || !tr.world || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+    // (nor where only the depth is drawn: the view's own depth pass ran all
+    // of the rain's and the snow's look for a colour nobody sees)
+    if (!tr.world || backEnd.depthFill || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
         R_WaterSetDry(sp);
         return;
     }
-    beach = water.beachSet && water.shoreSet;
-    rain  = R_RainAmount();
+    beach = r_waterWet->integer && water.beachSet && water.shoreSet;
+    rain  = r_waterWet->integer ? R_RainAmount() : 0.0f;
+    // snow lies on the world and what stands in it, not on men or what moves
+    snow  = (backEnd.currentEntity == &tr.worldEntity) ? R_SnowAmount() : 0.0f;
     // a cut-out (a tree line, a hedge, a fence) is no wall the rain wets;
     // the terrain, alpha tested on some maps, is ground that it does
     if (pStage && (pStage->stateBits & GLS_ATEST_BITS) && !(tess.shader && tess.shader->isTerrain)) {
         rain = 0.0f;
+        snow = 0.0f;
     }
-    if (!beach && rain <= 0.0f) {
+    if (!beach && rain <= 0.0f && snow <= 0.0f) {
         R_WaterSetDry(sp);
         return;
     }
@@ -2621,18 +2650,44 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
             v[3] += r_rainDebug->integer == 2 ? 20.0f : 10.0f;
         }
     }
+    // the snow rides the rain's place in it (a map has one or the other),
+    // so that the shaders test nothing more on a dry map: what is drawn -1
+    // for what is snow itself, which only glitters, -2 for what snow lies
+    // on, with how much of it where the rain's wetness goes
+    if (snow > 0.0f && rain <= 0.0f) {
+        const qboolean own = tess.shader && (tess.shader->surfaceFlags & SURF_SNOW);
+
+        v[2] = own ? 0.0f : snow * Com_Clamp(0.0f, 1.0f, r_snowCover->value);
+        v[3] = own ? -1.0f : -2.0f;
+    } else {
+        snow = 0.0f;
+    }
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
 
-    if (rain > 0.0f) {
+    // what is out under the sky, for both (and for the snow, how much it
+    // glitters where the rain has how much ground holds puddles)
+    if (rain > 0.0f || snow > 0.0f) {
         VectorSet4(v, rainCover.x0, rainCover.y0, 1.0f / (rainCover.width * rainCover.texel),
             1.0f / (rainCover.rows * rainCover.texel));
         GLSL_SetUniformVec4(sp, UNIFORM_RAINCOVER, v);
-        VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
-            R_RainPuddleShader(tess.shader) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,
-            Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+        if (snow > 0.0f) {
+            VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel, snow * Q_max(0.0f, r_snowSparkle->value), 0.0f);
+        } else {
+            VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
+                R_RainPuddleShader(tess.shader) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,
+                Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+        }
         GLSL_SetUniformVec4(sp, UNIFORM_RAINPARAMS, v);
         GL_BindToTMU(tr.rainCoverImage, TMU_RAINCOVER);
+    }
+    // (no puddles' mirror and no lightning in the snow)
+    if (snow > 0.0f) {
+        VectorClear4(v);
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINREFLECT, v);
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINFLASH, v);
+    }
 
+    if (rain > 0.0f) {
         // the view the puddles mirror, if it was drawn (R_WaterReflectView)
         if (backEnd.viewParms.rainReflect && tr.waterReflectImage) {
             VectorSet4(v, 1.0f, backEnd.viewParms.waterReflectPlane[3], backEnd.viewParms.waterReflectShare[0],

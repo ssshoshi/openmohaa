@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_ragdoll.h"
 #include "cg_water.h"
 #include "cg_lens.h"
+#include "cg_snow.h"
 #include "cg_gore.h"
 #include "cg_physics.h"
 #include "cg_bugreport.h"
@@ -975,6 +976,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
     CG_InitRagdoll();
     CG_InitWater();
     CG_InitLens();
+    CG_InitSnow();
     CG_GoreInit();
     CG_BlastInit();
     CG_InitPhysics();

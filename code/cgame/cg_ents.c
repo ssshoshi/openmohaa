@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_water.h"
 #include "cg_scriptblast.h"
 #include "cg_lens.h"
+#include "cg_snow.h"
 #include "cg_radar.h"
 
 /*
@@ -737,7 +738,7 @@ void CG_AddPacketEntities(void)
         CG_TAIL(2, CG_ScriptBlastsFrame());
         CG_TAIL(3, CG_WaterBloodFrame());
         CG_TAIL(4, CG_WaterRipplesFrame());
-        CG_TAIL(5, CG_LensFrame());
+        CG_TAIL(5, CG_LensFrame(); CG_SnowFrame());
 
         //  Client-side props and corpses on Jolt.
         CG_TAIL(6, CG_PhysicsFrame());

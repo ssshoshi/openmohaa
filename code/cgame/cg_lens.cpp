@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // (RE_SetLensSpots, glsl/lens_fp.glsl).
 
 #include "cg_lens.h"
+#include "cg_snow.h"
 
 cvar_t *cg_lens;
 static cvar_t *cg_lens_test;
@@ -67,8 +68,9 @@ void CG_InitLens(void)
     cg_lens_test = cgi.Cvar_Get("cg_lens_test", "0", CVAR_CHEAT);
     cg_lens_debug = cgi.Cvar_Get("cg_lens_debug", "0", 0);
     cg_lens_rain  = cgi.Cvar_Get("cg_lens_rain", "1", CVAR_ARCHIVE);
-    // a new map is dry until it rains (CG_LensRain)
+    // a new map is dry until it rains, and bare until it snows (CG_LensRain)
     cgi.Cvar_Set("r_rainWet", "0");
+    cgi.Cvar_Set("r_snowFall", "0");
     memset(cg_lensSpots, 0, sizeof(cg_lensSpots));
     cg_lensTime = 0;
     cg_lensSent = 0;
@@ -278,18 +280,36 @@ in. Out under the sky in the rain, it rains on the lens: how hard, the more
 the higher he looks and the heavier the rain, goes to the renderer
 (r_lensRain), which draws the drops on the glass, running down and gathering
 (glsl/lens_fp.glsl) and lets it dry when he goes in.
+
+Snow falls by the rain's own means: a snow map (m6l1a, m6l1b) gives the rain
+a snowflake for its shader (textures/snow0 to snow11) and slows it down. It
+is told from rain by that name: snow wets nothing, runs off no roof and
+leaves no drops on the lens. Once it has snowed on a map the renderer is
+told (r_snowFall): snow lies on what is out under the sky, and glitters.
 */
+static qboolean CG_RainIsSnow(void)
+{
+    return Q_stristr(cg.rain.currentShader, "snow") != NULL;
+}
+
 static void CG_LensRain(void)
 {
     static int      lastLook;
     static qboolean open;
     static float    lastSet = -1.0f;
     float           want = 0.0f;
+    const qboolean  raining = cg.rain.density > 0.0f && !CG_RainIsSnow();
 
-    if (cg.rain.density > 0.0f && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
+    if (raining && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
         cgi.Cvar_Set("r_rainWet", "1");
     }
-    if (cg.rain.density > 0.0f && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
+    if (cg.rain.density > 0.0f && !raining) {
+        CG_SnowFalls();
+        if (cgi.Cvar_Get("r_snowFall", "0", CVAR_TEMP)->value < 1.0f) {
+            cgi.Cvar_Set("r_snowFall", "1");
+        }
+    }
+    if (raining && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
         float up;
 
         // nothing over him but the sky
