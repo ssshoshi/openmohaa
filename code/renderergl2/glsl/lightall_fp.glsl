@@ -83,6 +83,11 @@ uniform vec4      u_RainReflect;
 uniform mat4      u_RainReflectMvp;
 // a lightning flash: its light, how strong (R_RainFrame)
 uniform vec4      u_RainFlash;
+// Added in OPM: the snow (r_snow, tr_water.c's R_WaterSetWet): how much of it
+// lies on what is drawn, how much it glitters, -, whether what is drawn is
+// snow itself (which only glitters). What is out under the sky is the rain's
+// cover grid's to say.
+uniform vec4      u_Snow;
 
 float WetNoise(vec2 p)
 {
@@ -196,6 +201,55 @@ vec3 WetAmount(out vec3 surfN)
 		}
 	}
 	return wet;
+}
+
+// Added in OPM: how much snow lies here, 0 to all of it: on what is out under
+// the sky and faces up, in drifts with bare patches between where there is
+// little of it (u_Snow.x: 0.4 leaves a good part bare, 0.7 little, 1 none),
+// with a ragged edge where the slope gets too steep to hold it. open: how
+// much sky is over it.
+float SnowLies(vec3 surfN, vec3 N, out float open)
+{
+	open = RainExposed(var_WetPos, surfN);
+	float drift = WetNoise(var_WetPos.xy / 97.0) * 0.55 + WetNoise(var_WetPos.xy / 23.0) * 0.3 + WetNoise(var_WetPos.xy / 5.0) * 0.15;
+	float up    = mix(surfN.z, N.z, 0.5);
+	float slope = smoothstep(0.5, 0.82, up + (drift - 0.5) * 0.3);
+	return open * slope * clamp((u_Snow.x * 1.5 - drift) * 3.0, 0.0, 1.0);
+}
+
+// Added in OPM: the snow's own surface, not quite even: a number about one
+float SnowGrainTone(vec3 p)
+{
+	return 0.93 + 0.07 * (WetNoise(p.xy / 2.3) * 0.6 + WetNoise(p.xy / 0.6) * 0.4);
+}
+
+// Added in OPM: the snow's glitter: grains of it each facing its own way, a
+// few at a time turned to throw the light at the eye, others as it moves.
+// A grain is a dot in a cell `size` across, laid out over the ground (snow
+// lies on what faces up); none where a cell is under a couple of pixels
+// (far off they would crawl), so two sizes are drawn, the fine ones near
+// and the coarse further out.
+float SnowGrains(vec3 p, vec3 v, float size, float finer)
+{
+	vec2  g    = p.xy / size;
+	float px   = length(fwidth(g));
+	// (and none of a coarse size where the finer one still shows)
+	float near = (1.0 - smoothstep(0.3, 0.7, px)) * mix(1.0, smoothstep(0.2, 0.5, px * finer), step(1.5, finer));
+	if (near <= 0.0)
+		return 0.0;
+	vec2  c = floor(g);
+	float h = fract(sin(dot(c, vec2(127.1, 311.7))) * 43758.5453);
+	// where in its cell, and how bright
+	vec2  o = vec2(fract(h * 37.3), fract(h * 71.9)) - vec2(0.5);
+	float d = length(fract(g) - vec2(0.5) - o * 0.5);
+	float a = fract(h * 91.7 + dot(v, vec3(h * 13.0 + 5.0, fract(h * 7.3) * 11.0 + 5.0, 9.0)));
+	return near * smoothstep(0.90, 0.95, a) * (1.0 - smoothstep(0.05, 0.13, d)) * (0.4 + 0.6 * fract(h * 53.0));
+}
+
+float SnowGlitter(vec3 p)
+{
+	vec3 v = normalize(u_ViewOrigin - p);
+	return max(SnowGrains(p, v, 0.7, 1.0), SnowGrains(p, v, 2.8, 4.0));
 }
 
 float WetHash(float x)
@@ -880,6 +934,9 @@ void main()
 	float wetRun   = 0.0;
 	// Added in OPM: the reflection of what is on the screen (SsrTrace)
 	vec4 ssr       = vec4(0.0);
+	// Added in OPM: how much snow lies here, and how much sky is over it (SnowLies)
+	float snowLie  = 0.0;
+	float snowOpen = 0.0;
 
 #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 	L = var_LightDir.xyz;
@@ -1066,6 +1123,23 @@ void main()
 		NH = clamp(dot(N, H), 0.0, 1.0);
 	}
 
+	// Added in OPM: snow lying on it: white, dull, the normal map's bumps
+	// under it smoothed over
+	if (u_Snow.x > 0.0 || u_Snow.y > 0.0)
+	{
+		snowLie = SnowLies(wetSurfN, N, snowOpen);
+		if (snowLie > 0.0)
+		{
+			diffuse.rgb  = mix(diffuse.rgb, Lin(vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos)), snowLie);
+			specular.rgb = mix(specular.rgb, vec3(0.03), snowLie);
+			roughness    = mix(roughness, 0.8, snowLie);
+			N  = normalize(mix(N, wetSurfN, snowLie));
+			NL = clamp(dot(N, L), 0.0, 1.0);
+			NE = clamp(dot(N, E), 0.0, 1.0);
+			NH = clamp(dot(N, H), 0.0, 1.0);
+		}
+	}
+
   #if defined(USE_SSR)
 	ssr = SsrTrace(var_WetPos, N, E, roughness, float(SSR_STEPS), 0.0);
   #endif
@@ -1218,7 +1292,15 @@ void main()
 		gl_FragColor.rgb += wet.y * WetSunGlint(wetN, Ew, F0, wetRough);
 	}
 	else
+	{
+		// Added in OPM: snow lying on it
+		if (u_Snow.x > 0.0 || u_Snow.y > 0.0)
+		{
+			snowLie = SnowLies(wetSurfN, wetSurfN, snowOpen);
+			diffuse.rgb = mix(diffuse.rgb, Lin(vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos)), snowLie);
+		}
 		gl_FragColor.rgb = diffuse.rgb * lightColor;
+	}
 
 #endif
 
@@ -1384,6 +1466,21 @@ void main()
   #endif
 	}
 #endif
+
+	// Added in OPM: the snow glitters in whatever light falls on it: where
+	// it lies, and on what is snow itself, out under the sky and facing up
+	if (u_Snow.y > 0.0)
+	{
+		float lies = u_Snow.w > 0.5 ? snowOpen * smoothstep(0.35, 0.8, wetSurfN.z) : snowLie;
+		if (lies > 0.0)
+		{
+			// (the brighter the light on it the more: little of it in the
+			// shade or by night, all of it in the sun or under a lamp)
+			float lum   = dot(gl_FragColor.rgb, vec3(0.2125, 0.7154, 0.0721));
+			float shown = u_Linear > 0.5 ? pow(max(lum, 0.0), 1.0 / 2.2) : lum;
+			gl_FragColor.rgb *= 1.0 + 8.0 * lies * u_Snow.y * smoothstep(0.15, 0.6, shown) * SnowGlitter(var_WetPos);
+		}
+	}
 
 	// MOH:AA global distance fog, matching the linear falloff the GL1 renderer
 	// gets from fixed function GL_FOG.

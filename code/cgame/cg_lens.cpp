@@ -67,8 +67,9 @@ void CG_InitLens(void)
     cg_lens_test = cgi.Cvar_Get("cg_lens_test", "0", CVAR_CHEAT);
     cg_lens_debug = cgi.Cvar_Get("cg_lens_debug", "0", 0);
     cg_lens_rain  = cgi.Cvar_Get("cg_lens_rain", "1", CVAR_ARCHIVE);
-    // a new map is dry until it rains (CG_LensRain)
+    // a new map is dry until it rains, and bare until it snows (CG_LensRain)
     cgi.Cvar_Set("r_rainWet", "0");
+    cgi.Cvar_Set("r_snowFall", "0");
     memset(cg_lensSpots, 0, sizeof(cg_lensSpots));
     cg_lensTime = 0;
     cg_lensSent = 0;
@@ -282,7 +283,8 @@ the higher he looks and the heavier the rain, goes to the renderer
 Snow falls by the rain's own means: a snow map (m6l1a, m6l1b) gives the rain
 a snowflake for its shader (textures/snow0 to snow11) and slows it down. It
 is told from rain by that name: snow wets nothing, runs off no roof and
-leaves no drops on the lens.
+leaves no drops on the lens. Once it has snowed on a map the renderer is
+told (r_snowFall): snow lies on what is out under the sky, and glitters.
 */
 static qboolean CG_RainIsSnow(void)
 {
@@ -299,6 +301,9 @@ static void CG_LensRain(void)
 
     if (raining && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
         cgi.Cvar_Set("r_rainWet", "1");
+    }
+    if (cg.rain.density > 0.0f && !raining && cgi.Cvar_Get("r_snowFall", "0", CVAR_TEMP)->value < 1.0f) {
+        cgi.Cvar_Set("r_snowFall", "1");
     }
     if (raining && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
         float up;
