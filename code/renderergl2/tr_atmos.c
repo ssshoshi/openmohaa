@@ -46,6 +46,21 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 // The player's own grade is the r_grade* cvars, which are applied with the
 // map's: r_gradeMap says how much of the map's is taken.
+//
+// The wind and the clouds:
+//
+//     // where the wind blows to (degrees, as yaw: 0 is +x, 90 +y), how hard
+//     wind    120 1.2
+//     // the clouds' shadows: how dark (0 to 1), how big a cloud is (units),
+//     // how fast they drift (units a second)
+//     clouds  0.5 2600 45
+//
+// The wind is the one the ground cover leans with and the clouds drift on,
+// and the cgame's rain slant and smoke are given it (vss_wind_x, vss_wind_y);
+// with no line it is the wind there always was. The clouds' shadows drift
+// over what the sun lights (glsl/shadowmask_fp.glsl): the sun's light dimmed
+// under them, along its rays, so a wall's shadow meets the ground's. A map
+// has none until its file says so; r_cloudShadows scales them.
 
 #include "tr_local.h"
 
@@ -59,6 +74,11 @@ static cvar_t *r_gradeGamma;
 static cvar_t *r_gradeGain;
 static cvar_t *r_gradeVignette;
 static cvar_t *r_gradeGrain;
+static cvar_t *r_wind;
+static cvar_t *r_cloudShadows;
+
+#define WIND_YAW_DEFAULT 36.87f // the ground cover's wind as it always was: (0.8, 0.6)
+#define CLOUD_SIZE       256
 
 typedef struct {
 	vec3_t lift, gamma, gain;
@@ -70,6 +90,10 @@ static struct {
 	qboolean found;
 	qboolean graded; // the file has a grade line
 	grade_t  grade;
+	qboolean windSet; // the file has a wind line
+	float    windYaw, windStrength;
+	float    cloudDark, cloudSize, cloudSpeed;
+	qboolean windGiven; // the cgame's wind cvars are this map's
 } atmos;
 
 static void R_GradeNeutral(grade_t *g)
@@ -193,6 +217,12 @@ static void R_AtmosReadFile(const char *mapName)
 	atmos.found  = qfalse;
 	atmos.graded = qfalse;
 	R_GradeNeutral(&atmos.grade);
+	atmos.windSet      = qfalse;
+	atmos.windYaw      = WIND_YAW_DEFAULT;
+	atmos.windStrength = 1.0f;
+	atmos.cloudDark    = 0.0f;
+	atmos.cloudSize    = 2600.0f;
+	atmos.cloudSpeed   = 45.0f;
 	Com_sprintf(atmos.file, sizeof(atmos.file), "atmos/%s.txt", mapName);
 	if (ri.FS_ReadFile(atmos.file, &buffer.v) <= 0) {
 		return;
@@ -208,6 +238,28 @@ static void R_AtmosReadFile(const char *mapName)
 		}
 		if (!Q_stricmp(token, "grade")) {
 			R_AtmosGradeLine(&text);
+		} else if (!Q_stricmp(token, "wind")) {
+			float v[2];
+			const int n = R_AtmosNumbers(&text, v, 2);
+
+			if (n < 1) {
+				ri.Printf(PRINT_WARNING, "%s: wind needs where it blows to, in degrees\n", atmos.file);
+			} else {
+				atmos.windSet      = qtrue;
+				atmos.windYaw      = v[0];
+				atmos.windStrength = n > 1 ? Com_Clamp(0.0f, 4.0f, v[1]) : 1.0f;
+			}
+		} else if (!Q_stricmp(token, "clouds")) {
+			float v[3];
+			const int n = R_AtmosNumbers(&text, v, 3);
+
+			if (n < 1) {
+				ri.Printf(PRINT_WARNING, "%s: clouds needs how dark their shadows are\n", atmos.file);
+			} else {
+				atmos.cloudDark  = Com_Clamp(0.0f, 1.0f, v[0]);
+				atmos.cloudSize  = n > 1 ? Q_max(64.0f, v[1]) : 2600.0f;
+				atmos.cloudSpeed = n > 2 ? v[2] : 45.0f;
+			}
 		} else {
 			// a newer file's setting: not this build's to read
 			ri.Printf(PRINT_DEVELOPER, "%s: '%s' is not known to this build\n", atmos.file, token);
@@ -227,6 +279,119 @@ The map's atmosphere, as it loads (or `atmosreload`).
 void R_AtmosLoadWorld(const char *mapName)
 {
 	R_AtmosReadFile(mapName);
+	// the last map's cloud image went with its images
+	tr.cloudShadowImage = NULL;
+
+	// the cgame's wind, which slants the rain and carries the smoke: this
+	// map's, or back to what it was when the last map had its own
+	if (atmos.windSet) {
+		vec2_t dir;
+		float  strength;
+
+		R_AtmosWind(dir, &strength);
+		ri.Cvar_Set("vss_wind_x", va("%g", dir[0] * 9.0f * strength));
+		ri.Cvar_Set("vss_wind_y", va("%g", dir[1] * 9.0f * strength));
+		atmos.windGiven = qtrue;
+	} else if (atmos.windGiven) {
+		ri.Cvar_Set("vss_wind_x", "8");
+		ri.Cvar_Set("vss_wind_y", "4");
+		atmos.windGiven = qfalse;
+	}
+}
+
+/*
+=============
+R_AtmosWind
+
+Where the wind blows to, flat and of length one, and how hard: 1 the wind
+there always was (r_wind scales it).
+=============
+*/
+void R_AtmosWind(vec2_t dir, float *strength)
+{
+	const float yaw = DEG2RAD(tr.world ? atmos.windYaw : WIND_YAW_DEFAULT);
+
+	dir[0]    = cos(yaw);
+	dir[1]    = sin(yaw);
+	*strength = (tr.world ? atmos.windStrength : 1.0f) * Q_max(0.0f, r_wind->value);
+}
+
+// A noise of clouds that meets itself at its edges: 0 clear sky, 255 the
+// thick of a cloud
+static void R_AtmosCloudImage(void)
+{
+	static const int cells[4]  = {4, 8, 16, 32};
+	static const float gain[4] = {0.5f, 0.27f, 0.15f, 0.08f};
+	byte            *pic = ri.Hunk_AllocateTempMemory(CLOUD_SIZE * CLOUD_SIZE * 4);
+	unsigned int     seed = 0x1e5f3a7u;
+	byte             knots[4][32 * 32];
+	int              o, x, y;
+
+	for (o = 0; o < 4; o++) {
+		for (x = 0; x < cells[o] * cells[o]; x++) {
+			seed        = seed * 1664525u + 1013904223u;
+			knots[o][x] = (byte)(seed >> 24);
+		}
+	}
+	for (y = 0; y < CLOUD_SIZE; y++) {
+		for (x = 0; x < CLOUD_SIZE; x++) {
+			float sum = 0.0f;
+
+			for (o = 0; o < 4; o++) {
+				const int   n  = cells[o];
+				const float fx = x * (float)n / CLOUD_SIZE, fy = y * (float)n / CLOUD_SIZE;
+				const int   x0 = (int)fx, y0 = (int)fy, x1 = (x0 + 1) % n, y1 = (y0 + 1) % n;
+				float       tx = fx - x0, ty = fy - y0;
+				float       a, b;
+
+				tx  = tx * tx * (3.0f - 2.0f * tx);
+				ty  = ty * ty * (3.0f - 2.0f * ty);
+				a   = knots[o][y0 * n + x0] + (knots[o][y0 * n + x1] - knots[o][y0 * n + x0]) * tx;
+				b   = knots[o][y1 * n + x0] + (knots[o][y1 * n + x1] - knots[o][y1 * n + x0]) * tx;
+				sum += (a + (b - a) * ty) * gain[o];
+			}
+			pic[(y * CLOUD_SIZE + x) * 4 + 0] = pic[(y * CLOUD_SIZE + x) * 4 + 1] = pic[(y * CLOUD_SIZE + x) * 4 + 2] =
+				(byte)Com_Clamp(0.0f, 255.0f, sum);
+			pic[(y * CLOUD_SIZE + x) * 4 + 3] = 255;
+		}
+	}
+	tr.cloudShadowImage = R_CreateImage("*cloudShadow", pic, CLOUD_SIZE, CLOUD_SIZE, IMGTYPE_COLORALPHA,
+		IMGFLAG_MIPMAP | IMGFLAG_NO_COMPRESSION, 0);
+	ri.Hunk_FreeTempMemory(pic);
+}
+
+/*
+=============
+R_AtmosCloudShadows
+
+The clouds' shadows for the sun's shadow mask (glsl/shadowmask_fp.glsl): how
+dark (0: none, and nothing is bound), one over a cloud's size, and how far
+they have drifted, in the image's own measure. Binds the cloud image.
+=============
+*/
+void R_AtmosCloudShadows(vec4_t out, int tmu)
+{
+	const float dark = (tr.world ? atmos.cloudDark : 0.0f) * Com_Clamp(0.0f, 1.0f, r_cloudShadows->value);
+	vec2_t      dir;
+	float       strength, drift;
+
+	VectorClear4(out);
+	if (dark <= 0.0f) {
+		return;
+	}
+	if (!tr.cloudShadowImage) {
+		R_AtmosCloudImage();
+	}
+	if (!tr.cloudShadowImage) {
+		return;
+	}
+	R_AtmosWind(dir, &strength);
+	// (the shadows go the way the wind does: the image is read the other way)
+	drift = (float)fmod(backEnd.refdef.floatTime, 36000.0) * atmos.cloudSpeed * strength / atmos.cloudSize;
+	VectorSet4(out, dark, 1.0f / atmos.cloudSize, -dir[0] * drift, -dir[1] * drift);
+	out[2] -= floor(out[2]);
+	out[3] -= floor(out[3]);
+	GL_BindToTMU(tr.cloudShadowImage, tmu);
 }
 
 static void R_GradeFromCvars(grade_t *g)
@@ -327,6 +492,20 @@ static void R_AtmosInfo_f(void)
 				m->saturation, m->vibrance, m->vignette, m->grain);
 		}
 	}
+	{
+		vec2_t dir;
+		float  strength;
+
+		R_AtmosWind(dir, &strength);
+		ri.Printf(PRINT_ALL, "Wind to %g degrees (%.2f %.2f), strength %g%s\n", tr.world ? atmos.windYaw : WIND_YAW_DEFAULT, dir[0],
+			dir[1], strength, atmos.windSet ? "" : " (no wind line: as it always was)");
+		if (atmos.cloudDark > 0.0f) {
+			ri.Printf(PRINT_ALL, "Cloud shadows %g dark (x r_cloudShadows %g), clouds %g units, drifting %g a second\n", atmos.cloudDark,
+				r_cloudShadows->value, atmos.cloudSize, atmos.cloudSpeed * strength);
+		} else {
+			ri.Printf(PRINT_ALL, "No cloud shadows\n");
+		}
+	}
 	if (!r_grade->integer) {
 		ri.Printf(PRINT_ALL, "r_grade 0: the picture is not graded\n");
 		return;
@@ -376,6 +555,10 @@ void R_AtmosInit(void)
 	ri.Cvar_SetDescription(r_gradeVignette, "Darkens the picture's corners, 0 to 1");
 	r_gradeGrain = ri.Cvar_Get("r_gradeGrain", "0", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_gradeGrain, "Film grain over the picture, 0 to 1");
+	r_wind = ri.Cvar_Get("r_wind", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_wind, "How hard the wind blows: the ground cover leans with it and the clouds' shadows drift on it (1: as the map has it, 0 still)");
+	r_cloudShadows = ri.Cvar_Get("r_cloudShadows", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_cloudShadows, "The shadows of clouds drifting over what the sun lights, on maps whose atmos/<map>.txt has clouds: 0 none, 1 as dark as the map has them. Needs r_sunShadows");
 	ri.Cmd_AddCommand("atmosinfo", R_AtmosInfo_f);
 	ri.Cmd_AddCommand("atmosreload", R_AtmosReload_f);
 }

@@ -28,6 +28,11 @@ uniform vec3   u_ViewLeft;
 uniform vec3   u_ViewUp;
 varying vec2   var_Ndc;
 
+// Added in OPM: the clouds' shadows (r_cloudShadows, tr_atmos.c): how dark
+// (0: none), one over a cloud's size, how far they have drifted
+uniform sampler2D u_CloudShadowMap;
+uniform vec4      u_CloudShadow;
+
 varying vec2   var_DepthTex;
 varying vec3   var_ViewDir;
 
@@ -220,6 +225,20 @@ void main()
 	// to the point to be under their texels may still stop
 	if (u_PrimaryLightOrigin.w > 0.0 && result > 0.0 && depth < 0.999)
 		result *= ContactShadow(u_ViewOrigin + var_ViewDir * depth, depth);
+
+	// Added in OPM: under a cloud the sun's light is dimmed. The clouds are
+	// looked up where the sun's ray through the point meets the world's
+	// level, so that a wall's shadow of a cloud meets the ground's; two
+	// sizes of them, drifting a little apart.
+	if (u_CloudShadow.x > 0.0 && result > 0.0 && depth < 0.999)
+	{
+		vec3  P  = u_ViewOrigin + var_ViewDir * depth;
+		vec3  L  = u_PrimaryLightOrigin.xyz;
+		vec2  at = (P.xy - L.xy * (P.z / max(L.z, 0.2))) * u_CloudShadow.y;
+		float c  = texture2D(u_CloudShadowMap, at + u_CloudShadow.zw).r * 0.7
+		         + texture2D(u_CloudShadowMap, at * 2.6 + u_CloudShadow.zw * 1.7 + vec2(0.37, 0.61)).r * 0.3;
+		result *= 1.0 - u_CloudShadow.x * smoothstep(0.42, 0.62, c);
+	}
 
 	gl_FragColor = vec4(vec3(result), 1.0);
 }
