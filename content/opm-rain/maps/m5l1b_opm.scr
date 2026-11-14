@@ -1,0 +1,38 @@
+//=============================================================================
+// maps/m5l1b_opm.scr - OpenMoHAA add-on for m5l1b
+//
+// It is raining when the level starts. global/weather.scr takes its rain,
+// wind and thunder from the level variables below when the level has set
+// them, and eases on from there; m5l1b's own script sets them only after
+// that, and only when the player walked in from m5l1a (continuegame: from the
+// game variables m5l1a left), so the level began dry either way.
+//
+// Coming from m5l1a the weather goes on as it was there; started by itself
+// (devmap, a mission picked from a menu) it starts as m5l1a does
+// (m5l1a_opm.scr).
+//
+// An add-on (Level::StartMapAddon) and not a change to maps/m5l1b.scr: a
+// savegame keeps a script thread's place as an offset into the compiled map
+// script. Runs at level start, before weather.scr reads these, and again
+// whenever a save is loaded, when they are already set and it leaves them.
+//=============================================================================
+
+	if (level.raindensity != NIL)
+		end
+
+	if (game.raindensity != NIL)
+	{
+		level.windtime = game.windtime
+		level.shuttertime = game.shuttertime
+		level.rainvolume = game.rainvolume
+		level.raindensity = game.raindensity
+		level.thundertime = game.thundertime
+		end
+	}
+
+	level.windtime = 3
+	level.shuttertime = 0.2
+	level.rainvolume = 0.4
+	level.raindensity = 3
+	level.thundertime = 6
+end
