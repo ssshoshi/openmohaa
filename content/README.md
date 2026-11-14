@@ -2,7 +2,8 @@
 
 Game data changes that go with the engine, one folder per pak. Each folder
 builds into `zzzzzzzzz-<folder>.pk3`, which sorts after the retail and mod paks
-and so overrides them.
+and so overrides them, or, when the folder has a `LOAD_LAST` file, into
+`zzzzzzzzzzzzzzzz-<folder>.pk3`, after the MOHAIM addon too.
 
 Most of these change a retail or mod file that is not ours to publish, so the
 folder holds only a unified diff against it (`<path>.patch`). The build takes
@@ -12,7 +13,10 @@ not ours either are listed with where to download them (`*.fetch`, one
 `<path in the pak> <url>` a line), and the build fetches them. Files of our own
 go in as they are, at their path under the folder. Images made from the
 game's own are recipes (`*.derive`, one `<path in the pak> <game path> scale <k>`
-a line: the game's image with its colours times k), made at build time.
+a line: the game's image with its colours times k), made at build time, and so
+are animations made from the game's own (`*.additive`, one
+`<path in the pak> <pose .skc> <motion .skc>` a line: the pose's first frame
+with its upper body moving as the motion's does).
 
     tools/content/pack.py                    # every pak, into build/content/
     tools/content/pack.py opm-hrrtm-blood    # one of them
@@ -27,8 +31,10 @@ a line: the game's image with its colours times k), made at build time.
 |---|---|---|
 | `opm-cabinet-ragdoll` | retail | The man who falls out of a shot hidden cabinet (`global/cabinet.scr`, m3l2, m5l1a, m5l1b) dies once he is clear of it, so the ragdoll takes over his fall. |
 | `opm-hrrtm-blood` | HRRTM Blood Effects Addon | Bullet hits on people splatter the wall behind at once and at full strength, light hits as well as hard ones. Built from the addon's own effect, so without the addon it is not built. Its two wall splats three times brighter (`blood.derive`): the addon's are near black. |
+| `opm-crouch-idle` | retail | The player crouched no longer holds still: the crouch idles the player model plays (`models/player/base/anims_*.txt`) were held poses, and are now each crouch with the upper body breathing and shifting as the standing idle of the same weapon does (`crouch_idles.additive`, made from the game's anims at build time). The body, its shadow and the view weapon's idle sway (`vm_idle`, which follows the body's hand) move crouched as they do standing. The legs stay as they were. Loads after the MOHAIM addon (`LOAD_LAST`: `zzzzzzzzzzzzzzzz-` prefix), whose own `anims_*.txt` would otherwise win. |
 | `opm-gore` | nothing | The gore system's shaders and textures (`cg_gore.cpp`): wounds, drops, splashes and pools. All our own; the textures are drawn by `tools/content/gore_textures.py`. |
 | `opm-physics` | internet, once | What corpses and props sound like striking things: the `phys_*` aliases the physics plays (`code/physics/phys_impact.cpp`), on Half-Life 2's and Day of Defeat: Source's physics recordings. Those are Valve's, so `physics.fetch` lists where the build downloads them from (kept in `~/.cache/openmohaa-content`) and only the pak built here has them. |
 | `opm-water` | nothing | How a map's water looks and moves (`water/<map>.txt`, read by `tr_water.c` and `cg_water.cpp`), and m3l1a's: grey-green Channel water, a swell rolling in onto Omaha, blood in the surf, the falling tide's wet sand with water standing on it and red under the dead, and the men of the first waves lying in the surf (`maps/m3l1a_opm.scr`), whom the waves lift, roll and wash up the beach. Patched: the bullet splash in water (`bh_water_lite`/`_hard.tik`: a column and a crown of drops, the rings left to the water itself) and m3l1a's scripted MG hits (`bhit`), which now show a real round's wound and blood (`global/opm_realhit.scr`, our own). |
 | `opm-prone` | retail; internet, once | The player model's prone animations (`models/player/base/anims_shared.txt`), which the legs play while lying down and crawling, so the shadow and first-person body lie down too, and the stance sounds (`ubersound/opm_prone.scr`): lying down, getting up, crawling, sprinting and the reload rustle, on Day of Defeat: Source's player recordings. Those are Valve's, so `prone.fetch` lists where the build downloads them from. Without the pak prone still works, standing up in the shadow and silent. |
+| `opm-rain` | nothing | m5l1a starts in the rain (`maps/m5l1a_opm.scr`, our own): an add-on that sets `global/weather.scr`'s second pattern before the weather script reads it, so it eases on from there instead of from dry. Not a patch to `maps/m5l1a.scr`: saves keep script threads as offsets into it. The water pouring off roofs' eaves in the rain and its splash (`scripts/opm_rain.shader`, read by `tr_water.c`'s `R_RainRunoff`): the stream's texture is our own, drawn by `tools/content/rain_textures.py`; the splash is the game's. |
 | `opm-trees` | retail | Trees stay whole at every distance: the flat sprites the far trees were swapped for, which popped in and out (and their shadows with them) as you walked, are never drawn, and the full model no longer fades out to make way for them (`scripts/trees.shader`). The leaf planes meant only for up close still fade. The trees whose `.tik` had no `lod_scale 100` (oak, birch, juniper, the winter pines) get it, which the static-model LOD now honours, so a far tree keeps its trunk. |

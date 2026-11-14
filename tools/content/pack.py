@@ -28,6 +28,7 @@ import glob
 import hashlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CONTENT = os.path.join(ROOT, "content")
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 PREFIX = "zzzzzzzzz-"
+# A pak whose folder holds a file named LOAD_LAST goes in under this prefix
+# instead: after the mod paks that sort later than PREFIX (the MOHAIM addon,
+# zzzzzzzzzzzzzzz-HRRTM_addon_MOHAIM.pk3, has its own player anims_*.txt).
+LATE_PREFIX = "zzzzzzzzzzzzzzzz-"
+LOAD_LAST = "LOAD_LAST"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "openmohaa-content")
 
 
@@ -50,7 +56,7 @@ class Skip(Exception):
 def game_paks(game):
     """The game's paks in load order (later ones win), ours left out."""
     paks = sorted(glob.glob(os.path.join(game, "main", "*.pk3")), key=lambda p: os.path.basename(p).lower())
-    return [p for p in paks if not os.path.basename(p).lower().startswith(PREFIX + "opm-")]
+    return [p for p in paks if not re.match(r"z+-opm-", os.path.basename(p).lower())]
 
 
 def game_file(game, path):
@@ -88,6 +94,74 @@ def derive(game, line):
     out = io.BytesIO()
     Image.merge("RGBA", (r, g, b, a)).save(out, "TGA")
     return path, out.getvalue(), pak
+
+
+HELD_BONES = ("Bip01", "Bip01 Pelvis", "Bip01 Footsteps", "ORIGIN", "Camera01", "eyes bone")
+HELD_PARTS = ("Thigh", "Calf", "Foot", "Toe")
+SKC_LOOP = 0x20
+
+
+def _held(bone):
+    """A bone an additive idle leaves as the pose has it: the root, the pelvis, the legs
+    (placed by their feet) and the helpers (origin, camera, eyes)."""
+    return bone in HELD_BONES or any(part in bone for part in HELD_PARTS)
+
+
+def _qmul(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
+def additive(game, line):
+    """A skeletal animation made from two of the game's: `<path in the pak> <pose> <motion>`.
+
+    The pose's first frame held, with every bone above the pelvis turned as the
+    motion turns that bone from its own first frame (in the bone's own space), at
+    the motion's length and rate, looping. Legs, pelvis and positions stay the
+    pose's, so the feet stay planted. Used for idles: a held crouch breathing and
+    shifting as the standing idle does."""
+    sys.path.insert(0, os.path.join(ROOT, "tools", "blender", "io_scene_mohaa"))
+    from mohaa import skc
+
+    words = line.split()
+    if len(words) != 3:
+        sys.exit(f"bad additive line: {line}")
+    path, pose_path, motion_path = words
+    pose_data, pak = game_file(game, pose_path)
+    motion_data, _ = game_file(game, motion_path)
+    pose, motion = skc.read(pose_data), skc.read(motion_data)
+
+    out = skc.Animation()
+    out.flags = motion.flags | SKC_LOOP
+    out.frame_time = motion.frame_time
+    out.channels = list(pose.channels)
+    still = pose.frames[0]
+    out.frames = [skc.Frame(still.bounds, still.radius) for _ in motion.frames]
+    base = pose.values[0]
+    deltas = {}
+    for c, name in enumerate(out.channels):
+        if not name.endswith(" rot") or _held(name[:-4]):
+            continue
+        track = motion.channel(name)
+        if track is None:
+            continue
+        x, y, z, w = track[0]
+        inv = (-x, -y, -z, w)
+        deltas[c] = [_qmul(inv, q) for q in track]
+    for f in range(motion.num_frames):
+        row = []
+        for c, value in enumerate(base):
+            if c in deltas:
+                q = _qmul(value, deltas[c][f])
+                n = sum(v * v for v in q) ** 0.5
+                value = tuple(v / n for v in q)
+            row.append(value)
+        out.values.append(row)
+    return path, skc.write(out), pak
 
 
 def patch_target(patch_file):
@@ -155,7 +229,7 @@ def build(name, game, out):
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, folder).replace(os.sep, "/")
-            if rel == "README.md":
+            if rel in ("README.md", LOAD_LAST):
                 continue
             if fn.endswith(".patch"):
                 path = patch_target(full)
@@ -170,6 +244,14 @@ def build(name, game, out):
                             path, data, pak = derive(game, line)
                             files[path] = data
                             print(f"  {path}  (derived from {os.path.basename(pak)})")
+            elif fn.endswith(".additive"):
+                with open(full) as f:
+                    for line in f:
+                        line = line.split("#")[0].strip()
+                        if line:
+                            path, data, pak = additive(game, line)
+                            files[path] = data
+                            print(f"  {path}  (made from {os.path.basename(pak)})")
             elif fn.endswith(".fetch"):
                 count = 0
                 with open(full) as f:
@@ -187,7 +269,8 @@ def build(name, game, out):
                 print(f"  {rel}")
 
     os.makedirs(out, exist_ok=True)
-    target = os.path.join(out, PREFIX + name + ".pk3")
+    prefix = LATE_PREFIX if os.path.isfile(os.path.join(folder, LOAD_LAST)) else PREFIX
+    target = os.path.join(out, prefix + name + ".pk3")
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
         for path in sorted(files):
             z.writestr(path, files[path])

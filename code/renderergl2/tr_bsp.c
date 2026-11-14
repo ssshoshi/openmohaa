@@ -1886,6 +1886,11 @@ static	void R_LoadSurfaces( lump_t *surfs, lump_t *verts, lump_t *indexLump ) {
 	in = (void *)(fileBase + surfs->fileofs);
 	out = s_worldData.surfaces;
 	for ( i = 0 ; i < count ; i++, in++, out++ ) {
+		// Added in OPM: the loading screen kept alive while the surfaces'
+		// shaders load their images, between one surface and the next
+		if ( ri.LoadingTick && !( i & 15 ) ) {
+			ri.LoadingTick();
+		}
 		switch ( LittleLong( in->surfaceType ) ) {
 		case MST_PATCH:
 			ParseMesh ( in, dv, hdrVertColors, out );
@@ -2999,10 +3004,65 @@ void R_RenderMissingCubemaps(void)
 }
 
 
+/*
+=================
+R_CalcVertexLightDirs
+
+Each world vertex's light direction, for the specular of baked light.
+
+Added in OPM: MOH:AA's R_LightDirForPoint traces to every light of the
+vertex's leaf and to the sun, which on m1l1 took 7.4 s of the load with the
+screen frozen. Where faces meet, their vertexes are at the same place, and
+the traces depend on the place alone (the normal only chooses between their
+result and itself afterwards), so each place is traced once: an open
+addressed table keyed on the exact position. The result is the same.
+=================
+*/
+typedef struct {
+	vec3_t   xyz;
+	vec3_t   dir;
+	qboolean used;
+} lightDirCache_t;
+
+static unsigned R_LightDirHash( const vec3_t xyz )
+{
+	unsigned h = 2166136261u;
+	const byte *b = (const byte *)xyz;
+	int i;
+
+	for ( i = 0; i < (int)sizeof( vec3_t ); i++ ) {
+		h = ( h ^ b[i] ) * 16777619u;
+	}
+	return h;
+}
+
 void R_CalcVertexLightDirs( void )
 {
 	int i, k;
 	msurface_t *surface;
+	lightDirCache_t *cache;
+	unsigned cacheSize, mask;
+	int numVerts = 0, traced = 0;
+
+	if ( s_worldData.lightGridData == NULL ) {
+		// R_LightDirForPoint would leave every one alone
+		return;
+	}
+
+	for(k = 0, surface = &s_worldData.surfaces[0]; k < s_worldData.numsurfaces; k++, surface++)
+	{
+		srfBspSurface_t *bspSurf = (srfBspSurface_t *) surface->data;
+
+		if (bspSurf->surfaceType == SF_FACE || bspSurf->surfaceType == SF_GRID || bspSurf->surfaceType == SF_TRIANGLES)
+			numVerts += bspSurf->numVerts;
+	}
+
+	// a power of two at least twice the vertexes, so probes stay short
+	for (cacheSize = 1024; cacheSize < (unsigned)numVerts * 2; cacheSize <<= 1)
+		;
+	mask = cacheSize - 1;
+	cache = ri.Hunk_AllocateTempMemory(cacheSize * sizeof(*cache));
+	Com_Memset(cache, 0, cacheSize * sizeof(*cache));
 
 	for(k = 0, surface = &s_worldData.surfaces[0]; k < s_worldData.numsurfaces /* s_worldData.numWorldSurfaces */; k++, surface++)
 	{
@@ -3017,9 +3077,38 @@ void R_CalcVertexLightDirs( void )
 				{
 					vec3_t lightDir;
 					vec3_t normal;
+					const float *xyz = bspSurf->verts[i].xyz;
+					unsigned slot = R_LightDirHash(xyz) & mask;
+					lightDirCache_t *entry;
+
+					// the loading screen kept alive through the traces
+					if (ri.LoadingTick && !(traced & 1023))
+						ri.LoadingTick();
+
+					for (;;)
+					{
+						entry = &cache[slot];
+						if (!entry->used)
+						{
+							entry->used = qtrue;
+							VectorCopy(xyz, entry->xyz);
+							R_LightDirSummed(xyz, &s_worldData, entry->dir);
+							traced++;
+							break;
+						}
+						if (!memcmp(entry->xyz, xyz, sizeof(vec3_t)))
+							break;
+						slot = (slot + 1) & mask;
+					}
 
 					R_VaoUnpackNormal(normal, bspSurf->verts[i].normal);
-					R_LightDirForPoint( bspSurf->verts[i].xyz, lightDir, normal, &s_worldData );
+
+					// as R_LightDirForPoint
+					if (DotProduct(entry->dir, normal) > 0.2f)
+						VectorCopy(entry->dir, lightDir);
+					else
+						VectorCopy(normal, lightDir);
+
 					R_VaoPackNormal(bspSurf->verts[i].lightdir, lightDir);
 				}
 
@@ -3029,6 +3118,9 @@ void R_CalcVertexLightDirs( void )
 				break;
 		}
 	}
+
+	ri.Hunk_FreeTempMemory(cache);
+	ri.Printf(PRINT_DEVELOPER, "vertex light directions: %d vertexes, %d places traced\n", numVerts, traced);
 }
 
 //
@@ -3335,6 +3427,10 @@ void R_UnpackTerraPatch(cTerraPatch_t* pPacked, cTerraPatchUnpacked_t* pUnpacked
     pUnpacked->y0 = ((int)pPacked->y << 6);
     pUnpacked->z0 = pPacked->iBaseHeight;
     pUnpacked->shader = ShaderForShaderNum(pPacked->iShader, FatLightmap(pPacked->iLightMap));
+    // Added in OPM: the rain wets it (R_WaterSetWet)
+    if (pUnpacked->shader) {
+        pUnpacked->shader->isTerrain = qtrue;
+    }
     pUnpacked->iNorth = pPacked->iNorth;
     pUnpacked->iEast = pPacked->iEast;
     pUnpacked->iSouth = pPacked->iSouth;
@@ -3707,6 +3803,31 @@ static void R_SetupSunFromWorldspawn( void )
 
 /*
 =================
+R_LoadStep
+
+Added in OPM: with com_loadProfile on, how long each step of the world load
+took, to go with the engine's load profile (which sees the renderer's world
+load as one stage).
+=================
+*/
+static int loadStepAt;
+
+static void R_LoadStep( const char *step )
+{
+	static cvar_t *com_loadProfile;
+	int            now = ri.Milliseconds();
+
+	if ( !com_loadProfile ) {
+		com_loadProfile = ri.Cvar_Get( "com_loadProfile", "0", 0 );
+	}
+	if ( step && com_loadProfile->integer && now - loadStepAt >= 50 ) {
+		ri.Printf( PRINT_ALL, "LOADPROFILE_WORLD %5dms %s\n", now - loadStepAt, step );
+	}
+	loadStepAt = now;
+}
+
+/*
+=================
 RE_LoadWorldMap
 
 Called directly from cgame
@@ -3724,6 +3845,9 @@ void RE_LoadWorldMap( const char *name ) {
 	if ( tr.worldMapLoaded ) {
 		ri.Error( ERR_DROP, "ERROR: attempted to redundantly load world map" );
 	}
+
+	// Added in OPM: the step timer starts here (com_loadProfile)
+	R_LoadStep( NULL );
 
 	// set default map light scale
 	tr.sunShadowScale = 0.5f;
@@ -3760,6 +3884,7 @@ void RE_LoadWorldMap( const char *name ) {
 	tr.sunShadows = qfalse;
 	VectorClear(tr.sunLight);
 	tr.haveCascade2Cache = qfalse;
+	memset(tr.haveCascadeKept, 0, sizeof(tr.haveCascadeKept));
 
 	R_FreeWorldImages();
 	//=========================
@@ -3818,15 +3943,20 @@ void RE_LoadWorldMap( const char *name ) {
 	// load into heap
 #if 0
 	R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
+	R_LoadStep( "R_LoadEntities" );
 	R_LoadShaders( &header->lumps[LUMP_SHADERS] );
+	R_LoadStep( "R_LoadShaders" );
 	R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS], &header->lumps[LUMP_SURFACES] );
+	R_LoadStep( "R_LoadLightmaps" );
 	R_LoadPlanes (&header->lumps[LUMP_PLANES]);
 	//R_LoadFogs( &header->lumps[LUMP_FOGS], &header->lumps[LUMP_BRUSHES], &header->lumps[LUMP_BRUSHSIDES] );
 	R_LoadSurfaces( &header->lumps[LUMP_SURFACES], &header->lumps[LUMP_DRAWVERTS], &header->lumps[LUMP_DRAWINDEXES] );
+	R_LoadStep( "R_LoadSurfaces" );
 	R_LoadMarksurfaces (&header->lumps[LUMP_LEAFSURFACES]);
 	R_LoadNodesAndLeafs (&header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS]);
 	R_LoadSubmodels (&header->lumps[LUMP_MODELS]);
 	R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
+	R_LoadStep( "R_LoadVisibility" );
 	R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
 #endif
 
@@ -3836,33 +3966,40 @@ void RE_LoadWorldMap( const char *name ) {
 	_R(53);
     _R(54);
     R_LoadShaders(Q_GetLumpByVersion(header, LUMP_SHADERS));
+    R_LoadStep( "R_LoadShaders" );
     _R(55);
     _R(56);
     R_LoadPlanes(Q_GetLumpByVersion(header, LUMP_PLANES));
+    R_LoadStep( "R_LoadPlanes" );
     _R(57);
     _R(58);
     _R(59);
     R_LoadLightmaps(Q_GetLumpByVersion(header, LUMP_LIGHTMAPS), Q_GetLumpByVersion(header, LUMP_SURFACES));
+    R_LoadStep( "R_LoadLightmaps" );
     _R(60);
     _R(61);
     _R(62);
     _R(63);
     _R(64);
     R_LoadSurfaces(Q_GetLumpByVersion(header, LUMP_SURFACES), Q_GetLumpByVersion(header, LUMP_DRAWVERTS), Q_GetLumpByVersion(header, LUMP_DRAWINDEXES));
+    R_LoadStep( "R_LoadSurfaces" );
     _R(65);
     _R(66);
     _R(67);
     _R(68);
     _R(69);
     R_LoadMarksurfaces(Q_GetLumpByVersion(header, LUMP_LEAFSURFACES));
+    R_LoadStep( "R_LoadMarksurfaces" );
     _R(70);
     _R(71);
     _R(72);
     _R(73);
     if (header->version > BSP_BETA_VERSION) {
         R_LoadNodesAndLeafs(Q_GetLumpByVersion(header, LUMP_NODES), Q_GetLumpByVersion(header, LUMP_LEAFS));
+        R_LoadStep( "R_LoadNodesAndLeafs" );
     } else {
         R_LoadNodesAndLeafsOld(Q_GetLumpByVersion(header, LUMP_NODES), Q_GetLumpByVersion(header, LUMP_LEAFS));
+        R_LoadStep( "R_LoadNodesAndLeafsOld" );
     }
     _R(74);
     _R(75);
@@ -3870,48 +4007,58 @@ void RE_LoadWorldMap( const char *name ) {
     numFogs = 0;
     _R(77);
     R_LoadSubmodels(Q_GetLumpByVersion(header, LUMP_MODELS));
+    R_LoadStep( "R_LoadSubmodels" );
     _R(78);
     _R(79);
     _R(80);
     R_LoadVisibility(Q_GetLumpByVersion(header, LUMP_VISIBILITY));
+    R_LoadStep( "R_LoadVisibility" );
     _R(81);
     _R(82);
     _R(83);
     _R(84);
     _R(85);
     R_LoadLightGrid2(Q_GetLumpByVersion(header, LUMP_LIGHTGRIDPALETTE), Q_GetLumpByVersion(header, LUMP_LIGHTGRIDOFFSETS), Q_GetLumpByVersion(header, LUMP_LIGHTGRIDDATA));
+    R_LoadStep( "R_LoadLightGrid2" );
     _R(86);
     _R(87);
     _R(88);
     _R(89);
     _R(90);
     R_LoadSphereLights(Q_GetLumpByVersion(header, LUMP_SPHERELIGHTS));
+    R_LoadStep( "R_LoadSphereLights" );
     _R(91);
     _R(92);
     _R(93);
     R_LoadSphereLightVis(Q_GetLumpByVersion(header, LUMP_SPHERELIGHTVIS));
+    R_LoadStep( "R_LoadSphereLightVis" );
     _R(94);
     _R(95);
     _R(96);
     R_LoadTerrain(Q_GetLumpByVersion(header, LUMP_TERRAIN));
+    R_LoadStep( "R_LoadTerrain" );
     _R(97);
     _R(98);
     _R(99);
     R_LoadTerrainIndexes(Q_GetLumpByVersion(header, LUMP_TERRAININDEXES));
+    R_LoadStep( "R_LoadTerrainIndexes" );
     _R(100);
     _R(101);
     if (header->version > BSP_BETA_VERSION)
     {
         _R(102);
         R_LoadStaticModelData(Q_GetLumpByVersion(header, LUMP_STATICMODELDATA));
+        R_LoadStep( "R_LoadStaticModelData" );
         _R(103);
         _R(104);
         _R(105);
         R_LoadStaticModelDefs(Q_GetLumpByVersion(header, LUMP_STATICMODELDEF));
+        R_LoadStep( "R_LoadStaticModelDefs" );
         _R(106);
         _R(107);
         _R(108);
         R_LoadStaticModelIndexes(Q_GetLumpByVersion(header, LUMP_STATICMODELINDEXES));
+        R_LoadStep( "R_LoadStaticModelIndexes" );
         _R(109);
         _R(110);
     }
@@ -3924,11 +4071,14 @@ void RE_LoadWorldMap( const char *name ) {
 
     ri.UI_LoadResource("*111");
     R_Sphere_InitLights();
+    R_LoadStep( "R_Sphere_InitLights" );
     R_SetupSunFromWorldspawn();
+    R_LoadStep( "R_SetupSunFromWorldspawn" );
 	//=========================
 
 	// determine vertex light directions
 	R_CalcVertexLightDirs();
+	R_LoadStep( "R_CalcVertexLightDirs" );
 
 	// determine which parts of the map are in sunlight
 	if (0)
@@ -4146,14 +4296,20 @@ void RE_LoadWorldMap( const char *name ) {
 	{
 		if (!tr.numCubemaps)
 			R_PlaceEnvProbes(Q_GetLumpByVersion(header, LUMP_ENTITIES));
+			R_LoadStep( "R_PlaceEnvProbes" );
 		if (tr.numCubemaps)
 			R_AssignCubemapsToWorldSurfaces();
+			R_LoadStep( "R_AssignCubemapsToWorldSurfaces" );
 	}
 
 	// Added in OPM
 	//  From the file as it is, before the lightmaps went into atlases.
 	R_GroundCoverLoadWorld(fileBase, header);
+	R_LoadStep( "R_GroundCoverLoadWorld" );
 	R_WaterLoadWorld(s_worldData.baseName);
+	R_LoadStep( "R_WaterLoadWorld" );
+	R_FogLoadWorld(s_worldData.baseName);
+	R_LoadStep( "R_FogLoadWorld" );
 
     ri.FS_FreeFile( buffer.v );
 
@@ -4162,8 +4318,10 @@ void RE_LoadWorldMap( const char *name ) {
 	//=========================
     ri.UI_LoadResource("*112");
     R_InitTerrain();
+    R_LoadStep( "R_InitTerrain" );
     ri.UI_LoadResource("*113");
     R_InitStaticModels();
+    R_LoadStep( "R_InitStaticModels" );
 
 	// Render or load all cubemaps
 	// Moved in OPM: after the terrain and the static models, which they
@@ -4171,16 +4329,21 @@ void RE_LoadWorldMap( const char *name ) {
 	if (r_cubeMapping->integer && tr.numCubemaps && glRefConfig.framebufferObject)
 	{
 		R_LoadCubemaps();
+		R_LoadStep( "R_LoadCubemaps" );
 		R_RenderMissingCubemaps();
+		R_LoadStep( "R_RenderMissingCubemaps" );
 	}
 
     // Added in OPM
     //  After the sun (R_Sphere_InitLights) and the static models.
     R_RtLoadWorld();
+    R_LoadStep( "R_RtLoadWorld" );
     ri.UI_LoadResource("*114");
     R_LevelMarksLoad(name);
+    R_LoadStep( "R_LevelMarksLoad" );
     ri.UI_LoadResource("*115");
     R_VisDebugLoad(name);
+    R_LoadStep( "R_VisDebugLoad" );
     ri.UI_LoadResource("*116");
     //=========================
 }

@@ -46,6 +46,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "gamecvars.h"
 #include "g_physics.h"
 #include "g_phys.h"
+#include "g_orch.h"
 #include "sentient.h"
 #include "barrels.h"
 #include "object.h"
@@ -592,6 +593,10 @@ static int G_PhysicsDecide(Entity *ent, float *mass, const char **why)
         }
         byDefault  = true;
         defaultWhy = ent->IsSubclassOfCrateObject() ? "a crate" : "a barrel";
+    } else if (ent->isSubclassOf(InteractObject) && G_OrchSpawned(ent)) {
+        // spawned from the model browser (g_orch.cpp): a prop, whatever its size
+        byDefault  = true;
+        defaultWhy = "spawned from the model browser";
     } else if (ent->isSubclassOf(InteractObject)) {
         byDefault  = ent->size[0] <= 96 && ent->size[1] <= 96 && ent->size[2] <= 96;
         defaultWhy = byDefault ? "small enough to move" : "too big to move";
@@ -740,7 +745,8 @@ void G_PhysicsInitLevel(const char *mapfile)
 
     // Solid brushes, and fences; the clip brushes that stand in for the
     // client's static model furniture are solid too, which is what the
-    // server's props should rest on. Player clip stays out.
+    // server's props should rest on. Player clip stays out, but where it is
+    // the ground under a patch that is drawn but not solid (a path, a road).
     std::vector<physFurniture_t> furniture;
 
     Phys_FindFurniture(buf, len, &furniture);
@@ -751,8 +757,9 @@ void G_PhysicsInitLevel(const char *mapfile)
     }
 
     memset(&opt, 0, sizeof(opt));
-    opt.contents  = CONTENTS_SOLID | CONTENTS_FENCE;
-    opt.skipBrush = G_PhysicsSkipFurniture;
+    opt.contents          = CONTENTS_SOLID | CONTENTS_FENCE;
+    opt.floorClipContents = CONTENTS_PLAYERCLIP;
+    opt.skipBrush         = G_PhysicsSkipFurniture;
 
     Phys_BuildBspWorld(gphys_world.system, buf, len, &opt, &gphys_worldBodies, &stats);
     Phys_ReadInlineModels(buf, len, &gphys_models);
@@ -1001,6 +1008,7 @@ bool G_PhysicsAddEntity(Entity *ent)
     gphys_entities[ent->entnum].id       = id;
     gphys_entities[ent->entnum].owned    = qtrue;
     gphys_entities[ent->entnum].ruleMass = ruleMass;
+    ent->edict->s.eFlags |= EF_PHYSICS_BODY;
 
     if (g_physics_log->integer >= 2) {
         gi.Printf(
@@ -1033,6 +1041,7 @@ void G_PhysicsRemoveEntity(Entity *ent)
     bodies.RemoveBody(pe->id);
     bodies.DestroyBody(pe->id);
     pe->owned = qfalse;
+    ent->edict->s.eFlags &= ~EF_PHYSICS_BODY;
     // No longer ours to slide, nor its scrape.
     G_PhysicsStopScrape(ent->entnum);
 

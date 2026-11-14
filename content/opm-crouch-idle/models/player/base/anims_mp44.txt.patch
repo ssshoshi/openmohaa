@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_mp44.txt
++++ b/models/player/base/anims_mp44.txt
+@@ -46,7 +46,7 @@
+ 	//========================
+ 
+ //	mp44_crouch_idle		viewmodel/mp44/mp44_crouchpose.skc		crossblend 0.2
+-	mp44_crouch_idle		weapon_rifle/crouch/rifle_crouch.skc			crossblend 0.1
++	mp44_crouch_idle		opm/crouch_idle_rifle.skc			crossblend 0.1
+ 	mp44_crouch_walk_fwd	multiplayer/mp_rifle_crouch_walk_forwards.skc	crossblend 0.2 //autosteps_walk
+ 	mp44_crouch_walk_back	multiplayer/mp_rifle_crouch_walk_back.skc		crossblend 0.2 //autosteps_walk
+ 	mp44_crouch_walk_left	multiplayer/mp_rifle_crouch_walk_left.skc	crossblend 0.2 //autosteps_walk

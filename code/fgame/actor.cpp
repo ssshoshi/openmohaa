@@ -3145,6 +3145,20 @@ void Actor::ResolveVoiceType(void)
     }
 }
 
+// OPM: Spearhead's German smoke grenade, which tools/ai-assets/build.py packs
+//  from the player's own Spearhead install; without it there is no smoke.
+static const char *OPM_SMOKE_GRENADE_MODEL = "models/projectiles/nebelhandgranate.tik";
+
+static bool OPM_SmokeGrenadeAvailable(void)
+{
+    static int iAvailable = 0;
+
+    if (!iAvailable) {
+        iAvailable = gi.modeltiki(OPM_SMOKE_GRENADE_MODEL) ? 1 : -1;
+    }
+    return iAvailable > 0;
+}
+
 /*
 ===============
 Actor::EventStart
@@ -3171,6 +3185,13 @@ void Actor::EventStart(Event *ev)
         && !AmmoCount("grenade")) {
         GiveAmmo("grenade", ai_grenade_ammo->integer);
         m_iOPMDefaultGrenades = ai_grenade_ammo->integer;
+    }
+
+    // OPM: the smoke grenade a German may throw (ai_smoke) is a model the
+    //  client loads when its configstring comes: registered here, with the
+    //  level, and not the first time one is thrown (79 ms in a fight).
+    if (AI_Enhanced(ai_smoke) && m_Team == TEAM_GERMAN && OPM_SmokeGrenadeAvailable()) {
+        G_ModelIndex((char *)OPM_SMOKE_GRENADE_MODEL);
     }
 
     if (level.Spawned()) {
@@ -5442,6 +5463,13 @@ void Actor::EventKilled(Event *ev)
 
     if (m_iOPMHoldGrenadeTime) {
         DropHeldGrenade();
+    }
+
+    // Added in OPM
+    //  A soldier the model browser spawned without AI still dies: its death
+    //  only plays while the AI thinks.
+    if (!m_bDoAI && G_OrchSpawned(this)) {
+        m_bDoAI = true;
     }
 
     DispatchEventKilled(ev, true);
@@ -10524,20 +10552,6 @@ bool Actor::FindGrenadeArc(const Vector& vTo, Vector *pvVel)
     }
 
     return false;
-}
-
-// OPM: Spearhead's German smoke grenade, which tools/ai-assets/build.py packs
-//  from the player's own Spearhead install; without it there is no smoke.
-static const char *OPM_SMOKE_GRENADE_MODEL = "models/projectiles/nebelhandgranate.tik";
-
-static bool OPM_SmokeGrenadeAvailable(void)
-{
-    static int iAvailable = 0;
-
-    if (!iAvailable) {
-        iAvailable = gi.modeltiki(OPM_SMOKE_GRENADE_MODEL) ? 1 : -1;
-    }
-    return iAvailable > 0;
 }
 
 /*

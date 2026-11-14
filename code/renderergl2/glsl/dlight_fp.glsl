@@ -29,4 +29,8 @@ void main()
 	
 	gl_FragColor.rgb = color.rgb * var_Color.rgb;
 	gl_FragColor.a = alpha;
+#if defined(USE_FROXEL_FOG)
+	// Added in OPM: the light in the air between it and the eye
+	gl_FragColor.rgb = FroxelFog(gl_FragColor.rgb, gl_FragColor.a);
+#endif
 }

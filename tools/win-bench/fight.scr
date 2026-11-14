@@ -1,0 +1,41 @@
+// Benchmark firefight on m5l1a by the player's start (win-bench hitch runs).
+// Six MP40 soldiers in front of the player, replaced as they die; every six
+// seconds a grenade goes off on one of them (explosion, smoke, a ragdoll,
+// gore). The player is in god mode and holds fire.
+local.pts[1] = "4700 -4790 0"
+local.pts[2] = "4620 -4700 0"
+local.pts[3] = "4540 -4620 0"
+local.pts[4] = "4760 -4660 0"
+local.pts[5] = "4660 -4560 0"
+local.pts[6] = "4560 -4800 0"
+local.t = 0
+while (1)
+{
+	for (local.i = 1; local.i <= 6; local.i++)
+	{
+		local.need = 0
+		if (local.s[local.i] == NIL || local.s[local.i] == NULL)
+			local.need = 1
+		else if !(isalive local.s[local.i])
+			local.need = 1
+		if (local.need)
+		{
+			local.s[local.i] = spawn models/human/german_wehrmact_soldier.tik "origin" local.pts[local.i] "angle" "315" "weapon" "MP40"
+			wait 0.25
+		}
+	}
+	wait 3
+	local.k = (local.t % 6) + 1
+	if (local.s[local.k] != NIL && local.s[local.k] != NULL)
+	{
+		if (isalive local.s[local.k])
+		{
+			local.g = spawn models/projectiles/M2FGrenade.tik
+			local.g.origin = local.s[local.k].origin + ( 0 30 16 )
+			wait 0.1
+			local.g explode
+		}
+	}
+	local.t++
+	wait 3
+}

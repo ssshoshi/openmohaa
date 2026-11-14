@@ -616,9 +616,11 @@ static void ProjectDlightTexture( void ) {
 		// where they aren't rendered
 		if ( dl->additive ) {
 			GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			R_FroxelSetFog(sp, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
 		}
 		else {
 			GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			R_FroxelSetFog(sp, GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE);
 		}
 
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 1);
@@ -1190,6 +1192,8 @@ static void ForwardDlight( void ) {
 			// thick: a light near far terrain (m3l1a's bunker MG42s' muzzle
 			// flashes on the bluff behind) blinked it white.
 			RB_SetGlobalFogUniforms(sp, pStage);
+			// Added in OPM: the light in the air between it and the eye
+			R_FroxelSetFog(sp, pStage->stateBits);
 			if (backEnd.globalFogEnabled && !tess.no_global_fog && (pStage->stateBits & GLS_FOG_ENABLED))
 			{
 				const vec4_t black = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -1348,6 +1352,8 @@ static void ProjectPshadowVBOGLSL( void ) {
 		// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
 		// where they aren't rendered
 		GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL );
+		// Added in OPM: the light in the air between it and the eye
+		R_FroxelSetFog(sp, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
 
 		GL_BindToTMU( tr.pshadowMaps[l], TB_DIFFUSEMAP );
@@ -1756,6 +1762,25 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec4(sp, UNIFORM_SOFTPARTICLE, soft);
 		}
 
+		// Added in OPM: with r_linearLighting, dust and smoke blended over the
+		// view cover it as they did without (generic_fp.glsl): blended as
+		// light, thin white smoke over a darker view was a glowing cloud
+		if (pStage->glslShaderGroup != tr.lightallShader)
+		{
+			float blend = 0.0f;
+
+			if (r_linearParticleBlend->integer && tess.shader->rtParticle && R_RtLinear()
+				&& (pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) == (GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA)
+				&& !(pStage->stateBits & GLS_DEPTHMASK_TRUE) && !backEnd.projection2D && !backEnd.depthFill
+				&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))
+				&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && RB_ParticleCopyView())
+			{
+				blend = 1.0f;
+				GL_BindToTMU(tr.waterSceneImage, TMU_PARTICLESCENE);
+			}
+			GLSL_SetUniformFloat(sp, UNIFORM_PARTICLEBLEND, blend);
+		}
+
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
 		GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, backEnd.viewParms.ori.origin);
 		GLSL_SetUniformVec3(sp, UNIFORM_LOCALVIEWORIGIN, backEnd.ori.viewOrigin);
@@ -1940,7 +1965,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
 		// Added in OPM: wet below the tide's mark (lightall)
-		R_WaterSetWet(sp);
+		R_WaterSetWet(sp, pStage);
 		// Added in OPM: reflections of what is on the screen
 		R_SsrSetUniforms(sp);
 

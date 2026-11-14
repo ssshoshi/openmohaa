@@ -403,6 +403,11 @@ movement on the server game.
 #define EF_ANY_TEAM   (EF_ALLIES | EF_AXIS)
 #define EF_DEAD       0x00000200 // don't draw a foe marker over players with EF_DEAD
 #define EF_NO_LERP    0x00001000 // don't lerp animations
+// Added in OPM
+//  A physics body the server moves (g_physics.cpp): props stop shots only
+//  (weapon clip), so the client gets no solid for them; the grabber finds
+//  them by this (cg_physics_movers.cpp). In the 16 bits sent; unused in MoHAA.
+#define EF_PHYSICS_BODY 0x00004000
 
 //
 // Team assault flags

@@ -926,11 +926,20 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 					if ( !stage->bundle[cntBundle].image[num] )
 					{
 						ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
-						return qfalse;
+						// Changed in OPM: a missing frame is left out and the
+						// stage parsed on. Stopping here lost the rest of the
+						// stage: fgrenexplosion names expl0017-0021, which no
+						// pak has, and in GL2 its fireballs came out opaque,
+						// black squares, without their blendFunc
+						continue;
 					}
 					stage->bundle[cntBundle].numImageAnimations++;
 				}
 				totalImages++;
+			}
+
+			if ( !stage->bundle[cntBundle].numImageAnimations ) {
+				return qfalse;
 			}
 
 			if ( totalImages > MAX_IMAGE_ANIMATIONS ) {
@@ -1910,10 +1919,18 @@ static qboolean ParseStage( shaderStage_t *stage, char **text )
 					if ( !stage->bundle[cntBundle].image[num] )
 					{
 						ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
-						return qfalse;
+						// Changed in OPM: a missing frame is left out and the
+						// stage parsed on. Stopping here lost the rest of the
+						// stage: fgrenexplosion names expl0017-0021, which no
+						// pak has, and in GL2 its fireballs came out opaque,
+						// black squares, without their blendFunc
+						continue;
 					}
 					stage->bundle[cntBundle].numImageAnimations++;
 				}
+			}
+			if ( !stage->bundle[cntBundle].numImageAnimations ) {
+				return qfalse;
 			}
 		}
 		else if (!Q_stricmp(token, "nofog"))
@@ -3263,6 +3280,17 @@ static int CollapseStagesToGLSL(void)
 
 	// skip shaders with deforms
 	if (shader.numDeforms != 0)
+	{
+		skip = qtrue;
+	}
+
+	// Added in OPM: sprites (spriteGen) stay with the generic program, which
+	// lights dust and smoke as particles (R_RtStageKind), fades them where
+	// they meet the world (r_softParticles), blends them as shown
+	// (r_linearParticleBlend) and draws MOH:AA's nextBundle, which lightall
+	// has no room for. There a puff's "rgbGen vertex" made it a surface lit
+	// by all of the light live (r_realtimeLighting 2)
+	if (shader.rtParticle)
 	{
 		skip = qtrue;
 	}

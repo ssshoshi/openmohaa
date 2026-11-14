@@ -35,6 +35,14 @@ typedef struct {
     // The brush contents that become collision.
     int contents;
 
+    // Clip brushes (contents without any of the above) that become collision
+    // where they are the ground: under a drawn patch that is not solid itself.
+    // Maps lay a path or a grass patch over a dip in the terrain and make the
+    // ground the player walks on with clip brushes under it (m5l1a's mud path
+    // over mudclip); without them bodies sink to the terrain under the patch.
+    // Clip elsewhere (invisible walls, ramps over stairs) stays out. 0: none.
+    int floorClipContents;
+
     // Asked of every world brush before it is added: true leaves it out. May
     // be NULL.
     qboolean (*skipBrush)(void *ctx, int brushNum, const char *shader, int contents, const vec3_t mins, const vec3_t maxs);
@@ -47,7 +55,7 @@ typedef struct {
 } physBspOptions_t;
 
 typedef struct {
-    int brushes, brushFails, skipped, patches, terrain, triangles, bodies;
+    int brushes, brushFails, skipped, patches, terrain, triangles, bodies, floorClips;
 } physBspStats_t;
 
 // The world model's brushes, patches and terrain, as static bodies added to

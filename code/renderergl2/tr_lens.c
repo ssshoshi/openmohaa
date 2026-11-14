@@ -30,6 +30,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "tr_local.h"
 
 cvar_t *r_lens;
+// Added in OPM: how hard it rains on the lens now, 0 to 1, from the cgame
+// (cg_lens.cpp, CG_LensRain): out under the sky in the rain, more looking up
+static cvar_t *r_lensRain;
+// how wet the glass is: it gets wet quickly, dries slowly
+static float lensWet;
+static double lensWetTime;
 
 // x, y, size, how much is left; what, seed, how far it has run, 0
 static vec4_t lensSpots[WATER_MAX_SPOTS];
@@ -40,6 +46,8 @@ void R_LensRegisterCvars(void)
 {
     r_lens = ri.Cvar_Get("r_lens", "1", CVAR_ARCHIVE);
     ri.Cvar_SetDescription(r_lens, "Draws what lands on the camera's lens: water from splashes, blood, dirt from blasts");
+    r_lensRain = ri.Cvar_Get("r_lensRain", "0", CVAR_TEMP);
+    ri.Cvar_SetDescription(r_lensRain, "How hard it rains on the lens now, 0 to 1 (the game sets it; cg_lens_rain scales it)");
 }
 
 void RE_SetLensSpots(const float *spots, int num)
@@ -65,9 +73,25 @@ void RB_LensDraw(FBO_t *fbo, ivec4_t box)
     shaderProgram_t *sp = &tr.lensShader;
     vec4_t           quadVerts[4], v;
     vec2_t           texCoords[4];
-    float            x0, y0, x1, y1;
+    float            x0, y0, x1, y1, dt;
 
-    if (!r_lens->integer || !numLensSpots || !sp->program || !tr.waterSceneFbo || !glRefConfig.framebufferBlit
+    // the glass: wet in a few seconds, dry in fifteen or so
+    dt          = (float)(backEnd.refdef.floatTime - lensWetTime);
+    lensWetTime = backEnd.refdef.floatTime;
+    if (dt < 0.0f || dt > 0.5f) {
+        dt = 0.0f;
+    }
+    {
+        const float want = r_lens->integer ? Com_Clamp(0.0f, 1.0f, r_lensRain->value) : 0.0f;
+
+        if (lensWet < want) {
+            lensWet = Q_min(want, lensWet + dt * 0.3f);
+        } else {
+            lensWet = Q_max(want, lensWet - dt * 0.07f);
+        }
+    }
+
+    if (!r_lens->integer || (!numLensSpots && lensWet < 0.002f) || !sp->program || !tr.waterSceneFbo || !glRefConfig.framebufferBlit
         || (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) || backEnd.viewParms.isPortal) {
         return;
     }
@@ -99,6 +123,8 @@ void RB_LensDraw(FBO_t *fbo, ivec4_t box)
     GLSL_SetUniformVec4(sp, UNIFORM_LENSINFO, v);
     GLSL_SetUniformWaterSpots(sp, UNIFORM_LENSSPOTS, lensSpots, numLensSpots);
     GLSL_SetUniformWaterSpots(sp, UNIFORM_LENSLOOK, lensLook, numLensSpots);
+    VectorSet4(v, lensWet, (float)fmod(backEnd.refdef.floatTime, 1000.0), 0.0f, 0.0f);
+    GLSL_SetUniformVec4(sp, UNIFORM_LENSRAIN, v);
 
     GL_State(GLS_DEPTHTEST_DISABLE);
     GL_Cull(CT_TWO_SIDED);

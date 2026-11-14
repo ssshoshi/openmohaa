@@ -57,6 +57,10 @@ SHADERS = {
 }
 # Spearhead tints German smoke green; plain grey smoke looks right on m3l2.
 SMOKE_TEXTURE = ("textures/sprites/hrpuffnstuff_german.tga", "textures/sprites/hrpuffnstuff.tga")
+# The smoke's puffs have a volume: with r_volumetric 2 the renderer draws them
+# in the air, lit and shadowed, in place of their sprites (an OPM emitter
+# command; older binaries skip it).
+SMOKE_VOLUME = ("models/fx/SmokeGrenadeExplosionGerman_base.txt", "models/projectiles/nebelhandgranate_base.txt")
 ALIASES = re.compile(r"^(nebelsmokegrenade_exp_(start|loop|end)\d+|smokegrenade_bounce_\w+|smokegrenade_air_loop)$")
 
 
@@ -104,6 +108,13 @@ def aliases(text):
     return out
 
 
+def smoke_volume(data, name):
+    text, n = re.subn(rb"^(\s*)spritegridlighting[ \t]*\r?\n", lambda m: m.group(0) + m.group(1) + b"smokevolume\r\n", data, flags=re.M)
+    if not n:
+        sys.exit(f"{name}: no spritegridlighting line to put smokevolume after")
+    return text
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spearhead", default=os.path.join(GAME_ROOT, "mainta"), help="Spearhead's mainta folder")
@@ -125,7 +136,10 @@ def main():
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(os.path.join(HERE, "m3l2_opm.scr"), "maps/m3l2_opm.scr")
         for name in FILES:
-            z.writestr(name, paks.read(name))
+            data = paks.read(name)
+            if name in SMOKE_VOLUME:
+                data = smoke_volume(data, name)
+            z.writestr(name, data)
         z.writestr("scripts/opm_m3l2.shader", shaders)
         z.writestr("ubersound/opm_m3l2.scr", uber)
     os.replace(tmp, args.out)

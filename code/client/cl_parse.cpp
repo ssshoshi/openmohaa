@@ -532,6 +532,7 @@ CL_ParseGamestate
 ==================
 */
 void CL_ParseGamestate( msg_t *msg ) {
+	Com_LoadProfileMark( "cl:gamestate" );
 	int				i, csNum;
 	entityState_t	*es;
 	int				newnum;

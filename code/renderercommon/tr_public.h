@@ -28,7 +28,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 extern "C" {
 #endif
 
-#define	REF_API_VERSION		17
+// Added in OPM: 18 adds refimport_t::LoadingTick
+#define	REF_API_VERSION		18
 
 typedef struct dtiki_s dtiki_t;
 typedef struct skelAnimFrame_s skelAnimFrame_t;
@@ -371,6 +372,13 @@ typedef struct {
     //
     int (*SKEL_GetMorphWeightFrame)(void *skeletor, int index, float time, int *data);
     int (*SKEL_GetBoneParent)(void *skeletor, int boneIndex);
+
+    // Added in OPM (REF_API_VERSION 18): during a map load, redraws the
+    // loading screen and lets the window's messages through, at most every
+    // 33 ms, for a long stretch of loading that has no other place to; a
+    // no-op outside a load. Only between whole pieces of work: never inside
+    // a shader or an image being made.
+    void (*LoadingTick)(void);
 } refimport_t;
 
 

@@ -119,6 +119,12 @@ static float EvalWaveForm( const waveForm_t *wf )
 
 	RB_ResolveWaveForm( wf, &rwf );
 
+	// Added in OPM: noise has no table (an alphaGen wave noise, a candle's
+	// flicker, dropped the game to the console)
+	if ( rwf.func == GF_NOISE ) {
+		return rwf.base + R_NoiseGet4f( 0, 0, 0, ( tess.shaderTime + rwf.phase ) * rwf.frequency ) * rwf.amplitude;
+	}
+
 	table = TableForFunc( rwf.func );
 
 	return WAVEVALUE( table, rwf.base, rwf.amplitude, rwf.phase, rwf.frequency );
@@ -444,6 +450,11 @@ static void AutospriteDeform( void ) {
 	} else {
 		VectorCopy( backEnd.viewParms.ori.axis[1], leftDir );
 		VectorCopy( backEnd.viewParms.ori.axis[2], upDir );
+	}
+	// Added in OPM: the right way up in the world (R_VIEW_UPSIDE_DOWN)
+	if ( R_VIEW_UPSIDE_DOWN() ) {
+		VectorNegate( leftDir, leftDir );
+		VectorNegate( upDir, upDir );
 	}
 
 	for ( i = 0 ; i < oldVerts ; i+=4 ) {

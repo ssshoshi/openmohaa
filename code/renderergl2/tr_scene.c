@@ -523,6 +523,46 @@ void RE_EndScene(void)
 }
 
 /*
+=================
+R_SunCascadeKept
+
+Added in OPM
+  r_sunCascadeStagger 1: sun cascades 1 and 2 are drawn on alternate frames,
+  1 on even and 2 on odd ones, and on the other a cascade keeps its map and
+  the matrix it was drawn with, so the world's shadows stay where they are
+  as the view moves; what moves in them (a soldier in cascade 1 or 2) is a
+  frame behind. Each of them took ~1.5 ms of the GPU in a firefight, and as
+  much of the CPU. A cascade is drawn anyway when the view has moved or
+  turned too far since it was (it may no longer cover what is seen): a
+  fast turn, a teleport, a cut.
+=================
+*/
+#define SUN_STAGGER_MAX_MOVE 24.0f  // units since the cascade was drawn
+#define SUN_STAGGER_MIN_DOT  0.99f  // ~8 degrees of turn
+
+static qboolean R_SunCascadeKept(const refdef_t *fd, int level)
+{
+	if (!r_sunCascadeStagger->integer || !tr.haveCascadeKept[level]
+		|| (tr.cascadeStaggerFrame & 1) == (level & 1)
+		|| DistanceSquared(fd->vieworg, tr.cascadeKeptOrigin[level]) > Square(SUN_STAGGER_MAX_MOVE)
+		|| DotProduct(fd->viewaxis[0], tr.cascadeKeptForward[level]) < SUN_STAGGER_MIN_DOT)
+	{
+		return qfalse;
+	}
+
+	Mat4Copy(tr.cascadeKeptMvp[level], tr.refdef.sunShadowMvp[level]);
+	return qtrue;
+}
+
+static void R_SunCascadeDrawn(const refdef_t *fd, int level)
+{
+	VectorCopy(fd->vieworg, tr.cascadeKeptOrigin[level]);
+	VectorCopy(fd->viewaxis[0], tr.cascadeKeptForward[level]);
+	Mat4Copy(tr.refdef.sunShadowMvp[level], tr.cascadeKeptMvp[level]);
+	tr.haveCascadeKept[level] = qtrue;
+}
+
+/*
 @@@@@@@@@@@@@@@@@@@@@
 RE_RenderScene
 
@@ -544,6 +584,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 	// Added in OPM: r_rtTestMove's piece
 	if ( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
 		R_RtAddTestEntity();
+		// and the rain's cover, the first frame it rains
+		R_RainFrame(fd);
 	}
 	GLimp_LogComment( "====== RE_RenderScene =====\n" );
 
@@ -586,7 +628,12 @@ void RE_RenderScene( const refdef_t *fd ) {
 		if (r_shadowCascadeZFar->integer != 0)
 		{
 			R_RenderSunShadowMaps(fd, 0);
-			R_RenderSunShadowMaps(fd, 1);
+			tr.cascadeStaggerFrame++;
+			if (!R_SunCascadeKept(fd, 1))
+			{
+				R_RenderSunShadowMaps(fd, 1);
+				R_SunCascadeDrawn(fd, 1);
+			}
 
 			// Cascade 2 carries no entities as long as
 			// r_sunEntityShadowCascades keeps it excluded (the default), so
@@ -606,9 +653,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 			{
 				Mat4Copy(tr.lastCascade2Mvp, tr.refdef.sunShadowMvp[2]);
 			}
-			else
+			else if (!R_SunCascadeKept(fd, 2))
 			{
 				R_RenderSunShadowMaps(fd, 2);
+				R_SunCascadeDrawn(fd, 2);
 				VectorCopy(fd->vieworg, tr.lastCascade2Origin);
 				VectorCopy(fd->viewaxis[0], tr.lastCascade2Forward);
 				Mat4Copy(tr.refdef.sunShadowMvp[2], tr.lastCascade2Mvp);
@@ -621,11 +669,14 @@ void RE_RenderScene( const refdef_t *fd ) {
 			Mat4Zero(tr.refdef.sunShadowMvp[1]);
 			Mat4Zero(tr.refdef.sunShadowMvp[2]);
 			tr.haveCascade2Cache = qfalse;
+			memset(tr.haveCascadeKept, 0, sizeof(tr.haveCascadeKept));
 		}
 
 		// only rerender last cascade if sun has changed position
 		if (r_forceSun->integer == 2 || !VectorCompare(tr.refdef.sunDir, tr.lastCascadeSunDirection))
 		{
+			// what cascades 1-2 kept was cast the old way
+			memset(tr.haveCascadeKept, 0, sizeof(tr.haveCascadeKept));
 			VectorCopy(tr.refdef.sunDir, tr.lastCascadeSunDirection);
 			R_RenderSunShadowMaps(fd, 3);
 			Mat4Copy(tr.refdef.sunShadowMvp[3], tr.lastCascadeSunMvp);
@@ -842,6 +893,7 @@ void RE_AddRefSpriteToScene(const refEntity_t* ent) {
     spr->scale = ent->scale;
     spr->renderfx = ent->renderfx;
     spr->shaderTime = ent->shaderTime;
+    spr->froxelTaken = qfalse;
 	AxisCopy(ent->axis, spr->axis);
 
 	for (i = 0; i < 4; ++i) {

@@ -1072,22 +1072,28 @@ qboolean R_FindGridPointForSphere(world_t *world, const vec3_t sphereOrigin, con
 	return qfalse;
 }
 
-int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world )
+/*
+=================
+R_LightDirSummed
+
+Added in OPM (split out of R_LightDirForPoint): the direction the light at a
+point comes from, the lights that reach it summed by brightness, normalised
+(zero when none does). It depends on the point alone, so the world load's
+per-vertex pass (R_CalcVertexLightDirs) works it out once for each place
+several vertexes share.
+=================
+*/
+void R_LightDirSummed( const vec3_t pointIn, world_t *world, vec3_t summedDir )
 {
-    vec3_t vLight;
+    vec3_t point;
     vec3_t vEnd;
     mnode_t* leaf;
     trace_t trace;
-    vec3_t summedDir;
     float addSize;
     int iNumLights;
     int i;
-	int j, k, l;
-    int gridStep[3][3];
 
-	if ( world->lightGridData == NULL )
-	  return qfalse;
-
+    VectorCopy(pointIn, point);
     VectorClear(summedDir);
 	leaf = NULL;
 	iNumLights = 0;
@@ -1146,6 +1152,16 @@ int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *w
     }
 
 	VectorNormalize(summedDir);
+}
+
+int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world )
+{
+    vec3_t summedDir;
+
+	if ( world->lightGridData == NULL )
+	  return qfalse;
+
+    R_LightDirSummed(point, world, summedDir);
 
     if (DotProduct(summedDir, normal) > 0.2f)
         VectorCopy(summedDir, lightDir);

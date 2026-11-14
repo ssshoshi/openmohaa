@@ -28,6 +28,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 cvar_t *cg_rain;
 cvar_t *cg_rain_drawcoverage;
+// Added in OPM: more of the rain than the map's script asks for
+static cvar_t *cg_rain_scale;
 
 void RainTouch(ctempmodel_t *ct, trace_t *trace)
 {
@@ -59,6 +61,7 @@ void ClientGameCommandManager::InitializeRainCvars()
     int i;
 
     cg_rain = cgi.Cvar_Get("cg_rain", "1", CVAR_ARCHIVE);
+    cg_rain_scale = cgi.Cvar_Get("cg_rain_scale", "1.6", CVAR_ARCHIVE);
     cg_rain_drawcoverage =
         cgi.Cvar_Get("cg_rain_drawcoverage", "0", CVAR_SAVEGAME | CVAR_RESETSTRING | CVAR_SYSTEMINFO);
 
@@ -157,6 +160,8 @@ void CG_Rain(centity_t *cent)
 
     VectorSubtract(vOmaxs, vOmins, vOe);
     fDensity  = cg.rain.density / 200.0;
+    // Added in OPM: heavier (cg_rain_scale)
+    fDensity *= Q_max(0.0f, cg_rain_scale->value);
     iNumSpawn = (int)(sqrt(vOe[0] * vOe[1]) * fDensity);
     if (iNumSpawn > MAX_BEAMS) {
         iNumSpawn = MAX_BEAMS;
@@ -188,9 +193,18 @@ void CG_Rain(centity_t *cent)
 
         iRandom = ((214013 * iRandom + 2531011) >> 16) & 0x7FFF;
 
-        vEnd[0] = (float)(iRandom % cg.rain.slant) + vStart[0] + vss_wind_x->value;
-        iRandom = ((214013 * iRandom + 2531011) >> 16) & 0x7FFF;
-        vEnd[1] = (float)(iRandom % cg.rain.slant) + vStart[1] + vss_wind_y->value;
+        // Added in OPM
+        //  The slant and the wind are for a fall from the top of the box: a
+        //  drop starting lower (the random height above) goes that much less
+        //  to the side, or the low ones fell at every angle (V shapes on the
+        //  walls) where all of the rain should fall the one way
+        {
+            const float fall = vOe[2] > 1.0f ? (vStart[2] - vOmins[2]) / vOe[2] : 1.0f;
+
+            vEnd[0] = ((float)(iRandom % cg.rain.slant) + vss_wind_x->value) * fall + vStart[0];
+            iRandom = ((214013 * iRandom + 2531011) >> 16) & 0x7FFF;
+            vEnd[1] = ((float)(iRandom % cg.rain.slant) + vss_wind_y->value) * fall + vStart[1];
+        }
         vEnd[2] = vOmins[2];
 
         // Fixed in 2.0

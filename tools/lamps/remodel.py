@@ -8,7 +8,8 @@
 
 Each lamp in data/opm-lamps/lights/lamps.txt is taken from the player's
 paks, made again by remodel_blender.py (its glass a surface of its own,
-rounded; a bulb or a flame at each of its bulbs) and written as its .skd at
+rounded; a bulb or a flame at each of its bulbs; the surfaces its `lathe`
+names turned round, tools/lamps/lathe.py) and written as its .skd at
 the path the game loads it from. The game's .tik is not touched: the new
 surfaces are named after their shaders, which the TIKI loader gives a
 surface it names no shader for. Those shaders are in the opm-lamps pak.
@@ -36,6 +37,7 @@ sys.path.insert(0, HERE)
 
 import glass  # noqa: E402
 import lamps  # noqa: E402
+import lathe  # noqa: E402
 import mohaa_blender as mb  # noqa: E402
 
 SHADERS = os.path.join(HERE, "..", "..", "data", "opm-lamps", "scripts", "opm_lampglass.shader")
@@ -153,6 +155,16 @@ def remodel(model, entry, work, args):
     margs = argparse.Namespace(game=args.game, ta=False, tt=False)
     tmp = os.path.join(out, "game")
     tik = mb.materialize(model, margs, tmp)
+    # its mesh and pose the game's own, beside the .tik (the importer takes
+    # those first): the paks Blender reads hold the remodelled lamps too
+    t = lamps.parse_tiki(model)
+    for path in t["skel"] + ([t["anim"]] if t["anim"] else []):
+        data = lamps.read(path)
+        if data is not None:
+            dest = os.path.join(tmp, "game", *re.sub("/+", "/", path).split("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(data)
     folders = ";".join(mb.to_host(f, win) for f in mb.game_folders(margs))
     cmd = [exe, "-b", "--factory-startup", "--python", mb.to_host(os.path.join(HERE, "remodel_blender.py"), win), "--",
            mb.to_host(tik, win), mb.to_host(os.path.join(out, "export"), win), mb.to_host(spec_path, win),
@@ -187,6 +199,14 @@ def remodel(model, entry, work, args):
     dest = os.path.join(work, "out", *re.sub("/+", "/", skd).split("/"))
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     shutil.copyfile(made, dest)
+    if "lathe" in entry:
+        # its turned parts (a shade, a socket) round, not polygons
+        with open(dest, "rb") as f:
+            data, report = lathe.lathe_skd(f.read(), entry["lathe"])
+        with open(dest, "wb") as f:
+            f.write(data)
+        for surface, what in report.items():
+            print("  lathe %s: %s" % (surface, what))
     print("%s: %s" % (model, json.dumps(result["report"].get("counts", {}))))
     return dest
 

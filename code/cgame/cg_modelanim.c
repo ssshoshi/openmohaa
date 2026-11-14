@@ -733,6 +733,306 @@ static void CG_FreezeIdleAnims(refEntity_t *model)
 
 /*
 ======================
+CG_IdleGesture
+
+Added in OPM
+  The idles (the *_idle animations: breathing, shifting the weight, looking
+  over the weapon) the player's own body and view weapon play. Mostly calm:
+  the idle the server plays, only vm_idle_calm as much, so the hands only
+  stir. Every vm_idle_every_min to vm_idle_every_max seconds of idling the
+  idle plays once whole, from its first frame to its last, on a clock of its
+  own; it begins and ends at the first frame, the pose the calm one keeps
+  close to, and eases in and out over vm_idle_gesture_fade. Idling anew
+  starts calm.
+======================
+*/
+static int   idleGestureStart = -1;
+static int   idleGestureNext;
+static float idleGestureTime;   // seconds into the whole idle
+static float idleGestureWeight; // 0 calm, 1 the whole idle
+
+static qboolean CG_IsIdleAnim(dtiki_t *tiki, int index)
+{
+    const char *name = cgi.Anim_NameForNum(tiki, index);
+    size_t      len;
+
+    if (!name) {
+        return qfalse;
+    }
+
+    len = strlen(name);
+    return len >= 5 && !Q_stricmp(name + len - 5, "_idle");
+}
+
+static void CG_IdleGestureSchedule(void)
+{
+    float lo = Q_max(0.0f, vm_idle_every_min->value);
+    float hi = Q_max(lo, vm_idle_every_max->value);
+
+    idleGestureStart  = -1;
+    idleGestureNext   = cg.time + (int)((lo + random() * (hi - lo)) * 1000);
+    idleGestureTime   = 0;
+    idleGestureWeight = 0;
+}
+
+static void CG_IdleGesture(const refEntity_t *model, qboolean idling)
+{
+    float fade, length, w;
+    int   i;
+
+    if (!idling || !model->tiki) {
+        CG_IdleGestureSchedule();
+        return;
+    }
+
+    if (idleGestureStart < 0) {
+        if (cg.time < idleGestureNext) {
+            return;
+        }
+        idleGestureStart = cg.time;
+    }
+
+    // as long as the idle playing now
+    length = 0;
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        if (model->frameInfo[i].weight && CG_IsIdleAnim(model->tiki, model->frameInfo[i].index)) {
+            length = Q_max(length, cgi.Anim_Time(model->tiki, model->frameInfo[i].index));
+        }
+    }
+
+    idleGestureTime = (cg.time - idleGestureStart) / 1000.0f;
+    if (length <= 0 || idleGestureTime >= length) {
+        CG_IdleGestureSchedule();
+        return;
+    }
+
+    fade = Q_clamp_float(vm_idle_gesture_fade->value, 0.01f, length / 2);
+    w    = Q_min(1.0f, Q_min(idleGestureTime, length - idleGestureTime) / fade);
+
+    idleGestureWeight = w * w * (3.0f - 2.0f * w);
+}
+
+/*
+======================
+CG_DampIdleAnims
+
+Added in OPM
+  The idles as CG_IdleGesture has them: each idle slot split into the one the
+  server plays (vm_idle_calm of the calm part), its first frame (the rest of
+  it, the pose CG_FreezeIdleAnims holds) and, during a gesture, the whole
+  idle on its own clock. The two added go in free frame slots.
+======================
+*/
+static int CG_AddIdleSlot(refEntity_t *model, const frameInfo_t *from, float time, float weight)
+{
+    int j;
+
+    if (weight <= 0) {
+        return 1;
+    }
+
+    for (j = 0; j < MAX_FRAMEINFOS; j++) {
+        if (!model->frameInfo[j].weight) {
+            model->frameInfo[j]        = *from;
+            model->frameInfo[j].time   = time;
+            model->frameInfo[j].weight = weight;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void CG_DampIdleAnims(refEntity_t *model)
+{
+    frameInfo_t idle;
+    qboolean    played[MAX_FRAMEINFOS];
+    float       calm, g, w;
+    int         i;
+
+    calm = Q_clamp_float(vm_idle_calm->value, 0, 1);
+    g    = idleGestureWeight;
+    if (calm >= 1 && g <= 0) {
+        return;
+    }
+
+    // only the slots played: the ones added below are not split again
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        played[i] = model->frameInfo[i].weight && CG_IsIdleAnim(model->tiki, model->frameInfo[i].index);
+    }
+
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        if (!played[i]) {
+            continue;
+        }
+
+        idle = model->frameInfo[i];
+        w    = idle.weight;
+
+        model->frameInfo[i].weight = w * (1 - g) * calm;
+        if (!CG_AddIdleSlot(model, &idle, 0, w * (1 - g) * (1 - calm))
+            || !CG_AddIdleSlot(model, &idle, idleGestureTime, w * g)) {
+            // no slot free: hold it still rather than play it all
+            model->frameInfo[i].weight = w;
+            model->frameInfo[i].time   = 0;
+        }
+    }
+}
+
+/*
+======================
+CG_IdleViewModelSway
+
+Added in OPM
+  Standing still, other players breathe, shift their weight and look over
+  their weapon (the *_idle animations); the view weapon held still. The world
+  body's idle is measured here as the move of its right hand, which holds the
+  weapon, from where it is in the idle's first frame, the pose the first
+  person body holds (CG_FreezeIdleAnims). The hand's place is taken from the
+  neck, which the camera stands for; its turn is the hand's own.
+  CG_ApplyIdleSway puts that move on the view weapon, vm_idle_scale as much,
+  fading in at vm_idle_speed while the view weapon idles too.
+======================
+*/
+static quat_t idleSwayQuat = {0, 0, 0, 1};
+static vec3_t idleSwayMove;
+static float  idleSwayFrac;
+
+static qboolean CG_HasIdleAnim(const refEntity_t *model)
+{
+    const char *name;
+    size_t      len;
+    int         i;
+
+    for (i = 0; i < MAX_FRAMEINFOS; i++) {
+        if (!model->frameInfo[i].weight) {
+            continue;
+        }
+
+        name = cgi.Anim_NameForNum(model->tiki, model->frameInfo[i].index);
+        if (!name) {
+            continue;
+        }
+
+        len = strlen(name);
+        if (len >= 5 && !Q_stricmp(name + len - 5, "_idle")) {
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
+static void CG_IdleViewModelSway(const refEntity_t *model)
+{
+    refEntity_t   live, still;
+    orientation_t handLive, handStill, neckLive, neckStill;
+    float         rot[3][3], target, step;
+    int           hand, neck, i, j, k;
+    qboolean      idling;
+
+    idling = vm_idle->integer && model->tiki && cg.snap->ps.stats[STAT_HEALTH] > 0 && !cg.snap->ps.stats[STAT_INZOOM]
+          && !(cg.predicted_player_state.pm_flags & (PMF_SPRINTING | PMF_CAMERA_VIEW | PMF_TURRET))
+          && cgi.anim->g_iLastVMAnim >= 0
+          && (cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE || cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE_0
+              || cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE_1 || cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE_2);
+
+    target = idling ? 1 : 0;
+    step   = cg.frametime / 1000.0f * vm_idle_speed->value;
+    if (idleSwayFrac < target) {
+        idleSwayFrac = Q_min(target, idleSwayFrac + step);
+    } else if (idleSwayFrac > target) {
+        idleSwayFrac = Q_max(target, idleSwayFrac - step);
+    }
+
+    CG_IdleGesture(model, idleSwayFrac > 0);
+
+    VectorClear(idleSwayMove);
+    QuatSet(idleSwayQuat, 0, 0, 0, 1);
+
+    if (idleSwayFrac <= 0 || !CG_HasIdleAnim(model)) {
+        return;
+    }
+
+    hand = cgi.Tag_NumForName(model->tiki, "tag_weapon_right");
+    neck = cgi.Tag_NumForName(model->tiki, "Bip01 Neck");
+    if (hand < 0 || neck < 0) {
+        return;
+    }
+
+    // poses of their own, not the player's per-frame one
+    live              = *model;
+    live.entityNumber = ENTITYNUM_NONE;
+    still             = live;
+    CG_FreezeIdleAnims(&still);
+    CG_DampIdleAnims(&live);
+
+    handLive  = cgi.TIKI_Orientation(&live, hand & TAG_MASK);
+    neckLive  = cgi.TIKI_Orientation(&live, neck & TAG_MASK);
+    handStill = cgi.TIKI_Orientation(&still, hand & TAG_MASK);
+    neckStill = cgi.TIKI_Orientation(&still, neck & TAG_MASK);
+
+    // model space is forward, left, up, as the view weapon's own axes are
+    for (i = 0; i < 3; i++) {
+        idleSwayMove[i] = (handLive.origin[i] - neckLive.origin[i]) - (handStill.origin[i] - neckStill.origin[i]);
+    }
+
+    // the turn from the still hand to the live one: row i is where axis i goes
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++) {
+            rot[i][j] = 0;
+            for (k = 0; k < 3; k++) {
+                rot[i][j] += handStill.axis[k][i] * handLive.axis[k][j];
+            }
+        }
+    }
+
+    step = idleSwayFrac * idleSwayFrac * (3.0f - 2.0f * idleSwayFrac) * vm_idle_scale->value;
+    VectorScale(idleSwayMove, step, idleSwayMove);
+    {
+        quat_t full, none = {0, 0, 0, 1};
+
+        MatToQuat(rot, full);
+        QuatSlerp(none, full, Q_min(step, 1.0f), idleSwayQuat);
+    }
+}
+
+/*
+======================
+CG_ApplyIdleSway
+
+Added in OPM
+  The move CG_IdleViewModelSway measured, on the view weapon: turned about the
+  hand that holds it (vm_sprint_pivot out), then moved.
+======================
+*/
+static void CG_ApplyIdleSway(refEntity_t *model)
+{
+    float  rot[3][3], axis[3][3];
+    vec3_t pivot;
+    int    i;
+
+    if (idleSwayFrac <= 0) {
+        return;
+    }
+
+    QuatToMat(idleSwayQuat, rot);
+    MatrixMultiply(rot, model->axis, axis);
+
+    VectorSet(pivot, vm_sprint_pivot->value, -vm_sprint_pivot->value * 0.4f, -vm_sprint_pivot->value * 0.5f);
+    for (i = 0; i < 3; i++) {
+        VectorMA(model->origin, pivot[i], model->axis[i], model->origin);
+        VectorMA(model->origin, -pivot[i], axis[i], model->origin);
+    }
+
+    for (i = 0; i < 3; i++) {
+        VectorMA(model->origin, idleSwayMove[i], model->axis[i], model->origin);
+    }
+    AxisCopy(axis, model->axis);
+}
+
+/*
+======================
 CG_PlaceFirstPersonBody
 
 Crouching, jumping and leaning carry the model's neck ahead of the eyes,
@@ -742,12 +1042,12 @@ the pose; its height is left alone so the feet stay on the ground, unless the
 neck comes up to the camera (see below).
 ======================
 */
-static void CG_PlaceFirstPersonBody(refEntity_t *body)
+static void CG_PlaceFirstPersonBody(refEntity_t *body, const vec3_t eyeBase)
 {
     orientation_t or;
-    vec3_t        neck, forward, target, angles;
+    vec3_t        neck, forward, target, angles, tilt;
     int           tagnum, i;
-    float         drop;
+    float         drop, back;
 
     tagnum = cgi.Tag_NumForName(body->tiki, "Bip01 Neck");
     if (tagnum < 0) {
@@ -762,7 +1062,15 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
 
     VectorSet(angles, 0, cg.refdefViewAngles[YAW], 0);
     AngleVectors(angles, forward, NULL, NULL);
-    VectorMA(cg.refdef.vieworg, -cg_firstPersonBodyOffset->value, forward, target);
+    // Added in OPM
+    //  The camera tilts about a point below it with the pitch
+    //  (CG_OffsetFirstPersonView): forward over the body looking down, and
+    //  back looking up. Looking down the body stays where it stands, the eyes
+    //  leaning out over it; looking up it goes back with the eyes, which
+    //  would otherwise be in the back of the neck.
+    VectorSubtract(cg.refdef.vieworg, eyeBase, tilt);
+    back = DotProduct(tilt, forward);
+    VectorMA(eyeBase, -cg_firstPersonBodyOffset->value + Q_min(back, 0.0f), forward, target);
 
     for (i = 0; i < 2; i++) {
         body->origin[i] += target[i] - neck[i];
@@ -777,7 +1085,12 @@ static void CG_PlaceFirstPersonBody(refEntity_t *body)
     //  in the chest and pieces of the body flicker into view. The body goes
     //  down until its neck is cg_firstPersonBodyNeckGap below the camera,
     //  about where it is standing, and is left alone otherwise.
-    drop = neck[2] - (cg.refdef.vieworg[2] - cg_firstPersonBodyNeckGap->value);
+    //  Looking down, the gap grows by cg_firstPersonBodyNeckGapPitch a
+    //  degree, about as standing does, so a jump doesn't bring the chest up
+    //  into the near plane.
+    drop = neck[2]
+         - (cg.refdef.vieworg[2] - cg_firstPersonBodyNeckGap->value
+            - Q_max(cg.refdefViewAngles[PITCH], 0.0f) * cg_firstPersonBodyNeckGapPitch->value);
     if (drop > 0) {
         body->origin[2] -= drop;
         body->oldorigin[2] -= drop;
@@ -852,6 +1165,68 @@ static qboolean CG_FirstPersonBodyHidden(void)
     }
 
     return qfalse;
+}
+
+/*
+======================
+CG_AddFirstPersonBody
+
+Added in OPM
+  The player's own world body in first person: the copy seen through the eyes
+  (cg_firstPersonBody) and the one drawn only into the shadow maps and
+  reflections (cg_firstPersonShadow). It goes without an entity number: the
+  first person model keeps the player's, so attached weapons still find it,
+  and the two would otherwise share one per-frame pose.
+
+  This runs once the camera is final. CG_OffsetFirstPersonView moves it after
+  the view values are worked out: it follows a smoothed view height, which
+  trails the body jumping and on stairs, and it tilts with the pitch, back
+  over the body when looking up. A body placed under the earlier camera put
+  the eyes inside the chest.
+======================
+*/
+static void CG_AddFirstPersonBody(const refEntity_t *model, const vec3_t eyeBase)
+{
+    refEntity_t body = *model;
+    refEntity_t fpsBody;
+    qboolean    bDrawBody;
+    vec3_t      shift;
+
+    body.entityNumber = ENTITYNUM_NONE;
+    body.renderfx &= ~(RF_FIRST_PERSON | RF_THIRD_PERSON | RF_DEPTHHACK);
+
+    VectorClear(shift);
+    bDrawBody = cg_firstPersonBody->integer && !CG_FirstPersonBodyHidden();
+    if (bDrawBody) {
+        // drawn only through the eyes, without the head the camera sits in
+        // or the arms the view model already draws
+        fpsBody = body;
+        fpsBody.renderfx |= RF_FIRST_PERSON | RF_FIRST_PERSON_BODY;
+        CG_FreezeIdleAnims(&fpsBody);
+        CG_PlaceFirstPersonBody(&fpsBody, eyeBase);
+        VectorSubtract(fpsBody.origin, body.origin, shift);
+        // not the drop that keeps the neck under a camera lowered by a
+        // jump: it would sink the shadow into the ground
+        shift[2] = 0;
+    }
+
+    if (cg_firstPersonShadow->integer) {
+        // It stands where the body seen through the eyes stands, else the
+        // shadow and the reflection sit off the feet. It plays the idles
+        // the body seen through the eyes holds still, as others see them.
+        cg.playerShadowBody = body;
+        CG_DampIdleAnims(&cg.playerShadowBody);
+        VectorAdd(cg.playerShadowBody.origin, shift, cg.playerShadowBody.origin);
+        VectorAdd(cg.playerShadowBody.oldorigin, shift, cg.playerShadowBody.oldorigin);
+        VectorAdd(cg.playerShadowBody.lightingOrigin, shift, cg.playerShadowBody.lightingOrigin);
+        cg.playerShadowBody.renderfx |= RF_THIRD_PERSON;
+        cgi.R_AddRefEntityToScene(&cg.playerShadowBody, ENTITYNUM_NONE);
+        cg.iPlayerShadowBodyTime = cg.time;
+    }
+
+    if (bDrawBody) {
+        cgi.R_AddRefEntityToScene(&fpsBody, ENTITYNUM_NONE);
+    }
 }
 
 /*
@@ -1292,6 +1667,8 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     qboolean       bThirdPerson = qfalse;
     qboolean       bShadowAttach = qfalse;
     refEntity_t    preAttach;
+    refEntity_t    worldModel;
+    vec3_t         eyeBase;
 
     s1 = &cent->currentState;
 
@@ -1727,36 +2104,13 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         if (!bThirdPerson) {
             // first person view
 
-            if ((cg_firstPersonShadow->integer || cg_firstPersonBody->integer) && !(s1->renderfx & RF_DONTDRAW)) {
-                // The world body. It goes without an entity number: the
-                // first person model keeps the player's, so attached weapons
-                // still find it, and the two would otherwise share one
-                // per-frame pose.
-                refEntity_t body = model;
+            // The world body, placed and added once the camera is final
+            //  (CG_AddFirstPersonBody)
+            worldModel = model;
+            VectorCopy(cg.refdef.vieworg, eyeBase);
 
-                body.entityNumber = ENTITYNUM_NONE;
-                body.renderfx &= ~(RF_FIRST_PERSON | RF_THIRD_PERSON | RF_DEPTHHACK);
-                CG_FreezeIdleAnims(&body);
-
-                if (cg_firstPersonShadow->integer) {
-                    // drawn only into the shadow maps, so the player casts a
-                    // shadow of their own
-                    cg.playerShadowBody = body;
-                    cg.playerShadowBody.renderfx |= RF_THIRD_PERSON;
-                    cgi.R_AddRefEntityToScene(&cg.playerShadowBody, ENTITYNUM_NONE);
-                    cg.iPlayerShadowBodyTime = cg.time;
-                }
-
-                if (cg_firstPersonBody->integer && !CG_FirstPersonBodyHidden()) {
-                    // drawn only through the eyes, without the head the camera
-                    // sits in or the arms the view model already draws
-                    refEntity_t fpsBody = body;
-
-                    fpsBody.renderfx |= RF_FIRST_PERSON | RF_FIRST_PERSON_BODY;
-                    CG_PlaceFirstPersonBody(&fpsBody);
-                    cgi.R_AddRefEntityToScene(&fpsBody, ENTITYNUM_NONE);
-                }
-            }
+            // the idle the first person body no longer plays, on the view weapon
+            CG_IdleViewModelSway(&model);
 
             if (!(cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW)
                 && (cg.snap->ps.stats[STAT_HEALTH] <= 0 || cg_animationviewmodel->integer)) {
@@ -1873,9 +2227,14 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
                     CG_OffsetFirstPersonView(&model, qfalse);
                     CG_SprintViewModel(&model);
                     CG_CrawlViewModel(&model);
+                    CG_ApplyIdleSway(&model);
                 }
 
                 AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);
+            }
+
+            if ((cg_firstPersonShadow->integer || cg_firstPersonBody->integer) && !(s1->renderfx & RF_DONTDRAW)) {
+                CG_AddFirstPersonBody(&worldModel, eyeBase);
             }
 
             model.renderfx &= ~(RF_FIRST_PERSON | RF_THIRD_PERSON);

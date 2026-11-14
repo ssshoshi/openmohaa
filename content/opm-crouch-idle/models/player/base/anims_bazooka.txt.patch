@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_bazooka.txt
++++ b/models/player/base/anims_bazooka.txt
+@@ -60,7 +60,7 @@
+ 	//========================
+ 	// Crouching
+ 	//========================
+-	bazooka_crouch_idle		multiplayer/mp_bazooka_crouch_bored.skc						crossblend 0.2
++	bazooka_crouch_idle		opm/crouch_idle_bazooka.skc						crossblend 0.2
+ 	bazooka_crouch_walk_fwd		multiplayer/mp_bazooka_crouch_walk_forward.skc				//autosteps_run
+ 	bazooka_crouch_walk_back	multiplayer/mp_bazooka_crouch_walk_back.skc				//autosteps_run
+ 	bazooka_crouch_walk_left	multiplayer/mp_bazooka_crouch_walk_left.skc				//autosteps_run

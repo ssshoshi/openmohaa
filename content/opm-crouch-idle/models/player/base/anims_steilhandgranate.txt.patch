@@ -1,0 +1,11 @@
+--- a/models/player/base/anims_steilhandgranate.txt
++++ b/models/player/base/anims_steilhandgranate.txt
+@@ -44,7 +44,7 @@
+ 	//========================
+ 	// Crouching
+ 	//========================
+-	steilhandgranate_crouch_idle		weapon_pistol/idles/idle_crouch_pistol.skc			crossblend 0.2
++	steilhandgranate_crouch_idle		opm/crouch_idle_stielhandgranate.skc			crossblend 0.2
+ 	
+ 	steilhandgranate_crouch_walk_fwd	weapon_grenade/walks_runs/walk_crouch_grenade.skc	//autosteps_walk
+ 	steilhandgranate_crouch_walk_back	weapon_grenade/walks_runs/walk_crouch_grenade.skc	//autosteps_walk

@@ -318,6 +318,9 @@ void FBO_Init(void)
 		R_CheckFBO(tr.screenScratchFbo);
 	}
 
+	// Added in OPM: SMAA (tr_smaa.c)
+	R_SmaaCreateFbos();
+
 	if (tr.sunRaysImage)
 	{
 		tr.sunRaysFbo = FBO_Create("_sunRays", tr.renderDepthImage->width, tr.renderDepthImage->height);
@@ -474,7 +477,10 @@ void FBO_Init(void)
 	{
 		tr.waterReflectFbo = FBO_Create("_waterReflect", tr.waterReflectImage->width, tr.waterReflectImage->height);
 		FBO_AttachImage(tr.waterReflectFbo, tr.waterReflectImage, GL_COLOR_ATTACHMENT0, 0);
-		FBO_CreateBuffer(tr.waterReflectFbo, GL_DEPTH_COMPONENT24_ARB, 0, 0);
+		if (tr.waterReflectDepthImage)
+			FBO_AttachImage(tr.waterReflectFbo, tr.waterReflectDepthImage, GL_DEPTH_ATTACHMENT, 0);
+		else
+			FBO_CreateBuffer(tr.waterReflectFbo, GL_DEPTH_COMPONENT24_ARB, 0, 0);
 		R_CheckFBO(tr.waterReflectFbo);
 	}
 
@@ -509,6 +515,27 @@ void FBO_Init(void)
 		tr.volumeBlurFbo = FBO_Create("_volumeblur", tr.volumeBlurImage->width, tr.volumeBlurImage->height);
 		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.volumeBlurFbo);
+	}
+	if (tr.froxelLightImage[0] && tr.froxelLightImage[1] && tr.froxelSumImage[0] && tr.froxelSumImage[1] && tr.froxelDepthImage && tr.froxelDepthQuarterImage)
+	{
+		tr.froxelDepthQuarterFbo = FBO_Create("_froxeldepthquarter", tr.froxelDepthQuarterImage->width, tr.froxelDepthQuarterImage->height);
+		FBO_AttachImage(tr.froxelDepthQuarterFbo, tr.froxelDepthQuarterImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.froxelDepthQuarterFbo);
+		tr.froxelDepthFbo = FBO_Create("_froxeldepth", tr.froxelDepthImage->width, tr.froxelDepthImage->height);
+		FBO_AttachImage(tr.froxelDepthFbo, tr.froxelDepthImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.froxelDepthFbo);
+		for (i = 0; i < 2; i++)
+		{
+			tr.froxelLightFbo[i] = FBO_Create(va("_froxellight%d", i), tr.froxelLightImage[i]->width, tr.froxelLightImage[i]->height);
+			FBO_AttachImage(tr.froxelLightFbo[i], tr.froxelLightImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.froxelLightFbo[i]);
+		}
+		for (i = 0; i < 2; i++)
+		{
+			tr.froxelSumFbo[i] = FBO_Create(va("_froxelsum%d", i), tr.froxelSumImage[i]->width, tr.froxelSumImage[i]->height);
+			FBO_AttachImage(tr.froxelSumFbo[i], tr.froxelSumImage[i], GL_COLOR_ATTACHMENT0, 0);
+			R_CheckFBO(tr.froxelSumFbo[i]);
+		}
 	}
 
 	if (tr.screenSsaoImage)

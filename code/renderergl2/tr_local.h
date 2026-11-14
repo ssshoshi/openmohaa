@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 QGL_1_1_PROCS;
 QGL_DESKTOP_1_1_PROCS;
 QGL_1_3_PROCS;
+QGL_TEXTURE3D_PROCS;
 QGL_1_5_PROCS;
 QGL_2_0_PROCS;
 QGL_3_0_PROCS;
@@ -532,8 +533,19 @@ enum
 #define GTAO_DEPTH_MIPS      4  // and the smaller copies of the depth it reads (gtao_fp.glsl's)
 #define TMU_SSRCOLOR         25 // Added in OPM: r_ssr, the last frame before its tone map
 #define TMU_SSRDEPTH         26 // and this frame's depth
-#define NUM_TEXTURE_UNITS    27
+#define TMU_FROXELFOG        27 // Added in OPM: r_volumetric 2, the air summed from the eye, for what is drawn after it (tr_froxel.c)
+#define TMU_RAINCOVER        28 // Added in OPM: what keeps the rain off, its height from above (tr_water.c)
+#define TMU_RAINREFLECT      29 // and the view the puddles mirror (R_WaterReflectView)
+#define TMU_RAINREFLECTDEPTH 30 // and its depth, to tell what is under a higher puddle
+#define TMU_PARTICLESCENE    31 // Added in OPM: the view behind its dust and smoke, to blend them as shown (r_linearParticleBlend)
+#define NUM_TEXTURE_UNITS    32
 
+// Added in OPM: r_volumetric 2's grid of the air (froxel_fp.glsl): a cell
+// FROXEL_PIXELS of the view a side, FROXEL_SLICES slices of its depth, laid
+// out FROXEL_TILES slices a row of a 2D image
+#define FROXEL_PIXELS  16
+#define FROXEL_SLICES  64
+#define FROXEL_TILES   8
 #define RT_MAX_LIGHTS   64 // a multiple of 4 (the lists of them, u_RtList), and no more than 64 (rtMask)
 #define RT_LIGHT_VEC4S  4
 #define RT_MASK_ALL     (~(uint64_t)0) // a surface no light was culled for
@@ -748,6 +760,9 @@ typedef struct shader_s {
     // texture of its first stage, which the program takes its ripples from
     qboolean isWater;
     image_t *waterImage;
+    // Added in OPM: the terrain is drawn with it (R_LoadTerrain): ground the
+    // rain wets, even with an alpha test, where a cut-out takes none of it
+    qboolean isTerrain;
 } shader_t;
 
 enum
@@ -885,8 +900,11 @@ enum
 	GLSL_VEC4_SKELLIGHTS, // Added in OPM: a posed model's lights, SKEL_GPU_MAX_LIGHTS * 3 vec4s
 	GLSL_VEC4_SKELDENTS,  // Added in OPM: its gore dents, SKEL_GPU_MAX_DENTS * 2 vec4s
 	GLSL_VEC4_SKELMORPHS, // Added in OPM: its morph targets' weights, SKEL_GPU_MAX_MORPHS / 4 vec4s
-	GLSL_VEC4_WATERSPOTS  // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_WATERSPOTS, // Added in OPM: blood in the water round bodies, WATER_MAX_SPOTS vec4s
+	GLSL_VEC4_SMOKE       // Added in OPM: the puffs of smoke in the air's grid, SMOKE_MAX_BLOBS * 3 vec4s (tr_froxel.c)
 };
+
+#define SMOKE_MAX_BLOBS 96 // Added in OPM: the most puffs of smoke the air's grid takes a frame (tr_froxel.c)
 
 #define WATER_MAX_SPOTS 32 // Added in OPM: the most clouds of blood round bodies in water (tr_water.c)
 #define WATER_RIPPLE_SIZE 1024 // Added in OPM: the water's ripples, a grid this many texels across (tr_water.c)
@@ -1037,6 +1055,22 @@ typedef enum
 	UNIFORM_AOPARAMS, // the occlusion pass's radius and strength (gtao_fp.glsl)
 	UNIFORM_VOLPARAMS,    // Added in OPM: r_volumetric (volumetric_fp.glsl): density, anisotropy, the sun's share, the lamps'
 	UNIFORM_VOLRANGE,     // how far the sun's steps go, its cascades there
+	UNIFORM_FROXEL,       // Added in OPM: r_volumetric 2 (froxel_fp.glsl): the grid's cells across, up, slices, its depth curve
+	UNIFORM_FOGVOLUMES,   // the map's fog banks, three vec4s each (tr_froxel.c)
+	UNIFORM_FOGPARAMS,    // how many
+	UNIFORM_FOGAMBIENT,   // their own light
+	UNIFORM_FROXELPREVORIGIN,  // last frame's eye, w how much of last frame each cell keeps
+	UNIFORM_FROXELPREVFORWARD, // its axes, left and up over the view's half width and height
+	UNIFORM_FROXELPREVLEFT,
+	UNIFORM_FROXELPREVUP,
+	UNIFORM_FROXELJITTER, // where in each cell the light is taken this frame
+	UNIFORM_SMOKEBLOBS,   // the puffs of smoke: middle and radius, albedo and density, the light their sprites had
+	UNIFORM_SMOKEPARAMS,  // how many, the noise's scale, its drift (time), how much it eats into them
+	UNIFORM_SMOKENOISE,   // the smoke's 3D noise
+	UNIFORM_FROXELFOG,     // Added in OPM: the air for what is drawn after it (USE_FROXEL_FOG): how, slices, depth curve
+	UNIFORM_FROXELFOGVIEW, // zfar / znear, zfar, one over the view's size
+	UNIFORM_FROXELFOGGRID, // cells across, up, the view's corner
+	UNIFORM_FROXELFOGMAP,
 	UNIFORM_RTBOUNCELAMPMAP,
 	UNIFORM_RTDIRECT,     // Added in OPM: the baked lamps' light on a lightmap (R_RtBakeLamps): its scale, eased in
 	UNIFORM_RTDIRECTMAP,
@@ -1047,6 +1081,8 @@ typedef enum
 	UNIFORM_RTPROBEG,
 	UNIFORM_RTPROBEB,
 	UNIFORM_SOFTPARTICLE, // Added in OPM: fade distance (0: none), 1 to fade the colour, zNear, zFar
+	UNIFORM_PARTICLESCENEMAP, // Added in OPM: the view behind dust and smoke (r_linearParticleBlend)
+	UNIFORM_PARTICLEBLEND,    // and 1 to blend them as shown, from it
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
 	UNIFORM_SKELPARAMS,
@@ -1084,6 +1120,7 @@ typedef enum
 	UNIFORM_LENSINFO,      // what is on the lens (tr_lens.c, glsl/lens_fp.glsl)
 	UNIFORM_LENSSPOTS,
 	UNIFORM_LENSLOOK,
+	UNIFORM_LENSRAIN,      // the rain on the glass: how wet, the time
 	UNIFORM_BLOOMPARAMS,   // Added in OPM: the bloom (RB_Bloom, glsl/bloom_fp.glsl)
 	UNIFORM_BLOOMTEXEL,
 	UNIFORM_WET,           // the wet layer on what stands in the water (lightall, tr_water.c)
@@ -1094,6 +1131,15 @@ typedef enum
 	UNIFORM_SSRPREVVIEWPROJ, // and to the last frame's
 	UNIFORM_SSRPARAMS,      // strength (0: off), reach, near, far
 	UNIFORM_WETSUN,
+	UNIFORM_RAINCOVER,      // Added in OPM: the rain's cover grid: its corner, one over its size
+	UNIFORM_RAINPARAMS,     // the time, the grid's texel, how much ground holds puddles, how much the beads show
+	UNIFORM_RAINCOVERMAP,
+	UNIFORM_RAINREFLECT,    // whether the puddles' mirror was drawn, its height, its share of the image across and up
+	UNIFORM_RAINREFLECTMVP, // how it was seen
+	UNIFORM_RAINREFLECTMAP,
+	UNIFORM_RAINREFLECTDEPTHMAP,
+	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
+	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1318,6 +1364,8 @@ typedef struct {
 	// Added in OPM: the view its water mirrors was drawn first, into
 	// tr.waterReflectImage (R_WaterReflectView): at this height, seen so
 	int			waterReflect;
+	// or, with none, the rain's puddles' (the same fields, the same image)
+	int			rainReflect;
 	vec4_t		waterReflectPlane; // normal, distance
 	vec2_t		waterReflectShare; // of the image across and up
 	mat4_t		waterReflectMvp;
@@ -1753,6 +1801,7 @@ typedef struct cStaticModelUnpacked_s {
     int rtCaster; // once moved, RT_CASTS_*
     uint64_t rtLights; // moving: the lights it can shadow anything for (trRefEntity_t)
     qboolean rtFixture; // a lamp: the realtime lights are in it, it casts none of their shadows
+    qboolean rtHidden; // a map's corona on a lamp's flame, not drawn (R_RtLightsAtLamps)
     int rtProbeState; // its bounce (R_RtStaticModelProbe): 0 not yet, 1 worked out, 2 no probe sees it
     vec4_t rtProbe[3];
 
@@ -1779,6 +1828,8 @@ typedef struct refSprite_s {
     byte shaderRGBA[4];
     int renderfx;
     float shaderTime;
+    qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke (R_FroxelTakesSprite)
+    byte     froxelAlpha; // and its alpha before its sprite gave the grid its share
 } refSprite_t;
 
 //=========================
@@ -2314,6 +2365,13 @@ typedef enum {
 	CPUTIMER_POSTPROCESS,	// RC_POSTPROCESS
 	CPUTIMER_SPRITES,		// RC_SPRITE_SURFS
 	CPUTIMER_2D,			// RC_STRETCH_PIC + the flush that actually draws it
+	// Added in OPM: RC_DRAW_BUFFER, the frame's first touch of the default
+	// framebuffer (bind, draw buffer, the render target clear). A driver
+	// holding the CPU back for its frame queue can block here, not at swap.
+	CPUTIMER_DRAWBUFFER,
+	// Added in OPM: the small commands (set color, color mask, clear depth,
+	// cap shadow map), so backend has nothing left unattributed but the loop.
+	CPUTIMER_SMALLCMDS,
 	CPUTIMER_PRESENT,		// RB_PresentToScreen
 	// The buffer swap and the optional qglFinish before it. This is where a
 	// main thread waiting on the GPU ends up, so it is the bucket that
@@ -2332,6 +2390,10 @@ typedef enum {
 	// Nested deeper still, inside whichever pass is drawing.
 	CPUTIMER_TESSBUILD,		// deform, colour and alpha gen per batch
 	CPUTIMER_TESSUPLOAD,	// RB_UpdateTessVao: the per-batch buffer uploads
+	// Added in OPM: the main thread blocked on a fence because the card is
+	// still reading a stream ring part or a skin arena (c_streamWaits counts
+	// them). Inside whichever command was drawing, or swap for the arena.
+	CPUTIMER_GPUWAIT,
 
 	CPUTIMER_COUNT
 } cpuTimerId_t;
@@ -2503,6 +2565,7 @@ typedef struct {
 	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
 	qboolean    waterScene; // Added in OPM: the view as it was before its water is in tr.waterSceneImage
+	qboolean    particleScene; // Added in OPM: the view as it was before its first dust or smoke is in tr.waterSceneImage
 	float       greyscale;
 
 	//
@@ -2580,6 +2643,11 @@ typedef struct {
 	image_t					*renderDepthImage;
 	image_t					*pshadowMaps[MAX_DRAWN_PSHADOWS];
 	image_t					*screenScratchImage;
+	// Added in OPM: SMAA (tr_smaa.c)
+	image_t					*smaaEdgesImage;
+	image_t					*smaaBlendImage;
+	image_t					*smaaAreaImage;
+	image_t					*smaaSearchImage;
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
 	image_t                 *bloomImage[BLOOM_LEVELS]; // Added in OPM: the bloom's levels, each half the last (RB_Bloom)
@@ -2595,11 +2663,17 @@ typedef struct {
 	image_t                 *gtaoDepthImage; // the depth at that size, read by both
 	image_t                 *volumeImage;     // Added in OPM: r_volumetric, the light in the air, at half the view's size
 	image_t                 *volumeBlurImage; // and half of its blur
+	image_t                 *froxelLightImage[2]; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row), this frame's and last
+	image_t                 *froxelSumImage[2]; // and summed from the eye, in passes from one to the other
+	image_t                 *froxelDepthImage; // and each tile of the view's furthest depth
+	image_t                 *froxelDepthQuarterImage; // and each quarter tile's, on the way (raw depth)
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
 	image_t					*waterReflectImage; // Added in OPM: the view water mirrors (tr_water.c)
+	image_t					*waterReflectDepthImage; // and its depth, for the air in it (tr_froxel.c)
 	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
+	image_t					*rainCoverImage;   // Added in OPM: the highest of the world at each place, from above: what keeps the rain off (tr_water.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
@@ -2611,6 +2685,8 @@ typedef struct {
 	FBO_t					*depthFbo;
 	FBO_t					*pshadowFbos[MAX_DRAWN_PSHADOWS];
 	FBO_t					*screenScratchFbo;
+	FBO_t					*smaaEdgesFbo;	// Added in OPM: SMAA (tr_smaa.c)
+	FBO_t					*smaaBlendFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
 	FBO_t                   *bloomFbo[BLOOM_LEVELS];
@@ -2627,6 +2703,10 @@ typedef struct {
 	FBO_t					*gtaoDepthFbo;
 	FBO_t					*volumeFbo;
 	FBO_t					*volumeBlurFbo;
+	FBO_t					*froxelLightFbo[2];
+	FBO_t					*froxelSumFbo[2];
+	FBO_t					*froxelDepthFbo;
+	FBO_t					*froxelDepthQuarterFbo;
 	FBO_t					*hdrDepthFbo;
 	FBO_t					*waterSceneFbo;
 	FBO_t					*waterReflectFbo;
@@ -2678,6 +2758,7 @@ typedef struct {
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
 	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
+	shaderProgram_t froxelShader[4];  // Added in OPM: r_volumetric 2 (froxel_fp.glsl): FROXEL_LIGHT, FROXEL_INTEGRATE, FROXEL_APPLY, FROXEL_DEPTH
 	shaderProgram_t ssaoShader;
 	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
 	shaderProgram_t depthBlurShader[4];
@@ -2686,6 +2767,7 @@ typedef struct {
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
+	shaderProgram_t smaaShader[3]; // Added in OPM: SMAA's edges, weights, blend (tr_smaa.c)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
 
@@ -2721,6 +2803,12 @@ typedef struct {
 	vec3_t                  lastCascade2Origin;
 	vec3_t                  lastCascade2Forward;
 	float                   lastCascade2Mvp[16];
+	// r_sunCascadeStagger: when each of cascades 1-2 was last drawn
+	int                     cascadeStaggerFrame;
+	qboolean                haveCascadeKept[3];
+	vec3_t                  cascadeKeptOrigin[3];
+	vec3_t                  cascadeKeptForward[3];
+	float                   cascadeKeptMvp[3][16];
 
 	frontEndCounters_t		pc;
 	int						frontEndMsec;		// not in pc due to clearing issue
@@ -3021,6 +3109,7 @@ extern  cvar_t  *r_shadowCascadeZBias;
 extern  cvar_t  *r_sunEntityShadowCascades;
 extern  cvar_t  *r_sunCascade2CacheDist;
 extern  cvar_t  *r_sunCascade2CacheAngle;
+extern  cvar_t  *r_sunCascadeStagger;
 extern  cvar_t  *r_skelCull;
 extern  cvar_t  *r_prepassFarModels;
 extern  cvar_t  *r_skinCache;
@@ -3208,12 +3297,23 @@ enum {
 	RT_STAGE_PARTICLE,  // translucent dust or smoke: as RT_STAGE_LIT_BAKED, lit at its corners from every side
 	RT_STAGE_PARTICLE_LIT // the same, as RT_STAGE_LIT
 };
+
+// Added in OPM: in the view water and puddles mirror (VPF_WATERREFLECT) the
+// eye's up is the world's down: a billboard built on the view's axes stood
+// on its head in the world, and so came out the right way up in the mirror
+// (a fire in a puddle). Turned half round, it still faces the eye, and the
+// mirror turns it over.
+#define R_VIEW_UPSIDE_DOWN() ((backEnd.viewParms.flags & VPF_WATERREFLECT) != 0)
+
 qboolean R_RtActive(void);
 int      R_RtBakedTile(void);
 void     R_RtFreeBakedLamps(void);
 qboolean R_RtLitLive(void);
 qboolean R_RtLinear(void);
 extern cvar_t *r_linearExposure;
+extern cvar_t *r_linearLighting;
+extern cvar_t *r_linearParticleBlend;
+qboolean RB_ParticleCopyView(void);
 qboolean R_RtTakesDlights(void);
 void R_RtRegister(void);
 void R_RtLoadWorld(void);
@@ -3630,6 +3730,7 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent );
 void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
+void R_LightDirSummed( const vec3_t point, world_t *world, vec3_t summedDir ); // Added in OPM
 int R_CubemapForPoint( vec3_t point );
 void R_PlaceEnvProbes( const lump_t *entityLump );
 int R_ViewCubemapForPoint( const vec3_t point );
@@ -4046,6 +4147,25 @@ void R_WaterRegisterCvars(void);
 void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs);
 void R_PlaneForSurface(surfaceType_t *surfType, cplane_t *plane);
 void R_WaterLoadWorld(const char *mapName);
+
+// Added in OPM: tr_froxel.c, r_volumetric 2 and the maps' fog banks
+extern cvar_t *r_volumetricFog;
+extern cvar_t *r_volumetricTemporal;
+void R_FroxelInit(void);
+void R_FroxelShutdown(void);
+void R_FogLoadWorld(const char *mapName);
+qboolean R_FroxelFogOn(void);
+extern cvar_t *r_volumetricSmoke;
+qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
+qboolean R_FroxelSpriteToo(const refSprite_t *sprite);
+qboolean R_FroxelHasWork(void);
+void RB_FroxelOpaqueDone(void);
+void RB_FroxelBeginView(void);
+void R_FroxelSetFog(shaderProgram_t *sp, int stateBits);
+void RB_FroxelFogDepth(float depth);
+qboolean R_FroxelOn(void);
+void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s);
+void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qboolean mainView);
 void R_WaterFinishShader(shader_t *sh, shaderStage_t *firstStage);
 qboolean RB_WaterDraw(shaderCommands_t *input);
 void RB_BeachDraw(void);
@@ -4053,7 +4173,10 @@ void R_WaterInfo_f(void);
 void R_WaterReload_f(void);
 void RE_SetWaterBlood(const float *spots, int numSpots, const float *stains, int numStains);
 void RE_AddWaterRipples(const float *ripples, int numRipples);
-void R_WaterSetWet(shaderProgram_t *sp);
+void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage);
+void R_RainFrame(const refdef_t *fd);
+qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale);
+float    R_RainOvercast(void);
 void R_WaterSetDry(shaderProgram_t *sp);
 void RB_WaterSawSky(const shader_t *sh);
 
@@ -4068,6 +4191,12 @@ void R_BloomRegisterCvars(void);
 void RB_Bloom(FBO_t *fbo, ivec4_t box);
 qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox);
 extern cvar_t *r_sharpen;
+// Added in OPM: SMAA 1x (tr_smaa.c)
+extern cvar_t *r_smaa;
+qboolean R_SmaaWanted(void);
+void R_SmaaCreateImages(int width, int height);
+void R_SmaaCreateFbos(void);
+qboolean RB_Smaa(FBO_t *src, ivec4_t box, FBO_t *dst);
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);

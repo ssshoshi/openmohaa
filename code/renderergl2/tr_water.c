@@ -75,7 +75,29 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 cvar_t        *r_water;
 cvar_t        *r_waterRipples;
 cvar_t        *r_waterWet;
+cvar_t        *r_rainWet;     // Added in OPM: set by the cgame: 1 once the map has rained (cg_lens.cpp)
+cvar_t        *r_rainPuddles;
+static cvar_t *r_rainPuddleShaders;
+static cvar_t *r_rainRoofShaders;
+static cvar_t *r_rainOvercast;
+static cvar_t *r_rainFlash;
+static cvar_t *r_rainRunoff;
+static cvar_t *r_rainMist;
+cvar_t        *r_rainBeads;
+cvar_t        *r_rainDebug;
 cvar_t        *r_waterReflect;
+cvar_t        *r_waterReflectStagger;
+
+// the mirror view last drawn, for r_waterReflectStagger
+static struct {
+    int      frame; // tr.frameCount it was drawn in, -1 none
+    qboolean puddles;
+    int      width, height; // the view's
+    vec3_t   origin, forward;
+    vec4_t   plane;
+    vec2_t   share;
+    mat4_t   mvp;
+} waterReflectKept = {-1};
 static cvar_t *r_waterBlood;
 
 typedef struct {
@@ -143,7 +165,28 @@ void R_WaterRegisterCvars(void)
     r_waterBlood = ri.Cvar_Get("r_waterBlood", "1", CVAR_ARCHIVE);
     r_waterRipples = ri.Cvar_Get("r_waterRipples", "1", CVAR_ARCHIVE | CVAR_LATCH);
     r_waterWet = ri.Cvar_Get("r_waterWet", "1", CVAR_ARCHIVE);
+    r_rainWet     = ri.Cvar_Get("r_rainWet", "0", CVAR_TEMP);
+    r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
+    r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
+    r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
+    r_rainRoofShaders = ri.Cvar_Get("r_rainRoofShaders", "roof shingle shngl siding thatch", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainRoofShaders, "In the rain, the textures of roofs, which the rain runs down in a rippling sheet: names or parts of names, separated by spaces or commas (on others it is just wet)");
+    r_rainOvercast = ri.Cvar_Get("r_rainOvercast", "0.7", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainOvercast, "In the rain, how much of the sun's light the clouds take, 0 to 1 (its glint on the wet goes with it)");
+    r_rainFlash = ri.Cvar_Get("r_rainFlash", "1", CVAR_ARCHIVE);
+    r_rainRunoff = ri.Cvar_Get("r_rainRunoff", "1", CVAR_ARCHIVE);
+    r_rainMist = ri.Cvar_Get("r_rainMist", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_rainMist, "In the rain, the mist lying low over what is out under the sky, drifting, and the haze of the rain further up (r_volumetric 2): 0 none, 1 as it is, more for thicker");
+    ri.Cvar_SetDescription(r_rainRunoff, "In the rain, water pours off the eaves of roofs and splashes where it lands: 0 none, 1 as it is, more for more of it");
+    ri.Cvar_SetDescription(r_rainFlash, "In the rain, how brightly lightning lights what is out under the sky: 0 not at all");
+    ri.Cvar_SetDescription(r_rainPuddleShaders, "In the rain, the textures puddles gather on: names or parts of names, separated by spaces or commas (empty: all open ground)");
+    r_rainDebug   = ri.Cvar_Get("r_rainDebug", "0", CVAR_CHEAT);
+    ri.Cvar_SetDescription(r_rainWet, "How wet the rain has made what is out under the sky, 0 to 1 (the game sets it on a map with rain; r_waterWet 0 turns it off)");
+    ri.Cvar_SetDescription(r_rainPuddles, "In the rain, how much of the open ground holds puddles, with the rain ringing them: 0 none, 1 most of it");
+    ri.Cvar_SetDescription(r_rainBeads, "In the rain, drops beaded on the hands and the weapon in view: 0 none, 1 as many as hold");
     r_waterReflect = ri.Cvar_Get("r_waterReflect", "1", CVAR_ARCHIVE);
+    r_waterReflectStagger = ri.Cvar_Get("r_waterReflectStagger", "0", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_waterReflectStagger, "1: the water's mirror view is drawn every other frame, and between them the last one is shown as it was seen (what moves in it is a frame behind)");
     ri.Cvar_SetDescription(r_waterReflect, "Water mirrors the world from under its surface, a second view drawn first: 0 only what is on the screen, 1 at half the screen's size, 2 at all of it (the size needs vid_restart), 3 as 1 and shows it in a corner");
     ri.Cvar_SetDescription(r_waterWet, "What stands in the water or on a beach below the tide's mark looks wet: darker, glossy, with the sky in it");
     ri.Cvar_SetDescription(r_waterRipples, "Ripples and wakes on water from men wading, boats, bullets and things falling in (needs vid_restart)");
@@ -721,9 +764,921 @@ static void R_WaterBuildBeach(void)
     beachGround.on = qtrue;
 }
 
+/*
+===============
+R_RainBuildCover
+
+Added in OPM
+  What keeps the rain off: the world's surfaces and its terrain, all but the
+  sky, what is not drawn and what is see-through, drawn from above into a
+  grid of the highest of them at each place (tr.rainCoverImage). Out in the
+  rain is at or above it (lightall_fp.glsl's RainExposed); a wall reads it a
+  little way out from its face, where the rain falls past it.
+  Built the first frame it rains on a map, from the front end.
+===============
+*/
+#define RAIN_COVER_SIZE 2048
+#define RAIN_COVER_NONE -1.0e9f
+
+static struct {
+    float   *height;
+    float   *puddle;      // the highest of what puddles gather on, out in the rain (R_RainBuildPuddles)
+    int      puddleCount; // r_rainPuddleShaders as it was built for
+    float    lastHeight;  // the height the puddles' mirror last took (R_WaterReflectView)
+    float    flash;       // a lightning flash, fading (R_RainFrame)
+    float    flashTime;
+    struct rainEave_s *eaves; // where water pours off a roof (R_RainFindEaves)
+    int      numEaves;
+    qhandle_t streamShader, curtainShader, crownShader, dropShader, mistShader;
+    qboolean shadersTried;
+    qboolean hasLast;
+    int      width, rows;
+    float    x0, y0, texel;
+    vec2_t   mins, maxs;
+    qboolean on, tried;
+} rainCover;
+
+static qboolean R_RainPuddleShader(const shader_t *shader);
+static float    R_RainAmount(void);
+static void     R_WaterSky(vec4_t out);
+static void     R_RainFindEaves(void);
+
+// the grid R_RainTri draws into: the cover's, or the puddles'
+static float *rainGrid;
+
+static qboolean R_RainCovers(const shader_t *sh)
+{
+    return sh && !sh->isSky && !(sh->surfaceFlags & (SURF_SKY | SURF_NODRAW)) && !(sh->contentFlags & CONTENTS_WATER)
+             && sh->sort < SS_BLEND0
+         ? qtrue
+         : qfalse;
+}
+
+static void R_RainTri(const vec3_t a, const vec3_t b, const vec3_t c, qboolean draw)
+{
+    float area, minx, maxx, miny, maxy;
+    int   x0, x1, y0, y1, x, y;
+
+    minx = Q_min(a[0], Q_min(b[0], c[0]));
+    maxx = Q_max(a[0], Q_max(b[0], c[0]));
+    miny = Q_min(a[1], Q_min(b[1], c[1]));
+    maxy = Q_max(a[1], Q_max(b[1], c[1]));
+    if (!draw) {
+        rainCover.mins[0] = Q_min(rainCover.mins[0], minx);
+        rainCover.mins[1] = Q_min(rainCover.mins[1], miny);
+        rainCover.maxs[0] = Q_max(rainCover.maxs[0], maxx);
+        rainCover.maxs[1] = Q_max(rainCover.maxs[1], maxy);
+        return;
+    }
+
+    area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    x0   = Q_max(0, (int)floor((minx - rainCover.x0) / rainCover.texel));
+    x1   = Q_min(rainCover.width - 1, (int)floor((maxx - rainCover.x0) / rainCover.texel));
+    y0   = Q_max(0, (int)floor((miny - rainCover.y0) / rainCover.texel));
+    y1   = Q_min(rainCover.rows - 1, (int)floor((maxy - rainCover.y0) / rainCover.texel));
+
+    if (fabs(area) < 0.001f) {
+        // no puddle lies on a wall
+        if (rainGrid != rainCover.height) {
+            return;
+        }
+        // edge on from above (a wall): its top along the texels it crosses,
+        // as a thin wall would be lost between their middles. The top where
+        // the texel is along it, not its highest anywhere: a broken wall's
+        // tall piece roofed the low top beside it (dry, its edges wet)
+        const float *tv[3] = {a, b, c};
+
+        for (y = y0; y <= y1; y++) {
+            for (x = x0; x <= x1; x++) {
+                const float px = rainCover.x0 + (x + 0.5f) * rainCover.texel;
+                const float py = rainCover.y0 + (y + 0.5f) * rainCover.texel;
+                vec2_t      d  = {maxx - minx, maxy - miny};
+                const float len = sqrt(d[0] * d[0] + d[1] * d[1]);
+                float       off;
+
+                if (len < 0.001f) {
+                    continue;
+                }
+                // how far the texel's middle is off the line from a to the far end
+                {
+                    const float *p0 = a, *p1 = (Distance(a, b) > Distance(a, c)) ? b : c;
+                    const float  ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+                    const float  l  = sqrt(ex * ex + ey * ey);
+
+                    if (l < 0.001f) {
+                        continue;
+                    }
+                    off = fabs((px - p0[0]) * ey - (py - p0[1]) * ex) / l;
+                }
+                if (off <= rainCover.texel * 0.71f) {
+                    const float *p0 = a, *p1 = (Distance(a, b) > Distance(a, c)) ? b : c;
+                    const float  ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+                    const float  l2 = ex * ex + ey * ey;
+                    float        sv[3], st, top = RAIN_COVER_NONE, smin = 1e9f, smax = -1e9f;
+                    float       *h = &rainGrid[y * rainCover.width + x];
+                    int          e;
+
+                    // along the wall: each corner's place, and the texel's,
+                    // kept within the wall's ends
+                    for (e = 0; e < 3; e++) {
+                        sv[e] = ((tv[e][0] - p0[0]) * ex + (tv[e][1] - p0[1]) * ey) / l2;
+                        smin  = Q_min(smin, sv[e]);
+                        smax  = Q_max(smax, sv[e]);
+                    }
+                    st = ((px - p0[0]) * ex + (py - p0[1]) * ey) / l2;
+                    st = Q_max(smin, Q_min(smax, st));
+                    // the highest of the edges over that place
+                    for (e = 0; e < 3; e++) {
+                        const int   f  = (e + 1) % 3;
+                        const float s0 = sv[e], s1 = sv[f];
+
+                        if (fabs(s1 - s0) < 1e-5f) {
+                            if (fabs(st - s0) < 1e-4f) {
+                                top = Q_max(top, Q_max(tv[e][2], tv[f][2]));
+                            }
+                        } else if ((st - s0) * (st - s1) <= 1e-6f) {
+                            const float k = (st - s0) / (s1 - s0);
+                            top = Q_max(top, tv[e][2] + (tv[f][2] - tv[e][2]) * k);
+                        }
+                    }
+                    if (top <= RAIN_COVER_NONE * 0.5f) {
+                        top = Q_max(a[2], Q_max(b[2], c[2]));
+                    }
+                    *h = Q_max(*h, top);
+                }
+            }
+        }
+        return;
+    }
+
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            const float px = rainCover.x0 + (x + 0.5f) * rainCover.texel;
+            const float py = rainCover.y0 + (y + 0.5f) * rainCover.texel;
+            const float wa = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) / area;
+            const float wb = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
+            const float wc = 1.0f - wa - wb;
+            float      *h  = &rainGrid[y * rainCover.width + x];
+
+            if (wa < -0.001f || wb < -0.001f || wc < -0.001f) {
+                continue;
+            }
+            *h = Q_max(*h, wa * a[2] + wb * b[2] + wc * c[2]);
+        }
+    }
+}
+
+static void R_RainCoverSurfaces(qboolean draw, qboolean puddles)
+{
+    int i, k, x, y;
+
+    for (i = 0; i < tr.world->numsurfaces; i++) {
+        const msurface_t      *surf = &tr.world->surfaces[i];
+        const srfBspSurface_t *bsp;
+
+        if (!R_RainCovers(surf->shader) || !surf->data || (puddles && !R_RainPuddleShader(surf->shader))) {
+            continue;
+        }
+        if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) {
+            continue;
+        }
+        bsp = (const srfBspSurface_t *)surf->data;
+        for (k = 0; k + 2 < bsp->numIndexes; k += 3) {
+            R_RainTri(bsp->verts[bsp->indexes[k]].xyz, bsp->verts[bsp->indexes[k + 1]].xyz,
+                bsp->verts[bsp->indexes[k + 2]].xyz, draw);
+        }
+    }
+
+    for (i = 0; i < tr.world->numTerraPatches; i++) {
+        const cTerraPatchUnpacked_t *patch = &tr.world->terraPatches[i];
+
+        if (!R_RainCovers(patch->shader) || (puddles && !R_RainPuddleShader(patch->shader))) {
+            continue;
+        }
+        for (y = 0; y < 8; y++) {
+            for (x = 0; x < 8; x++) {
+                vec3_t p[4];
+
+                for (k = 0; k < 4; k++) {
+                    const int xi = x + (k & 1), yi = y + (k >> 1);
+
+                    VectorSet(p[k], patch->x0 + xi * 64.0f, patch->y0 + yi * 64.0f,
+                        patch->heightmap[yi * 9 + xi] * 2.0f + patch->z0);
+                }
+                R_RainTri(p[0], p[1], p[3], draw);
+                R_RainTri(p[0], p[3], p[2], draw);
+            }
+        }
+    }
+}
+
+static void R_RainBuildCover(void)
+{
+    float extent;
+    int   i, start = ri.Milliseconds();
+
+    rainCover.tried = qtrue;
+    if (!tr.world) {
+        return;
+    }
+
+    VectorSet2(rainCover.mins, 1e9f, 1e9f);
+    VectorSet2(rainCover.maxs, -1e9f, -1e9f);
+    R_RainCoverSurfaces(qfalse, qfalse);
+    if (rainCover.maxs[0] <= rainCover.mins[0] || rainCover.maxs[1] <= rainCover.mins[1]) {
+        return;
+    }
+
+    extent          = Q_max(rainCover.maxs[0] - rainCover.mins[0], rainCover.maxs[1] - rainCover.mins[1]);
+    rainCover.texel = Q_max(extent / RAIN_COVER_SIZE, 6.0f);
+    rainCover.x0    = rainCover.mins[0] - rainCover.texel;
+    rainCover.y0    = rainCover.mins[1] - rainCover.texel;
+    rainCover.width = Q_min(RAIN_COVER_SIZE, (int)ceil((rainCover.maxs[0] - rainCover.mins[0]) / rainCover.texel) + 2);
+    rainCover.rows  = Q_min(RAIN_COVER_SIZE, (int)ceil((rainCover.maxs[1] - rainCover.mins[1]) / rainCover.texel) + 2);
+
+    rainCover.height = ri.Malloc(rainCover.width * rainCover.rows * sizeof(float));
+    for (i = 0; i < rainCover.width * rainCover.rows; i++) {
+        rainCover.height[i] = RAIN_COVER_NONE;
+    }
+    rainGrid = rainCover.height;
+    R_RainCoverSurfaces(qtrue, qfalse);
+    R_RainFindEaves();
+
+    tr.rainCoverImage = R_CreateImage("*rainCover", NULL, rainCover.width, rainCover.rows, IMGTYPE_COLORALPHA,
+        IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R32F);
+    qglTextureSubImage2DEXT(tr.rainCoverImage->texnum, GL_TEXTURE_2D, 0, 0, 0, rainCover.width, rainCover.rows, GL_RED,
+        GL_FLOAT, rainCover.height);
+    qglTextureParameteriEXT(tr.rainCoverImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    qglTextureParameteriEXT(tr.rainCoverImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    rainCover.on = qtrue;
+    ri.Printf(PRINT_DEVELOPER, "rain: cover %dx%d, %.1f units a texel, in %d ms\n", rainCover.width, rainCover.rows,
+        rainCover.texel, ri.Milliseconds() - start);
+}
+
+/*
+===============
+R_RainBuildPuddles
+
+Added in OPM
+  Where puddles gather (r_rainPuddleShaders), out in the rain: the highest
+  of those surfaces at each place of the cover's grid, for the height of the
+  puddles' mirror (R_WaterReflectView). Again when the list changes.
+===============
+*/
+static void R_RainBuildPuddles(void)
+{
+    int i, n = rainCover.width * rainCover.rows;
+
+    if (!rainCover.puddle) {
+        rainCover.puddle = ri.Malloc(n * sizeof(float));
+    }
+    for (i = 0; i < n; i++) {
+        rainCover.puddle[i] = RAIN_COVER_NONE;
+    }
+    rainGrid = rainCover.puddle;
+    R_RainCoverSurfaces(qtrue, qtrue);
+    rainGrid = rainCover.height;
+
+    // under something, no rain falls in it
+    for (i = 0; i < n; i++) {
+        if (rainCover.puddle[i] < rainCover.height[i] - 2.0f) {
+            rainCover.puddle[i] = RAIN_COVER_NONE;
+        }
+    }
+    rainCover.puddleCount = r_rainPuddleShaders->modificationCount;
+}
+
+/*
+===============
+R_RainPuddleHeight
+
+Added in OPM
+  The height of the puddles the eye looks at: the first place along its
+  look, flat over the ground, from under it out to 1024 units, where they
+  gather below it.
+===============
+*/
+static qboolean R_RainPuddleHeight(const vec3_t eye, const vec3_t forward, float *height)
+{
+    const int cx = (int)floor((eye[0] - rainCover.x0) / rainCover.texel);
+    const int cy = (int)floor((eye[1] - rainCover.y0) / rainCover.texel);
+    const int most = (int)(1024.0f / rainCover.texel);
+    int       r, x, y;
+
+    (void)forward;
+    if (!rainCover.puddle) {
+        return qfalse;
+    }
+    // Added in OPM: the puddle nearest the eye, whichever way it looks (the
+    // highest in view, or the one looked at, changed as the eye turned, and
+    // with it what a puddle gave back: a man's reflection off his feet).
+    // Puddles lower than it look it up where the eye's ray crosses its
+    // height; higher ones have the screen's (SsrTrace) alone. Out in rings
+    // from under the eye, the first ring with one in it
+    for (r = 0; r <= most; r++) {
+        float best = RAIN_COVER_NONE;
+
+        for (y = cy - r; y <= cy + r; y++) {
+            const int step = (y == cy - r || y == cy + r) ? 1 : 2 * r;
+
+            if (y < 0 || y >= rainCover.rows) {
+                continue;
+            }
+            for (x = cx - r; x <= cx + r; x += Q_max(step, 1)) {
+                float h;
+
+                if (x < 0 || x >= rainCover.width) {
+                    continue;
+                }
+                h = rainCover.puddle[y * rainCover.width + x];
+                if (h > RAIN_COVER_NONE * 0.5f && h < eye[2] - 8.0f && h > best) {
+                    best = h;
+                }
+            }
+        }
+        if (best > RAIN_COVER_NONE * 0.5f) {
+            *height = best;
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
+/*
+===============
+R_RainFindEaves
+
+Added in OPM
+  Where water pours off a roof: the lower edge of a slope in the cover's
+  grid, the roof rising behind it, over a drop of six feet and more to what
+  is under it, where it lands. A flat top (a wall's) has no lower edge, and
+  pours nothing. One every 18 units or so along an edge.
+===============
+*/
+typedef struct rainEave_s {
+    vec3_t top;    // the edge, where it leaves the roof
+    float  bottom; // where it lands
+    float  seed;
+    vec2_t out;    // the way off the roof, flat
+    vec3_t ground; // which way what it lands on faces
+} rainEave_t;
+
+#define RAIN_MAX_EAVES 8192
+#define RAIN_EAVE_GAP  18.0f
+
+static void R_RainFindEaves(void)
+{
+    static const int dirs[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+    const int        W = rainCover.width, H = rainCover.rows;
+    const float     *g = rainCover.height;
+    const float      t = rainCover.texel;
+    int              ow, oh, x, y, d;
+    byte            *taken;
+
+    rainCover.eaves    = ri.Malloc(RAIN_MAX_EAVES * sizeof(rainEave_t));
+    rainCover.numEaves = 0;
+    ow    = (int)(W * t / RAIN_EAVE_GAP) + 1;
+    oh    = (int)(H * t / RAIN_EAVE_GAP) + 1;
+    taken = ri.Malloc(ow * oh);
+    Com_Memset(taken, 0, ow * oh);
+
+    for (y = 2; y < H - 2; y++) {
+        for (x = 2; x < W - 2; x++) {
+            const float h = g[y * W + x];
+
+            if (h <= RAIN_COVER_NONE * 0.5f) {
+                continue;
+            }
+            for (d = 0; d < 8; d++) {
+                const int   dx = dirs[d][0], dy = dirs[d][1];
+                const float n  = g[(y + dy) * W + x + dx];
+                const float run = t * (dx && dy ? 1.41f : 1.0f);
+                float       px, py, len;
+                int         cx, cy;
+                rainEave_t *e;
+
+                // a drop over the edge, onto something, of an eave's height
+                // (a bank's ledge is lower)
+                if (n <= RAIN_COVER_NONE * 0.5f || n > h - 72.0f) {
+                    continue;
+                }
+                // the roof rising behind it, steadily, not a step up, and on
+                // for 30 units and more (a wall's sloped cap is narrower)
+                {
+                    float    prev = h;
+                    int      k;
+                    qboolean roof = qtrue;
+
+                    for (k = 1; k <= 5 && roof; k++) {
+                        const int   rx = x - k * dx, ry = y - k * dy;
+                        const float r  = (rx >= 0 && rx < W && ry >= 0 && ry < H) ? g[ry * W + rx] : RAIN_COVER_NONE;
+
+                        roof = r >= prev + run * 0.15f && r <= prev + run * 1.6f;
+                        prev = r;
+                    }
+                    if (!roof) {
+                        continue;
+                    }
+                }
+                if (x - 2 * dx < 1 || x - 2 * dx > W - 2 || y - 2 * dy < 1 || y - 2 * dy > H - 2) {
+                    continue;
+                }
+                // Added in OPM: the roof runs down to this edge, not along
+                // it: at a gable's sloped side the roof rises behind it
+                // across (diagonally), but its water runs on down the slope
+                {
+                    const int   bx = x - 2 * dx, by = y - 2 * dy;
+                    const float c  = g[by * W + bx];
+                    const float hx1 = g[by * W + bx + 1], hx0 = g[by * W + bx - 1];
+                    const float hy1 = g[(by + 1) * W + bx], hy0 = g[(by - 1) * W + bx];
+                    float       ux, uy, ul, dl;
+
+                    // a neighbour off the roof (past its edge) stands in as
+                    // the roof's own height here
+                    ux = ((fabs(hx1 - c) < 3.0f * t ? hx1 : c) - (fabs(hx0 - c) < 3.0f * t ? hx0 : c));
+                    uy = ((fabs(hy1 - c) < 3.0f * t ? hy1 : c) - (fabs(hy0 - c) < 3.0f * t ? hy0 : c));
+                    ul = sqrt(ux * ux + uy * uy);
+                    dl = sqrt((float)(dx * dx + dy * dy));
+                    // uphill must point back, away from the edge
+                    if (ul < 0.001f || (-(ux * dx + uy * dy) / (ul * dl)) < 0.85f) {
+                        continue;
+                    }
+                }
+                // Added in OPM: a roof is wide: the slope goes on to either
+                // side of the way down, where a wall's broken cap, sloping
+                // down along the wall, is a texel or two across
+                {
+                    const int   bx = x - 2 * dx, by = y - 2 * dy;
+                    const int   sx = -dy, sy = dx;
+                    const float c  = g[by * W + bx];
+                    int         side, k, wide = 0;
+
+                    for (side = -1; side <= 1; side += 2) {
+                        for (k = 1; k <= 3; k++) {
+                            const int   qx = bx + side * k * sx, qy = by + side * k * sy;
+                            const float q  = (qx >= 0 && qx < W && qy >= 0 && qy < H) ? g[qy * W + qx] : RAIN_COVER_NONE;
+
+                            if (fabs(q - c) > 2.0f * t * k) {
+                                break;
+                            }
+                        }
+                        wide += k - 1;
+                    }
+                    if (wide < 4) {
+                        continue;
+                    }
+                }
+                len = sqrt((float)(dx * dx + dy * dy));
+                px  = rainCover.x0 + (x + 0.5f + 0.5f * dx / len) * t;
+                py  = rainCover.y0 + (y + 0.5f + 0.5f * dy / len) * t;
+                cx  = (int)((px - rainCover.x0) / RAIN_EAVE_GAP);
+                cy  = (int)((py - rainCover.y0) / RAIN_EAVE_GAP);
+                if (cx < 0 || cy < 0 || cx >= ow || cy >= oh || taken[cy * ow + cx]) {
+                    break;
+                }
+                taken[cy * ow + cx] = 1;
+                if (rainCover.numEaves >= RAIN_MAX_EAVES) {
+                    break;
+                }
+                e = &rainCover.eaves[rainCover.numEaves++];
+                VectorSet(e->top, px, py, h - 1.0f);
+                e->bottom = n;
+                VectorSet2(e->out, dx / len, dy / len);
+                // the slope of what it lands on, from the grid about the
+                // place: a neighbour far off its height (a wall, a step) is
+                // not the same surface, and stands in as level
+                {
+                    const int   lx = x + dx, ly = y + dy;
+                    const float hl = g[ly * W + lx - 1], hr = g[ly * W + lx + 1];
+                    const float hd = g[(ly - 1) * W + lx], hu = g[(ly + 1) * W + lx];
+                    const float gx = (fabs(hr - n) < 24.0f ? hr : n) - (fabs(hl - n) < 24.0f ? hl : n);
+                    const float gy = (fabs(hu - n) < 24.0f ? hu : n) - (fabs(hd - n) < 24.0f ? hd : n);
+
+                    VectorSet(e->ground, -gx / (2.0f * t), -gy / (2.0f * t), 1.0f);
+                    VectorNormalize(e->ground);
+                }
+                e->seed   = (float)((x * 73856093u) ^ (y * 19349663u)) / 4294967296.0f;
+                if (e->seed < 0.0f) {
+                    e->seed = -e->seed;
+                }
+                e->seed = e->seed - floor(e->seed);
+                break;
+            }
+        }
+    }
+    ri.Free(taken);
+    ri.Printf(PRINT_DEVELOPER, "rain: %d eaves\n", rainCover.numEaves);
+}
+
+/*
+===============
+R_RainRunoff
+
+Added in OPM
+  The water pouring off the eaves near the eye (R_RainFindEaves), as rain
+  runs off a roof: a veil all along the edge (opm/rain_curtain), leaving it
+  whole and thinning to drops as it falls, leaning out as water thrown off
+  an edge does; here and there a heavier stream in it (opm/rain_stream); and
+  a splash where it lands (R_RainSplash). Added to the scene as polygons,
+  before it is begun (RE_RenderScene).
+===============
+*/
+#define RAIN_RUNOFF_RANGE 1600.0f
+#define RAIN_RUNOFF_MAX   384
+
+// a quad, its top two corners first: the colour, and the alpha at the top
+// and at the bottom
+static void R_RainQuad(qhandle_t shader, const vec3_t tl, const vec3_t trc, const vec3_t br, const vec3_t bl,
+    const float st[4][2], byte grey, float alphaTop, float alphaBottom)
+{
+    polyVert_t v[4];
+    int        k;
+
+    VectorCopy(tl, v[0].xyz);
+    VectorCopy(trc, v[1].xyz);
+    VectorCopy(br, v[2].xyz);
+    VectorCopy(bl, v[3].xyz);
+    for (k = 0; k < 4; k++) {
+        v[k].st[0]       = st[k][0];
+        v[k].st[1]       = st[k][1];
+        v[k].modulate[0] = v[k].modulate[1] = v[k].modulate[2] = grey;
+        v[k].modulate[3] = (byte)Com_Clamp(0.0f, 255.0f, (k < 2 ? alphaTop : alphaBottom) * 255.0f);
+    }
+    RE_AddPolyToScene(shader, 4, v, 1);
+}
+
+/*
+===============
+R_RainSplash
+
+Added in OPM
+  Where the water off an eave lands, a splash with some body to it, of our
+  own textures (tools/content/rain_textures.py): the crown of spray thrown
+  up and out (opm/rain_crown), two of them out of step along the edge; drops
+  flying off it, each on its own arc and drawn out along its flight
+  (opm/rain_drop); and the fine mist rising off it in two puffs that grow
+  and thin (opm/rain_mist). Turned to the eye about the upright, but at
+  different places and heights, so it has depth as the eye goes round it.
+  All of it stands on what it lands on, at its slope, its foot a little
+  into it so its edge is not seen; the drops leave the slope and fall.
+===============
+*/
+#define RAIN_SPLASH_RANGE 900.0f
+#define RAIN_SPLASH_DROPS 6
+
+static float R_RainHash(float x)
+{
+    const float h = sin(x * 12.9898f) * 43758.5453f;
+
+    return h - floor(h);
+}
+
+static void R_RainSplash(const vec3_t base, const vec3_t ground, const vec3_t edge, const vec3_t eye, float half,
+    float seed, float flow, float a, byte grey, float time)
+{
+    float  st[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    vec3_t c, tl, trc, br, bl, up, along, side;
+    int    k;
+
+    // stood on what it lands on: its face's way out is up, and the edge
+    // and the way across to the eye lie in it
+    VectorCopy(ground, up);
+    VectorMA(edge, -DotProduct(edge, up), up, along);
+    if (VectorNormalize(along) < 0.01f) {
+        VectorCopy(edge, along);
+    }
+    VectorMA(eye, -DotProduct(eye, up), up, side);
+    if (VectorNormalize(side) < 0.01f) {
+        CrossProduct(up, along, side);
+        VectorNormalize(side);
+    }
+
+    // the crowns
+    if (rainCover.crownShader) {
+        for (k = 0; k < 2; k++) {
+            const float phase = time * (3.2f + 2.0f * seed + 0.7f * k) + seed * 17.0f + k * 0.5f;
+            const float f     = phase - floor(phase);
+            const float w     = (5.0f + 7.0f * sqrt(f)) * (0.75f + 0.5f * R_RainHash(floor(phase) + seed)) * (0.6f + 0.5f * flow);
+            const float h     = w * (0.9f + 0.5f * (1.0f - f));
+            const int   flip  = ((int)floor(phase) + k) & 1;
+
+            VectorMA(base, (k ? -0.3f : 0.3f) * half + (seed - 0.5f) * 4.0f, along, c);
+            // its foot a little into the ground, so its edge is not seen
+            VectorMA(c, -(1.5f + 0.22f * h), up, c);
+            VectorMA(c, -w, side, bl);
+            VectorMA(c, w, side, br);
+            VectorMA(bl, h, up, tl);
+            VectorMA(br, h, up, trc);
+            st[0][0] = st[3][0] = flip ? 1.0f : 0.0f;
+            st[1][0] = st[2][0] = flip ? 0.0f : 1.0f;
+            R_RainQuad(rainCover.crownShader, tl, trc, br, bl, st, grey, a * (1.0f - f) * 0.8f, a * (1.0f - f));
+        }
+    }
+
+    // the drops thrown off it
+    if (rainCover.dropShader) {
+        st[0][0] = st[3][0] = 0.0f;
+        st[1][0] = st[2][0] = 1.0f;
+        for (k = 0; k < RAIN_SPLASH_DROPS; k++) {
+            const float id    = seed * 97.0f + k * 7.31f;
+            const float rate  = 1.6f + 1.4f * R_RainHash(id);
+            const float phase = time * rate + R_RainHash(id + 1.0f);
+            const float n     = floor(phase) + id;
+            const float f     = phase - floor(phase);
+            // its throw: up, and out any way, this time round
+            const float vz    = 50.0f + 70.0f * R_RainHash(n + 2.0f);
+            const float vh    = 15.0f + 45.0f * R_RainHash(n + 3.0f);
+            const float ang   = R_RainHash(n + 4.0f) * 2.0f * M_PI;
+            // back down to the slope it leaves, under gravity
+            const float life  = vz / (250.0f * Q_max(0.3f, up[2]));
+            const float t     = f * life;
+            vec3_t      dir, vel, pos, ax, sd, toEye;
+            float       len, w;
+
+            VectorScale(along, cos(ang), dir);
+            VectorMA(dir, sin(ang), side, dir);
+            VectorMA(base, (R_RainHash(n + 5.0f) - 0.5f) * 2.0f * half, along, pos);
+            VectorMA(pos, vh * t, dir, pos);
+            VectorMA(pos, vz * t, up, pos);
+            pos[2] -= 250.0f * t * t;
+
+            VectorScale(dir, vh, vel);
+            VectorMA(vel, vz, up, vel);
+            vel[2] -= 500.0f * t;
+            len    = VectorNormalize2(vel, ax);
+            // drawn out along its flight, across it to the eye
+            CrossProduct(side, up, toEye);
+            CrossProduct(ax, toEye, sd);
+            if (VectorNormalize(sd) < 0.01f) {
+                VectorCopy(side, sd);
+            }
+            w   = 0.45f + 0.35f * R_RainHash(n + 6.0f);
+            len = w + len * 0.018f;
+
+            VectorMA(pos, len, ax, c);
+            VectorMA(c, -w, sd, tl);
+            VectorMA(c, w, sd, trc);
+            VectorMA(pos, -len, ax, c);
+            VectorMA(c, w, sd, br);
+            VectorMA(c, -w, sd, bl);
+            R_RainQuad(rainCover.dropShader, tl, trc, br, bl, st, grey, a * (1.0f - f * f), a * (1.0f - f * f));
+        }
+    }
+
+    // the mist
+    if (rainCover.mistShader) {
+        for (k = 0; k < 2; k++) {
+            const float phase = time * (0.45f + 0.2f * k) + seed * 5.0f + k * 0.5f;
+            const float f     = phase - floor(phase);
+            const float size  = (8.0f + 16.0f * f) * (0.8f + 0.4f * seed);
+            const float ma    = a * 0.4f * sin(f * M_PI) * (0.5f + 0.5f * flow);
+
+            VectorMA(base, (k ? 0.45f : -0.45f) * half, along, c);
+            // a third of it in the ground: its lower edge is never seen
+            VectorMA(c, size * 0.35f + 6.0f * f, up, c);
+            VectorMA(c, -size, side, tl);
+            VectorMA(tl, size, up, tl);
+            VectorMA(c, size, side, trc);
+            VectorMA(trc, size, up, trc);
+            VectorMA(c, size, side, br);
+            VectorMA(br, -size, up, br);
+            VectorMA(c, -size, side, bl);
+            VectorMA(bl, -size, up, bl);
+            st[0][0] = st[3][0] = (k ^ ((int)floor(phase) & 1)) ? 1.0f : 0.0f;
+            st[1][0] = st[2][0] = 1.0f - st[0][0];
+            R_RainQuad(rainCover.mistShader, tl, trc, br, bl, st, grey, ma, ma);
+        }
+    }
+}
+
+static qhandle_t R_RainRunoffShader(const char *name)
+{
+    const qhandle_t h  = RE_RegisterShader(name);
+    shader_t       *sh = R_GetShaderByHandle(h);
+
+    // without the pak that has it, none: the default shader is a white square
+    return sh && !sh->defaultShader ? h : 0;
+}
+
+static void R_RainRunoff(const refdef_t *fd)
+{
+    const float amount = r_rainRunoff->value * R_RainAmount();
+    const float time   = fd->time * 0.001f;
+    vec4_t      sky;
+    float       lum;
+    byte        grey;
+    int         i, drawn = 0;
+
+    if (amount <= 0.0f || !rainCover.numEaves) {
+        return;
+    }
+    if (!rainCover.shadersTried) {
+        rainCover.shadersTried  = qtrue;
+        rainCover.curtainShader = R_RainRunoffShader("opm/rain_curtain");
+        rainCover.streamShader  = R_RainRunoffShader("opm/rain_stream");
+        rainCover.crownShader   = R_RainRunoffShader("opm/rain_crown");
+        rainCover.dropShader    = R_RainRunoffShader("opm/rain_drop");
+        rainCover.mistShader    = R_RainRunoffShader("opm/rain_mist");
+    }
+    if (!rainCover.curtainShader) {
+        return;
+    }
+
+    // as bright as the sky over it
+    R_WaterSky(sky);
+    lum  = Com_Clamp(0.25f, 1.0f, 0.2126f * sky[0] + 0.7152f * sky[1] + 0.0722f * sky[2] + 0.15f);
+    grey = (byte)Com_Clamp(0.0f, 255.0f, lum * 235.0f);
+
+    for (i = 0; i < rainCover.numEaves && drawn < RAIN_RUNOFF_MAX; i++) {
+        const rainEave_t *e = &rainCover.eaves[i];
+        vec3_t            to, side, along, out, bot, mid, tl, trc, ml, mr, bl, br;
+        float             dist, fade, flow, a, fall, lean, half, s0, s1;
+        float             st[4][2];
+
+        VectorSubtract(fd->vieworg, e->top, to);
+        to[2] = 0.0f;
+        dist  = VectorLength(to);
+        if (dist > RAIN_RUNOFF_RANGE || dist < 1.0f) {
+            continue;
+        }
+        // behind the eye
+        if (DotProduct(to, fd->viewaxis[0]) > 64.0f) {
+            continue;
+        }
+        // less of the edge pours when it rains less
+        if (e->seed > 0.2f + 0.8f * Com_Clamp(0.0f, 1.0f, amount)) {
+            continue;
+        }
+
+        fade = 1.0f - Com_Clamp(0.0f, 1.0f, (dist - RAIN_RUNOFF_RANGE * 0.6f) / (RAIN_RUNOFF_RANGE * 0.4f));
+        // heavier here, lighter there along the edge, and as gusts come
+        flow = 0.55f + 0.3f * sin(e->seed * 53.0f + time * 0.9f) + 0.15f * sin(time * 5.0f + e->seed * 91.0f);
+        a    = fade * Com_Clamp(0.0f, 1.0f, flow) * Com_Clamp(0.0f, 1.5f, amount);
+        if (a < 0.02f) {
+            continue;
+        }
+
+        VectorSet(out, e->out[0], e->out[1], 0.0f);
+        VectorSet(along, -out[1], out[0], 0.0f);
+        fall = e->top[2] - e->bottom;
+        // thrown off the edge: out as the square root of the fall
+        lean = (4.0f + 0.05f * fall) * (0.7f + 0.6f * e->seed);
+        half = RAIN_EAVE_GAP * 0.5f + 3.0f;
+
+        VectorSet(mid, e->top[0], e->top[1], e->top[2] - fall * 0.35f);
+        VectorMA(mid, lean * 0.59f, out, mid);
+        VectorSet(bot, e->top[0], e->top[1], e->bottom);
+        VectorMA(bot, lean, out, bot);
+        // on a slope, the ground as far out as it lands
+        bot[2] -= lean * (e->ground[0] * out[0] + e->ground[1] * out[1]) / Q_max(0.3f, e->ground[2]);
+
+        VectorMA(e->top, -half, along, tl);
+        VectorMA(e->top, half, along, trc);
+        VectorMA(mid, -half, along, ml);
+        VectorMA(mid, half, along, mr);
+        VectorMA(bot, -half, along, bl);
+        VectorMA(bot, half, along, br);
+
+        // the texture held to the world along the edge, so the pieces of
+        // one edge run on into each other
+        s0 = (DotProduct(e->top, along) - half) / 64.0f;
+        s1 = (DotProduct(e->top, along) + half) / 64.0f;
+
+        // the veil: whole off the edge, then breaking up
+        st[0][0] = st[3][0] = s0;
+        st[1][0] = st[2][0] = s1;
+        st[0][1] = st[1][1] = -e->top[2] / 96.0f;
+        st[2][1] = st[3][1] = -mid[2] / 96.0f;
+        R_RainQuad(rainCover.curtainShader, tl, trc, mr, ml, st, grey, a * 0.9f, a * 0.7f);
+        st[0][1] = st[1][1] = -mid[2] / 96.0f;
+        st[2][1] = st[3][1] = -bot[2] / 96.0f;
+        R_RainQuad(rainCover.curtainShader, ml, mr, br, bl, st, grey, a * 0.7f, a * 0.25f);
+
+        // the face of the eye's to turn the rest to
+        VectorNormalize(to);
+        VectorSet(side, -to[1], to[0], 0.0f);
+
+        // a heavier stream, here and there
+        if (rainCover.streamShader && e->seed < 0.14f) {
+            const float w = 2.0f + 2.5f * (e->seed / 0.14f);
+
+            VectorMA(e->top, -w, side, tl);
+            VectorMA(e->top, w, side, trc);
+            VectorMA(bot, w, side, br);
+            VectorMA(bot, -w, side, bl);
+            st[0][0] = st[3][0] = floor(e->seed * 100.0f) * 0.25f;
+            st[1][0] = st[2][0] = st[0][0] + 0.75f;
+            st[0][1] = st[1][1] = -e->top[2] / 160.0f;
+            st[2][1] = st[3][1] = -e->bottom / 160.0f;
+            R_RainQuad(rainCover.streamShader, tl, trc, br, bl, st, grey, a, a * 0.8f);
+        }
+
+        // the splash where it lands, near enough to see (R_RainSplash)
+        if (dist < RAIN_SPLASH_RANGE) {
+            R_RainSplash(bot, e->ground, along, side, half, e->seed, flow, a, grey, time);
+        }
+        drawn++;
+    }
+
+    // r_rainDebug 3: what it drew, now and then
+    if (r_rainDebug->integer == 3) {
+        static int last;
+
+        if (fd->time - last > 2000 || fd->time < last) {
+            float best = 1e9f;
+            int   bi = -1;
+
+            last = fd->time;
+            for (i = 0; i < rainCover.numEaves; i++) {
+                const float dd = Distance(fd->vieworg, rainCover.eaves[i].top);
+
+                if (dd < best) {
+                    best = dd;
+                    bi   = i;
+                }
+            }
+            ri.Printf(PRINT_ALL, "rain runoff: %d drawn of %d eaves, amount %.2f; nearest %.0f away at (%.0f %.0f %.0f) to %.0f\n", drawn,
+                rainCover.numEaves, amount, best, bi >= 0 ? rainCover.eaves[bi].top[0] : 0.0f,
+                bi >= 0 ? rainCover.eaves[bi].top[1] : 0.0f, bi >= 0 ? rainCover.eaves[bi].top[2] : 0.0f,
+                bi >= 0 ? rainCover.eaves[bi].bottom : 0.0f);
+        }
+    }
+}
+
+static void R_RainFreeCover(void)
+{
+    if (rainCover.eaves) {
+        ri.Free(rainCover.eaves);
+    }
+    if (rainCover.height) {
+        ri.Free(rainCover.height);
+    }
+    if (rainCover.puddle) {
+        ri.Free(rainCover.puddle);
+    }
+    memset(&rainCover, 0, sizeof(rainCover));
+    // the last map's grid is one of its images, which the next map frees
+    tr.rainCoverImage = NULL;
+}
+
+// Once a scene, in the front end: the cover, the first time it rains
+void R_RainFrame(const refdef_t *fd)
+{
+    if (!rainCover.tried && r_rainWet->value > 0.0f && r_waterWet->integer && tr.world) {
+        R_RainBuildCover();
+    }
+    if (rainCover.on && (!rainCover.puddle || rainCover.puddleCount != r_rainPuddleShaders->modificationCount)) {
+        R_RainBuildPuddles();
+    }
+
+    // lightning: global/weather.scr flashes by setting r_fastsky to 1 (the
+    // sky cleared to the white fog) for a tenth or a fifth of a second; the
+    // light of it on the world goes out over a moment after
+    {
+        const float now = fd->time * 0.001f;
+        const float dt  = Com_Clamp(0.0f, 0.25f, now - rainCover.flashTime);
+
+        rainCover.flashTime = now;
+        if (rainCover.on && r_rainFlash->value > 0.0f && r_fastsky->value >= 0.99f) {
+            rainCover.flash = 1.0f;
+        } else {
+            rainCover.flash *= exp(-dt * 9.0f);
+            if (rainCover.flash < 0.01f) {
+                rainCover.flash = 0.0f;
+            }
+        }
+    }
+
+    R_RainRunoff(fd);
+}
+
+static float R_RainAmount(void)
+{
+    return rainCover.on ? Com_Clamp(0.0f, 1.0f, r_rainWet->value) : 0.0f;
+}
+
+/*
+===============
+R_RainOvercast
+
+Added in OPM
+  How much of the sun the rain's clouds hide, 0 to 1 (r_rainOvercast): the
+  realtime sun is that much dimmer (R_RtSetupFrame), and its glint on what
+  the rain has wet (R_WaterSetWet) goes the same way.
+===============
+*/
+float R_RainOvercast(void)
+{
+    return R_RainAmount() * Com_Clamp(0.0f, 1.0f, r_rainOvercast->value);
+}
+
+
 void R_WaterLoadWorld(const char *mapName)
 {
     int i;
+
+    waterReflectKept.frame = -1; // the last map's
+    R_RainFreeCover();
 
     R_WaterReadFile(mapName);
     // a shore's own texture swapped for the beach's (m3l1a's painted
@@ -831,6 +1786,39 @@ static qboolean RB_WaterCopyView(void)
         backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
 
     backEnd.waterScene = qtrue;
+    return qtrue;
+}
+
+/*
+===============
+RB_ParticleCopyView
+
+Added in OPM: the view as it is before its first dust or smoke that is blended
+as shown (r_linearParticleBlend, generic_fp.glsl), into the water's copy: what
+each puff covers is worked out from it. The water's own copy, made before its
+water, does as well. Copied for them alone, the water still copies again, so
+that it shows what was drawn since (a puff beyond it).
+===============
+*/
+qboolean RB_ParticleCopyView(void)
+{
+    FBO_t *fbo = glState.currentFBO;
+
+    if (backEnd.waterScene || backEnd.particleScene) {
+        return qtrue;
+    }
+    if (!tr.waterSceneFbo || !glRefConfig.framebufferBlit || fbo != tr.renderFbo) {
+        return qfalse;
+    }
+
+    FBO_FastBlit(fbo, NULL, tr.waterSceneFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    FBO_Bind(fbo);
+    qglViewport(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+    qglScissor(backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
+
+    backEnd.particleScene = qtrue;
     return qtrue;
 }
 
@@ -1016,6 +2004,8 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
         RB_WaterViewBox(v);
         GLSL_SetUniformVec4(sp, UNIFORM_WATERVIEW, v);
     }
+    // Added in OPM: the light in the air between it and the eye
+    R_FroxelSetFog(sp, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 
     GLSL_SetUniformVec4(sp, UNIFORM_WATERCOLOR, water.color);
 
@@ -1119,6 +2109,11 @@ It is a mirror portal (oblique near plane at the surface, the faces turned)
 that draws what the main view does: entities and sprites as it has them
 (R_AddEntitySurfaces), no water, no viewmodel; no depth prepass, so no sun
 shadow mask either. One height a view: the water nearest under the eye.
+
+With no water in view, in the rain, the puddles' (r_rainPuddleShaders):
+level at the height of those the eye looks at (R_RainPuddleHeight), cut a
+little over it, as the bumps of the ground around a puddle are not seen in
+it. Their lightall looks itself up in it (R_WaterSetWet).
 ===============
 */
 // what the last view under the water was, for waterinfo
@@ -1135,11 +2130,13 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     viewParms_t parms, oldParms;
     cplane_t    mirror;
     float       above = 0.0f, d;
-    qboolean    found = qfalse;
+    qboolean    found = qfalse, puddles = qfalse, puddleInView = qfalse;
+    const qboolean rain = R_RainAmount() > 0.0f && r_rainPuddles->value > 0.0f && rainCover.puddle;
     mat4_t      mvp;
     int         i;
 
     tr.viewParms.waterReflect = qfalse;
+    tr.viewParms.rainReflect  = qfalse;
 
     if (!r_waterReflect->integer || !tr.waterReflectFbo || !tr.waterShader.program || !tr.world
         || tr.viewParms.isPortal || tr.viewParms.isPortalSky || tr.viewParms.targetFbo
@@ -1157,6 +2154,9 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
         float     h;
 
         R_DecomposeSort(drawSurfs[i].sort, &entityNum, &shader, &fogNum, &dlighted, &pshadowed, &bStaticModel);
+        if (rain && !puddleInView && entityNum == REFENTITYNUM_WORLD && !bStaticModel && R_RainPuddleShader(shader)) {
+            puddleInView = qtrue;
+        }
         if (!shader->waterImage || entityNum != REFENTITYNUM_WORLD) {
             continue;
         }
@@ -1193,7 +2193,49 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
             above  = d;
         }
     }
+    if (!found && puddleInView) {
+        float h;
+
+        // none along the look: the height it last took, so the mirror is not
+        // dropped and taken up again as the eye turns
+        qboolean have = R_RainPuddleHeight(tr.viewParms.ori.origin, tr.viewParms.ori.axis[0], &h);
+
+        if (have) {
+            rainCover.lastHeight = h;
+            rainCover.hasLast    = qtrue;
+        } else if (rainCover.hasLast && rainCover.lastHeight < tr.viewParms.ori.origin[2] - 8.0f) {
+            h    = rainCover.lastHeight;
+            have = qtrue;
+        }
+        if (have) {
+            VectorSet(mirror.normal, 0.0f, 0.0f, 1.0f);
+            mirror.dist = h;
+            above       = tr.viewParms.ori.origin[2] - h;
+            found = puddles = qtrue;
+        }
+    }
     if (!found) {
+        return;
+    }
+
+    // r_waterReflectStagger: the frame after one is drawn, it is shown again
+    // as it was seen (its matrix places it), if the eye has not gone far
+    // and the water is the same: a second view of the world, 1.5 ms on m5l1a.
+    if (r_waterReflectStagger->integer && waterReflectKept.frame == tr.frameCount - 1
+        && waterReflectKept.puddles == puddles && fabs(waterReflectKept.plane[3] - mirror.dist) < 0.5f
+        && DotProduct(waterReflectKept.plane, mirror.normal) > 0.9999f
+        && waterReflectKept.width == tr.viewParms.viewportWidth && waterReflectKept.height == tr.viewParms.viewportHeight
+        && DistanceSquared(waterReflectKept.origin, tr.viewParms.ori.origin) < 24.0f * 24.0f
+        && DotProduct(waterReflectKept.forward, tr.viewParms.ori.axis[0]) > 0.99f) {
+        waterReflectKept.frame                = -1; // drawn again on the next
+        tr.viewParms.waterReflect           = !puddles;
+        tr.viewParms.rainReflect            = puddles;
+        Vector4Copy(waterReflectKept.plane, tr.viewParms.waterReflectPlane);
+        tr.viewParms.waterReflectShare[0] = waterReflectKept.share[0];
+        tr.viewParms.waterReflectShare[1] = waterReflectKept.share[1];
+        Mat4Copy(waterReflectKept.mvp, tr.viewParms.waterReflectMvp);
+        waterReflectInfo.height = tr.viewParms.ori.origin[2] - above / mirror.normal[2];
+        waterReflectInfo.frame  = tr.frameCount;
         return;
     }
 
@@ -1210,7 +2252,9 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     parms.isPortal = qtrue;
     parms.isMirror = qtrue;
     VectorCopy(mirror.normal, parms.portalPlane.normal);
-    parms.portalPlane.dist = mirror.dist - 1.0f;
+    // (a puddle's cut just over it, for the ground about it: higher, it cut
+    // off a man's boots, his reflection a gap below his feet)
+    parms.portalPlane.dist = mirror.dist + (puddles ? 2.0f : -1.0f);
     parms.zFar             = 0.0f;
     parms.flags            = (parms.flags | VPF_NOVIEWMODEL | VPF_WATERREFLECT) & ~VPF_USESUNLIGHT;
 
@@ -1234,12 +2278,24 @@ void R_WaterReflectView(drawSurf_t *drawSurfs, int numDrawSurfs)
     Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
 
     tr.viewParms                    = oldParms;
-    tr.viewParms.waterReflect       = qtrue;
+    tr.viewParms.waterReflect       = !puddles;
+    tr.viewParms.rainReflect        = puddles;
     VectorCopy(mirror.normal, tr.viewParms.waterReflectPlane);
     tr.viewParms.waterReflectPlane[3] = mirror.dist;
     tr.viewParms.waterReflectShare[0] = parms.viewportWidth / (float)tr.waterReflectFbo->width;
     tr.viewParms.waterReflectShare[1] = parms.viewportHeight / (float)tr.waterReflectFbo->height;
     Mat4Copy(mvp, tr.viewParms.waterReflectMvp);
+
+    waterReflectKept.frame   = tr.frameCount;
+    waterReflectKept.puddles = puddles;
+    waterReflectKept.width   = oldParms.viewportWidth;
+    waterReflectKept.height  = oldParms.viewportHeight;
+    VectorCopy(oldParms.ori.origin, waterReflectKept.origin);
+    VectorCopy(oldParms.ori.axis[0], waterReflectKept.forward);
+    Vector4Copy(tr.viewParms.waterReflectPlane, waterReflectKept.plane);
+    waterReflectKept.share[0] = tr.viewParms.waterReflectShare[0];
+    waterReflectKept.share[1] = tr.viewParms.waterReflectShare[1];
+    Mat4Copy(mvp, waterReflectKept.mvp);
 }
 
 // Reads the map's water file again: for working on one
@@ -1448,18 +2504,151 @@ void R_WaterSetDry(shaderProgram_t *sp)
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
 }
 
-void R_WaterSetWet(shaderProgram_t *sp)
-{
-    vec4_t v;
+/*
+===============
+R_RainPuddleShader
 
-    if (!r_waterWet->integer || !water.beachSet || !water.shoreSet || !tr.world
-        || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+Added in OPM
+  Whether puddles gather on what is drawn with this shader: its name holds
+  one of r_rainPuddleShaders' words (or the list is empty). Kept for the last
+  shader asked about, as the draws come in runs of one.
+===============
+*/
+typedef struct {
+    const shader_t *shader;
+    int             count;
+    qboolean        match;
+} rainShaderMatch_t;
+
+// whether the shader's name holds one of the list's words (or the list is
+// empty, if emptyAll), kept for the last shader asked about
+static qboolean R_RainShaderInList(const shader_t *shader, const cvar_t *cv, qboolean emptyAll, rainShaderMatch_t *m)
+{
+    char  list[MAX_CVAR_VALUE_STRING];
+    char *word, *next;
+
+    if (!shader) {
+        return qfalse;
+    }
+    if (shader == m->shader && cv->modificationCount == m->count) {
+        return m->match;
+    }
+    m->shader = shader;
+    m->count  = cv->modificationCount;
+
+    Q_strncpyz(list, cv->string, sizeof(list));
+    m->match = emptyAll;
+    for (word = list; *word; word = next) {
+        while (*word == ' ' || *word == ',') {
+            word++;
+        }
+        if (!*word) {
+            break;
+        }
+        m->match = qfalse;
+        for (next = word; *next && *next != ' ' && *next != ','; next++) {
+        }
+        if (*next) {
+            *next++ = 0;
+        }
+        if (Q_stristr(shader->name, word)) {
+            return m->match = qtrue;
+        }
+    }
+    return m->match;
+}
+
+static qboolean R_RainPuddleShader(const shader_t *shader)
+{
+    static rainShaderMatch_t m = {NULL, -1, qfalse};
+
+    return R_RainShaderInList(shader, r_rainPuddleShaders, qtrue, &m);
+}
+
+/*
+===============
+R_RainRoofShader
+
+Added in OPM
+  Whether the rain runs down what is drawn with this shader in a sheet, as
+  off a roof (r_rainRoofShaders): on a bank, a wall's cap, it is just wet.
+===============
+*/
+static qboolean R_RainRoofShader(const shader_t *shader)
+{
+    static rainShaderMatch_t m = {NULL, -1, qfalse};
+
+    return R_RainShaderInList(shader, r_rainRoofShaders, qfalse, &m);
+}
+
+void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
+{
+    vec4_t      v;
+    qboolean    beach;
+    float       rain;
+
+    if (!r_waterWet->integer || !tr.world || (backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP))) {
+        R_WaterSetDry(sp);
+        return;
+    }
+    beach = water.beachSet && water.shoreSet;
+    rain  = R_RainAmount();
+    // a cut-out (a tree line, a hedge, a fence) is no wall the rain wets;
+    // the terrain, alpha tested on some maps, is ground that it does
+    if (pStage && (pStage->stateBits & GLS_ATEST_BITS) && !(tess.shader && tess.shader->isTerrain)) {
+        rain = 0.0f;
+    }
+    if (!beach && rain <= 0.0f) {
         R_WaterSetDry(sp);
         return;
     }
 
-    VectorSet4(v, 1.0f, water.beachTop + 24.0f, 0.0f, 0.0f);
+    // the beach: how wet, its mark; the rain: how wet, and what is drawn (1
+    // the world's own surfaces, which hold puddles; 2 the hands and the
+    // weapon in view, which hold beads of it)
+    VectorSet4(v, beach ? 1.0f : 0.0f, beach ? water.beachTop + 24.0f : 0.0f, rain, 0.0f);
+    if (rain > 0.0f) {
+        const trRefEntity_t *ent = backEnd.currentEntity;
+
+        if (ent == &tr.worldEntity && !backEnd.currentStaticModel) {
+            // a roof's a quarter more (the sheet down it: RainRuns)
+            v[3] = R_RainRoofShader(tess.shader) ? 1.25f : 1.0f;
+        } else if (ent && ent != &tr.worldEntity && (ent->e.renderfx & RF_FIRST_PERSON)) {
+            v[3] = 2.0f;
+        }
+        // shown as how wet and the puddles, in place of the colour
+        if (r_rainDebug->integer == 1 || r_rainDebug->integer == 2) {
+            v[3] += r_rainDebug->integer == 2 ? 20.0f : 10.0f;
+        }
+    }
     GLSL_SetUniformVec4(sp, UNIFORM_WET, v);
+
+    if (rain > 0.0f) {
+        VectorSet4(v, rainCover.x0, rainCover.y0, 1.0f / (rainCover.width * rainCover.texel),
+            1.0f / (rainCover.rows * rainCover.texel));
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINCOVER, v);
+        VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
+            R_RainPuddleShader(tess.shader) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,
+            Com_Clamp(0.0f, 1.0f, r_rainBeads->value));
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINPARAMS, v);
+        GL_BindToTMU(tr.rainCoverImage, TMU_RAINCOVER);
+
+        // the view the puddles mirror, if it was drawn (R_WaterReflectView)
+        if (backEnd.viewParms.rainReflect && tr.waterReflectImage) {
+            VectorSet4(v, 1.0f, backEnd.viewParms.waterReflectPlane[3], backEnd.viewParms.waterReflectShare[0],
+                backEnd.viewParms.waterReflectShare[1]);
+            GLSL_SetUniformMat4(sp, UNIFORM_RAINREFLECTMVP, backEnd.viewParms.waterReflectMvp);
+            GL_BindToTMU(tr.waterReflectImage, TMU_RAINREFLECT);
+            GL_BindToTMU(tr.waterReflectDepthImage ? tr.waterReflectDepthImage : tr.whiteImage, TMU_RAINREFLECTDEPTH);
+        } else {
+            VectorClear4(v);
+        }
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINREFLECT, v);
+
+        // a lightning flash (R_RainFrame), cold white
+        VectorSet4(v, 0.8f, 0.87f, 1.0f, rainCover.flash * r_rainFlash->value * 2.5f);
+        GLSL_SetUniformVec4(sp, UNIFORM_RAINFLASH, v);
+    }
 
     R_WaterSky(v);
     GLSL_SetUniformVec4(sp, UNIFORM_WETSKY, v);
@@ -1472,6 +2661,38 @@ void R_WaterSetWet(shaderProgram_t *sp)
         VectorCopy(backEnd.refdef.sunDir, v);
         VectorNormalize(v);
         v[3] = Com_Clamp(0.0f, 1.0f, most) * 0.6f;
+        // behind the rain's clouds: no sun to glint, in the shade or out
+        // of it (a glint is not shadowed, and showed in the shade)
+        // behind the rain's clouds the glint is the clouds', soft and wide
+        // (a sun's sharp one showed in the shade, the sun before the
+        // clouds): how overcast, in how much longer than 1 the way to the
+        // sun is (glsl/lightall_fp.glsl, WetSunGlint)
+        VectorScale(v, 1.0f + R_RainOvercast(), v);
         GLSL_SetUniformVec4(sp, UNIFORM_WETSUN, v);
     }
+}
+
+/*
+===============
+R_RainMistParams
+
+Added in OPM
+  The rain's mist for the light in the air (tr_froxel.c, froxel_fp.glsl):
+  mist the density of the lowest of it, how high it thins to a third of
+  that, the drift's time, the rain's haze further up; cover the cover's
+  grid (as UNIFORM_RAINCOVER), which says what is out under the sky. False
+  with no rain, or none of it wanted.
+===============
+*/
+qboolean R_RainMistParams(vec4_t mist, vec4_t cover, float densityScale)
+{
+    const float amount = R_RainAmount() * Q_max(0.0f, r_rainMist->value);
+
+    if (amount <= 0.0f || !tr.rainCoverImage) {
+        return qfalse;
+    }
+    VectorSet4(mist, 5.0f * amount * densityScale, 50.0f, backEnd.refdef.floatTime, 0.12f * amount * densityScale);
+    VectorSet4(cover, rainCover.x0, rainCover.y0, 1.0f / (rainCover.width * rainCover.texel),
+        1.0f / (rainCover.rows * rainCover.texel));
+    return qtrue;
 }

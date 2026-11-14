@@ -473,6 +473,12 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	double			originalTime;
 	FBO_t*			fbo = NULL;
 	qboolean		bStaticModel, oldbStaticModel;
+	// Added in OPM: the depth prepass and the shadow views never sample a
+	// cubemap, so a surface's cubemap must not end their batches. With
+	// r_cubeMapping on, rooms get different probes and the same shader came
+	// out as many small draws in every cascade (~0.8 ms of sun pass).
+	const qboolean	cubemapsUsed = !backEnd.depthFill
+		&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP | VPF_NOCUBEMAPS));
 
 	// save original time for entity shader offsets
 	originalTime = backEnd.refdef.floatTime;
@@ -518,7 +524,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	//=========================
 
 	for (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {
-		if ( drawSurf->sort == (unsigned)oldSort && drawSurf->cubemapIndex == oldCubemapIndex) {
+		cubemapIndex = cubemapsUsed ? drawSurf->cubemapIndex : 0;
+		if ( drawSurf->sort == (unsigned)oldSort && cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
 				continue;
 			// Added in OPM: a model too small for the prepass (r_prepassFarModels)
@@ -554,7 +561,6 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			bStaticModel = qfalse;
         }
         //=========================
-		cubemapIndex = drawSurf->cubemapIndex;
 
 		// Added in OPM: the wet beach, over the opaque world and under
 		// anything blended (tr_water.c)
@@ -565,6 +571,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			}
 			RB_BeachDraw();
 			beachDrawn = qtrue;
+			// Added in OPM: the light in the air, over the opaque world,
+			// for what comes after it to take at its own depth
+			RB_FroxelOpaqueDone();
 		}
 
 		//
@@ -811,6 +820,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// Added in OPM: the beach, when nothing blended came after the world
 	if (!beachDrawn && !backEnd.depthFill) {
 		RB_BeachDraw();
+		RB_FroxelOpaqueDone();
 	}
 	RB_SurfProfEnd();
 
@@ -1461,7 +1471,10 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	// Added in OPM: until the prepass copies it, not this view's depth
 	backEnd.softDepth = qfalse;
+	// Added in OPM: no air for what it draws until it is summed (tr_froxel.c)
+	RB_FroxelBeginView();
 	backEnd.waterScene = qfalse;
+	backEnd.particleScene = qfalse;
 	backEnd.depthPrepassed = qfalse;
 
 	// clear the z buffer, set the modelview, etc
@@ -2433,8 +2446,15 @@ static void RB_Volumetric(FBO_t *dstFbo, ivec4_t dstBox)
 	GLSL_SetUniformVec4(&tr.depthBlurShader[1], UNIFORM_VIEWINFO, viewInfo);
 	RB_InstantQuad2(quadVerts, texCoords);
 
-	// added to the view
-	FBO_Blit(tr.volumeFbo, NULL, NULL, dstFbo, dstBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+	// added to the view. FBO_Blit takes a box it is given (top down) the
+	// other way from none (bottom up): with dstBox and no source box the air
+	// went on upside down, a copy of the view turned over wherever its light
+	// had an edge to it (the shafts round a gate or a roof)
+	{
+		ivec4_t volBox = { 0, 0, tr.volumeFbo->width, tr.volumeFbo->height };
+
+		FBO_Blit(tr.volumeFbo, volBox, NULL, dstFbo, dstBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+	}
 
 	R_GpuTimerEnd(GPUTIMER_VOLUME);
 }
@@ -2505,6 +2525,8 @@ const void *RB_PostProcess(const void *data)
 	if (srcFbo && tr.volumeFbo && tr.volumetricShader.program && R_RtLitLive() && r_volumetricDensity->value > 0
 		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) && !backEnd.viewParms.isPortal)
 		RB_Volumetric(srcFbo, srcBox);
+	// (r_volumetric 2 is drawn in the view, between the opaque world and
+	// what comes after it: RB_FroxelOpaqueDone)
 
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)
@@ -2519,8 +2541,18 @@ const void *RB_PostProcess(const void *data)
 			// Use an intermediate FBO because it can't blit to the same FBO directly
 			// and can't read from an MSAA dstFbo later.
 			RB_ToneMap(srcFbo, srcBox, tr.screenScratchFbo, srcBox, autoExposure);
-			// (Added in OPM: sharpened on its way back, r_sharpen)
-			if (!RB_Sharpen(tr.screenScratchFbo, srcBox, srcFbo, srcBox))
+			// (Added in OPM: anti-aliased, r_smaa, and sharpened on its way
+			// back, r_sharpen; with both, SMAA writes to its edges image,
+			// done with by then, and the sharpening reads it)
+			if (r_smaa->integer && tr.smaaEdgesFbo && r_sharpen->value > 0 && r_smaa->integer > 0
+				&& RB_Smaa(tr.screenScratchFbo, srcBox, tr.smaaEdgesFbo))
+			{
+				if (!RB_Sharpen(tr.smaaEdgesFbo, srcBox, srcFbo, srcBox))
+					FBO_FastBlit(tr.smaaEdgesFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+			}
+			else if (RB_Smaa(tr.screenScratchFbo, srcBox, srcFbo))
+				;
+			else if (!RB_Sharpen(tr.screenScratchFbo, srcBox, srcFbo, srcBox))
 				FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		}
 		else if (r_cameraExposure->value != 0.0f)
@@ -2763,7 +2795,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 
 		switch ( *(const int *)data ) {
 		case RC_SET_COLOR:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_SetColor( data );
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_STRETCH_PIC:
 			R_CpuTimerBegin(CPUTIMER_2D);
@@ -2776,7 +2810,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			R_CpuTimerEnd(CPUTIMER_DRAWSURFS);
 			break;
 		case RC_DRAW_BUFFER:
+			R_CpuTimerBegin(CPUTIMER_DRAWBUFFER);
 			data = RB_DrawBuffer( data );
+			R_CpuTimerEnd(CPUTIMER_DRAWBUFFER);
 			break;
 		case RC_SWAP_BUFFERS:
 			data = RB_SwapBuffers( data );
@@ -2788,13 +2824,19 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			data = RB_TakeVideoFrameCmd( data );
 			break;
 		case RC_COLORMASK:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_ColorMask(data);
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_CLEARDEPTH:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_ClearDepth(data);
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_CAPSHADOWMAP:
+			R_CpuTimerBegin(CPUTIMER_SMALLCMDS);
 			data = RB_CapShadowMap(data);
+			R_CpuTimerEnd(CPUTIMER_SMALLCMDS);
 			break;
 		case RC_POSTPROCESS:
 			R_CpuTimerBegin(CPUTIMER_POSTPROCESS);

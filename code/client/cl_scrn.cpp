@@ -606,6 +606,9 @@ void SCR_SimpleUpdateScreen( void ) {
 	else {
 		re.EndFrame( NULL, NULL );
 	}
+
+	// Added in OPM: a frame shown, for the load profiler (com_loadProfile)
+	Com_LoadProfilePresent( clc.state == CA_ACTIVE ? qtrue : qfalse );
 }
 
 /*

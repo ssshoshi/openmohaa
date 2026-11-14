@@ -75,4 +75,8 @@ void main()
 
 	gl_FragColor.rgb = vec3(0);
 	gl_FragColor.a = clamp(intensity, 0.0, 0.75);
+#if defined(USE_FROXEL_FOG)
+	// Added in OPM: a shadow under the air darkens toward its light
+	gl_FragColor.rgb = FroxelFog(gl_FragColor.rgb, gl_FragColor.a);
+#endif
 }

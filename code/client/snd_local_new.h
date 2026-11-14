@@ -176,7 +176,10 @@ enum loopsound_flags_t {
     LOOPSOUND_FLAG_NO_PAN = 1
 };
 
-#define MAX_SFX         1400
+// Added in OPM
+//  Was 1400; the level's voice lines are now loaded with it
+//  (cg_precacheVoices), about 1000 for one kind of German soldier.
+#define MAX_SFX         4096
 #define MAX_SFX_INFOS   1000
 #define MAX_LOOP_SOUNDS 64
 #define DEFAULT_SFX_NUMBER_PLAYING 10 //5

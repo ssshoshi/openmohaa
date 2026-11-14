@@ -50,6 +50,8 @@ extern const char *fallbackShader_gtao_vp;
 extern const char *fallbackShader_gtao_fp;
 extern const char *fallbackShader_volumetric_vp;
 extern const char *fallbackShader_volumetric_fp;
+extern const char *fallbackShader_froxel_vp;
+extern const char *fallbackShader_froxel_fp;
 extern const char *fallbackShader_ssao_vp;
 extern const char *fallbackShader_ssao_fp;
 extern const char *fallbackShader_texturecolor_vp;
@@ -63,6 +65,9 @@ extern const char *fallbackShader_lens_vp;
 extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_bloom_vp;
 extern const char *fallbackShader_bloom_fp;
+extern const char *fallbackShader_smaa_vp;
+extern const char *fallbackShader_smaa_fp;
+extern const char *fallbackShader_smaa_lib;
 extern const char *fallbackShader_ripple_fp;
 extern const char *fallbackShader_beach_fp;
 extern const char *fallbackShader_water_fp;
@@ -218,6 +223,22 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_AOParams",        GLSL_VEC4 },
 	{ "u_VolParams",       GLSL_VEC4 },
 	{ "u_VolRange",        GLSL_VEC4 },
+	{ "u_Froxel",          GLSL_VEC4 },
+	{ "u_FogVolumes",      GLSL_VEC4_WATERSPOTS },
+	{ "u_FogParams",       GLSL_VEC4 },
+	{ "u_FogAmbient",      GLSL_VEC4 },
+	{ "u_FroxelPrevOrigin",  GLSL_VEC4 },
+	{ "u_FroxelPrevForward", GLSL_VEC4 },
+	{ "u_FroxelPrevLeft",    GLSL_VEC4 },
+	{ "u_FroxelPrevUp",      GLSL_VEC4 },
+	{ "u_FroxelJitter",    GLSL_VEC4 },
+	{ "u_SmokeBlobs",      GLSL_VEC4_SMOKE },
+	{ "u_SmokeParams",     GLSL_VEC4 },
+	{ "u_SmokeNoise",      GLSL_INT },
+	{ "u_FroxelFog",       GLSL_VEC4 },
+	{ "u_FroxelFogView",   GLSL_VEC4 },
+	{ "u_FroxelFogGrid",   GLSL_VEC4 },
+	{ "u_FroxelFogMap",    GLSL_INT },
 	{ "u_RtBounceLampMap", GLSL_INT },
 	{ "u_RtDirect",        GLSL_VEC4 },
 	{ "u_RtDirectMap",     GLSL_INT },
@@ -228,6 +249,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtProbeG",        GLSL_VEC4 },
 	{ "u_RtProbeB",        GLSL_VEC4 },
 	{ "u_SoftParticle",    GLSL_VEC4 },
+	{ "u_ParticleSceneMap", GLSL_INT },
+	{ "u_ParticleBlend",   GLSL_FLOAT },
 	{ "u_GroundCover",     GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
 	{ "u_SkelParams",      GLSL_VEC4 },
@@ -266,6 +289,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_LensInfo",        GLSL_VEC4 },
 	{ "u_LensSpots",       GLSL_VEC4_WATERSPOTS },
 	{ "u_LensLook",        GLSL_VEC4_WATERSPOTS },
+	{ "u_LensRain",        GLSL_VEC4 },
 	{ "u_BloomParams",     GLSL_VEC4 },
 	{ "u_BloomTexel",      GLSL_VEC4 },
 	{ "u_Wet",             GLSL_VEC4 },
@@ -275,7 +299,16 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_SsrViewProj",     GLSL_MAT16 },
 	{ "u_SsrPrevViewProj", GLSL_MAT16 },
 	{ "u_SsrParams",       GLSL_VEC4 },
-	{ "u_WetSun",          GLSL_VEC4 }
+	{ "u_WetSun",          GLSL_VEC4 },
+	{ "u_RainCover",       GLSL_VEC4 },
+	{ "u_RainParams",      GLSL_VEC4 },
+	{ "u_RainCoverMap",    GLSL_INT },
+	{ "u_RainReflect",     GLSL_VEC4 },
+	{ "u_RainReflectMvp",  GLSL_MAT16 },
+	{ "u_RainReflectMap",  GLSL_INT },
+	{ "u_RainReflectDepthMap", GLSL_INT },
+	{ "u_RainFlash",       GLSL_VEC4 },
+	{ "u_RainMist",        GLSL_VEC4 }
 };
 
 typedef enum
@@ -387,7 +420,7 @@ static const char *rt_glsl =
 	// the lights this draw may take, four indexes a vec4; u_RtParams.x of them
 	"uniform vec4 u_RtList[RT_MAX_LIGHTS / 4];\n"
 	"uniform vec4 u_RtParams;\n"        // x lights, y mode, z shadows, w darkening floor
-	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun
+	"uniform vec4 u_RtSunDir;\n"        // xyz towards the sun, w 1 with a sun, and past that how overcast (R_RainOvercast)
 	"uniform vec4 u_RtSunColor;\n"      // w 1 with its screen shadow
 	"uniform vec4 u_RtAmbient;\n"
 	"uniform int  u_RtStage;\n"
@@ -764,7 +797,15 @@ static const char *rt_glsl =
 	"				vis = texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r;\n"
 	"			sum += u_RtSunColor.rgb * (ndl * vis);\n"
 	"			if (rt_specOn && dot(N, u_RtSunDir.xyz) > 0.0)\n"
-	"				rt_spec += u_RtSunColor.rgb * (ndl * vis) * RtSpecular(N, u_RtSunDir.xyz);\n"
+	// (w past 1: how overcast, how much of its light the rain's clouds took;
+	// its shine then is theirs, wide and soft, as bright as the sun was)
+	"			{\n"
+	"				float oc = u_RtSunDir.w - 1.0;\n"
+	"				float keep = rt_specRough;\n"
+	"				rt_specRough = mix(rt_specRough, max(rt_specRough, 0.55), clamp(oc * 2.0, 0.0, 1.0));\n"
+	"				rt_spec += u_RtSunColor.rgb / max(1.0 - oc, 0.05) * (ndl * vis) * RtSpecular(N, u_RtSunDir.xyz);\n"
+	"				rt_specRough = keep;\n"
+	"			}\n"
 	"		}\n"
 	"	}\n"
 	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
@@ -899,6 +940,62 @@ static const char *rt_glsl =
 	"	return sum;\n"
 	"}\n"
 	"#endif\n";
+
+/*
+Added in OPM: the light in the air (r_volumetric 2, tr_froxel.c) for what is
+drawn after the opaque world: dust, smoke, glass, water, the alpha tested
+leaves. The air from the eye to the fragment, summed (what it adds, what it
+lets through), read from the grid at the fragment's depth (as froxel_fp.glsl's
+FROXEL_APPLY reads it at each pixel's), and put on the fragment as its blend
+takes it (u_FroxelFog.x): 1 what it lets through of the fragment plus what it
+adds (blended over, or drawn whole), 2 only what it lets through (added on top:
+the air's own light would be added again each time), 3 a multiply faded as far
+as the air hides it, 4 as 1 for a colour already times its alpha (blended
+with one and one less its alpha: the air's light only as far as it covers,
+or its quad's clear corners took the air's light, dark squares round a
+fireball in smoke).
+*/
+static const char *froxelFog_glsl =
+	"uniform sampler2D u_FroxelFogMap;\n"
+	"uniform vec4 u_FroxelFog;\n"
+	"uniform vec4 u_FroxelFogView;\n"
+	"uniform vec4 u_FroxelFogGrid;\n"
+	"vec2 FroxelFogUV(vec2 uv, float s)\n"
+	"{\n"
+	"	vec2 edge = 0.5 / u_FroxelFogGrid.xy;\n"
+	"	vec2 tile = vec2(mod(s, 8.0), floor(s / 8.0));\n"
+	"	return (tile + clamp(uv, edge, 1.0 - edge)) / 8.0;\n"
+	"}\n"
+	"vec3 FroxelFog(vec3 c, float alpha)\n"
+	"{\n"
+	"	if (u_FroxelFog.x < 0.5) return c;\n"
+	// w more than 0: the depth to take it at (a flare, drawn flat at the
+	// end); less: the depth range squeezed into one part of it (the view
+	// weapon's), undone
+	"	float zf = u_FroxelFog.w < 0.0 ? min(gl_FragCoord.z * -u_FroxelFog.w, 1.0) : gl_FragCoord.z;\n"
+	"	float depth = u_FroxelFog.w > 0.0 ? u_FroxelFog.w : u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, zf);\n"
+	"	vec2  uv = (gl_FragCoord.xy - u_FroxelFogGrid.zw) * u_FroxelFogView.zw;\n"
+	"	float f  = min(log2(depth / 256.0 + 1.0) / u_FroxelFog.z * u_FroxelFog.y, u_FroxelFog.y) - 1.0;\n"
+	"	vec4  a, b;\n"
+	"	if (f < 0.0)\n"
+	"	{\n"
+	"		a = vec4(0.0, 0.0, 0.0, 1.0);\n"
+	"		b = texture2D(u_FroxelFogMap, FroxelFogUV(uv, 0.0));\n"
+	"		f += 1.0;\n"
+	"	}\n"
+	"	else\n"
+	"	{\n"
+	"		float s = floor(f);\n"
+	"		a = texture2D(u_FroxelFogMap, FroxelFogUV(uv, s));\n"
+	"		b = texture2D(u_FroxelFogMap, FroxelFogUV(uv, min(s + 1.0, u_FroxelFog.y - 1.0)));\n"
+	"		f -= s;\n"
+	"	}\n"
+	"	vec4 air = mix(a, b, f);\n"
+	"	if (u_FroxelFog.x < 1.5) return c * air.a + air.rgb;\n"
+	"	if (u_FroxelFog.x < 2.5) return c * air.a;\n"
+	"	if (u_FroxelFog.x < 3.5) return mix(vec3(1.0), c, air.a);\n"
+	"	return c * air.a + air.rgb * clamp(alpha, 0.0, 1.0);\n"
+	"}\n";
 
 static const char *rt_skyBake_vp =
 	"attribute vec3 attr_Position;\n"
@@ -1172,6 +1269,10 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 		Q_strcat(dest, size, rt_glsl);
 	}
 
+	// Added in OPM: the light in the air, for what is drawn after it
+	if (extra && shaderType == GL_FRAGMENT_SHADER && strstr(extra, "#define USE_FROXEL_FOG"))
+		Q_strcat(dest, size, froxelFog_glsl);
+
 	if (r_pbr->integer)
 		Q_strcat(dest, size, "#define USE_PBR\n");
 
@@ -1415,8 +1516,9 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	// Added in OPM: room for lightall, which with its header outgrew 32000
 	// (it failed to load, saying only that it could not); static, as two
 	// such buffers are a lot of stack and the shaders are built one at a time
-	static char vpCode[65536];
-	static char fpCode[65536];
+	// (and again: lightall with its header past 65536)
+	static char vpCode[131072];
+	static char fpCode[131072];
 	char *postHeader;
 	int size;
 	int result;
@@ -1461,6 +1563,39 @@ static int GLSL_InitGPUShader(shaderProgram_t * program, const char *name,
 	result = GLSL_InitGPUShader2(program, name, attribs, vpCode, fragmentShader ? fpCode : NULL);
 
 	return result;
+}
+
+/*
+====================
+GLSL_SmaaSource
+
+Added in OPM: an SMAA wrapper (glsl/smaa_vp.glsl, smaa_fp.glsl) with the SMAA
+library (glsl/smaa_lib.glsl) put in at its marker, the line
+//SMAA_LIB_HERE: the library needs the wrapper's defines before it, and the
+wrapper's main needs the library's functions.
+====================
+*/
+static qboolean GLSL_SmaaSource(const char *wrapper, char *dest, int size)
+{
+	const char *marker = "//SMAA_LIB_HERE";
+	const char *at = strstr(wrapper, marker);
+	int         head;
+
+	if (!at) {
+		return qfalse;
+	}
+
+	head = at - wrapper;
+	if (head + (int)strlen(fallbackShader_smaa_lib) + (int)strlen(at) + 2 > size) {
+		return qfalse;
+	}
+
+	Com_Memcpy(dest, wrapper, head);
+	dest[head] = '\0';
+	Q_strcat(dest, size, fallbackShader_smaa_lib);
+	Q_strcat(dest, size, "\n");
+	Q_strcat(dest, size, at + strlen(marker));
+	return qtrue;
 }
 
 void GLSL_InitUniforms(shaderProgram_t *program)
@@ -1525,6 +1660,9 @@ void GLSL_InitUniforms(shaderProgram_t *program)
 				break;
 			case GLSL_VEC4_WATERSPOTS:
 				size += sizeof(vec4_t) * WATER_MAX_SPOTS;
+				break;
+			case GLSL_VEC4_SMOKE:
+				size += sizeof(vec4_t) * SMOKE_MAX_BLOBS * 3;
 				break;
 			default:
 				break;
@@ -1892,6 +2030,33 @@ void GLSL_SetUniformWaterSpots(shaderProgram_t *program, int uniformNum, const v
 
 /*
 Added in OPM
+The puffs of smoke in the air's grid (tr_froxel.c), three vec4s each; only
+those sent.
+*/
+void GLSL_SetUniformSmoke(shaderProgram_t *program, int uniformNum, const vec4_t *v, int vec4s)
+{
+	GLint *uniforms = program->uniforms;
+	vec_t *compare  = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+
+	if (uniforms[uniformNum] == -1 || vec4s <= 0) {
+		return;
+	}
+	if (uniformsInfo[uniformNum].type != GLSL_VEC4_SMOKE) {
+		ri.Printf(PRINT_WARNING, "GLSL_SetUniformSmoke: wrong type for uniform %i in program %s\n", uniformNum, program->name);
+		return;
+	}
+	if (vec4s > SMOKE_MAX_BLOBS * 3) {
+		vec4s = SMOKE_MAX_BLOBS * 3;
+	}
+	if (!memcmp(compare, v, vec4s * sizeof(vec4_t))) {
+		return;
+	}
+	Com_Memcpy(compare, v, vec4s * sizeof(vec4_t));
+	qglProgramUniform4fvEXT(program->program, uniforms[uniformNum], vec4s, &v[0][0]);
+}
+
+/*
+Added in OPM
 The realtime lights a draw may take (R_RtSetUniforms), count indexes, four a
 vec4. Only the vec4s that hold them are sent.
 */
@@ -2205,6 +2370,10 @@ static qboolean GLSL_InitLightallShader(int i)
 		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
 	}
 
+	// Added in OPM: the light in the air, for what is drawn after it
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
+
 	if (!GLSL_InitGPUShader(&tr.lightallShader[i], "lightall", attribs, qtrue, extradefines, qtrue, fallbackShader_lightall_vp, fallbackShader_lightall_fp))
 	{
 		ri.Error(ERR_FATAL, "Could not load lightall shader!");
@@ -2236,6 +2405,9 @@ static qboolean GLSL_InitLightallShader(int i)
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELBONES,       TMU_SKELBONES);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SKELMORPHMAP,    TMU_SKELMORPHS);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINREFLECTMAP,  TMU_RAINREFLECT);
+	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_RAINREFLECTDEPTHMAP, TMU_RAINREFLECTDEPTH);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRCOLORMAP,     TMU_SSRCOLOR);
 	GLSL_SetUniformInt(&tr.lightallShader[i], UNIFORM_SSRDEPTHMAP,     TMU_SSRDEPTH);
 
@@ -2340,6 +2512,8 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 		Q_strcat(extradefines, 1024, "#define USE_SOFTPARTICLES\n");
 	if (slim)
 		Q_strcat(extradefines, 1024, "#define RT_NO_PIXEL_LOOP\n");
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
 
 	if (!GLSL_InitGPUShader(sp, "generic", attribs, qtrue, extradefines, qtrue, fallbackShader_generic_vp, fallbackShader_generic_fp))
 	{
@@ -2358,6 +2532,9 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
 	GLSL_SetUniformInt(sp, UNIFORM_RTSKYLIGHTMAP,   TMU_RTSKYLM);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP,    TMU_RAINCOVER);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINREFLECTMAP,  TMU_RAINREFLECT);
+	GLSL_SetUniformInt(sp, UNIFORM_RAINREFLECTDEPTHMAP, TMU_RAINREFLECTDEPTH);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCEMAP,     TMU_RTBOUNCE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTAOMAP,         TMU_RTAO);
 	GLSL_SetUniformInt(sp, UNIFORM_RTBOUNCELAMPMAP, TMU_RTBOUNCELAMP);
@@ -2366,6 +2543,7 @@ static qboolean GLSL_InitGenericShader(shaderProgram_t *sp, int i, qboolean slim
 	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEMAP,       TMU_RTLIVE);
 	GLSL_SetUniformInt(sp, UNIFORM_RTLIVEDIR,       TMU_RTLIVEDIR);
 	GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP,  TMU_SOFTDEPTH);
+	GLSL_SetUniformInt(sp, UNIFORM_PARTICLESCENEMAP, TMU_PARTICLESCENE);
 
 	GLSL_FinishGPUShader(sp);
 
@@ -2544,6 +2722,10 @@ void GLSL_InitGPUShaders(void)
 			Q_strcat(extradefines, 1024, "#define USE_DEFORM_VERTEXES\n");
 		}
 
+		// Added in OPM: the light in the air, over what is drawn after it
+		if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+			Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
+
 		if (!GLSL_InitGPUShader(&tr.dlightShader[i], "dlight", attribs, qtrue, extradefines, qtrue, fallbackShader_dlight_vp, fallbackShader_dlight_fp))
 		{
 			ri.Error(ERR_FATAL, "Could not load dlight shader!");
@@ -2615,6 +2797,9 @@ void GLSL_InitGPUShaders(void)
 	extradefines[0] = '\0';
 
 	Q_strcat(extradefines, 1024, "#define USE_PCF\n#define USE_DISCARD\n");
+	// Added in OPM: the light in the air, over what is drawn after it
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+		Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
 
 	if (!GLSL_InitGPUShader(&tr.pshadowShader, "pshadow", attribs, qtrue, extradefines, qtrue, fallbackShader_pshadow_vp, fallbackShader_pshadow_fp))
 	{
@@ -2749,7 +2934,7 @@ void GLSL_InitGPUShaders(void)
 	}
 
 	// Added in OPM: the light in the air, which reads the realtime lights
-	if (r_volumetric->integer && r_realtimeLighting->integer == 2)
+	if (r_volumetric->integer == 1 && r_realtimeLighting->integer == 2)
 	{
 		attribs = ATTR_POSITION | ATTR_TEXCOORD;
 		Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
@@ -2775,6 +2960,50 @@ void GLSL_InitGPUShaders(void)
 		GLSL_FinishGPUShader(&tr.volumetricShader);
 
 		numEtcShaders++;
+	}
+
+	// Added in OPM: r_volumetric 2, the light in the air in a grid of cells
+	if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+	{
+		static const char *passes[4] = { "#define FROXEL_LIGHT\n", "#define FROXEL_INTEGRATE\n", "#define FROXEL_APPLY\n", "#define FROXEL_DEPTH\n" };
+
+		for (i = 0; i < 4; i++)
+		{
+			shaderProgram_t *sp = &tr.froxelShader[i];
+
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			Q_strncpyz(extradefines, "#define USE_RTLIGHT\n", sizeof(extradefines));
+			Q_strcat(extradefines, sizeof(extradefines), passes[i]);
+			Q_strcat(extradefines, sizeof(extradefines), va("#define WATER_MAX_SPOTS %d\n#define SMOKE_MAX_BLOBS %d\n", WATER_MAX_SPOTS, SMOKE_MAX_BLOBS));
+
+			if (!GLSL_InitGPUShader(sp, "froxel", attribs, qtrue, extradefines, qtrue, fallbackShader_froxel_vp, fallbackShader_froxel_fp))
+			{
+				ri.Error(ERR_FATAL, "Could not load froxel shader!");
+			}
+
+			GLSL_InitUniforms(sp);
+			GLSL_SetUniformInt(sp, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+			// Added in OPM: the rain's cover, for its mist (R_RainMistParams)
+			GLSL_SetUniformInt(sp, UNIFORM_RAINCOVERMAP, TMU_RAINCOVER);
+			// the light pass's tile depths off TB_LIGHTMAP, which is the
+			// sun's third cascade (TB_SHADOWMAP3) there
+			GLSL_SetUniformInt(sp, UNIFORM_SCREENDEPTHMAP, i == 0 ? TB_NORMALMAP : TB_LIGHTMAP);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP,  TB_SHADOWMAP);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP2, TB_SHADOWMAP2);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP3, TB_SHADOWMAP3);
+			GLSL_SetUniformInt(sp, UNIFORM_SHADOWMAP4, TB_SHADOWMAP4);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWSTATIC,  TMU_RTSHADOW_STATIC);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWDYNAMIC, TMU_RTSHADOW_DYNAMIC);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSHADOWBAKED,   TMU_RTSHADOW_BAKED);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSUNSHADOW,     TMU_RTSUNSHADOW);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSUNCASCADE,    TMU_RTSUNCASCADE);
+			GLSL_SetUniformInt(sp, UNIFORM_RTCAPSULES,      TMU_RTCAPSULES);
+			GLSL_SetUniformInt(sp, UNIFORM_RTSKYMAP,        TMU_RTSKY);
+			GLSL_SetUniformInt(sp, UNIFORM_SMOKENOISE,      TB_SPECULARMAP);
+			GLSL_FinishGPUShader(sp);
+
+			numEtcShaders++;
+		}
 	}
 
 
@@ -2872,6 +3101,8 @@ void GLSL_InitGPUShaders(void)
 
 		Q_strcat(extradefines, 1024, va("#define WATER_MAX_SPOTS %d\n", WATER_MAX_SPOTS));
 		Q_strcat(extradefines, 1024, va("#define WATER_RIPPLE_SIZE %d\n", WATER_RIPPLE_SIZE));
+		if (r_volumetric->integer == 2 && r_realtimeLighting->integer == 2)
+			Q_strcat(extradefines, 1024, "#define USE_FROXEL_FOG\n");
 
 		if (GLSL_InitGPUShader(&tr.waterShader, "water", attribs, qtrue, extradefines, qtrue, fallbackShader_water_vp, fallbackShader_water_fp))
 		{
@@ -2914,6 +3145,42 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.bloomShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
 			GLSL_FinishGPUShader(&tr.bloomShader);
 			numEtcShaders++;
+		}
+
+		// SMAA's three passes (tr_smaa.c), at the r_smaa quality
+		if (R_SmaaWanted())
+		{
+			static const char *presets[4] = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
+			static char        smaaVp[65536], smaaFp[65536];
+			int                level = abs(r_smaa->integer);
+
+			if (level < 1 || level > 4)
+				level = 3;
+
+			if (GLSL_SmaaSource(fallbackShader_smaa_vp, smaaVp, sizeof(smaaVp))
+				&& GLSL_SmaaSource(fallbackShader_smaa_fp, smaaFp, sizeof(smaaFp)))
+			{
+				for (i = 0; i < 3; i++)
+				{
+					attribs = ATTR_POSITION | ATTR_TEXCOORD;
+					extradefines[0] = '\0';
+					Q_strcat(extradefines, 1024, va("#define SMAA_PASS %d\n#define SMAA_PRESET_%s\n", i, presets[level - 1]));
+					// not "smaa": r_externalGLSL would read the wrappers alone
+					if (GLSL_InitGPUShader(&tr.smaaShader[i], "smaa_spliced", attribs, qtrue, extradefines, qtrue, smaaVp, smaaFp))
+					{
+						GLSL_InitUniforms(&tr.smaaShader[i]);
+						GLSL_SetUniformInt(&tr.smaaShader[i], UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+						GLSL_SetUniformInt(&tr.smaaShader[i], UNIFORM_LIGHTMAP, TB_LIGHTMAP);
+						GLSL_SetUniformInt(&tr.smaaShader[i], UNIFORM_NORMALMAP, TB_NORMALMAP);
+						GLSL_FinishGPUShader(&tr.smaaShader[i]);
+						numEtcShaders++;
+					}
+				}
+			}
+			else
+			{
+				ri.Printf(PRINT_WARNING, "WARNING: SMAA shader source could not be put together, r_smaa does nothing\n");
+			}
 		}
 
 		// its ripples, a step of them
@@ -3026,12 +3293,16 @@ void GLSL_ShutdownGPUShaders(void)
 
 	GLSL_DeleteGPUShader(&tr.shadowmaskShader);
 	GLSL_DeleteGPUShader(&tr.volumetricShader);
+	for (i = 0; i < 4; i++)
+		GLSL_DeleteGPUShader(&tr.froxelShader[i]);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.gtaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.bloomShader);
+	for (i = 0; i < 3; i++)
+		GLSL_DeleteGPUShader(&tr.smaaShader[i]);
 	GLSL_DeleteGPUShader(&tr.beachShader[0]);
 	GLSL_DeleteGPUShader(&tr.beachShader[1]);
 

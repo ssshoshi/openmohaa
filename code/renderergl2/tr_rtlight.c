@@ -86,6 +86,7 @@ cvar_t *r_rtDynamicEvery;
 cvar_t *r_rtLamps;
 cvar_t *r_rtWindowLights;
 cvar_t *r_linearLighting;
+cvar_t *r_linearParticleBlend;
 cvar_t *r_linearLightRef;
 cvar_t *r_linearExposure;
 static cvar_t *r_rtBounce;
@@ -369,6 +370,8 @@ void R_RtRegister(void)
 	ri.Cvar_SetDescription(r_rtBakedDebug, "1: the baked lamps' light without the normal maps' shading of it; 2: each lamp baked onto every surface, not those in its reach alone; 100 + n: light n baked alone (both on the next bake); 3: of the bounce, the lamps' alone; 4: the daylight's alone. Not archived: a test switch");
 	r_linearLighting = ri.Cvar_Get("r_linearLighting", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_SetDescription(r_linearLighting, "With r_realtimeLighting 2 and r_hdr 1: the light is added up as light (linear), and the frame made fit to show after the tone map. A texture and a lamp at its middle distance look as before; nearer a lamp is less burnt out, further it falls off more gently, and light from several places adds up as it does in a room. Needs vid_restart");
+	r_linearParticleBlend = ri.Cvar_Get("r_linearParticleBlend", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_linearParticleBlend, "With r_linearLighting: dust and smoke cover what is behind them as they did without it (blended as shown, not as light, where thin white smoke over a darker view was a glowing cloud). It reads the view behind them, a copy of it each view they are in. 0: blended as light");
 	r_linearLightRef = ri.Cvar_Get("r_linearLightRef", "0.5", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_linearLightRef, 0.05f, 1.0f, qfalse);
 	ri.Cvar_SetDescription(r_linearLightRef, "With r_linearLighting: how bright (of white) a lamp is where it looks as it did without: nearer it is dimmer than it was, further brighter. Needs vid_restart");
@@ -477,6 +480,7 @@ light makes to it: there the lights stay where the map compiled them.
 #define RT_LAMP_BULBS  12
 #define RT_LAMP_REACH  512.0f // a light further than this from every lamp is a fill
 #define RT_LAMP_SEEN   16.0f  // a trace that stops this near a lamp got to it
+#define RT_FLAME_CORONA 16.0f // a map's corona this near a flame is the flame's (hidden)
 #define RT_LAMP_MOST   1.5f   // a lamp takes up to this much of what its kind gives
 #define RT_LAMP_NEAR   48.0f  // a lamp's light stops growing this near it: its shade glows, it is no point
 #define RT_LAMP_SPOT_BACK 128.0f // a spot light this far down its cone from a lamp is the lamp's
@@ -608,8 +612,18 @@ static void R_RtLoadLampDefs(void)
 			stops = atof(COM_ParseExt(&text, qfalse));
 			VectorNormalize(def->shade);
 			// a ring: a lampshade open at both ends, holding back what leaves
-			// by its sides; sent as longer than a whole (RtLight)
-			token = COM_ParseExt(&text, qfalse);
+			// by its sides; sent as longer than a whole (RtLight). Read only
+			// if it is on this line: at the line's end the parser steps onto
+			// the next one, and SkipRestOfLine then lost that whole line (a
+			// caged bulb's "bulb", and with it the lamp)
+			{
+				const char *p = text;
+
+				while (p && (*p == ' ' || *p == '\t')) {
+					p++;
+				}
+				token = (p && *p && *p != '\n' && *p != '\r') ? COM_ParseExt(&text, qfalse) : "";
+			}
 			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops) + (!Q_stricmp(token, "ring") ? 1.0f : 0.0f), def->shade);
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;
@@ -843,7 +857,7 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		const rtLampDef_t *def;
 	} lamp_t;
 	lamp_t *lamps;
-	int     numLamps = 0, taken = 0, fills = 0, added = 0, spots = 0;
+	int     numLamps = 0, taken = 0, fills = 0, added = 0, spots = 0, coronas = 0;
 	int     numMapLights = rt.numLights;
 	int     i, j, k;
 
@@ -1045,9 +1059,28 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		l->range = R_RtRangeOf(l->color);
 	}
 
+	// The map's corona sprites on a flame (m1l2a's desert lanterns): the
+	// designer's stand-in for a light, a still white glow over the flame the
+	// lamp has now, which flickers with its light
+	for (j = 0; j < tr.world->numStaticModels; j++) {
+		cStaticModelUnpacked_t *sm = &tr.world->staticModels[j];
+
+		if (!sm->tiki || !Q_stristr(sm->model, "corona")) {
+			continue;
+		}
+		for (i = 0; i < numLamps; i++) {
+			if ((lamps[i].def->kind == RT_LAMP_CANDLE || lamps[i].def->kind == RT_LAMP_LANTERN)
+				&& Distance(sm->origin, lamps[i].centre) < RT_FLAME_CORONA) {
+				sm->rtHidden = qtrue;
+				coronas++;
+				break;
+			}
+		}
+	}
+
 	ri.Hunk_FreeTempMemory(lamps);
-	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps, %d of the map's lights went to them (%d spot lights), %d lit their own, %d fills\n",
-		numLamps, taken + spots, spots, added, fills);
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamps, %d of the map's lights went to them (%d spot lights), %d lit their own, %d fills, %d coronas on flames hidden\n",
+		numLamps, taken + spots, spots, added, fills, coronas);
 }
 
 /*
@@ -1263,6 +1296,9 @@ static void R_RtLightsAtFixtures(void)
 	byte *isLamp = ri.Hunk_AllocateTempMemory(Q_max(1, tr.world->numStaticModels));
 
 	Com_Memset(isLamp, 0, Q_max(1, tr.world->numStaticModels));
+	for (i = 0; i < tr.world->numStaticModels; i++) {
+		tr.world->staticModels[i].rtHidden = qfalse;
+	}
 	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
 		R_RtLightsAtLamps(isLamp);
 	}
@@ -3509,6 +3545,28 @@ static void R_RtBounceStep(float bake, float ease)
 	}
 }
 
+/*
+=============
+R_RtBindVertexArray
+
+The bakes' own vertex arrays bound with the renderer's VAO cache kept true.
+Bound behind it, the cache went on naming the VAO bound before (tess.vao,
+say): the next R_BindVao of that one did nothing, and its draws took
+whatever was bound in its place. R_RtBakeQuad, made the first time a lamp
+goes live, before anything cleared the cache, left it so. With one of these
+bound the cache names a stand-in, so R_BindVao and R_BindNullVao both bind
+for real after it.
+=============
+*/
+static void R_RtBindVertexArray(GLuint vao)
+{
+	static vao_t bakeVao = { "rtBake_VAO" };
+
+	qglBindVertexArray(vao);
+	bakeVao.vao = vao;
+	glState.currentVao = vao ? &bakeVao : NULL;
+}
+
 static void R_RtBakeSkyLightmaps(void)
 {
 	rtBakeList_t list;
@@ -3569,7 +3627,7 @@ static void R_RtBakeSkyLightmaps(void)
 
 		R_BindNullVao();
 		qglGenVertexArrays(1, &vao);
-		qglBindVertexArray(vao);
+		R_RtBindVertexArray(vao);
 		qglGenBuffers(1, &vbo);
 		qglBindBuffer(GL_ARRAY_BUFFER, vbo);
 		qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * list.num, list.verts, GL_STATIC_DRAW);
@@ -3603,7 +3661,7 @@ static void R_RtBakeSkyLightmaps(void)
 		qglDisableVertexAttribArray(ATTR_INDEX_TEXCOORD);
 		qglBindBuffer(GL_ARRAY_BUFFER, 0);
 		qglDeleteBuffers(1, &vbo);
-		qglBindVertexArray(0);
+		R_RtBindVertexArray(0);
 		qglDeleteVertexArrays(1, &vao);
 		FBO_Bind(NULL);
 
@@ -3847,7 +3905,7 @@ static float R_RtLightShape(const rtLight_t *l, vec4_t shape)
 static qboolean R_RtBakeUpload(rtBakePage_t *page)
 {
 	qglGenVertexArrays(1, &page->vao);
-	qglBindVertexArray(page->vao);
+	R_RtBindVertexArray(page->vao);
 	qglGenBuffers(1, &page->vbo);
 	qglBindBuffer(GL_ARRAY_BUFFER, page->vbo);
 	qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * page->list.num, page->list.verts, GL_STATIC_DRAW);
@@ -3857,7 +3915,7 @@ static qboolean R_RtBakeUpload(rtBakePage_t *page)
 	qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
 	qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
 	qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
-	qglBindVertexArray(0);
+	R_RtBindVertexArray(0);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
 	page->firsts = ri.Malloc(sizeof(GLint) * Q_max(1, page->list.numChunks));
 	page->counts = ri.Malloc(sizeof(GLsizei) * Q_max(1, page->list.numChunks));
@@ -3875,7 +3933,7 @@ static qboolean R_RtBakeTarget(rtBakePage_t *page, image_t *image)
 	}
 	qglViewport(0, 0, image->width, image->height);
 	qglScissor(0, 0, image->width, image->height);
-	qglBindVertexArray(page->vao);
+	R_RtBindVertexArray(page->vao);
 	return qtrue;
 }
 
@@ -3906,7 +3964,7 @@ static void R_RtBakeMode(float mode, float alpha)
 
 static void R_RtBakeEnd(void)
 {
-	qglBindVertexArray(0);
+	R_RtBindVertexArray(0);
 	FBO_Bind(NULL);
 }
 
@@ -4012,7 +4070,7 @@ static qboolean R_RtBakeQuad(void)
 	verts[1].lm[0] = 2.0f;
 	verts[2].lm[1] = 2.0f;
 	qglGenVertexArrays(1, &rt_bake.quadVao);
-	qglBindVertexArray(rt_bake.quadVao);
+	R_RtBindVertexArray(rt_bake.quadVao);
 	qglGenBuffers(1, &rt_bake.quadVbo);
 	qglBindBuffer(GL_ARRAY_BUFFER, rt_bake.quadVbo);
 	qglBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
@@ -4022,7 +4080,7 @@ static qboolean R_RtBakeQuad(void)
 	qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
 	qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
 	qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
-	qglBindVertexArray(0);
+	R_RtBindVertexArray(0);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
 	return qtrue;
 }
@@ -4035,7 +4093,7 @@ static qboolean R_RtLiveFillPass(rtBakePage_t *page, image_t *src, image_t *dst,
 	if (!R_RtBakeTarget(page, dst)) {
 		return qfalse;
 	}
-	qglBindVertexArray(rt_bake.quadVao);
+	R_RtBindVertexArray(rt_bake.quadVao);
 	GL_State(state);
 	GL_Cull(CT_TWO_SIDED);
 	GLSL_BindProgram(&tr.rtBakeFillShader);
@@ -6472,8 +6530,11 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 	if (rt.sun) {
 		VectorCopy(rt.sunDir, tr.rtSunDir);
-		tr.rtSunDir[3] = 1.0f;
-		VectorScale(rt.sunColor, bake, tr.rtSunColor);
+		// Added in OPM: 1 with a sun, and past that how much it shines: a sun
+		// behind the rain's clouds lights a little and gives no glint
+		tr.rtSunDir[3] = 1.0f + R_RainOvercast();
+		// Added in OPM: behind the rain's clouds, less of it (R_RainOvercast)
+		VectorScale(rt.sunColor, bake * (1.0f - R_RainOvercast()), tr.rtSunColor);
 		// the screen shadow the depth prepass leaves (RB_RenderDrawSurfList)
 		tr.rtSunColor[3] = (tr.screenShadowImage && tr.sunShadows && r_depthPrepass->value && r_sunlightMode->integer) ? 1.0f : 0.0f;
 	} else {
@@ -6973,6 +7034,11 @@ void R_RtSetVolumeUniforms(shaderProgram_t *sp)
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNDIR, tr.rtSunDir);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSUNCOLOR, tr.rtSunColor);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTAMBIENT, tr.rtAmbient);
+	// the sky's light, for the fog and the smoke (RtSky)
+	GLSL_SetUniformVec4(sp, UNIFORM_RTSKYCOLOR, tr.rtSkyColor);
+	if (tr.rtSkyColor[3] > 0) {
+		GLSL_SetUniformRtSky(sp, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
+	}
 	// one tap of each shadow's four, unspread
 	VectorSet4(surface, 0.0f, 0.0f, 0.0f, 1.0f);
 	GLSL_SetUniformVec4(sp, UNIFORM_RTSURFACE, surface);

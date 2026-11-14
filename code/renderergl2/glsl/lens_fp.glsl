@@ -11,6 +11,7 @@ uniform sampler2D u_ScreenImageMap; // the frame
 uniform vec4 u_LensInfo;                     // how many, the view's width over its height, how far it is across a texel of the copy
 uniform vec4 u_LensSpots[WATER_MAX_SPOTS];   // x, y (a share of the view), how big (a share of its height), how much of it is left
 uniform vec4 u_LensLook[WATER_MAX_SPOTS];    // what (0 water, 1 blood, 2 dirt), a seed, how far it has run down, 0
+uniform vec4 u_LensRain;                     // how wet the glass is from the rain (0 to 1), the time in seconds
 
 varying vec2 var_Tex;
 varying vec2 var_View;
@@ -34,6 +35,139 @@ float Clouds(vec2 x)
 	return Noise(x) * 0.6 + Noise(x * 2.1 + 3.7) * 0.28 + Noise(x * 4.3 + 9.1) * 0.12;
 }
 
+// The rain on the glass. Water lies on it in blobs that run together where
+// they meet (each a soft mound, the mounds added, and water where the sum is
+// enough): beads that land and sit, then dry away; and drops that sit a
+// while, then run down a wandering path, each at its own pace, gathering
+// speed, some in fits, in two sizes. Few at a time: a drop now and then looking ahead, a couple of
+// dozen looking up. What is behind is bent by the slope of the water.
+
+vec3 GlassHash(vec2 id)
+{
+	return fract(sin(vec3(dot(id, vec2(127.1, 311.7)), dot(id, vec2(269.5, 183.3)), dot(id, vec2(419.2, 371.9)))) * 43758.5453);
+}
+
+// a soft mound of water, 1 in its middle, none at r
+float GlassBlob(float len, float r)
+{
+	return smoothstep(r, 0.0, len);
+}
+
+// beads sitting on the glass: one to a cell, in a few of them (the wetter
+// the more), landing at once and drying away slowly
+float GlassBeads(vec2 p, float t, float wet)
+{
+	vec2  q  = p * 12.0;
+	vec2  id = floor(q);
+	vec3  n  = GlassHash(id + 7.3);
+	// kept inside its cell (cut by its edge, it drew a box)
+	float r  = 0.12 + 0.2 * n.z;
+	vec2  at = (n.xy - 0.5) * (0.9 - 2.0 * r);
+	float c  = fract(t * 0.05 + n.z * 3.1);
+	float life = smoothstep(0.0, 0.02, c) * smoothstep(1.0, 0.4, c);
+	float here = step(fract(n.z * 13.1), 0.12 * wet);
+
+	return GlassBlob(length(fract(q) - 0.5 - at), r) * life * here;
+}
+
+// drops running down, one in a few of the cells (the wetter the more). Each
+// time round a cell's drop is another: where it lands, whether it lands at
+// all, how big. It sits a while, then goes down in one to four legs, each
+// with its own pause, its own pace (slow at first, gathering speed) and its
+// own slight slant; where it paused it may leave a small bead, which dries
+// away slowly
+float GlassRunning(vec2 p, float t, float seed, float wet)
+{
+	const vec2 cell = vec2(1.0 / 8.0, 0.7); // in view heights at this scale
+
+	float col = floor(p.x / cell.x);
+	vec3  cn  = GlassHash(vec2(col, seed));
+	vec2  q   = vec2(p.x / cell.x, p.y / cell.y + cn.x);
+	vec2  id  = floor(q);
+	vec2  st  = fract(q);
+	vec3  h0  = GlassHash(id + seed * 3.7);
+
+	// this time round the cell, and this drop's own
+	float lt   = t * (0.06 + 0.1 * h0.x) + h0.z;
+	float life = fract(lt);
+	vec2  cyc  = id + vec2(floor(lt) * 17.31, floor(lt) * 5.13 + seed);
+	vec3  n    = GlassHash(cyc);
+	vec3  m    = GlassHash(cyc * 1.31 + 4.2);
+
+	float show = smoothstep(0.0, 0.03, life) * smoothstep(1.0, 0.92, life) * step(n.y, 0.25 * wet);
+	if (show <= 0.0)
+		return 0.0;
+
+	float r    = 0.022 * (0.5 + 1.1 * n.x * n.x);
+	float rx   = r / cell.x + 0.03;
+	float hold = 0.05 + 0.35 * m.y;
+	float legs = 1.0 + floor(m.z * 4.0);
+	float tl   = clamp((life - hold) / (0.78 - hold), 0.0, 1.0);
+	float leg  = min(floor(tl * legs), legs - 1.0);
+
+	// where it is, leg by leg, and the beads it left where it paused
+	float x    = 0.5 + (n.z - 0.5) * 0.3;
+	float water  = 0.0;
+	float gone = 0.0;
+	for (int j = 0; j < 4; j++)
+	{
+		float fj = float(j);
+		if (fj >= legs)
+			break;
+		vec3  k     = GlassHash(cyc + vec2(fj * 3.3, 7.7));
+		float slant = (k.x - 0.5) * 0.5;
+		float y0    = fj / legs;
+		if (fj < leg)
+		{
+			// a leg it has gone down: the bead it may have left at its start
+			if (j > 0 && k.y < 0.6)
+			{
+				float age  = life - (hold + fj / legs * (0.78 - hold));
+				float fade = 1.0 - smoothstep(0.0, 0.2, age);
+				float rb   = r * (0.3 + 0.25 * k.z);
+				vec2  bd   = vec2((st.x - clamp(x, rx, 1.0 - rx)) * cell.x, (st.y - (0.85 - 0.72 * y0)) * cell.y);
+				water += GlassBlob(length(bd), rb) * fade;
+			}
+			x += slant / legs;
+		}
+		else
+		{
+			// the leg it is on: a pause, then away, faster as it goes
+			float tau  = fract(tl * legs);
+			if (tl >= 1.0)
+				tau = 1.0;
+			float pace = pow(smoothstep(0.15 + 0.4 * k.y, 1.0, tau), 1.2 + 1.6 * k.z);
+			gone = (fj + pace) / legs;
+			if (j > 0 && k.y < 0.6 && pace < 1.0)
+			{
+				float rb = r * (0.3 + 0.25 * k.z);
+				vec2  bd = vec2((st.x - clamp(x, rx, 1.0 - rx)) * cell.x, (st.y - (0.85 - 0.72 * y0)) * cell.y);
+				water += GlassBlob(length(bd), rb) * smoothstep(0.0, 0.3, pace);
+			}
+			x += slant * pace / legs;
+			break;
+		}
+	}
+	x = clamp(x, rx, 1.0 - rx);
+
+	// the drop: longer when it goes fast, fuller below, where the water
+	// gathers
+	float y = 0.85 - 0.72 * gone;
+	vec2  d = vec2((st.x - x) * cell.x, (st.y - y) * cell.y);
+	d.y    *= d.y > 0.0 ? 0.8 : 0.75;
+	water += GlassBlob(length(d), r);
+	return water * show;
+}
+
+// the water on the glass here, 0 to 1
+float GlassWater(vec2 p, float t, float wet)
+{
+	float h = GlassBeads(p, t, wet)
+	        + GlassRunning(p, t, 1.0, wet)
+	        + GlassRunning(p * 1.6 + vec2(3.1, 1.7), t * 1.1, 2.0, wet * 0.6);
+	return smoothstep(0.3, 1.0, h);
+}
+
 void main()
 {
 	float aspect = u_LensInfo.y;
@@ -42,6 +176,24 @@ void main()
 	float glint  = 0.0;       // the sky's light caught on one
 	float blood  = 0.0;
 	float dirt   = 0.0;
+
+	// the rain on the glass: what is behind bent by how the water lies on
+	// it, darker where it is steep (a drop's rim), lit where it faces up
+	if (u_LensRain.x > 0.002)
+	{
+		vec2  p  = (var_View - 0.5) * vec2(aspect, 1.0);
+		float t  = u_LensRain.y;
+		float e  = 0.001;
+		float h  = GlassWater(p, t, u_LensRain.x);
+		vec2  dh = vec2(GlassWater(p + vec2(e, 0.0), t, u_LensRain.x) - h, GlassWater(p + vec2(0.0, e), t, u_LensRain.x) - h);
+
+		// what is behind seen through the water, moved by its slope; a
+		// little darker where it is steep (a drop's rim), the sky caught
+		// high on it
+		bent  += dh * 1.6;
+		shade  = max(shade, clamp(length(dh) * 1.2, 0.0, 0.15));
+		glint  = max(glint, clamp(dot(dh, vec2(-0.6, 0.8)) * 2.0, 0.0, 0.3));
+	}
 
 	int count = int(u_LensInfo.x + 0.5);
 	for (int i = 0; i < WATER_MAX_SPOTS; i++)
