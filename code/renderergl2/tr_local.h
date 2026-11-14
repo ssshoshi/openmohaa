@@ -1140,6 +1140,12 @@ typedef enum
 	UNIFORM_RAINREFLECTDEPTHMAP,
 	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
 	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
+	UNIFORM_GRADELIFT,      // Added in OPM: the picture's grade (tr_atmos.c, tonemap_fp.glsl): lift, saturation
+	UNIFORM_GRADEGAMMA,     // one over the gamma, vibrance
+	UNIFORM_GRADEGAIN,      // gain, contrast
+	UNIFORM_GRADEMISC,      // vignette, grain, a number a frame, whether there is a grade
+	UNIFORM_CLOUDSHADOW,    // Added in OPM: the clouds' shadows (shadowmask_fp.glsl): how dark, one over their size, their drift
+	UNIFORM_CLOUDSHADOWMAP,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2674,6 +2680,7 @@ typedef struct {
 	image_t					*waterReflectDepthImage; // and its depth, for the air in it (tr_froxel.c)
 	image_t					*beachGroundImage; // Added in OPM: the beach's ground, its height from above (tr_water.c)
 	image_t					*rainCoverImage;   // Added in OPM: the highest of the world at each place, from above: what keeps the rain off (tr_water.c)
+	image_t					*cloudShadowImage; // Added in OPM: a noise of clouds, for their shadows (tr_atmos.c)
 	image_t					*waterRippleImage[2]; // Added in OPM: the water's ripples (tr_water.c)
 	image_t                 *renderCubeImage;
 	
@@ -4152,6 +4159,14 @@ extern cvar_t *r_volumetricTemporal;
 void R_FroxelInit(void);
 void R_FroxelShutdown(void);
 void R_FogLoadWorld(const char *mapName);
+// Added in OPM: a map's atmosphere and the picture's grade (tr_atmos.c)
+extern cvar_t *r_grade;
+void R_AtmosInit(void);
+void R_AtmosShutdown(void);
+void R_AtmosLoadWorld(const char *mapName);
+void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
+void R_AtmosWind(vec2_t dir, float *strength);
+void R_AtmosCloudShadows(vec4_t out, int tmu);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;
 qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
