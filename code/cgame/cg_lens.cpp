@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // (RE_SetLensSpots, glsl/lens_fp.glsl).
 
 #include "cg_lens.h"
+#include "cg_snow.h"
 
 cvar_t *cg_lens;
 static cvar_t *cg_lens_test;
@@ -302,8 +303,11 @@ static void CG_LensRain(void)
     if (raining && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
         cgi.Cvar_Set("r_rainWet", "1");
     }
-    if (cg.rain.density > 0.0f && !raining && cgi.Cvar_Get("r_snowFall", "0", CVAR_TEMP)->value < 1.0f) {
-        cgi.Cvar_Set("r_snowFall", "1");
+    if (cg.rain.density > 0.0f && !raining) {
+        CG_SnowFalls();
+        if (cgi.Cvar_Get("r_snowFall", "0", CVAR_TEMP)->value < 1.0f) {
+            cgi.Cvar_Set("r_snowFall", "1");
+        }
     }
     if (raining && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
         float up;

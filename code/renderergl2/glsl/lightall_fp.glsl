@@ -1125,7 +1125,7 @@ void main()
 
 	// Added in OPM: snow lying on it: white, dull, the normal map's bumps
 	// under it smoothed over
-	if (u_Snow.x > 0.0 || u_Snow.y > 0.0)
+	if (u_Snow.x > 0.0)
 	{
 		snowLie = SnowLies(wetSurfN, N, snowOpen);
 		if (snowLie > 0.0)
@@ -1294,7 +1294,7 @@ void main()
 	else
 	{
 		// Added in OPM: snow lying on it
-		if (u_Snow.x > 0.0 || u_Snow.y > 0.0)
+		if (u_Snow.x > 0.0)
 		{
 			snowLie = SnowLies(wetSurfN, wetSurfN, snowOpen);
 			diffuse.rgb = mix(diffuse.rgb, Lin(vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos)), snowLie);
@@ -1469,16 +1469,21 @@ void main()
 
 	// Added in OPM: the snow glitters in whatever light falls on it: where
 	// it lies, and on what is snow itself, out under the sky and facing up
-	if (u_Snow.y > 0.0)
+	if (u_Snow.y > 0.0 && (u_Snow.w > 0.5 || snowLie > 0.0))
 	{
-		float lies = u_Snow.w > 0.5 ? snowOpen * smoothstep(0.35, 0.8, wetSurfN.z) : snowLie;
-		if (lies > 0.0)
+		// the brighter the light on it the more: none of it in the dark,
+		// little in the shade, all of it in the sun or under a lamp (and
+		// nothing more is worked out where there is none)
+		float lum    = dot(gl_FragColor.rgb, vec3(0.2125, 0.7154, 0.0721));
+		float shown  = u_Linear > 0.5 ? pow(max(lum, 0.0), 1.0 / 2.2) : lum;
+		float bright = smoothstep(0.15, 0.6, shown);
+		if (bright > 0.0)
 		{
-			// (the brighter the light on it the more: little of it in the
-			// shade or by night, all of it in the sun or under a lamp)
-			float lum   = dot(gl_FragColor.rgb, vec3(0.2125, 0.7154, 0.0721));
-			float shown = u_Linear > 0.5 ? pow(max(lum, 0.0), 1.0 / 2.2) : lum;
-			gl_FragColor.rgb *= 1.0 + 8.0 * lies * u_Snow.y * smoothstep(0.15, 0.6, shown) * SnowGlitter(var_WetPos);
+			float lies = snowLie;
+			if (u_Snow.w > 0.5)
+				lies = smoothstep(0.35, 0.8, wetSurfN.z) * RainExposed(var_WetPos, wetSurfN);
+			if (lies > 0.0)
+				gl_FragColor.rgb *= 1.0 + 8.0 * lies * u_Snow.y * bright * SnowGlitter(var_WetPos);
 		}
 	}
 
