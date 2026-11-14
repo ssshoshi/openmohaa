@@ -835,8 +835,14 @@ void Com_SkipRestOfLine(char **data)
 	int             c;
 
 	p = *data;
-	while((c = *p++) != 0)
+	// Fixed in OPM: as SkipRestOfLine
+	if(!p)
 	{
+		return;
+	}
+	while((c = *p) != 0)
+	{
+		p++;
 		if(c == '\n')
 		{
 			com_lines++;
@@ -969,6 +975,48 @@ qboolean SkipBracedSection (char **program, int depth) {
 
 /*
 =================
+COM_MoreOnLine
+
+Added in OPM
+  Whether the line the text is on has anything more on it (a comment is
+  nothing).
+=================
+*/
+qboolean COM_MoreOnLine( const char *data ) {
+	if ( !data ) {
+		return qfalse;
+	}
+	while ( *data == ' ' || *data == '\t' ) {
+		data++;
+	}
+	return *data && *data != '\n' && *data != '\r' && !( data[0] == '/' && data[1] == '/' );
+}
+
+/*
+=================
+COM_ParseOnLine
+
+Added in OPM
+  The line's next token, or none if it has no more. COM_ParseExt asked for a
+  token the line does not have steps onto the next line (or off the end of the
+  text, leaving none), and the SkipRestOfLine that ends the line's reading then
+  loses that whole line: a line with fewer values than it may have took the
+  line after it with it. A reader of a file of lines reads its values with
+  this.
+=================
+*/
+char *COM_ParseOnLine( char **data_p ) {
+	if ( !COM_MoreOnLine( *data_p ) ) {
+		static char none[1];
+
+		none[0] = 0;
+		return none;
+	}
+	return COM_ParseExt( data_p, qfalse );
+}
+
+/*
+=================
 SkipRestOfLine
 =================
 */
@@ -977,7 +1025,15 @@ void SkipRestOfLine ( char **data ) {
 	int		c;
 
 	p = *data;
-	while ( (c = *p++) != 0 ) {
+	// Fixed in OPM
+	//  No text: what COM_ParseExt leaves when a token is looked for at the
+	//  end of it (a last line with fewer values than it may have). And at
+	//  the end of a last line with no newline, stop on the end, not past it.
+	if ( !p ) {
+		return;
+	}
+	while ( (c = *p) != 0 ) {
+		p++;
 		if ( c == '\n' ) {
 			com_lines++;
 			break;

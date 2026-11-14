@@ -1130,6 +1130,9 @@ void	COM_BeginParseSession( const char *name );
 int		COM_GetCurrentParseLine( void );
 const char	*COM_Parse( char **data_p );
 char	*COM_ParseExt( char **data_p, qboolean allowLineBreak );
+// Added in OPM: a line's values, read without stepping onto the next line
+qboolean COM_MoreOnLine( const char *data );
+char	*COM_ParseOnLine( char **data_p );
 char	*COM_ParseExtIgnoreQuotes( char **data_p, qboolean allowLineBreak );
 const char *COM_GetToken( char **data_p, qboolean crossline );
 void	Com_SkipRestOfLine(char **data);
