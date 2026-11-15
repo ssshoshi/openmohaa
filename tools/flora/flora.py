@@ -398,6 +398,101 @@ animations
 """ % {"n": name}
 
 
+LEAF_FX = """TIKI
+// OPM (content/opm-trees, made by tools/flora): leaves shaken off a %(what)s by a
+// blast (cgame's CG_LensBlast): they burst out of its crown, and come down
+// turning over and over.
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy2.skd
+}
+
+init
+{
+	client
+	{
+		cache models/fx/opm_leaf.tik
+
+		sfx originspawn
+		(
+			model models/fx/opm_leaf.tik
+			spawnrange 3000
+			count %(count)d
+			color 1 1 1
+			offset crandom %(wide)d crandom %(wide)d crandom %(tall)d
+			angles random 360 random 360 random 360
+			avelocity crandom 240 crandom 300 crandom 240
+			randvel crandom %(throw)d crandom %(throw)d range -20 %(throw)d
+			accel 0 0 -160
+			friction 1.6
+			life 6.0 1.5
+			scalemin 0.8
+			scalemax 1.6
+			fade
+		)
+	}
+}
+
+animations
+{
+	idle dummy2.skc
+}
+"""
+
+
+def leaf_fx(out, textures):
+    """What a blast shakes down: one leaf as a model (a quad), and the two effects that throw them."""
+    m = skd.Model("opm_leaf.skd")
+    m.bones = [skd.Bone("leaf")]
+    s = skd.Surface("leaf")
+    for x, y, u, v in ((-3.0, -4.5, 0, 1), (3.0, -4.5, 1, 1), (3.0, 4.5, 1, 0), (-3.0, 4.5, 0, 0)):
+        s.verts.append(skd.Vertex((0.0, 0.0, 1.0), (u, v), [(0, 1.0, (x, y, 0.0))]))
+    s.triangles = [(0, 1, 2), (0, 2, 3)]
+    m.surfaces.append(s)
+    a = skc.Animation()
+    a.channels = ["leaf pos", "leaf rot"]
+    a.values = [[(0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)]]
+    a.frames = [skc.Frame(((-5, -5, -1), (5, 5, 1)), 6.0)]
+    write(os.path.join(out, "models/fx/opm_leaf.skd"), skd.write(m))
+    write(os.path.join(out, "models/fx/opm_leaf.skc"), skc.write(a))
+    write(os.path.join(out, "models/fx/opm_leaf.tik"), """TIKI
+setup
+{
+	scale 1
+	path models/fx
+	skelmodel opm_leaf.skd
+	surface leaf shader opm_flora/leaf_fall
+	lod_scale 100
+}
+
+animations
+{
+	idle opm_leaf.skc
+}
+""")
+    write(os.path.join(out, "models/fx/opm_leaves_tree.tik"),
+          LEAF_FX % dict(what="tree", count=22, wide=130, tall=70, throw=70))
+    write(os.path.join(out, "models/fx/opm_leaves_bush.tik"),
+          LEAF_FX % dict(what="bush", count=9, wide=30, tall=20, throw=45))
+    if textures:
+        tex = os.path.join(out, "textures/opm/flora")
+        os.makedirs(tex, exist_ok=True)
+        paint.fallen_leaf("LeafSet014", (0.55, 0.66, 0.40)).save(os.path.join(tex, "leaf_fall.tga"))
+    return """opm_flora/leaf_fall
+{
+	cull none
+	{
+		map textures/opm/flora/leaf_fall.tga
+		alphaFunc GE128
+		depthWrite
+		rgbGen lightingSpherical
+	}
+}
+"""
+
+
 def write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
@@ -437,6 +532,7 @@ def main():
         print("%-10s bark %5d tris (%d surfaces)  leaves %5d tris (%d surfaces)  %.0f x %.0f x %.0f"
               % (name, bark.count(), len(bark.surfaces), leaves.count(), len(leaves.surfaces),
                  hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]))
+    shaders += leaf_fx(args.out, not args.no_textures)
     write(os.path.join(args.out, "scripts/opm_flora.shader"), shaders)
 
 

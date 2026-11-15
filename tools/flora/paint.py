@@ -232,3 +232,20 @@ def bark(asset, tint=(1.0, 1.0, 1.0), size=(512, 512)):
         col, nrm = polyhaven(asset)
     col = np.asarray(col.resize(size, Image.LANCZOS), np.float32) * np.array(tint, np.float32)
     return Image.fromarray(col.clip(0, 255).astype(np.uint8), "RGB"), nrm.resize(size, Image.LANCZOS)
+
+
+def fallen_leaf(asset, tint, size=128):
+    """One scanned leaf by itself, RGBA: what comes down when a tree is shaken."""
+    rgb, alpha, _ = max(cut_leaves(asset), key=lambda leaf: leaf[1].size)
+    h, w = alpha.shape
+    k = (size - 4) / max(h, w)
+    dim = (max(2, int(w * k)), max(2, int(h * k)))
+    c = np.asarray(Image.fromarray(rgb.clip(0, 255).astype(np.uint8), "RGB").resize(dim, Image.LANCZOS), np.float32)
+    a = np.asarray(Image.fromarray(alpha.clip(0, 255).astype(np.uint8), "L").resize(dim, Image.LANCZOS), np.float32)
+    out_c = np.zeros((size, size, 3), np.float32)
+    out_a = np.zeros((size, size), np.float32)
+    y0, x0 = (size - dim[1]) // 2, (size - dim[0]) // 2
+    out_c[y0:y0 + dim[1], x0:x0 + dim[0]] = c * np.array(tint, np.float32)
+    out_a[y0:y0 + dim[1], x0:x0 + dim[0]] = a
+    out_c = bleed(out_c, out_a, 8)
+    return Image.fromarray(np.dstack([out_c, out_a]).clip(0, 255).astype(np.uint8), "RGBA")
