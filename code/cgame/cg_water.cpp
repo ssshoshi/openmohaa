@@ -243,7 +243,7 @@ static int CG_WaterNumbers(char **text, float *out, int n)
     int i;
 
     for (i = 0; i < n; i++) {
-        const char *token = COM_ParseExt(text, qfalse);
+        const char *token = COM_ParseOnLine(text);
 
         if (!token[0]) {
             break;

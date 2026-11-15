@@ -565,7 +565,7 @@ static void R_RtLoadLampDefs(void)
 			continue;
 		}
 		if (!Q_stricmp(token, "kind")) {
-			token = COM_ParseExt(&text, qfalse);
+			token = COM_ParseOnLine(&text);
 			def->kind = !Q_stricmp(token, "bulb")      ? RT_LAMP_BULB
 					  : !Q_stricmp(token, "candle")  ? RT_LAMP_CANDLE
 					  : !Q_stricmp(token, "lantern") ? RT_LAMP_LANTERN
@@ -579,15 +579,15 @@ static void R_RtLoadLampDefs(void)
 			int k;
 
 			for (k = 0; k < 3; k++) {
-				def->color[k] = atof(COM_ParseExt(&text, qfalse));
+				def->color[k] = atof(COM_ParseOnLine(&text));
 			}
 		} else if (!Q_stricmp(token, "intensity")) {
-			def->intensity = atof(COM_ParseExt(&text, qfalse));
+			def->intensity = atof(COM_ParseOnLine(&text));
 		} else if (!Q_stricmp(token, "bulb")) {
 			int k;
 
 			for (k = 0; k < 3; k++) {
-				const float v = atof(COM_ParseExt(&text, qfalse));
+				const float v = atof(COM_ParseOnLine(&text));
 
 				if (def->numBulbs < RT_LAMP_BULBS) {
 					def->bulbs[def->numBulbs][k] = v;
@@ -599,9 +599,9 @@ static void R_RtLoadLampDefs(void)
 			float stops;
 
 			for (k = 0; k < 3; k++) {
-				def->shade[k] = atof(COM_ParseExt(&text, qfalse));
+				def->shade[k] = atof(COM_ParseOnLine(&text));
 			}
-			stops = atof(COM_ParseExt(&text, qfalse));
+			stops = atof(COM_ParseOnLine(&text));
 			VectorNormalize(def->shade);
 			// a ring: a lampshade open at both ends, holding back what leaves
 			// by its sides; sent as longer than a whole (RtLight). Read only
@@ -614,16 +614,16 @@ static void R_RtLoadLampDefs(void)
 				while (p && (*p == ' ' || *p == '\t')) {
 					p++;
 				}
-				token = (p && *p && *p != '\n' && *p != '\r') ? COM_ParseExt(&text, qfalse) : "";
+				token = (p && *p && *p != '\n' && *p != '\r') ? COM_ParseOnLine(&text) : "";
 			}
 			VectorScale(def->shade, Com_Clamp(0.0f, 1.0f, stops) + (!Q_stricmp(token, "ring") ? 1.0f : 0.0f), def->shade);
 		} else if (!Q_stricmp(token, "spot")) {
 			int k;
 
 			for (k = 0; k < 3; k++) {
-				def->spotDir[k] = atof(COM_ParseExt(&text, qfalse));
+				def->spotDir[k] = atof(COM_ParseOnLine(&text));
 			}
-			def->spotAngle = atof(COM_ParseExt(&text, qfalse));
+			def->spotAngle = atof(COM_ParseOnLine(&text));
 			def->spot      = VectorNormalize(def->spotDir) > 0 && def->spotAngle > 0;
 		}
 		SkipRestOfLine(&text);
