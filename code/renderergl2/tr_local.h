@@ -3092,6 +3092,7 @@ extern  cvar_t  *r_rtSky;
 extern  cvar_t  *r_rtSkyTile;
 extern  cvar_t  *r_rtFacesPerFrame;
 extern  cvar_t  *r_rtMaxLights;
+extern  cvar_t  *r_rtShadowSlope;
 extern  cvar_t  *r_rtAmbient;
 extern  cvar_t  *r_rtDynamicLights;
 extern  cvar_t  *r_rtShadowCharacters;
@@ -3633,6 +3634,7 @@ typedef struct shaderCommands_s
 	// only their counts, and the vertex program sways them (time, draw
 	// distance, wind)
 	qboolean    groundCover;
+	qboolean    terrain;    // Added in OPM: a terrain patch is in the batch (lamp shadows draw its one side)
 	vec4_t      groundCoverParams;
 
 	// Added in OPM: the batch is polygons (marks, decals): the realtime

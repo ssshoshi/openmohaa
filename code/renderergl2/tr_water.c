@@ -222,7 +222,7 @@ static int R_WaterNumbers(char **text, float *out, int n)
     int i;
 
     for (i = 0; i < n; i++) {
-        const char *token = COM_ParseExt(text, qfalse);
+        const char *token = COM_ParseOnLine(text);
 
         if (!token[0]) {
             break;
@@ -346,16 +346,16 @@ static void R_WaterReadFile(const char *mapName)
         } else if (!Q_stricmp(key, "remapShader")) {
             char from[MAX_QPATH];
 
-            token = COM_ParseExt(&text, qfalse);
+            token = COM_ParseOnLine(&text);
             Q_strncpyz(from, token, sizeof(from));
-            token = COM_ParseExt(&text, qfalse);
+            token = COM_ParseOnLine(&text);
             if (from[0] && token[0] && water.numRemaps < 4) {
                 Q_strncpyz(water.remaps[water.numRemaps][0], from, MAX_QPATH);
                 Q_strncpyz(water.remaps[water.numRemaps][1], token, MAX_QPATH);
                 water.numRemaps++;
             }
         } else if (!Q_stricmp(key, "beachSurface")) {
-            token = COM_ParseExt(&text, qfalse);
+            token = COM_ParseOnLine(&text);
             if (token[0] && water.numBeachSurfaces < 4) {
                 Q_strncpyz(water.beachSurfaces[water.numBeachSurfaces++], token, MAX_QPATH);
             }
