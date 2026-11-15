@@ -689,6 +689,24 @@ void R_AddStaticModelSurfaces(void)
                 for (j = 0; j < skelmodel->numSurfaces; j++, surface = surface->pNext, dsurf++, s_surface++) {
                     shader = tr.shaders[dsurf->hShader[0]];
 
+                    // Added in OPM: a remade tree's distance levels. Its near
+                    // surfaces' shaders fade out with distance and its far
+                    // ones' fade in over the same stretch (as the game's far
+                    // sprites did); drawn from the card nothing fades, so it
+                    // is one set or the other, changed half way, by how far
+                    // the tree stands from the eye (not from a shadow's view,
+                    // which must cast what is seen).
+                    if (SM->surfaceVaos && !SM->vaoColors && r_staticModelVao->integer && shader->stages[0]
+                        && (shader->stages[0]->alphaGen == AGEN_DIST_FADE
+                            || shader->stages[0]->alphaGen == AGEN_ONE_MINUS_DIST_FADE)) {
+                        const float change = (shader->fDistNear + shader->fDistRange * 0.5f) * r_floraLod->value;
+                        const qboolean far_ = r_floraLod->value > 0.0f
+                                           && DistanceSquared(tiki_worldorigin, tr.refdef.vieworg) > change * change;
+
+                        if (far_ != (shader->stages[0]->alphaGen == AGEN_ONE_MINUS_DIST_FADE)) {
+                            continue;
+                        }
+                    } else
                     if (shader->numUnfoggedPasses == 1 && !r_nocull->integer) {
                         switch (shader->stages[0]->alphaGen) {
                         case AGEN_DIST_FADE:
