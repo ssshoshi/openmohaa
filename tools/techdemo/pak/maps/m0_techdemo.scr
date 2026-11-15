@@ -5,7 +5,8 @@
 //   techdemo_bench 1     fly the benchmark camera round the map, again and
 //                        again, the same way every time (a lap's length is in
 //                        m0_techdemo_bench.scr, made with the map)
-//   techdemo_crowd N     how many soldiers stand in the yard (default 24)
+//   techdemo_crowd N     how many soldiers stand in the yard (default one of
+//                        each human model, 54)
 //   techdemo_movers 0    leave the hall's moving lights off
 
 	exec global/ai.scr
@@ -69,25 +70,82 @@ range_targets:
 end
 
 //----------------------------------------------------------------------------
-// the yard: a crowd of a fixed size, as many skeletal models as a busy scene
+// the yard: one of every man the game has (the stock paks' characters, 54
+// of them), as many skeletal models as a busy scene. techdemo_crowd N stands
+// N there instead, going round the list again past the end.
 
 crowd:
 	wait 1
+	local.count = 54
 	local.n = int (getcvar "techdemo_crowd")
 	if (getcvar "techdemo_crowd" == "")
-		local.n = 24
+		local.n = local.count
+	local.models = waitthread crowd_models
 	for (local.i = 0; local.i < local.n; local.i++)
 	{
-		local.x = -384 + (local.i % 6) * 288
-		local.y = 640 + int (local.i / 6) * 256
-		if (local.i % 2)
-			local.m = models/human/german_wehrmact_soldier.tik
-		else
-			local.m = models/human/allied_airborne_soldier.tik
-		local.a = waitthread passive local.m ( local.x local.y 0 ) (local.i * 37)
+		local.x = -768 + (local.i % 9) * 288
+		local.y = 512 + int (local.i / 9) * 256
+		local.a = waitthread passive local.models[local.i % local.count] ( local.x local.y 0 ) (local.i * 37)
 		local.a.health = 100000
 	}
 end
+
+crowd_models:
+	local.m[0] = "models/human/1st-ranger_captain.tik"
+	local.m[1] = "models/human/1st-ranger_engineer.tik"
+	local.m[2] = "models/human/1st-ranger_lieutenant.tik"
+	local.m[3] = "models/human/1st-ranger_medic.tik"
+	local.m[4] = "models/human/1st-ranger_private.tik"
+	local.m[5] = "models/human/1st-ranger_private_prisoner.tik"
+	local.m[6] = "models/human/1st-ranger_sergeant.tik"
+	local.m[7] = "models/human/2nd-ranger_captain.tik"
+	local.m[8] = "models/human/2nd-ranger_engineer.tik"
+	local.m[9] = "models/human/2nd-ranger_lieutenant.tik"
+	local.m[10] = "models/human/2nd-ranger_medic.tik"
+	local.m[11] = "models/human/2nd-ranger_private.tik"
+	local.m[12] = "models/human/2nd-ranger_sergeant.tik"
+	local.m[13] = "models/human/allied_airborne_soldier.tik"
+	local.m[14] = "models/human/allied_misc_manon.tik"
+	local.m[15] = "models/human/allied_oss_man_disguised.tik"
+	local.m[16] = "models/human/allied_oss_man_m1.tik"
+	local.m[17] = "models/human/allied_pilot.tik"
+	local.m[18] = "models/human/coxswain.tik"
+	local.m[19] = "models/human/dday_29th_private.tik"
+	local.m[20] = "models/human/dday_29th_private_patient.tik"
+	local.m[21] = "models/human/dday_29th_private_radio.tik"
+	local.m[22] = "models/human/dday_engineer.tik"
+	local.m[23] = "models/human/dday_ranger_captain.tik"
+	local.m[24] = "models/human/dday_ranger_lieutenant.tik"
+	local.m[25] = "models/human/dday_ranger_medic.tik"
+	local.m[26] = "models/human/dday_ranger_private.tik"
+	local.m[27] = "models/human/dday_ranger_sergeant.tik"
+	local.m[28] = "models/human/german_afrika_grenadier.tik"
+	local.m[29] = "models/human/german_afrika_NCO.tik"
+	local.m[30] = "models/human/german_afrika_officer.tik"
+	local.m[31] = "models/human/german_afrika_private.tik"
+	local.m[32] = "models/human/german_elite_gestapo.tik"
+	local.m[33] = "models/human/german_elite_sentry.tik"
+	local.m[34] = "models/human/german_hund_hundpatrol.tik"
+	local.m[35] = "models/human/german_kreigsmarine.tik"
+	local.m[36] = "models/human/german_misc_frogman.tik"
+	local.m[37] = "models/human/german_misc_kradschutzen-afrika.tik"
+	local.m[38] = "models/human/german_misc_kradshutzen.tik"
+	local.m[39] = "models/human/german_misc_scientist.tik"
+	local.m[40] = "models/human/german_misc_worker.tik"
+	local.m[41] = "models/human/german_panzer_grenadier.tik"
+	local.m[42] = "models/human/german_panzer_obershutze.tik"
+	local.m[43] = "models/human/german_panzer_shutze.tik"
+	local.m[44] = "models/human/german_panzer_tankcommander.tik"
+	local.m[45] = "models/human/german_waffenss_nco.tik"
+	local.m[46] = "models/human/german_waffenss_officer.tik"
+	local.m[47] = "models/human/german_waffenss_shutze.tik"
+	local.m[48] = "models/human/german_wehrmact_grenadier.tik"
+	local.m[49] = "models/human/german_wehrmact_NCO.tik"
+	local.m[50] = "models/human/german_wehrmact_officer.tik"
+	local.m[51] = "models/human/german_wehrmact_soldier.tik"
+	local.m[52] = "models/human/german_winter_type1.tik"
+	local.m[53] = "models/human/german_winter_type2.tik"
+end local.m
 
 //----------------------------------------------------------------------------
 // the pond: men dead in the water, floating
