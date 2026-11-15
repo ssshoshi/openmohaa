@@ -2536,7 +2536,9 @@ static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
     int            i;
 
     vao = SM->surfaceVaos[staticSurf - SM->surfaces];
-    if (!vao || RB_ShaderFadesVertexes(tess.shader)) {
+    // (a fade by distance needs the vertexes in the batch: a far sprite's.
+    // A remade tree's is its distance levels', chosen where it was added.)
+    if (!vao || (SM->vaoColors && RB_ShaderFadesVertexes(tess.shader))) {
         return qfalse;
     }
     // A shader that moves its vertexes needs them in the batch; but a tree's

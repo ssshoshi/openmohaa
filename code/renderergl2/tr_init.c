@@ -267,6 +267,7 @@ cvar_t	*r_marksOnTriangleMeshes;
 cvar_t	*r_vaoCache;
 cvar_t	*r_staticModelVao; // Added in OPM
 cvar_t	*r_floraWind;      // Added in OPM
+cvar_t	*r_floraLod;       // Added in OPM
 cvar_t	*r_gpuTimerSync;
 cvar_t	*r_gpuTimers;
 cvar_t	*r_frameHitchMsec;
@@ -1914,6 +1915,8 @@ void R_Register( void )
 	// Added in OPM
 	r_staticModelVao = ri.Cvar_Get("r_staticModelVao", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_staticModelVao, "Static models the light grid lights (remade trees and props) are drawn from the graphics card instead of being copied to it every frame (0: copied, as before)");
+	r_floraLod = ri.Cvar_Get("r_floraLod", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraLod, "How far off remade trees change to their lighter far models, times what each is made for (1: as made, 2 twice as far, 0 never: always the full model)");
 	r_floraWind = ri.Cvar_Get("r_floraWind", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_floraWind, "How far the wind moves remade trees and bushes: trunks bend, boughs sway and leaves flutter, harder under a gust (1: as made, 0 still; r_wind and the map's wind scale it too)");
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
