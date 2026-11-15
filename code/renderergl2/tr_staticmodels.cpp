@@ -48,7 +48,7 @@ static struct {
 } staticVaos[STATIC_VAO_SURFACES];
 static int numStaticVaos;
 
-static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf)
+static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf, const color4ub_t *colors)
 {
     static srfVert_t verts[TIKI_MAX_VERTEXES];
     static glIndex_t indexes[TIKI_MAX_TRIANGLES * 3];
@@ -56,12 +56,13 @@ static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf)
     vao_t           *vao;
     int              i;
 
-    for (i = 0; i < numStaticVaos; i++) {
+    // (one with the map's own colours is that model's alone)
+    for (i = 0; i < numStaticVaos && !colors; i++) {
         if (staticVaos[i].surf == surf) {
             return staticVaos[i].vao;
         }
     }
-    if (numStaticVaos == STATIC_VAO_SURFACES || !surf->pStaticXyz || surf->numVerts > TIKI_MAX_VERTEXES
+    if ((!colors && numStaticVaos == STATIC_VAO_SURFACES) || tr.numVaos > MAX_VAOS - 256 || !surf->pStaticXyz || surf->numVerts > TIKI_MAX_VERTEXES
         || surf->numTriangles > TIKI_MAX_TRIANGLES || surf->numVerts < 3 || surf->numTriangles < 1) {
         return NULL;
     }
@@ -74,7 +75,14 @@ static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf)
         verts[i].lightmap[0] = surf->pStaticTexCoords[i][1][0];
         verts[i].lightmap[1] = surf->pStaticTexCoords[i][1][1];
         R_VaoPackNormal(verts[i].normal, surf->pStaticNormal[i]);
-        verts[i].color[0] = verts[i].color[1] = verts[i].color[2] = verts[i].color[3] = 0xffff;
+        if (colors) {
+            verts[i].color[0] = colors[i][0] * 0xffff / 0xff;
+            verts[i].color[1] = colors[i][1] * 0xffff / 0xff;
+            verts[i].color[2] = colors[i][2] * 0xffff / 0xff;
+            verts[i].color[3] = colors[i][3] * 0xffff / 0xff;
+        } else {
+            verts[i].color[0] = verts[i].color[1] = verts[i].color[2] = verts[i].color[3] = 0xffff;
+        }
         VectorClear(sdirs[i]);
         VectorClear(tdirs[i]);
     }
@@ -105,7 +113,10 @@ static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf)
         R_VaoPackTangent(verts[i].tangent, packMe);
     }
 
-    vao = R_CreateVao2(va("static model surface %d", numStaticVaos), surf->numVerts, verts, surf->numTriangles * 3, indexes);
+    vao = R_CreateVao2(va("static model surface %d", tr.numVaos), surf->numVerts, verts, surf->numTriangles * 3, indexes);
+    if (colors) {
+        return vao;
+    }
     if (vao) {
         R_BindVao(vao);
         qglDisableVertexAttribArray(ATTR_INDEX_COLOR);
@@ -124,6 +135,7 @@ static void R_StaticModelVaos(cStaticModelUnpacked_t *pSM, const char *name, flo
     int j, k, n;
 
     pSM->surfaceVaos = NULL;
+    pSM->vaoColors   = qfalse;
     pSM->floraHeight = 0.0f;
     if (!pSM->noVertexData || !glRefConfig.vertexArrayObject) {
         return;
@@ -145,13 +157,84 @@ static void R_StaticModelVaos(cStaticModelUnpacked_t *pSM, const char *name, flo
         skelSurfaceGame_t *surf;
 
         for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext, n++) {
-            pSM->surfaceVaos[n] = R_StaticSurfaceVao(surf);
+            pSM->surfaceVaos[n] = R_StaticSurfaceVao(surf, NULL);
         }
     }
 
     // a tree or a bush: the wind moves it
     if ((strstr(name, "/tree_") || strstr(name, "/bush_")) && top > 8.0f) {
         pSM->floraHeight = top;
+    }
+}
+
+/*
+==============
+R_StaticFloraVaos
+
+Added in OPM: the game's own trees and bushes keep the map's light, a colour
+for each vertex of each one, so each gets its surfaces on the card with its
+own colours: then the wind can move it as it does the remade ones
+(RB_StaticMeshVao). Only on a map where they are few enough (palms in the
+desert, a hedge's worth): a forest of them stays as it was.
+==============
+*/
+#define STATIC_FLORA_VAOS 2000
+
+static qboolean R_StaticFloraOwnLight(const cStaticModelUnpacked_t *pSM)
+{
+    return pSM->tiki && !pSM->noVertexData && !pSM->surfaceVaos && pSM->numVertexData > 0
+        && (strstr(pSM->model, "tree_") || strstr(pSM->model, "bush_")) && pSM->tiki->a->maxs[2] > 8.0f;
+}
+
+static void R_StaticFloraVaos(void)
+{
+    int i, j, k, n, count = 0;
+
+    if (!glRefConfig.vertexArrayObject || !tr.world->staticModelData) {
+        return;
+    }
+    for (i = 0; i < tr.world->numStaticModels; i++) {
+        const cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
+
+        if (R_StaticFloraOwnLight(pSM)) {
+            for (j = 0; j < pSM->tiki->numMeshes; j++) {
+                const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+                count += skel ? skel->numSurfaces : 0;
+            }
+        }
+    }
+    if (!count || count > STATIC_FLORA_VAOS) {
+        return;
+    }
+    for (i = 0; i < tr.world->numStaticModels; i++) {
+        cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
+        const color4ub_t       *colors;
+        int                     numSurfaces = 0;
+
+        if (!R_StaticFloraOwnLight(pSM)) {
+            continue;
+        }
+        for (j = 0; j < pSM->tiki->numMeshes; j++) {
+            const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+            numSurfaces += skel ? skel->numSurfaces : 0;
+        }
+        if (!numSurfaces) {
+            continue;
+        }
+        colors           = (const color4ub_t *)&tr.world->staticModelData[pSM->firstVertexData];
+        pSM->surfaceVaos = (vao_t **)ri.Hunk_Alloc(numSurfaces * sizeof(vao_t *), h_dontcare);
+        for (j = 0, n = 0; j < pSM->tiki->numMeshes; j++) {
+            skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+            skelSurfaceGame_t *surf;
+
+            for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext, n++) {
+                pSM->surfaceVaos[n] = R_StaticSurfaceVao(surf, colors + pSM->surfaces[n].ofsStaticData);
+            }
+        }
+        pSM->vaoColors   = qtrue;
+        pSM->floraHeight = pSM->tiki->a->maxs[2];
     }
 }
 
@@ -407,6 +490,9 @@ void R_InitStaticModels(void)
         // Added in OPM: on the card, if the grid lights it
         R_StaticModelVaos(pSM, szTemp, maxs[2]);
     }
+
+    // Added in OPM: the game's own trees, with the map's light, where they are few
+    R_StaticFloraVaos();
 
     tr.refdef.numStaticModels    = tr.world->numStaticModels;
     tr.refdef.staticModels       = tr.world->staticModels;

@@ -2532,9 +2532,27 @@ static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
     if (!SM->surfaceVaos || !r_staticModelVao->integer) {
         return qfalse;
     }
+    const qboolean windy = SM->floraHeight > 0.0f && r_floraWind->value > 0.0f;
+    int            i;
+
     vao = SM->surfaceVaos[staticSurf - SM->surfaces];
-    if (!vao || ShaderRequiresCPUDeforms(tess.shader) || RB_ShaderFadesVertexes(tess.shader)) {
+    if (!vao || RB_ShaderFadesVertexes(tess.shader)) {
         return qfalse;
+    }
+    // A shader that moves its vertexes needs them in the batch; but a tree's
+    // own sway (flap, wave) gives way to the wind here. Never a far sprite's
+    // turning to the eye.
+    if (ShaderRequiresCPUDeforms(tess.shader)) {
+        if (!windy) {
+            return qfalse;
+        }
+        for (i = 0; i < tess.shader->numDeforms; i++) {
+            const deform_t d = tess.shader->deforms[i].deformation;
+
+            if (d != DEFORM_WAVE && d != DEFORM_FLAP_S && d != DEFORM_FLAP_T) {
+                return qfalse;
+            }
+        }
     }
 
     RB_EndSurface();
@@ -2545,10 +2563,12 @@ static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
     tess.numIndexes     = surf->numTriangles * 3;
     tess.numVertexes    = surf->numVerts;
 
-    grid = (const byte *)&SM->iGridLighting;
-    qglVertexAttrib4f(ATTR_INDEX_COLOR, grid[0] / 255.0f, grid[1] / 255.0f, grid[2] / 255.0f, 1.0f);
+    if (!SM->vaoColors) {
+        grid = (const byte *)&SM->iGridLighting;
+        qglVertexAttrib4f(ATTR_INDEX_COLOR, grid[0] / 255.0f, grid[1] / 255.0f, grid[2] / 255.0f, 1.0f);
+    }
 
-    if (SM->floraHeight > 0.0f && r_floraWind->value > 0.0f) {
+    if (windy) {
         vec2_t dir;
         float  strength, yaw;
 
@@ -2656,7 +2676,7 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
     }
 
     // Added in OPM: whole, and lit by the grid: from the card
-    if (render_count == surf->numVerts && backEnd.currentStaticModel->noVertexData && RB_StaticMeshVao(staticSurf)) {
+    if (render_count == surf->numVerts && backEnd.currentStaticModel->surfaceVaos && RB_StaticMeshVao(staticSurf)) {
         return;
     }
 

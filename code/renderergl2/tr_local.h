@@ -1831,6 +1831,7 @@ typedef struct cStaticModelUnpacked_s {
     //  (R_StaticModelVaos), and how tall it stands if it is a tree or a bush,
     //  which the wind sways (0: it is not).
     struct vao_s **surfaceVaos;
+    qboolean       vaoColors; // they hold the map's own light for it (R_StaticFloraVaos)
     float          floraHeight;
 } cStaticModelUnpacked_t;
 
