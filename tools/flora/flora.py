@@ -18,7 +18,7 @@ How a tree is grown: a branch is a bent, tapering tube; along it stand its
 children, turned round it by the golden angle, each a shorter, thinner branch
 of the next level (trunk, boughs, branches). The last level carries the leaf
 cards: bent quads showing one spray of the species' leaf texture
-(tools/flora/paint.py), lying along the branch, their normals turned partly
+(tools/flora/paint.py: scanned leaves and photographed bark, CC0, downloaded once), lying along the branch, their normals turned partly
 outward from the crown so it is lit as a rounded mass. The whole is then
 fitted to the height and radius of the model it replaces. Seeded: the same
 model every run.
@@ -76,9 +76,9 @@ SPECIES = {
             Level(4, 4, 0, math.radians(50), 0.5, 0.5, start=0.2, gnarl=0.20, tropism=0.04, tip=0.2),
         ],
         cards=15, card_size=76.0, card_droop=0.22, puff=0.75, flare=0.75,
-        leaf=dict(kind="oak", palette=[(58, 84, 34), (66, 94, 38), (74, 102, 42), (52, 76, 30), (84, 106, 44)],
-                  twig=(62, 48, 34), leaf_len=0.19, density=2),
-        bark=dict(kind="furrowed", plate=(118, 106, 90), fissure=(40, 32, 26), moss=(86, 98, 62)),
+        # scanned oak leaves (spring green: darkened to summer's), and furrowed oak bark
+        leaf=dict(asset="LeafSet016", tint=(0.50, 0.62, 0.42), twig=(62, 48, 34), leaf_len=0.21, density=2),
+        bark=dict(asset="jolcham_oak_bark_01", tint=(0.9, 0.88, 0.85)),
         bark_tile=(2.0, 120.0), seed=11,
     ),
 }
@@ -345,12 +345,11 @@ def main():
         if not args.no_textures:
             tex = os.path.join(args.out, "textures/opm/flora")
             os.makedirs(tex, exist_ok=True)
-            im, n = paint.leaf_atlas(sp.leaf["kind"], sp.leaf["palette"], sp.leaf["twig"], sp.seed,
+            im, n = paint.leaf_atlas(sp.leaf["asset"], sp.leaf["tint"], sp.leaf["twig"], sp.seed,
                                      leaf_len=sp.leaf["leaf_len"], density=sp.leaf["density"])
             im.save(os.path.join(tex, name + "_leaves.tga"))
             n.save(os.path.join(tex, name + "_leaves_n.tga"))
-            b = sp.bark
-            im, n = paint.bark(b["kind"], b["plate"], b["fissure"], b["moss"], sp.seed + 1)
+            im, n = paint.bark(sp.bark["asset"], sp.bark["tint"])
             im.save(os.path.join(tex, name + "_bark.tga"))
             n.save(os.path.join(tex, name + "_bark_n.tga"))
         print("%-10s bark %5d tris (%d surfaces)  leaves %5d tris (%d surfaces)  %.0f x %.0f x %.0f"
