@@ -2561,6 +2561,7 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.SetWaterBlood = RE_SetWaterBlood;
 	re.AddWaterRipples = RE_AddWaterRipples;
 	re.SetLensSpots = RE_SetLensSpots;
+	re.AddBlast = RE_AddBlast;
 	re.TIKI_Orientation = RE_TIKI_Orientation;
 	re.TIKI_IsOnGround = RE_TIKI_IsOnGround;
 	re.SetFrameNumber = RE_SetFrameNumber;

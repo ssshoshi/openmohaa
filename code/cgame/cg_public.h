@@ -92,7 +92,8 @@ functions imported from the main executable
 //  6: CM_EnableBrush is present.
 //  7: R_SetWaterBlood, R_AddWaterRipples and R_SetLensSpots are present (and
 //  NULL when the renderer has no use for them).
-#define CGAME_IMPORT_API_VERSION 7
+//  8: R_AddBlast is present (NULL likewise).
+#define CGAME_IMPORT_API_VERSION 8
 
     /*
 ==================================================================
@@ -483,6 +484,10 @@ functions exported to the main executable
         void (*R_AddWaterRipples)(const float *ripples, int numRipples);
         //  What is on the camera's lens: see refexport_t.
         void (*R_SetLensSpots)(const float *spots, int numSpots);
+
+        // Added in OPM, API version 8
+        //  A blast, for the trees and the grass: see refexport_t.
+        void (*R_AddBlast)(const float *origin, float radius, float strength);
 
     } clientGameImport_t;
 

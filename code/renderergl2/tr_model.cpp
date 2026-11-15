@@ -2563,6 +2563,7 @@ static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
         tess.floraParams[1] = tess.shader->cullType == CT_TWO_SIDED ? -SM->floraHeight : SM->floraHeight;
         tess.floraParams[2] = strength * r_floraWind->value;
         tess.floraParams[3] = yaw + 7.0f * floor(Com_Clamp(0.0f, 2.0f, R_AtmosGusts()) * 10.0f + 0.5f);
+        R_BlastSway(SM->origin, tess.floraBlast);
     }
 
     staticModelNumIndexes[SM - backEnd.refdef.staticModels] += tess.numIndexes;

@@ -215,6 +215,12 @@ typedef struct {
     void (*AddWaterRipples)(const float *ripples, int numRipples);
 
     // Added in OPM
+    //  Something blew up there: how far its blast reaches and how hard it is
+    //  (1 a grenade). Trees, bushes and grass round it are thrown back by it
+    //  and spring up again. A renderer that sways none ignores it.
+    void (*AddBlast)(const float *origin, float radius, float strength);
+
+    // Added in OPM
     //  What is on the camera's lens, eight floats each: x and y across and
     //  up the view (0 to 1), how big (a share of its height), how much of it
     //  is left (0 to 1); what it is (0 water, 1 blood, 2 dirt), a seed, how

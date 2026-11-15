@@ -227,6 +227,13 @@ void CG_LensFleshHit(const vec3_t at)
 
 void CG_LensBlast(const vec3_t at, int kind, qboolean inWater)
 {
+    // the trees, bushes and grass round it are thrown back (the renderer's)
+    if (cgi.apiversion >= 8 && cgi.R_AddBlast) {
+        const int k = kind < 0 ? 0 : (kind > 3 ? 3 : kind);
+
+        cgi.R_AddBlast(at, 260.0f + 130.0f * k, 1.0f + 0.3f * k);
+    }
+
     static const float reaches[] = {500.0f, 650.0f, 800.0f, 800.0f};
     float              reach     = reaches[kind < 0 ? 0 : kind > 3 ? 3 : kind];
     float              x, y, dist, amount;

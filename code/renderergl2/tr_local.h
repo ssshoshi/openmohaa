@@ -3654,6 +3654,7 @@ typedef struct shaderCommands_s
 	// height (negative: leaves, which flutter), wind, where it blows to
 	qboolean    flora;
 	vec4_t      floraParams;
+	vec4_t      floraBlast; // which way a blast throws it and how far (of its height), how hard it shakes
 
 	// Added in OPM: the batch is polygons (marks, decals): the realtime
 	// bounce lights them from the probes where they are (R_RtSetUniforms)
@@ -4188,6 +4189,10 @@ void R_AtmosLoadWorld(const char *mapName);
 void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 void R_AtmosWind(vec2_t dir, float *strength);
 float R_AtmosGusts(void);
+// Added in OPM: blasts, and what they do to what grows (tr_atmos.c)
+void RE_AddBlast(const float *origin, float radius, float strength);
+void R_BlastSway(const vec3_t at, vec4_t out);
+int R_BlastPushers(vec4_t *out, int max);
 void R_AtmosCloudShadows(vec4_t out, int tmu);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;

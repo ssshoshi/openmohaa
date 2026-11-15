@@ -114,10 +114,8 @@ uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows
 // Added in OPM: who stands in the grass (tr_groundcover.c's GC_Pushers): where
 // his feet are and how far round them it gives way, 0 for none. (The gore
 // dents' uniform, which the tufts' own lightall has no other use for.)
-#if defined(USE_GROUNDCOVER)
 #define GC_PUSHERS 8
-uniform vec4   u_SkelDents[GC_PUSHERS];
-#endif
+uniform vec4   u_SkelDents[GC_PUSHERS]; // (a tree's: [0] a blast's throw, xy of its height, and z how hard it shakes; then who stands in it)
 #endif
 
 #if defined(USE_GROUNDCOVER) || defined(USE_FLORA)
@@ -525,6 +523,10 @@ void main()
 		float to    = yaw + gusty * ((n.y - 0.5) * 1.5 + sin(t * 0.047) * 0.21 + sin(t * 0.113 + 1.3) * 0.14);
 		float wind  = u_GroundCover.z;
 
+		// a blast near by throws it back and sets it thrashing (R_BlastSway)
+		vec4  blast = u_SkelDents[0];
+		g    += blast.z / max(wind, 0.2);
+
 		float phase = fract(root.x * 0.0137 + root.y * 0.0071) * 6.2832;
 		float up    = clamp(position.z / height, 0.0, 1.0);
 		float sway  = sin(t * 1.1 + phase) * 0.6 + sin(t * 2.3 + phase * 1.7) * 0.4;
@@ -537,6 +539,33 @@ void main()
 
 		vec3  offs  = vec3(vec2(cos(to), sin(to)) * (bend + bamp * (0.5 + 0.5 * bsway)), bamp * bsway * 0.6 - bend * bend / (2.0 * height));
 		float flut  = leafy * (0.5 + g * 3.0) * wind * sin(t * 9.0 + dot(position, vec3(0.37, 0.23, 0.41)) + phase);
+
+		offs.xy += blast.xy * height * (up * up + arm * 0.7);
+
+		// who pushes through it: its twigs give way round him, low down
+		// (a bush's, a sapling's; a tree's boughs are over his head)
+		{
+			vec3 wpos = (u_ModelMatrix * vec4(position, 1.0)).xyz;
+
+			for (int k = 1; k < GC_PUSHERS; k++)
+			{
+				vec4  pu    = u_SkelDents[k];
+				float reach = pu.w * 1.6;
+				vec2  d     = wpos.xy - pu.xy;
+				float r2    = dot(d, d);
+				float over  = wpos.z - pu.z;
+
+				if (pu.w > 0.0 && pu.w < 100.0 && r2 < reach * reach && over > -16.0 && over < 96.0)
+				{
+					float dist = sqrt(r2);
+					float f    = 1.0 - dist / reach;
+
+					f = f * f * (3.0 - 2.0 * f) * min(up * 4.0 + arm * 3.0, 1.0);
+					offs.xy += (dist > 0.5 ? d / dist : vec2(1.0, 0.0)) * f * reach * 0.45;
+					offs.z  -= f * reach * 0.12;
+				}
+			}
+		}
 
 		position += vec3(dot(offs, ax), dot(offs, ay), dot(offs, az)) / size + normal * flut;
 	}

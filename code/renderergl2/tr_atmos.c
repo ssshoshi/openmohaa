@@ -320,6 +320,122 @@ float R_AtmosGusts(void)
 }
 
 /*
+==================
+Blasts
+
+Added in OPM: where something blew up lately (RE_AddBlast, from cgame). What
+grows near is thrown back from it and swings to rest: R_BlastSway for a tree
+or a bush, R_BlastPushers for the grass, which lies flat round it and stands
+up again from the outside in.
+==================
+*/
+#define MAX_BLASTS   8
+#define BLAST_SWAY   4.5f // seconds a tree takes to come to rest
+#define BLAST_FLAT   7.0f // seconds grass lies
+
+static struct {
+	vec3_t origin;
+	float  radius, strength;
+	float  time; // the scene's (refdef.floatTime): every pass of a frame has the same, so puts a tree in the same place
+} blasts[MAX_BLASTS];
+static int numBlasts;
+
+void RE_AddBlast(const float *origin, float radius, float strength)
+{
+	int i, oldest = 0;
+
+	if (!origin || radius <= 0.0f) {
+		return;
+	}
+	if (numBlasts < MAX_BLASTS) {
+		oldest = numBlasts++;
+	} else {
+		for (i = 1; i < MAX_BLASTS; i++) {
+			if (blasts[i].time < blasts[oldest].time) {
+				oldest = i;
+			}
+		}
+	}
+	VectorCopy(origin, blasts[oldest].origin);
+	blasts[oldest].radius   = radius;
+	blasts[oldest].strength = strength;
+	blasts[oldest].time     = tr.refdef.floatTime;
+}
+
+/*
+What a tree standing at a point feels: out[0..1] which way it is thrown, as a
+part of its height its top goes; out[2] how hard it shakes (0 to 1 and over).
+*/
+void R_BlastSway(const vec3_t at, vec4_t out)
+{
+	const float now = backEnd.refdef.floatTime;
+	int         i;
+
+	VectorSet4(out, 0, 0, 0, 0);
+	for (i = 0; i < numBlasts; i++) {
+		const float age   = now - blasts[i].time;
+		const float reach = blasts[i].radius * 3.0f;
+		float       dx = at[0] - blasts[i].origin[0], dy = at[1] - blasts[i].origin[1];
+		float       dist = sqrt(dx * dx + dy * dy);
+		float       f, env;
+
+		if (age < 0.0f || age > BLAST_SWAY || dist > reach || fabs(at[2] - blasts[i].origin[2]) > reach) {
+			continue;
+		}
+		// the wave takes a moment to reach it
+		if (age < dist / 3000.0f) {
+			continue;
+		}
+		f   = 1.0f - dist / reach;
+		f   = f * f * blasts[i].strength;
+		env = exp(-age * 1.3f);
+		if (dist < 1.0f) {
+			dx = 1.0f, dy = 0.0f, dist = 1.0f;
+		}
+		// thrown away from it, then swinging back and forth to rest
+		out[0] += dx / dist * f * env * cos(age * 5.5f) * 0.07f;
+		out[1] += dy / dist * f * env * cos(age * 5.5f) * 0.07f;
+		out[2] = Q_max(out[2], f * env * 1.6f);
+	}
+}
+
+/*
+blasttest [distance] [radius] [strength]: a blast ahead of the view, as an
+explosion there gives (nothing else of one: to see what grows react).
+*/
+static void R_BlastTest_f(void)
+{
+	const float dist = ri.Cmd_Argc() > 1 ? atof(ri.Cmd_Argv(1)) : 300.0f;
+	vec3_t      at;
+
+	VectorMA(tr.refdef.vieworg, dist, tr.refdef.viewaxis[0], at);
+	at[2] = tr.refdef.vieworg[2] - 60.0f;
+	RE_AddBlast(at, ri.Cmd_Argc() > 2 ? atof(ri.Cmd_Argv(2)) : 300.0f, ri.Cmd_Argc() > 3 ? atof(ri.Cmd_Argv(3)) : 1.0f);
+}
+
+/*
+The grass's: where it lies flat, as its pushers are (x, y, z, how far round).
+*/
+int R_BlastPushers(vec4_t *out, int max)
+{
+	const float now = backEnd.refdef.floatTime;
+	int         i, n = 0;
+
+	// the newest first
+	for (i = numBlasts - 1; i >= 0 && n < max; i--) {
+		const float age = now - blasts[i].time;
+
+		if (age < 0.0f || age > BLAST_FLAT) {
+			continue;
+		}
+		VectorCopy(blasts[i].origin, out[n]);
+		out[n][3] = blasts[i].radius * 0.8f * (1.0f - (age / BLAST_FLAT) * (age / BLAST_FLAT));
+		n++;
+	}
+	return n;
+}
+
+/*
 =============
 R_AtmosWind
 
@@ -583,10 +699,12 @@ void R_AtmosInit(void)
 	ri.Cvar_SetDescription(r_cloudShadows, "The shadows of clouds drifting over what the sun lights, on maps whose atmos/<map>.txt has clouds: 0 none, 1 as dark as the map has them. Needs r_sunShadows");
 	ri.Cmd_AddCommand("atmosinfo", R_AtmosInfo_f);
 	ri.Cmd_AddCommand("atmosreload", R_AtmosReload_f);
+	ri.Cmd_AddCommand("blasttest", R_BlastTest_f);
 }
 
 void R_AtmosShutdown(void)
 {
 	ri.Cmd_RemoveCommand("atmosinfo");
 	ri.Cmd_RemoveCommand("atmosreload");
+	ri.Cmd_RemoveCommand("blasttest");
 }
