@@ -287,7 +287,6 @@ opm_flora/%(n)s_leaves
 	qer_editorimage textures/opm/flora/%(n)s_leaves.tga
 	cull none
 	surfaceparm foliage
-	deformVertexes flap t 24 sin 0 2.5 0    0.2 1 0
 	{
 		map textures/opm/flora/%(n)s_leaves.tga
 		depthWrite
