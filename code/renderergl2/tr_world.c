@@ -65,6 +65,18 @@ static qboolean	R_CullSurface( msurface_t *surf ) {
 		}
 		*/
 
+		// Added in OPM: a lamp's shadow (r_realtimeLighting 2) has both sides
+		// of every face, as its draw does (GL_Cull two sided). Only the far
+		// side, a wall had nothing nearer the lamp than its face away from
+		// it, and the ground at its foot and the corner where it met another
+		// wall were within a texel or two of that: the lamp lit a line along
+		// them from the far side of the wall. The shaders' offset off the
+		// surface keeps the near side from shadowing what it is.
+		if ( (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)) )
+		{
+			return qfalse;
+		}
+
 		// shadowmaps draw back surfaces
 		if ( tr.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW) )
 		{

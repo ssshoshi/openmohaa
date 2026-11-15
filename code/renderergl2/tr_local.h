@@ -1140,6 +1140,10 @@ typedef enum
 	UNIFORM_RAINREFLECTDEPTHMAP,
 	UNIFORM_RAINFLASH,      // a lightning flash: its light, how strong
 	UNIFORM_RAINMIST,       // the rain's mist (froxel_fp.glsl): its density low down, how high it thins, the time, the haze's density
+	UNIFORM_GRADELIFT,      // Added in OPM: the picture's grade (tr_atmos.c, tonemap_fp.glsl): lift, saturation
+	UNIFORM_GRADEGAMMA,     // one over the gamma, vibrance
+	UNIFORM_GRADEGAIN,      // gain, contrast
+	UNIFORM_GRADEMISC,      // vignette, grain, a number a frame, whether there is a grade
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -3085,6 +3089,7 @@ extern  cvar_t  *r_rtSky;
 extern  cvar_t  *r_rtSkyTile;
 extern  cvar_t  *r_rtFacesPerFrame;
 extern  cvar_t  *r_rtMaxLights;
+extern  cvar_t  *r_rtShadowSlope;
 extern  cvar_t  *r_rtAmbient;
 extern  cvar_t  *r_rtDynamicLights;
 extern  cvar_t  *r_rtShadowCharacters;
@@ -3626,6 +3631,7 @@ typedef struct shaderCommands_s
 	// only their counts, and the vertex program sways them (time, draw
 	// distance, wind)
 	qboolean    groundCover;
+	qboolean    terrain;    // Added in OPM: a terrain patch is in the batch (lamp shadows draw its one side)
 	vec4_t      groundCoverParams;
 
 	// Added in OPM: the batch is polygons (marks, decals): the realtime
@@ -4152,6 +4158,12 @@ extern cvar_t *r_volumetricTemporal;
 void R_FroxelInit(void);
 void R_FroxelShutdown(void);
 void R_FogLoadWorld(const char *mapName);
+// Added in OPM: a map's atmosphere and the picture's grade (tr_atmos.c)
+extern cvar_t *r_grade;
+void R_AtmosInit(void);
+void R_AtmosShutdown(void);
+void R_AtmosLoadWorld(const char *mapName);
+void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;
 qboolean R_FroxelTakesSprite(const refSprite_t *sprite);

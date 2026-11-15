@@ -108,7 +108,7 @@ static int R_FogNumbers(char **text, float *out, int count)
 	int i;
 
 	for (i = 0; i < count; i++) {
-		const char *token = COM_ParseExt(text, qfalse);
+		const char *token = COM_ParseOnLine(text);
 		if (!token[0]) {
 			break;
 		}

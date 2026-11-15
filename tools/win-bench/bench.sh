@@ -238,20 +238,28 @@ wait "$launch_pid" 2>/dev/null
 
 # --- parse -------------------------------------------------------------------
 clean="$(mktemp)"; tr -d '\r' < "$LOG" | sed -E 's/^\[[^]]*\] //' > "$clean"
+# The timing lines are read from what was logged up to the end of the last
+# measurement window only: the frames after it hold OMBENCH_CMDS and the
+# end-of-run screenshot, and a 100-frame report with the screenshot in it
+# reads about a millisecond a frame slower. Which run's last report had it
+# depended on how its frames fell, so two settings could differ by that and
+# nothing else.
+measured="$(mktemp)"
+awk '{l[NR]=$0} /^OMBENCH_ENDWIN_/{e=NR} END{n=(e?e:NR); for(i=1;i<=n;i++) print l[i]}' "$clean" > "$measured"
 
 renderer="$(grep -a 'GL_RENDERER:' "$clean" | head -1 | sed 's/.*GL_RENDERER: //')"
 glver="$(grep -a 'GL_VERSION:' "$clean" | head -1 | sed 's/.*GL_VERSION: //')"
 # take the LAST full gpu report block (steady state; first world frame is stale by design)
-gpu_line="$(grep -a '^gpu .*ms =' "$clean" | tail -1)"
-sub_line="$(grep -a '^gpu submission:' "$clean" | tail -1)"
-fe_pf="$(grep -a '^frontend per frame:' "$clean" | tail -1)"
-fe_ms="$(grep -a '^frontend ms/frame:' "$clean" | tail -1)"
-cpu_wall="$(grep -a '^cpu .*ms wall =' "$clean" | tail -1)"
-eng_line="$(grep -a '^frame .*ms = sleep' "$clean" | tail -1)"
-cg_line="$(grep -a '^cgame .*ms =' "$clean" | tail -1)"
-cge_line="$(grep -a '^cgame ents ' "$clean" | tail -1)"
-cpu_back="$(grep -a '^cpu backend =' "$clean" | tail -1)"
-cpu_pass="$(grep -a '^cpu   in drawsurfs:' "$clean" | tail -1)"
+gpu_line="$(grep -a '^gpu .*ms =' "$measured" | tail -1)"
+sub_line="$(grep -a '^gpu submission:' "$measured" | tail -1)"
+fe_pf="$(grep -a '^frontend per frame:' "$measured" | tail -1)"
+fe_ms="$(grep -a '^frontend ms/frame:' "$measured" | tail -1)"
+cpu_wall="$(grep -a '^cpu .*ms wall =' "$measured" | tail -1)"
+eng_line="$(grep -a '^frame .*ms = sleep' "$measured" | tail -1)"
+cg_line="$(grep -a '^cgame .*ms =' "$measured" | tail -1)"
+cge_line="$(grep -a '^cgame ents ' "$measured" | tail -1)"
+cpu_back="$(grep -a '^cpu backend =' "$measured" | tail -1)"
+cpu_pass="$(grep -a '^cpu   in drawsurfs:' "$measured" | tail -1)"
 
 echo
 echo "======================= openmohaa GL2 win-bench ======================="
@@ -352,5 +360,5 @@ shot="$(ls -t "$SHOTDIR"/*.jpg 2>/dev/null | head -1)"
 echo "screenshot: ${shot:-<none>}"
 echo "log       : $LOG"
 echo "======================================================================="
-rm -f "$clean"
+rm -f "$clean" "$measured"
 [ -n "$gpu_line" ]

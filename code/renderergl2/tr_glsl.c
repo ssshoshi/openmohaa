@@ -308,7 +308,11 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RainReflectMap",  GLSL_INT },
 	{ "u_RainReflectDepthMap", GLSL_INT },
 	{ "u_RainFlash",       GLSL_VEC4 },
-	{ "u_RainMist",        GLSL_VEC4 }
+	{ "u_RainMist",        GLSL_VEC4 },
+	{ "u_GradeLift",       GLSL_VEC4 },
+	{ "u_GradeGamma",      GLSL_VEC4 },
+	{ "u_GradeGain",       GLSL_VEC4 },
+	{ "u_GradeMisc",       GLSL_VEC4 }
 };
 
 typedef enum
