@@ -1644,6 +1644,13 @@ const void	*RB_DrawSurfs( const void *data ) {
 					GLSL_SetUniformVec4(&tr.shadowmaskShader, UNIFORM_PRIMARYLIGHTORIGIN, contact);
 					GLSL_SetUniformFloat(&tr.shadowmaskShader, UNIFORM_PRIMARYLIGHTRADIUS, Q_max(1.0f, r_contactShadowThickness->value));
 				}
+				// Added in OPM: the clouds' shadows on what the sun lights
+				{
+					vec4_t clouds;
+
+					R_AtmosCloudShadows(clouds, TB_NORMALMAP);
+					GLSL_SetUniformVec4(&tr.shadowmaskShader, UNIFORM_CLOUDSHADOW, clouds);
+				}
 
 				RB_InstantQuad2(quadVerts, texCoords); //, color, shaderProgram, invTexRes);
 

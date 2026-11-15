@@ -312,7 +312,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_GradeLift",       GLSL_VEC4 },
 	{ "u_GradeGamma",      GLSL_VEC4 },
 	{ "u_GradeGain",       GLSL_VEC4 },
-	{ "u_GradeMisc",       GLSL_VEC4 }
+	{ "u_GradeMisc",       GLSL_VEC4 },
+	{ "u_CloudShadow",     GLSL_VEC4 },
+	{ "u_CloudShadowMap",  GLSL_INT }
 };
 
 typedef enum
@@ -2931,6 +2933,8 @@ void GLSL_InitGPUShaders(void)
 		GLSL_SetUniformInt(&tr.shadowmaskShader, UNIFORM_SHADOWMAP2, TB_SHADOWMAP2);
 		GLSL_SetUniformInt(&tr.shadowmaskShader, UNIFORM_SHADOWMAP3, TB_SHADOWMAP3);
 		GLSL_SetUniformInt(&tr.shadowmaskShader, UNIFORM_SHADOWMAP4, TB_SHADOWMAP4);
+		// Added in OPM: the clouds' shadows (a unit the cascades do not take)
+		GLSL_SetUniformInt(&tr.shadowmaskShader, UNIFORM_CLOUDSHADOWMAP, TB_NORMALMAP);
 
 		GLSL_FinishGPUShader(&tr.shadowmaskShader);
 

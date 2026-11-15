@@ -108,7 +108,7 @@ varying vec3   var_RtNormal;
 // the tuft stands, and in w how far this vertex sways (0 on the ground);
 // attr_TexCoord1 its phase, and the fraction of the draw distance it reaches
 #if defined(USE_GROUNDCOVER)
-uniform vec4   u_GroundCover; // time, draw distance, wind
+uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows to (radians)
 #endif
 
 #if defined(USE_VERTEX_ANIMATION)
@@ -414,7 +414,7 @@ void main()
 		           + sin(t * 3.7 + phase * 1.7) * 0.35;
 
 		position = root + (position - root) * sink;
-		position += vec3(0.8, 0.6, 0.0) * ((sway * 2.2 + 1.2) * gust * attr_Tangent.w * u_GroundCover.z * sink);
+		position += vec3(cos(u_GroundCover.w), sin(u_GroundCover.w), 0.0) * ((sway * 2.2 + 1.2) * gust * attr_Tangent.w * u_GroundCover.z * sink);
 	}
 #endif
 

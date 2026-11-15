@@ -1858,12 +1858,20 @@ void RB_SurfaceGroundCover(void *surface)
     const gcCell_t         *cell = draw->cell;
     const float            *view = backEnd.viewParms.ori.origin;
     const float             range = Com_Clamp(128, 8192, r_groundCoverDistance->value);
-    const float             wind = r_groundCoverWind->value;
-    const vec3_t            windDir = { 0.8f, 0.6f, 0 };
+    // Added in OPM: the map's wind (tr_atmos.c), where there was one wind for all
+    float                   wind = r_groundCoverWind->value;
+    vec3_t                  windDir = { 0.8f, 0.6f, 0 };
     float                   time = (float)fmod(backEnd.refdef.floatTime, 3600.0);
     int                     numVerts = draw->numTufts * GC_VERTS_TUFT;
     int                     firstVert;
     int                     n, i;
+
+    {
+        float strength;
+
+        R_AtmosWind(windDir, &strength);
+        wind *= strength;
+    }
 
     gc.backEndDraws++;
     gc.backEndTufts += draw->numTufts;
@@ -1879,7 +1887,7 @@ void RB_SurfaceGroundCover(void *surface)
         }
         if (!tess.groundCover) {
             tess.groundCover = qtrue;
-            VectorSet4(tess.groundCoverParams, time, range, wind, 0);
+            VectorSet4(tess.groundCoverParams, time, range, wind, atan2(windDir[1], windDir[0]));
             gc.batchChunk = cell->chunk;
             gc.batchSize  = 0;
         }
