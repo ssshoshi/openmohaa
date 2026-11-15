@@ -31,6 +31,132 @@ qboolean        g_bInfostaticmodels = qfalse;
 
 /*
 ==============
+R_StaticModelVaos
+
+Added in OPM: a model the light grid lights has the same vertexes wherever it
+stands (the map's own light for it is a colour for each vertex of each one),
+so its surfaces are put on the card once, here, and drawn from there
+(RB_StaticMeshVao) instead of being copied into the batch every frame, every
+pass. Their colour array is left off: the grid's light is given for the draw.
+==============
+*/
+#define STATIC_VAO_SURFACES 1024
+
+static struct {
+    const skelSurfaceGame_t *surf;
+    vao_t                   *vao;
+} staticVaos[STATIC_VAO_SURFACES];
+static int numStaticVaos;
+
+static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf)
+{
+    static srfVert_t verts[TIKI_MAX_VERTEXES];
+    static glIndex_t indexes[TIKI_MAX_TRIANGLES * 3];
+    static vec3_t    sdirs[TIKI_MAX_VERTEXES], tdirs[TIKI_MAX_VERTEXES];
+    vao_t           *vao;
+    int              i;
+
+    for (i = 0; i < numStaticVaos; i++) {
+        if (staticVaos[i].surf == surf) {
+            return staticVaos[i].vao;
+        }
+    }
+    if (numStaticVaos == STATIC_VAO_SURFACES || !surf->pStaticXyz || surf->numVerts > TIKI_MAX_VERTEXES
+        || surf->numTriangles > TIKI_MAX_TRIANGLES || surf->numVerts < 3 || surf->numTriangles < 1) {
+        return NULL;
+    }
+
+    Com_Memset(verts, 0, sizeof(verts[0]) * surf->numVerts);
+    for (i = 0; i < surf->numVerts; i++) {
+        VectorCopy(surf->pStaticXyz[i], verts[i].xyz);
+        verts[i].st[0]       = surf->pStaticTexCoords[i][0][0];
+        verts[i].st[1]       = surf->pStaticTexCoords[i][0][1];
+        verts[i].lightmap[0] = surf->pStaticTexCoords[i][1][0];
+        verts[i].lightmap[1] = surf->pStaticTexCoords[i][1][1];
+        R_VaoPackNormal(verts[i].normal, surf->pStaticNormal[i]);
+        verts[i].color[0] = verts[i].color[1] = verts[i].color[2] = verts[i].color[3] = 0xffff;
+        VectorClear(sdirs[i]);
+        VectorClear(tdirs[i]);
+    }
+    for (i = 0; i < surf->numTriangles * 3; i += 3) {
+        const int a = surf->pTriangles[i], b = surf->pTriangles[i + 1], c = surf->pTriangles[i + 2];
+        vec3_t    sdir, tdir;
+
+        indexes[i]     = a;
+        indexes[i + 1] = b;
+        indexes[i + 2] = c;
+        if (a >= surf->numVerts || b >= surf->numVerts || c >= surf->numVerts) {
+            return NULL;
+        }
+        R_CalcTexDirs(sdir, tdir, verts[a].xyz, verts[b].xyz, verts[c].xyz, verts[a].st, verts[b].st, verts[c].st);
+        VectorAdd(sdirs[a], sdir, sdirs[a]);
+        VectorAdd(sdirs[b], sdir, sdirs[b]);
+        VectorAdd(sdirs[c], sdir, sdirs[c]);
+        VectorAdd(tdirs[a], tdir, tdirs[a]);
+        VectorAdd(tdirs[b], tdir, tdirs[b]);
+        VectorAdd(tdirs[c], tdir, tdirs[c]);
+    }
+    for (i = 0; i < surf->numVerts; i++) {
+        vec3_t tangent, bitangent;
+        vec4_t packMe;
+
+        packMe[3] = R_CalcTangentSpace(tangent, bitangent, surf->pStaticNormal[i], sdirs[i], tdirs[i]);
+        VectorCopy(tangent, packMe);
+        R_VaoPackTangent(verts[i].tangent, packMe);
+    }
+
+    vao = R_CreateVao2(va("static model surface %d", numStaticVaos), surf->numVerts, verts, surf->numTriangles * 3, indexes);
+    if (vao) {
+        R_BindVao(vao);
+        qglDisableVertexAttribArray(ATTR_INDEX_COLOR);
+        vao->attribs[ATTR_INDEX_COLOR].enabled = 0;
+        R_BindNullVao();
+    }
+    staticVaos[numStaticVaos].surf = surf;
+    staticVaos[numStaticVaos].vao  = vao;
+    numStaticVaos++;
+    return vao;
+}
+
+static void R_StaticModelVaos(cStaticModelUnpacked_t *pSM, const char *name, float top)
+{
+    int numSurfaces = 0;
+    int j, k, n;
+
+    pSM->surfaceVaos = NULL;
+    pSM->floraHeight = 0.0f;
+    if (!pSM->noVertexData || !glRefConfig.vertexArrayObject) {
+        return;
+    }
+
+    for (j = 0; j < pSM->tiki->numMeshes; j++) {
+        const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+        if (skel) {
+            numSurfaces += skel->numSurfaces;
+        }
+    }
+    if (!numSurfaces) {
+        return;
+    }
+    pSM->surfaceVaos = (vao_t **)ri.Hunk_Alloc(numSurfaces * sizeof(vao_t *), h_dontcare);
+    for (j = 0, n = 0; j < pSM->tiki->numMeshes; j++) {
+        skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+        skelSurfaceGame_t *surf;
+
+        for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext, n++) {
+            pSM->surfaceVaos[n] = R_StaticSurfaceVao(surf);
+        }
+    }
+
+    // a tree or a bush: the wind moves it
+    if ((strstr(name, "/tree_") || strstr(name, "/bush_")) && top > 8.0f) {
+        pSM->floraHeight = top;
+    }
+}
+
+/*
+==============
 R_InitStaticModels
 ==============
 */
@@ -43,6 +169,7 @@ void R_InitStaticModels(void)
     int                     i, j, k, l;
 
     g_bInfostaticmodels = qfalse;
+    numStaticVaos       = 0; // Added in OPM: the last map's went with it
 
     if (tr.overbrightShift) {
         for (i = 0; i < tr.world->numStaticModelData; i++) {
@@ -276,6 +403,9 @@ void R_InitStaticModels(void)
                 }
             }
         }
+
+        // Added in OPM: on the card, if the grid lights it
+        R_StaticModelVaos(pSM, szTemp, maxs[2]);
     }
 
     tr.refdef.numStaticModels    = tr.world->numStaticModels;

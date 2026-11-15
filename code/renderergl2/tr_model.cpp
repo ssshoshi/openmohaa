@@ -2512,6 +2512,63 @@ static staticCacheSlot_t *R_StaticCacheSlot(const skelSurfaceGame_t *sf, int cou
     return &staticSlots[(h ^ (h >> 15)) & (STATIC_CACHE_SLOTS - 1)];
 }
 
+/*
+=============
+RB_StaticMeshVao
+
+Added in OPM: a static model's surface drawn from the card (R_StaticModelVaos):
+a batch of its own, that nothing is copied into. The light grid's colour where
+the model stands goes in as the colour of every vertex. A tree or a bush is
+swayed by the vertex program: tess.flora.
+=============
+*/
+static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
+{
+    cStaticModelUnpacked_t *SM = backEnd.currentStaticModel;
+    skelSurfaceGame_t      *surf = staticSurf->surface;
+    vao_t                  *vao;
+    const byte             *grid;
+
+    if (!SM->surfaceVaos || !r_staticModelVao->integer) {
+        return qfalse;
+    }
+    vao = SM->surfaceVaos[staticSurf - SM->surfaces];
+    if (!vao || ShaderRequiresCPUDeforms(tess.shader) || RB_ShaderFadesVertexes(tess.shader)) {
+        return qfalse;
+    }
+
+    RB_EndSurface();
+    RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+
+    R_BindVao(vao);
+    tess.useInternalVao = qfalse;
+    tess.numIndexes     = surf->numTriangles * 3;
+    tess.numVertexes    = surf->numVerts;
+
+    grid = (const byte *)&SM->iGridLighting;
+    qglVertexAttrib4f(ATTR_INDEX_COLOR, grid[0] / 255.0f, grid[1] / 255.0f, grid[2] / 255.0f, 1.0f);
+
+    if (SM->floraHeight > 0.0f && r_floraWind->value > 0.0f) {
+        vec2_t dir;
+        float  strength, yaw;
+
+        R_AtmosWind(dir, &strength);
+        yaw = atan2(dir[1], dir[0]);
+        if (yaw < 0.0f) {
+            yaw += 2.0f * M_PI;
+        }
+        tess.flora          = qtrue;
+        tess.floraParams[0] = (float)fmod(backEnd.refdef.floatTime, 3600.0);
+        // leaves (drawn from both sides) flutter
+        tess.floraParams[1] = tess.shader->cullType == CT_TWO_SIDED ? -SM->floraHeight : SM->floraHeight;
+        tess.floraParams[2] = strength * r_floraWind->value;
+        tess.floraParams[3] = yaw + 7.0f * floor(Com_Clamp(0.0f, 2.0f, R_AtmosGusts()) * 10.0f + 0.5f);
+    }
+
+    staticModelNumIndexes[SM - backEnd.refdef.staticModels] += tess.numIndexes;
+    return qtrue;
+}
+
 void RB_StaticMesh(staticSurface_t *staticSurf)
 {
     int                i, j;
@@ -2595,6 +2652,11 @@ void RB_StaticMesh(staticSurface_t *staticSurf)
         }
     } else {
         render_count = surf->numVerts;
+    }
+
+    // Added in OPM: whole, and lit by the grid: from the card
+    if (render_count == surf->numVerts && backEnd.currentStaticModel->noVertexData && RB_StaticMeshVao(staticSurf)) {
+        return;
     }
 
     indexes = surf->numTriangles * 3;

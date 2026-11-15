@@ -107,8 +107,9 @@ varying vec3   var_RtNormal;
 // Added in OPM: ground cover tufts (tr_groundcover.c). attr_Tangent is where
 // the tuft stands, and in w how far this vertex sways (0 on the ground);
 // attr_TexCoord1 its phase, and the fraction of the draw distance it reaches
-#if defined(USE_GROUNDCOVER)
+#if defined(USE_GROUNDCOVER) || defined(USE_FLORA)
 uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows to (radians, under 7) with how gusty it is in tenths times 7 over it
+                              // (a tree's, USE_FLORA: time, its height, negative for leaves, wind, the same)
 
 // Added in OPM: who stands in the grass (tr_groundcover.c's GC_Pushers): where
 // his feet are and how far round them it gives way, 0 for none. (The gore
@@ -117,6 +118,9 @@ uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows
 #define GC_PUSHERS 8
 uniform vec4   u_SkelDents[GC_PUSHERS];
 #endif
+#endif
+
+#if defined(USE_GROUNDCOVER) || defined(USE_FLORA)
 
 // Added in OPM: two noises at once, for the gusts
 vec2 GcHash2(vec2 p)
@@ -492,6 +496,49 @@ void main()
 			position.xy += out2 * (height * 0.75 * sink);
 			position.z  -= press * height * 0.6 * sink;
 		}
+	}
+#endif
+
+#if defined(USE_FLORA)
+	{
+		// Added in OPM: a tree in the wind (RB_StaticMeshVao). Its trunk bends
+		// from the foot as a beam does, its boughs sway the more the farther
+		// out they reach, each side in its own time, and its leaves flutter.
+		// The gusts are the grass's at its foot (above): a front of harder
+		// wind bends the whole tree over and sets it thrashing.
+		float t      = u_GroundCover.x;
+		float height = abs(u_GroundCover.y);
+		float leafy  = u_GroundCover.y < 0.0 ? 1.0 : 0.0;
+		vec3  root   = u_ModelMatrix[3].xyz;
+		vec3  ax     = u_ModelMatrix[0].xyz;
+		vec3  ay     = u_ModelMatrix[1].xyz;
+		vec3  az     = u_ModelMatrix[2].xyz;
+		float size   = dot(ax, ax);
+
+		float level = floor(u_GroundCover.w / 7.0);
+		float yaw   = u_GroundCover.w - level * 7.0;
+		float gusty = level * 0.1;
+		vec2  wdir  = vec2(cos(yaw), sin(yaw));
+		vec2  n     = GcNoise2(vec2((dot(root.xy, wdir) - t * 220.0) / 520.0, dot(root.xy, vec2(-wdir.y, wdir.x)) / 900.0 + t * 0.013));
+		float burst = smoothstep(0.2, 0.75, 0.5 + 0.5 * sin(t * 0.21 + 2.0 * sin(t * 0.083)));
+		float g     = gusty * smoothstep(0.4, 0.8, n.x) * (0.35 + 0.65 * burst);
+		float to    = yaw + gusty * ((n.y - 0.5) * 1.5 + sin(t * 0.047) * 0.21 + sin(t * 0.113 + 1.3) * 0.14);
+		float wind  = u_GroundCover.z;
+
+		float phase = fract(root.x * 0.0137 + root.y * 0.0071) * 6.2832;
+		float up    = clamp(position.z / height, 0.0, 1.0);
+		float sway  = sin(t * 1.1 + phase) * 0.6 + sin(t * 2.3 + phase * 1.7) * 0.4;
+		float bend  = up * up * height * (0.004 * (1.0 + 0.6 * sway) + g * (0.022 + 0.008 * sway)) * wind;
+
+		float arm   = length(position.xy) / height;
+		float bph   = atan(position.y, position.x) * 3.0 + position.z * 0.013 + phase;
+		float bsway = sin(t * 2.7 + bph) * 0.6 + sin(t * 4.3 + bph * 1.3) * 0.4;
+		float bamp  = arm * height * (0.006 + g * 0.030) * wind;
+
+		vec3  offs  = vec3(vec2(cos(to), sin(to)) * (bend + bamp * (0.5 + 0.5 * bsway)), bamp * bsway * 0.6 - bend * bend / (2.0 * height));
+		float flut  = leafy * (0.5 + g * 3.0) * wind * sin(t * 9.0 + dot(position, vec3(0.37, 0.23, 0.41)) + phase);
+
+		position += vec3(dot(offs, ax), dot(offs, ay), dot(offs, az)) / size + normal * flut;
 	}
 #endif
 

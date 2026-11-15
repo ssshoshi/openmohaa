@@ -265,6 +265,8 @@ cvar_t	*r_saveFontData;
 cvar_t	*r_marksOnTriangleMeshes;
 
 cvar_t	*r_vaoCache;
+cvar_t	*r_staticModelVao; // Added in OPM
+cvar_t	*r_floraWind;      // Added in OPM
 cvar_t	*r_gpuTimerSync;
 cvar_t	*r_gpuTimers;
 cvar_t	*r_frameHitchMsec;
@@ -1909,6 +1911,11 @@ void R_Register( void )
 	// frozen (orch_campos): three views, cache off and on, the same pixels but
 	// for 0.018% of one view; off against off, the same. So it is on.
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "1", CVAR_ARCHIVE);
+	// Added in OPM
+	r_staticModelVao = ri.Cvar_Get("r_staticModelVao", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_staticModelVao, "Static models the light grid lights (remade trees and props) are drawn from the graphics card instead of being copied to it every frame (0: copied, as before)");
+	r_floraWind = ri.Cvar_Get("r_floraWind", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraWind, "How far the wind moves remade trees and bushes: trunks bend, boughs sway and leaves flutter, harder under a gust (1: as made, 0 still; r_wind and the map's wind scale it too)");
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
