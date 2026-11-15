@@ -71,16 +71,34 @@ def polyhaven(asset, res="1k"):
 
 def cut_leaves(asset, upright=True):
     """The atlas's leaves, each cut out: (rgb, alpha, normal) float arrays, stalk at the bottom."""
-    maps = ambientcg(asset)
-    rgb = np.asarray(maps["Color"].convert("RGB"), np.float32)
-    alpha = np.asarray(maps["Opacity"].convert("L"), np.float32)
-    nrm = np.asarray(maps["NormalGL"].convert("RGB"), np.float32)
+    if asset.startswith("ph:"):  # a Poly Haven model's atlas: ph:<model>:<part>, e.g. ph:fir_tree_01:twig
+        _, model, part = asset.split(":")
+        with open(_get("https://api.polyhaven.com/files/" + model, model + ".json")) as f:
+            files = json.load(f)
+        maps = []
+        for key in ("diff", "alpha", "nor_gl"):
+            url = files["%s_%s" % (part, key)]["2k"]["jpg"]["url"]
+            maps.append(Image.open(_get(url, os.path.basename(url))))
+        rgb = np.asarray(maps[0].convert("RGB"), np.float32)
+        alpha = np.asarray(maps[1].convert("L"), np.float32)
+        nrm = np.asarray(maps[2].convert("RGB"), np.float32)
+    else:
+        maps = ambientcg(asset)
+        rgb = np.asarray(maps["Color"].convert("RGB"), np.float32)
+        alpha = np.asarray(maps["Opacity"].convert("L"), np.float32)
+        nrm = np.asarray(maps["NormalGL"].convert("RGB"), np.float32)
     labels, count = ndimage.label(alpha > 128)
     leaves = []
     for sl in ndimage.find_objects(labels):
         h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
         if h * w < alpha.size / 400:  # a speck
             continue
+        if asset.startswith("ph:"):
+            # a model's atlas holds its stems and trunks too, as solid strips: only the sprigs,
+            # which are mostly gaps
+            fill = (alpha[sl] > 128).mean()
+            if fill > 0.42 or h < w * 0.6 or h > w * 3.5 or h < alpha.shape[0] / 12:
+                continue
         pad = (slice(max(0, sl[0].start - 2), sl[0].stop + 2), slice(max(0, sl[1].start - 2), sl[1].stop + 2))
         leaves.append((rgb[pad], alpha[pad], nrm[pad]))
     if not leaves:
@@ -113,7 +131,7 @@ def _turned(leaf, length, angle, squash, tint, tilt):
     return c, a, n, size
 
 
-def draw_spray(leaves, size, rng, tint, twig_rgb, leaf_len, density):
+def draw_spray(leaves, size, rng, tint, twig_rgb, leaf_len, density, snow=0.0):
     """One cell: (rgb, alpha, normal) arrays, size x size."""
     S = size
     rgb = np.zeros((S, S, 3), np.float32)
@@ -166,6 +184,11 @@ def draw_spray(leaves, size, rng, tint, twig_rgb, leaf_len, density):
         vary = np.array(tint, np.float32) * depth * rng.uniform(0.88, 1.12, 3) * rng.uniform(0.9, 1.1)
         c, a, nm, _ = _turned(leaves[rng.integers(len(leaves))], S * leaf_len * rng.uniform(0.75, 1.15), ang,
                               rng.uniform(0.6, 1.0), vary, (rng.normal(0, 0.25), rng.normal(0, 0.25)))
+        if snow > 0.0:
+            # snow lies where the sprig is thickest, along its spine, more on the ones on top
+            thick = ndimage.gaussian_filter(a / 255.0, sigma=max(1.0, S * 0.006))
+            lie = (np.clip((thick - 0.42) / 0.22, 0.0, 1.0) * snow * depth * rng.uniform(0.6, 1.0))[..., None]
+            c = c * (1 - lie) + np.array((214.0, 220.0, 232.0), np.float32) * lie
         h, w = a.shape
         # its stalk (the bottom middle of the upright leaf) goes on the twig
         half = S * leaf_len * 0.5
@@ -201,7 +224,7 @@ def bleed(rgb, alpha, rounds=24):
     return rgb
 
 
-def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2):
+def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2, snow=0.0):
     """(RGBA image, normal image): four sprays, 2x2, of the leaf set's leaves."""
     rng = np.random.default_rng(seed)
     leaves = cut_leaves(asset)
@@ -210,7 +233,7 @@ def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2):
     alpha = np.zeros((W, W), np.float32)
     nrm = np.zeros((W, W, 3), np.float32)
     for i in range(4):
-        r, a, n = draw_spray(leaves, cell, rng, tint, twig_rgb, leaf_len, density)
+        r, a, n = draw_spray(leaves, cell, rng, tint, twig_rgb, leaf_len, density, snow)
         y0, x0 = (i // 2) * cell, (i % 2) * cell
         rgb[y0:y0 + cell, x0:x0 + cell] = r
         alpha[y0:y0 + cell, x0:x0 + cell] = a
