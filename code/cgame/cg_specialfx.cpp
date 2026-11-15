@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_specialfx.h"
 #include "cg_ragdoll.h"
 #include "cg_physics.h"
+#include "cg_snow.h"
 
 extern refEntity_t *current_entity;
 extern dtiki_t     *current_tiki;
@@ -426,6 +427,9 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_OPM_WATER_SPLASH_LARGE:
             szEffectModel = "models/fx/opm_splash_large.tik";
             break;
+        case SFX_OPM_BREATH:
+            szEffectModel = "models/fx/opm_breath.tik";
+            break;
         default:
             szEffectModel = "models/fx/bh_stone_hard.tik";
             break;
@@ -792,6 +796,12 @@ void CG_Footstep(const char *szTagName, centity_t *ent, refEntity_t *pREnt, int 
         }
 
         return;
+    }
+
+    // Added in OPM
+    //  A step on snow leaves its print.
+    if (iRunning != -1) {
+        CG_SnowFootprint(ent, &trace);
     }
 
     CG_FootstepMain(&trace, iRunning, iEquipment);

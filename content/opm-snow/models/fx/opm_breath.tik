@@ -1,0 +1,43 @@
+TIKI
+// OPM (content/opm-snow): a breath in cold air (cg_snow.cpp's CG_BreathEntity):
+// a small puff out of a man's mouth the way he faces, which slows, swells,
+// rises a little and is gone in a second.
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy2.skd
+}
+
+init
+{
+	client
+	{
+		cache vsssource.spr
+
+		sfx originspawn
+		(
+			model vsssource.spr
+			spawnrange 1600
+			count 2
+			alpha 0.2
+			color 0.6 0.63 0.7
+			angles 0 0 random 360
+			offsetalongaxis random 2 crandom 1 crandom 1
+			velocity 24
+			randvelaxis random 16 crandom 5 crandom 5
+			accel 0 0 7
+			friction 2.2
+			life 1.0 0.3
+			scalemin 0.09
+			scalemax 0.13
+			scalerate 2.4
+			fade
+		)
+	}
+}
+
+animations
+{
+	idle dummy2.skc
+}

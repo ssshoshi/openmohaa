@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "cg_ragdoll.h"
 #include "cg_gore.h"
 #include "cg_orch.h"
+#include "cg_snow.h"
 #include "../corepp/tiki.h"
 
 static qboolean cg_forceModelAllowed = qfalse;
@@ -2268,6 +2269,9 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         cgi.R_AddRefEntityToScene(&model, s1->parent);
         // Added in OPM
         CG_GoreAddEntity(cent, &model, (s1->eFlags & EF_DEAD) ? qtrue : qfalse);
+        // Added in OPM
+        //  A man's breath in the cold, on a snow map.
+        CG_BreathEntity(cent, &model);
 
         if (bShadowAttach) {
             refEntity_t shadowModel = model;
