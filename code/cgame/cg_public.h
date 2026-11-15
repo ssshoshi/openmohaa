@@ -487,7 +487,7 @@ functions exported to the main executable
 
         // Added in OPM, API version 8
         //  A blast, for the trees and the grass: see refexport_t.
-        void (*R_AddBlast)(const float *origin, float radius, float strength);
+        int (*R_AddBlast)(const float *origin, float radius, float strength, float *shaken, int maxShaken);
 
     } clientGameImport_t;
 

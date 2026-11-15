@@ -217,8 +217,11 @@ typedef struct {
     // Added in OPM
     //  Something blew up there: how far its blast reaches and how hard it is
     //  (1 a grenade). Trees, bushes and grass round it are thrown back by it
-    //  and spring up again. A renderer that sways none ignores it.
-    void (*AddBlast)(const float *origin, float radius, float strength);
+    //  and spring up again. A renderer that sways none ignores it. Returns
+    //  how many trees and bushes it shook hard, the nearest first, and in
+    //  shaken (up to maxShaken of them, four floats each) the middle of each
+    //  one's crown and how tall it stands: where its leaves come down from.
+    int (*AddBlast)(const float *origin, float radius, float strength, float *shaken, int maxShaken);
 
     // Added in OPM
     //  What is on the camera's lens, eight floats each: x and y across and

@@ -340,12 +340,12 @@ static struct {
 } blasts[MAX_BLASTS];
 static int numBlasts;
 
-void RE_AddBlast(const float *origin, float radius, float strength)
+int RE_AddBlast(const float *origin, float radius, float strength, float *shaken, int maxShaken)
 {
-	int i, oldest = 0;
+	int i, k, oldest = 0, count = 0;
 
 	if (!origin || radius <= 0.0f) {
-		return;
+		return 0;
 	}
 	if (numBlasts < MAX_BLASTS) {
 		oldest = numBlasts++;
@@ -360,6 +360,38 @@ void RE_AddBlast(const float *origin, float radius, float strength)
 	blasts[oldest].radius   = radius;
 	blasts[oldest].strength = strength;
 	blasts[oldest].time     = tr.refdef.floatTime;
+
+	// the trees and bushes it shakes hard: within twice its radius, the nearest first
+	if (shaken && maxShaken > 0 && tr.world) {
+		float dists[16];
+
+		maxShaken = Q_min(maxShaken, 16);
+		for (i = 0; i < tr.world->numStaticModels; i++) {
+			const cStaticModelUnpacked_t *sm = &tr.world->staticModels[i];
+			float                         tall, d;
+
+			if (sm->floraHeight <= 0.0f || !sm->tiki) {
+				continue;
+			}
+			tall = sm->floraHeight * sm->tiki->load_scale * sm->scale;
+			d    = (sm->origin[0] - origin[0]) * (sm->origin[0] - origin[0]) + (sm->origin[1] - origin[1]) * (sm->origin[1] - origin[1]);
+			if (d > radius * radius * 4.0f || origin[2] < sm->origin[2] - radius || origin[2] > sm->origin[2] + tall + radius) {
+				continue;
+			}
+			for (k = count; k > 0 && dists[k - 1] > d; k--) {
+				if (k < maxShaken) {
+					dists[k] = dists[k - 1];
+					Vector4Copy(&shaken[(k - 1) * 4], &shaken[k * 4]);
+				}
+			}
+			if (k < maxShaken) {
+				dists[k] = d;
+				VectorSet4(&shaken[k * 4], sm->origin[0], sm->origin[1], sm->origin[2] + tall * 0.62f, tall);
+				count = Q_min(count + 1, maxShaken);
+			}
+		}
+	}
+	return count;
 }
 
 /*
@@ -410,7 +442,7 @@ static void R_BlastTest_f(void)
 
 	VectorMA(tr.refdef.vieworg, dist, tr.refdef.viewaxis[0], at);
 	at[2] = tr.refdef.vieworg[2] - 60.0f;
-	RE_AddBlast(at, ri.Cmd_Argc() > 2 ? atof(ri.Cmd_Argv(2)) : 300.0f, ri.Cmd_Argc() > 3 ? atof(ri.Cmd_Argv(3)) : 1.0f);
+	RE_AddBlast(at, ri.Cmd_Argc() > 2 ? atof(ri.Cmd_Argv(2)) : 300.0f, ri.Cmd_Argc() > 3 ? atof(ri.Cmd_Argv(3)) : 1.0f, NULL, 0);
 }
 
 /*

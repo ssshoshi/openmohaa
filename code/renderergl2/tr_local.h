@@ -4190,7 +4190,7 @@ void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 void R_AtmosWind(vec2_t dir, float *strength);
 float R_AtmosGusts(void);
 // Added in OPM: blasts, and what they do to what grows (tr_atmos.c)
-void RE_AddBlast(const float *origin, float radius, float strength);
+int RE_AddBlast(const float *origin, float radius, float strength, float *shaken, int maxShaken);
 void R_BlastSway(const vec3_t at, vec4_t out);
 int R_BlastPushers(vec4_t *out, int max);
 void R_AtmosCloudShadows(vec4_t out, int tmu);

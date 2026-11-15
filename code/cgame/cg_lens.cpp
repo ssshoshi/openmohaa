@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // (RE_SetLensSpots, glsl/lens_fp.glsl).
 
 #include "cg_lens.h"
+#include "cg_specialfx.h"
 #include "cg_snow.h"
 
 cvar_t *cg_lens;
@@ -231,7 +232,14 @@ void CG_LensBlast(const vec3_t at, int kind, qboolean inWater)
     if (cgi.apiversion >= 8 && cgi.R_AddBlast) {
         const int k = kind < 0 ? 0 : (kind > 3 ? 3 : kind);
 
-        cgi.R_AddBlast(at, 260.0f + 130.0f * k, 1.0f + 0.3f * k);
+        float     shaken[6][4];
+        const int n = cgi.R_AddBlast(at, 260.0f + 130.0f * k, 1.0f + 0.3f * k, &shaken[0][0], 6);
+
+        // and leaves come down from the ones it shakes hard (opm-trees data)
+        for (int i = 0; i < n; i++) {
+            sfxManager.MakeEffect_Normal(shaken[i][3] > 250.0f ? SFX_OPM_LEAVES_TREE : SFX_OPM_LEAVES_BUSH,
+                Vector(shaken[i]), Vector(0, 0, 1));
+        }
     }
 
     static const float reaches[] = {500.0f, 650.0f, 800.0f, 800.0f};

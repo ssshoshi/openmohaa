@@ -158,6 +158,10 @@ typedef enum {
     SFX_OPM_WATER_SPLASH_LARGE,
     //  A breath in the cold (CG_BreathEntity, opm-snow data).
     SFX_OPM_BREATH,
+    //  Leaves shaken off a tree, and off a bush, by a blast (CG_LensBlast,
+    //  opm-trees data).
+    SFX_OPM_LEAVES_TREE,
+    SFX_OPM_LEAVES_BUSH,
     SFX_TEST_EFFECT,
     SFX_COUNT
 } SpecialEffects;
