@@ -222,8 +222,13 @@ def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2):
 
 # --------------------------------------------------------------------------- bark
 
-def bark(asset, tint=(1.0, 1.0, 1.0), size=(512, 1024)):
-    """(RGB image, normal image), tiling: a Poly Haven bark, its colours times tint."""
-    col, nrm = polyhaven(asset)
+def bark(asset, tint=(1.0, 1.0, 1.0), size=(512, 512)):
+    """(RGB image, normal image), tiling: a photographed bark (Poly Haven's, or ambientCG's
+    Bark sets), its colours times tint."""
+    if asset.startswith("Bark"):
+        maps = ambientcg(asset, "1K")
+        col, nrm = maps["Color"].convert("RGB"), maps["NormalGL"].convert("RGB")
+    else:
+        col, nrm = polyhaven(asset)
     col = np.asarray(col.resize(size, Image.LANCZOS), np.float32) * np.array(tint, np.float32)
     return Image.fromarray(col.clip(0, 255).astype(np.uint8), "RGB"), nrm.resize(size, Image.LANCZOS)

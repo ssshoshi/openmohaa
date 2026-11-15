@@ -65,6 +65,20 @@ class Species:
         self.__dict__.update(kw)
 
 
+def bush(replaces, bone, height, radius, stems, leaf, bark, seed, cards=4, card_size=44.0, twigs=4,
+         spread=38, stem_radius=2.6, droop=0.15):
+    """A shrub: several stems from the ground, each with a few twigs that carry the leaves."""
+    return Species(
+        replaces=replaces, bone=bone, height=height, radius=radius, stems=stems, spread=math.radians(spread),
+        trunk_len=0.8, trunk_radius=stem_radius,
+        levels=[
+            Level(4, 4, twigs, math.radians(45), 0.55, 0.6, start=0.3, gnarl=0.14, tropism=0.12, tip=0.4),
+            Level(2, 3, 0, math.radians(45), 0.5, 0.5, gnarl=0.2, tropism=0.05, tip=0.3),
+        ],
+        cards=cards, card_size=card_size, card_droop=droop, puff=0.7, flare=0.0,
+        leaf=leaf, bark=bark, bark_tile=40.0, seed=seed)
+
+
 SPECIES = {
     # Pedunculate oak (Quercus robur), the tree of the Normandy bocage: a short stout bole
     # that parts into a few heavy crooked limbs, and a broad round crown as wide as it is tall.
@@ -75,12 +89,59 @@ SPECIES = {
             Level(6, 6, 7, math.radians(55), 0.50, 0.55, start=0.25, gnarl=0.16, tropism=0.12, tip=0.25),
             Level(4, 4, 0, math.radians(50), 0.5, 0.5, start=0.2, gnarl=0.20, tropism=0.04, tip=0.2),
         ],
-        cards=15, card_size=76.0, card_droop=0.22, puff=0.75, flare=0.75,
+        cards=15, card_size=76.0, card_droop=0.22, puff=0.75, flare=0.55,
         # scanned oak leaves (spring green: darkened to summer's), and furrowed oak bark
         leaf=dict(asset="LeafSet016", tint=(0.50, 0.62, 0.42), twig=(62, 48, 34), leaf_len=0.21, density=2),
         bark=dict(asset="jolcham_oak_bark_01", tint=(0.9, 0.88, 0.85)),
-        bark_tile=(2.0, 120.0), seed=11,
+        bark_tile=60.0, seed=11,
     ),
+    # The game's "common tree": a young European beech (Fagus sylvatica), as stands in every
+    # Norman hedge and lane: one straight smooth grey stem right up through an oval crown of
+    # slender ascending branches.
+    "beech": Species(
+        replaces=["tree_commontree"], bone="Box02", height=391.0, radius=114.0, trunk_len=0.92, trunk_radius=8.5,
+        levels=[
+            Level(8, 8, 12, math.radians(52), 0.36, 0.5, start=0.3, gnarl=0.03, tip=0.25),
+            Level(4, 5, 4, math.radians(50), 0.5, 0.6, start=0.3, gnarl=0.12, tropism=0.10, tip=0.3),
+            Level(2, 3, 0, math.radians(45), 0.5, 0.5, gnarl=0.18, tropism=0.03, tip=0.3),
+        ],
+        cards=6, card_size=52.0, card_droop=0.2, puff=0.7, flare=0.3,
+        leaf=dict(asset="LeafSet014", tint=(0.52, 0.66, 0.40), twig=(70, 62, 52), leaf_len=0.19, density=2),
+        bark=dict(asset="Bark011", tint=(0.72, 0.72, 0.68)),
+        bark_tile=44.0, seed=23,
+    ),
+    # Silver birch (Betula pendula): a tall thin pale stem, short ascending branches and
+    # hanging twigs with small leaves, light enough to see through.
+    "birch": Species(
+        replaces=["tree_birch"], bone="Box01", height=1127.0, radius=156.0, trunk_len=0.95, trunk_radius=11.0,
+        levels=[
+            Level(9, 8, 14, math.radians(42), 0.20, 0.45, start=0.38, gnarl=0.025, tip=0.2),
+            Level(4, 4, 4, math.radians(55), 0.55, 0.6, start=0.3, gnarl=0.10, tropism=0.02, tip=0.3),
+            Level(2, 3, 0, math.radians(50), 0.5, 0.5, gnarl=0.15, tropism=-0.35, tip=0.3),
+        ],
+        cards=5, card_size=64.0, card_droop=0.55, puff=0.6, flare=0.25,
+        leaf=dict(asset="LeafSet003", tint=(0.62, 0.74, 0.40), twig=(60, 44, 36), leaf_len=0.13, density=2),
+        bark=dict(asset="Bark011", tint=(1.25, 1.25, 1.22)),
+        bark_tile=44.0, seed=31,
+    ),
+    # The hedge shrubs. Hazel (Corylus avellana): many straight rods from one stool.
+    "hazel": bush(["bush_full"], "Box02", 129.0, 98.0, 8,
+                  dict(asset="LeafSet009", tint=(0.50, 0.60, 0.36), twig=(74, 60, 44), leaf_len=0.17, density=2),
+                  dict(asset="bark_brown_02", tint=(0.8, 0.75, 0.7)), 41, card_size=38.0),
+    # Blackthorn (Prunus spinosa), low and dense with small leaves.
+    "blackthorn": bush(["bush_regularbush"], "Box01", 35.0, 40.0, 6,
+                       dict(asset="LeafSet022", tint=(0.42, 0.55, 0.34), twig=(52, 44, 40), leaf_len=0.11, density=3),
+                       dict(asset="bark_brown_02", tint=(0.6, 0.58, 0.56)), 43, cards=3, card_size=20.0, twigs=3,
+                       spread=55, stem_radius=1.0),
+    # Alder buckthorn (Frangula alnus): an upright shrub of glossy oval leaves.
+    "buckthorn": bush(["bush_buckthorn"], "Box01", 132.0, 49.0, 5,
+                      dict(asset="LeafSet022", tint=(0.50, 0.64, 0.38), twig=(70, 52, 44), leaf_len=0.16, density=2),
+                      dict(asset="bark_brown_02", tint=(0.7, 0.66, 0.62)), 47, card_size=40.0, spread=22),
+    # A thin shrub and a sapling: young hornbeam (Carpinus betulus), few stems, open.
+    "hornbeam": bush(["bush_sparseshrub", "bush_sappling"], "Box01", 83.0, 34.0, 3,
+                     dict(asset="LeafSet001", tint=(0.62, 0.74, 0.46), twig=(70, 58, 46), leaf_len=0.18, density=2),
+                     dict(asset="bark_brown_02", tint=(0.75, 0.72, 0.68)), 53, cards=3, card_size=32.0, twigs=3,
+                     spread=18, stem_radius=1.4),
 }
 
 
@@ -170,31 +231,41 @@ class Mesh:
 
 
 def tube(mesh, br, sides, tile, flare=0.0):
-    """A branch's bark: rings of vertexes along it, closed to a point at its tip."""
-    n = len(br.pts)
+    """A branch's bark: rings of vertexes along it, closed to a point at its tip. The bark
+    goes round it a whole number of times, as near to tile units wide as that allows, and
+    is as tall as it is wide."""
+    pts, rads = list(br.pts), list(br.rads)
+    if flare:  # the foot: rings close together where the roots spread
+        for t in (0.5, 0.22, 0.08):
+            pts.insert(1, pts[0] * (1 - t) + pts[1] * t)
+            rads.insert(1, rads[0] * (1 - t) + rads[1] * t)
+    n = len(pts)
+    girth = 2 * math.pi * rads[0]
+    wraps = max(1, round(girth / tile))
+    tall = max(girth / wraps, tile * 0.4)
     verts, tris = [], []
-    side = perp(norm(br.pts[1] - br.pts[0]))
+    side = perp(norm(pts[1] - pts[0]))
     along = 0.0
     for i in range(n):
-        d = norm(br.pts[min(i + 1, n - 1)] - br.pts[max(i - 1, 0)])
+        d = norm(pts[min(i + 1, n - 1)] - pts[max(i - 1, 0)])
         side = norm(side - d * np.dot(side, d))  # carried along, so the tube does not twist
         other = np.cross(d, side)
         if i:
-            along += np.linalg.norm(br.pts[i] - br.pts[i - 1])
+            along += np.linalg.norm(pts[i] - pts[i - 1])
         for j in range(sides + 1):
             a = 2 * math.pi * j / sides
             out = side * math.cos(a) + other * math.sin(a)
-            r = br.rads[i]
-            if flare and i < 3:  # the roots: wider at the ground, in buttresses
-                r *= 1 + flare * math.exp(-along / (br.rads[0] * 1.6)) * (1 + 0.35 * math.cos(a * 5 + 1.0))
-            verts.append((br.pts[i] + out * r, out, (tile[0] * j / sides, -along / tile[1])))
+            r = rads[i]
+            if flare:  # wider at the ground, in soft buttresses
+                r *= 1 + flare * math.exp(-along / (rads[0] * 1.3)) * (1 + 0.22 * math.cos(a * 4 + 1.0))
+            verts.append((pts[i] + out * r, out, (wraps * j / sides, -along / tall)))
     for i in range(n - 1):
         for j in range(sides):
             a, b = i * (sides + 1) + j, (i + 1) * (sides + 1) + j
             tris += [(a, a + 1, b), (a + 1, b + 1, b)]
     tip = len(verts)
-    d = norm(br.pts[-1] - br.pts[-2])
-    verts.append((br.pts[-1] + d * br.rads[-1] * 1.5, d, (tile[0] * 0.5, -(along + br.rads[-1]) / tile[1])))
+    d = norm(pts[-1] - pts[-2])
+    verts.append((pts[-1] + d * rads[-1] * 1.5, d, (wraps * 0.5, -(along + rads[-1]) / tall)))
     last = (n - 1) * (sides + 1)
     tris += [(last + j, last + j + 1, tip) for j in range(sides)]
     mesh.add(verts, tris)
@@ -225,26 +296,37 @@ def build(name):
     sp = SPECIES[name]
     rng = np.random.default_rng(sp.seed)
     branches, cards = [], []
-    grow(sp, rng, np.zeros(3), norm(np.array([rng.normal(0, 0.02), rng.normal(0, 0.02), 1.0])),
-         sp.height * sp.trunk_len, sp.trunk_radius, 0, branches, cards)
+    stems = getattr(sp, "stems", 0)
+    if stems:  # a shrub: stems from the ground, leaning out all round
+        for k in range(stems):
+            az = 2 * math.pi * (k + rng.uniform(-0.3, 0.3)) / stems
+            lean = sp.spread * rng.uniform(0.3, 1.0) if k else 0.05
+            d = np.array([math.cos(az) * math.sin(lean), math.sin(az) * math.sin(lean), math.cos(lean)])
+            grow(sp, rng, d * np.array([1.0, 1.0, 0.0]) * sp.trunk_radius * 2.0, d,
+                 sp.height * sp.trunk_len * rng.uniform(0.75, 1.0), sp.trunk_radius * rng.uniform(0.7, 1.0), 0,
+                 branches, cards)
+    else:
+        grow(sp, rng, np.zeros(3), norm(np.array([rng.normal(0, 0.02), rng.normal(0, 0.02), 1.0])),
+             sp.height * sp.trunk_len, sp.trunk_radius, 0, branches, cards)
 
     # fitted to the model it replaces: its height, and its radius about the trunk
-    pts = np.array([p for b in branches for p in b.pts] + [c[0] + c[1] * sp.card_size * c[2] for c in cards])
-    top = pts[:, 2].max()
-    rad = np.percentile(np.hypot(pts[:, 0], pts[:, 1]), 97)
-    fit = np.array([sp.radius / rad, sp.radius / rad, sp.height / top])
-    for b in branches:
-        b.pts = [p * fit for p in b.pts]
-        if b.level:
-            b.rads = [r * (fit[0] * fit[2]) ** 0.5 for r in b.rads]
-    cards = [(c[0] * fit, norm(c[1] * fit), c[2], c[3], c[4]) for c in cards]
-    centre = np.array([0.0, 0.0, sp.height * 0.58])
-
-    bark, leaves = Mesh("bark"), Mesh("leaves")
-    for b in branches:
-        tube(bark, b, sp.levels[b.level].sides, sp.bark_tile, sp.flare if b.level == 0 else 0.0)
-    for c in cards:
-        card(leaves, sp, c[0], c[1], c[2], c[3], c[4], centre)
+    # (of what is drawn, so in a few rounds: the cards do not scale with the branches)
+    fit = np.ones(3)
+    for _ in range(10):
+        thick = (fit[0] * fit[2]) ** 0.5
+        fitted = []
+        for b in branches:
+            keep = not stems and b.level == 0  # a trunk keeps the girth it was given
+            fitted.append(Branch([p * fit for p in b.pts], [r if keep else r * thick for r in b.rads], b.level))
+        centre = np.array([0.0, 0.0, sp.height * (0.5 if stems else 0.58)])
+        bark, leaves = Mesh("bark"), Mesh("leaves")
+        for b in fitted:
+            tube(bark, b, sp.levels[b.level].sides, sp.bark_tile, sp.flare if b.level == 0 else 0.0)
+        for c in cards:
+            card(leaves, sp, c[0] * fit, norm(c[1] * fit), c[2], c[3], c[4], centre)
+        pts = np.array([v[0] for m in (bark, leaves) for verts, _ in m.surfaces for v in verts])
+        rad = np.percentile(np.hypot(pts[:, 0], pts[:, 1]), 99.5)
+        fit = fit * np.array([sp.radius / rad, sp.radius / rad, sp.height / pts[:, 2].max()])
     return sp, bark, leaves
 
 
