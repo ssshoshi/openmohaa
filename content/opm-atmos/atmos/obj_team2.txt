@@ -1,0 +1,3 @@
+// V2 Rocket Facility: a breeze
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 150 1 1

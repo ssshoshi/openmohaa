@@ -4168,6 +4168,7 @@ void R_AtmosShutdown(void);
 void R_AtmosLoadWorld(const char *mapName);
 void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 void R_AtmosWind(vec2_t dir, float *strength);
+float R_AtmosGusts(void);
 void R_AtmosCloudShadows(vec4_t out, int tmu);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;

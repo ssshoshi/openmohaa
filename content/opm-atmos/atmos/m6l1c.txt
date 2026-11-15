@@ -1,0 +1,3 @@
+// The Ardennes in the snow: a cold wind through the forest
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 290 1.2 1.3
