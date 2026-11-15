@@ -278,18 +278,29 @@ in. Out under the sky in the rain, it rains on the lens: how hard, the more
 the higher he looks and the heavier the rain, goes to the renderer
 (r_lensRain), which draws the drops on the glass, running down and gathering
 (glsl/lens_fp.glsl) and lets it dry when he goes in.
+
+Snow falls by the rain's own means: a snow map (m6l1a, m6l1b) gives the rain
+a snowflake for its shader (textures/snow0 to snow11) and slows it down. It
+is told from rain by that name: snow wets nothing, runs off no roof and
+leaves no drops on the lens.
 */
+static qboolean CG_RainIsSnow(void)
+{
+    return Q_stristr(cg.rain.currentShader, "snow") != NULL;
+}
+
 static void CG_LensRain(void)
 {
     static int      lastLook;
     static qboolean open;
     static float    lastSet = -1.0f;
     float           want = 0.0f;
+    const qboolean  raining = cg.rain.density > 0.0f && !CG_RainIsSnow();
 
-    if (cg.rain.density > 0.0f && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
+    if (raining && cgi.Cvar_Get("r_rainWet", "0", CVAR_TEMP)->value < 1.0f) {
         cgi.Cvar_Set("r_rainWet", "1");
     }
-    if (cg.rain.density > 0.0f && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
+    if (raining && CG_LensOn() && cg_lens_rain->value > 0.0f && cg.snap) {
         float up;
 
         // nothing over him but the sky
