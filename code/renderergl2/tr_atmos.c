@@ -79,13 +79,16 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // straight row; and far off, where a tile is a few pixels and its repeat a
 // grid, it is blended with itself laid several times the size
 // (glsl/lightall_fp.glsl, USE_GROUNDVARY: a lightall of the ground's own,
-// so nothing else pays for it). The last two are for materials only: a
-// picture made to be laid once (a crater, a path's border) keeps its place
-// and takes the patches alone (R_AtmosImageTiles), and so does what is not
-// ground to lie on (a cliff, a painted line of trees). Every map has it, at
-// the numbers above without a line; r_groundVariation scales the patches
-// and the push, r_groundFar the far look. `atmosinfo ground` lists what is
-// ground on the map and what each is taken for.
+// so nothing else pays for it). The last two are for earth only, lying
+// level: the terrain, and brushwork that is grass, dirt, sand, mud or
+// gravel and nowhere wood or metal. What snow lies on (roofs, steps,
+// bunker walls), a picture made to be laid once (a crater, a path's
+// border: R_AtmosImageTiles), what runs one way (furrows, planks) and what
+// is no ground to lie on (a cliff, a painted line of trees) keep their
+// place and take the patches alone. Every map has it, at the numbers above
+// without a line; r_groundVariation scales the patches and the push,
+// r_groundFar the far look. `atmosinfo ground` lists what is ground on the
+// map and which of it takes the patches alone.
 
 #include "tr_local.h"
 
@@ -112,8 +115,12 @@ static cvar_t *r_groundFar;
 #define GROUND_FAR       0.5f
 #define GROUND_FAR_DIST  1500.0f
 #define GROUND_WARP      0.2f
-// what is ground by its surface flags
+// what is ground by its surface flags; what of it is earth, to lay out of
+// true (snow is put on every roof, wall and step it lies on); and what is
+// built, which never is (a plank floor is mud to walk on in the rain)
 #define GROUND_FLAGS     (SURF_GRASS | SURF_DIRT | SURF_SAND | SURF_MUD | SURF_GRAVEL | SURF_SNOW)
+#define EARTH_FLAGS      (SURF_GRASS | SURF_DIRT | SURF_SAND | SURF_MUD | SURF_GRAVEL)
+#define BUILT_FLAGS      (SURF_WOOD | SURF_METAL | SURF_GLASS | SURF_PAPER | SURF_CARPET | SURF_GRILL)
 
 typedef struct {
 	vec3_t lift, gamma, gain;
@@ -397,7 +404,7 @@ qboolean R_AtmosGroundShader(const shader_t *shader)
 	if (atmos.groundPatches <= 0.0f && atmos.groundFar <= 0.0f && atmos.groundWarp <= 0.0f) {
 		return qfalse;
 	}
-	return shader->isTerrain || shader->isGround;
+	return shader->isTerrain || (shader->groundFlags & GROUND_FLAGS) != 0;
 }
 
 // Whether a ground texture is a material, which may be laid out of true and
@@ -478,8 +485,10 @@ static qboolean R_AtmosImageTiles(image_t *image)
 	// (the seam over four channels of 255: 8 is a step nobody sees. The
 	// middle from the rim, of 255: the stock craters and rocks are over 30,
 	// the roads with their ruts and the banded yards 11 to 19, sand, grass
-	// and snow under 9)
-	return seamX <= stepX * 2.0 + 8.0 && seamY <= stepY * 2.0 + 8.0 && apart <= 25.0;
+	// and snow under 9. And what runs one way, planks, furrows, corrugated
+	// iron, changes half as much again across as along)
+	return seamX <= stepX * 2.0 + 8.0 && seamY <= stepY * 2.0 + 8.0 && apart <= 25.0
+		&& Q_max(stepX, stepY) <= Q_min(stepX, stepY) * 1.5 + 1.0;
 }
 
 // The same of a shader: of every texture it draws
@@ -514,6 +523,9 @@ the map compiler's and the game's). A face's flags are in the map's shader
 list: the script's surfaceparm, or what the mapper gave the face (a texture
 with no script has only that), so one texture is there several times, as
 rock here and gravel there. A shader that is ground on any face is ground.
+The flags say what a boot sounds like on it, not what it is: snow is on the
+roofs and steps it lies on, mud on a plank floor. So only what is earth and
+nowhere built is laid out of true, and the rest takes the patches alone.
 =============
 */
 static void R_AtmosGroundFlags(void)
@@ -522,7 +534,7 @@ static void R_AtmosGroundFlags(void)
 
 	// (the last map's, where its shaders are still there)
 	for (j = 0; j < tr.numShaders; j++) {
-		tr.shaders[j]->isGround    = qfalse;
+		tr.shaders[j]->groundFlags = 0;
 		tr.shaders[j]->groundTiles = qfalse;
 	}
 	if (!tr.world) {
@@ -530,21 +542,26 @@ static void R_AtmosGroundFlags(void)
 	}
 	for (i = 0; i < tr.world->numShaders; i++) {
 		const dshader_t *d     = &tr.world->shaders[i];
-		const int        flags = d->surfaceFlags & GROUND_FLAGS;
+		const int        flags = d->surfaceFlags & (GROUND_FLAGS | BUILT_FLAGS);
 
 		if (!flags || (d->surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
 			continue;
 		}
 		for (j = 0; j < tr.numShaders; j++) {
 			if (!Q_stricmp(tr.shaders[j]->name, d->shader)) {
-				tr.shaders[j]->isGround = qtrue;
+				tr.shaders[j]->groundFlags |= flags;
 			}
 		}
 	}
+	// a material to lay out of true: what the terrain is drawn with, and of
+	// the brushwork what is earth and nowhere built
 	for (j = 0; j < tr.numShaders; j++) {
 		shader_t *sh = tr.shaders[j];
 
-		if ((sh->isGround || sh->isTerrain) && sh != tr.defaultShader && !sh->defaultShader) {
+		if (sh == tr.defaultShader || sh->defaultShader) {
+			continue;
+		}
+		if (sh->isTerrain || ((sh->groundFlags & EARTH_FLAGS) && !(sh->groundFlags & BUILT_FLAGS))) {
 			sh->groundTiles = R_AtmosShaderTiles(sh);
 		}
 	}
@@ -556,7 +573,8 @@ R_AtmosGroundVary
 
 For the ground's lightall: how strong its patches, one over their size, how
 much of the far look, one over where that is whole; and how far its texture
-is pushed out of true, in tiles.
+is pushed out of true, in tiles, and between what slopes (its normal's
+height) that and the far look come in.
 =============
 */
 void R_AtmosGroundVary(const shader_t *shader, vec4_t out, vec4_t out2)
@@ -564,7 +582,12 @@ void R_AtmosGroundVary(const shader_t *shader, vec4_t out, vec4_t out2)
 	// (a picture made to be laid once is left as it was laid)
 	const qboolean tiles = !shader || shader->groundTiles;
 
-	VectorSet4(out2, tiles ? atmos.groundWarp * Com_Clamp(0.0f, 2.0f, r_groundVariation->value) : 0.0f, 0.0f, 0.0f, 0.0f);
+	// how level it must lie for that: the terrain up a fair slope, the
+	// brushwork all but flat (a roof's pitch is not ground)
+	const qboolean terrain = shader && shader->isTerrain;
+
+	VectorSet4(out2, tiles ? atmos.groundWarp * Com_Clamp(0.0f, 2.0f, r_groundVariation->value) : 0.0f, terrain ? 0.45f : 0.85f,
+		terrain ? 0.75f : 0.95f, 0.0f);
 	out[0] = atmos.groundPatches * Com_Clamp(0.0f, 2.0f, r_groundVariation->value);
 	out[1] = 1.0f / atmos.groundSize;
 	out[2] = tiles ? Com_Clamp(0.0f, 1.0f, atmos.groundFar * Q_max(0.0f, r_groundFar->value)) : 0.0f;
@@ -775,7 +798,7 @@ static void R_AtmosInfo_f(void)
 					n++;
 					if (ri.Cmd_Argc() > 1 && !Q_stricmp(ri.Cmd_Argv(1), "ground")) {
 						ri.Printf(PRINT_ALL, "  %s%s%s\n", tr.shaders[i]->name, tr.shaders[i]->isTerrain ? " (terrain)" : "",
-							tr.shaders[i]->groundTiles ? "" : ": patches only (a picture laid once)");
+							tr.shaders[i]->groundTiles ? "" : ": patches only");
 					}
 				}
 			}

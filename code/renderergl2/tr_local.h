@@ -763,9 +763,11 @@ typedef struct shader_s {
     // Added in OPM: the terrain is drawn with it (R_LoadTerrain): ground the
     // rain wets, even with an alpha test, where a cut-out takes none of it
     qboolean isTerrain;
-    // Added in OPM: grass, dirt, sand, mud, gravel or snow on some face of the
-    // map, by the map's own shader list (R_AtmosGroundFlags): r_groundVariation
-    qboolean isGround;
+    // Added in OPM: what the map's faces have it as, of the ground's flags
+    // (grass, dirt, sand, mud, gravel, snow) and of what is built (wood,
+    // metal...), by the map's own shader list (R_AtmosGroundFlags):
+    // r_groundVariation
+    int groundFlags;
     // and its texture is a material, which may be laid out of true and
     // over itself at another size, not a picture laid once (R_AtmosImageTiles)
     qboolean groundTiles;

@@ -839,7 +839,7 @@ vec4 hitCube(vec3 ray, vec3 pos, vec3 invSize, float lod, samplerCube tex)
 // and cooler in patches of two sizes. A lightall of the ground's own
 // (USE_GROUNDVARY): nothing else runs this.
 uniform vec4 u_GroundVary;  // how strong the patches, one over their size, how much of the far look, one over where it is whole
-uniform vec4 u_GroundVary2; // how far the texture is pushed, in tiles
+uniform vec4 u_GroundVary2; // how far the texture is pushed, in tiles; from what slope to what it is ground to lie on
 
 // two noises at once, of a cheaper cast than the rain's: this is run for
 // every pixel of ground
@@ -876,7 +876,7 @@ float GroundFlat()
 {
 	vec3 n = cross(dFdx(var_WetPos), dFdy(var_WetPos));
 
-	return smoothstep(0.45, 0.75, abs(n.z) / max(length(n), 1e-6));
+	return smoothstep(u_GroundVary2.y, u_GroundVary2.z, abs(n.z) / max(length(n), 1e-6));
 }
 
 vec2 GroundWarp(vec2 tc, float flat_)
