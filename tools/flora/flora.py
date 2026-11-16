@@ -300,12 +300,14 @@ def tube(mesh, br, sides, tile, flare=0.0):
     for i in range(n - 1):
         for j in range(sides):
             a, b = i * (sides + 1) + j, (i + 1) * (sides + 1) + j
-            tris += [(a, a + 1, b), (a + 1, b + 1, b)]
+            # clockwise seen from outside: the game's renderers cull the
+            # counter-clockwise side (GL_FRONT) of a front-sided shader
+            tris += [(a, b, a + 1), (a + 1, b, b + 1)]
     tip = len(verts)
     d = norm(pts[-1] - pts[-2])
     verts.append((pts[-1] + d * rads[-1] * 1.5, d, (wraps * 0.5, -(along + rads[-1]) / tall)))
     last = (n - 1) * (sides + 1)
-    tris += [(last + j, last + j + 1, tip) for j in range(sides)]
+    tris += [(last + j, tip, last + j + 1) for j in range(sides)]
     mesh.add(verts, tris)
 
 
