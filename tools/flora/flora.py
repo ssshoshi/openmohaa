@@ -637,7 +637,7 @@ def main():
         if pine_src and name in pines.PINES:
             sp, cfg = SPECIES[name], pines.PINES[name]
             meshes = pines.build(pine_parts, pine_trees[cfg["tree"]], sp.height, sp.radius, cfg["lod"],
-                                 cfg.get("bare", False))
+                                 cfg.get("bare", False), cfg.get("sink", 0.0))
             model, anim, lo, hi = to_skd(name, sp, meshes)
             write(os.path.join(args.out, "models/static/natural/opm_%s.skd" % name), model)
             write(os.path.join(args.out, "models/static/natural/opm_%s.skc" % name), anim)

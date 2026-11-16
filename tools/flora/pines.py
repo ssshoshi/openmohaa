@@ -56,15 +56,18 @@ BARK_PARTS, CARD_PARTS, ROOT_PARTS = (0, 1), (2, 3, 4, 5), (6,)
 # which tree of the row (counted from the left, -x, as the trees are found) becomes
 # which game model: the young ones are bushy cones, the grown ones a tall bare stem
 # under a crown, the dead ones snags
+# how far below its origin each stem reaches: as deep as the game's own tree it stands in
+# for (theirs go 23 to 72 units down, so that a tree on a slope or set a little high by the
+# mapper still meets the ground) and a little more
 PINES = {
-    "spruce_tall": dict(tree=8, lod=900.0),    # 20 m, two tiers of crown
-    "spruce_fill": dict(tree=7, lod=900.0),    # 19 m, full to low down
-    "spruce_mid": dict(tree=5, lod=800.0),     # 14 m, bushy
-    "spruce_small": dict(tree=3, lod=650.0),   # 9 m, a young cone
+    "spruce_tall": dict(sink=64, tree=8, lod=900.0),    # 20 m, two tiers of crown
+    "spruce_fill": dict(sink=48, tree=7, lod=900.0),    # 19 m, full to low down
+    "spruce_mid": dict(sink=40, tree=5, lod=800.0),     # 14 m, bushy
+    "spruce_small": dict(sink=80, tree=3, lod=650.0),   # 9 m, a young cone
     # the bare stems of tall ones whose crowns are overhead, out of sight (1465 of them on
     # m6l1a): a trunk only, from a dying one and a dead one
-    "stem_thin": dict(tree=14, lod=700.0, bare=True),
-    "stem_thick": dict(tree=12, lod=700.0, bare=True),
+    "stem_thin": dict(sink=40, tree=14, lod=700.0, bare=True),
+    "stem_thick": dict(sink=40, tree=12, lod=700.0, bare=True),
 }
 
 
@@ -265,7 +268,7 @@ def axis_tube(pts, height, rings=8, sides=5, ground=0.0):
     return np.array(pos), np.array(nrm), np.array(uv), np.array(tris)
 
 
-def build(parts, tree, height, radius, lod, bare=False):
+def build(parts, tree, height, radius, lod, bare=False, sink=0.0):
     """The meshes of one tree of the row: bark, bark_root, leaves, snow and their far ones
     (a bare one: its stem only, and far off a tube)."""
     mo = _meshopt()
@@ -297,6 +300,16 @@ def build(parts, tree, height, radius, lod, bare=False):
         return p, n, uv
 
     placed = {i: place(i) for i in {i for i, _ in ps}}
+    # the foot drawn down to `sink` below the origin: what is under the ground stretched
+    # deeper (what shows above it stays as it was), so the flare runs on into the ground
+    # wherever the ground falls away from the tree
+    wood = [placed[i][0][np.unique(parts[i][3][g])] for i, g in ps if i not in CARD_PARTS]
+    low = min(w[:, 2].min() for w in wood)
+    if sink and -sink < low < 0:
+        for i in placed:
+            if i not in CARD_PARTS:
+                z = placed[i][0][:, 2]
+                z[z < 0] *= sink / -low
     bark, root, leaves, snow = Mesh("bark"), Mesh("bark_root"), Mesh("leaves"), Mesh("snow")
     bark_far, leaves_far, snow_far = Mesh("bark_far"), Mesh("leaves_far"), Mesh("snow_far")
     centre = np.array([0.0, 0.0, height * 0.6])
@@ -322,7 +335,7 @@ def build(parts, tree, height, radius, lod, bare=False):
         # far off, a bare stem is a five-sided tube up its axis (its bark comes in many
         # short pieces that do not simplify)
         pts = np.concatenate([placed[i][0][np.unique(parts[i][3][g])] for i, g in ps if i in BARK_PARTS])
-        bark_far.add(*axis_tube(pts, height, ground=-0.02 * height))
+        bark_far.add(*axis_tube(pts, height, ground=-max(sink, 0.02 * height)))
 
     # the needle cards: each piece one card
     cards = []
@@ -456,13 +469,16 @@ def shader_text(name, meshes, lod, tex="pine"):
 }
 """ % {"n": name, "m": m.name, "img": img, "fade": fade}
         else:
+            # (the root flare is a sheet open underneath: seen from below a slope, or
+            # where the ground dips at its edge, one-sided it showed the sky through it)
+            cull = "\tcull none\n" if m.name in ("bark_root", "bark_far") else ""
             out += """opm_flora/%(n)s_%(m)s
 {
 	qer_editorimage %(img)s
-	{
+%(cull)s	{
 		map %(img)s
 		rgbGen vertex
 %(fade)s	}
 }
-""" % {"n": name, "m": m.name, "img": img, "fade": fade}
+""" % {"n": name, "m": m.name, "img": img, "fade": fade, "cull": cull}
     return out
