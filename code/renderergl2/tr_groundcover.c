@@ -67,6 +67,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define GC_MAX_DRAWS        4096
 #define GC_MASK_SIZE        64
 #define GC_MIN_NORMAL_Z     0.7f
+#define GC_MIN_NORMAL_Z_PATCH 0.5f // the bocage's hills are steeper than its fields
 #define GC_BUILD_BUDGET_US  2000.0
 
 // on the card: a cell's tufts in pages, the pages in chunks of a buffer each
@@ -89,6 +90,7 @@ typedef struct {
     vec3_t normal;
     int    lightmap;
     int    shader;
+    int    patch;  // of a curved patch: not solid, the player walks on clip under it
 } gcTri_t;
 
 // a grass terrain patch
@@ -109,6 +111,7 @@ typedef struct {
     byte     mask[GC_MASK_SIZE * GC_MASK_SIZE]; // 0: bare, 255: grass
     vec3_t   tint;
     int      ground;   // gcGround_t
+    qboolean solid;    // its brushes are solid (a patch need not be)
     int      kept, dropMask, dropCovered; // samples on it so far (groundcoverinfo)
 } gcShader_t;
 
@@ -736,6 +739,100 @@ static float GC_WaterEdge(const vec3_t at, float above)
     return best;
 }
 
+// One triangle of grass ground, if it looks up enough: counted in the first
+// pass, copied in the second.
+static void GC_AddTri(int pass, const drawVert_t *v[3], int lightmap, int slot, qboolean patch)
+{
+    vec3_t e1, e2, n, vn;
+    int    k;
+
+    VectorSubtract(v[1]->xyz, v[0]->xyz, e1);
+    VectorSubtract(v[2]->xyz, v[0]->xyz, e2);
+    CrossProduct(e1, e2, n);
+    if (VectorNormalize(n) < 0.001f) {
+        return;
+    }
+    // the winding is either way; the vertex normals say which is up
+    VectorAdd(v[0]->normal, v[1]->normal, vn);
+    VectorAdd(vn, v[2]->normal, vn);
+    if (DotProduct(n, vn) < 0) {
+        VectorNegate(n, n);
+    }
+    if (n[2] < (patch ? GC_MIN_NORMAL_Z_PATCH : GC_MIN_NORMAL_Z)) {
+        return;
+    }
+
+    if (pass == 1) {
+        gcTri_t *tri = &gc.tris[gc.numTris];
+
+        for (k = 0; k < 3; k++) {
+            VectorCopy(v[k]->xyz, tri->xyz[k]);
+            tri->st[k][0] = LittleFloat(v[k]->st[0]);
+            tri->st[k][1] = LittleFloat(v[k]->st[1]);
+            tri->lm[k][0] = LittleFloat(v[k]->lightmap[0]);
+            tri->lm[k][1] = LittleFloat(v[k]->lightmap[1]);
+        }
+        VectorCopy(n, tri->normal);
+        tri->lightmap = lightmap;
+        tri->shader   = slot;
+        tri->patch    = patch;
+    }
+    gc.numTris++;
+}
+
+#define GC_PATCH_STEPS 6 // triangles' rows across each 3x3 piece of a patch
+
+// A curved patch (the bocage's hills): each 3x3 piece of its control grid
+// evaluated as the renderer does, a quadratic Bezier each way, into small
+// triangles.
+static void GC_AddPatch(int pass, const drawVert_t *cp, int width, int height, int numVerts, int lightmap, int slot)
+{
+    drawVert_t        grid[GC_PATCH_STEPS + 1][GC_PATCH_STEPS + 1];
+    int               px, py, a, b, i, j;
+
+    if (width < 3 || height < 3 || !(width & 1) || !(height & 1) || width * height > numVerts) {
+        return;
+    }
+    for (py = 0; py + 2 < height; py += 2) {
+        for (px = 0; px + 2 < width; px += 2) {
+            for (b = 0; b <= GC_PATCH_STEPS; b++) {
+                const float t = b / (float)GC_PATCH_STEPS;
+                const float wt[3] = { (1 - t) * (1 - t), 2 * t * (1 - t), t * t };
+
+                for (a = 0; a <= GC_PATCH_STEPS; a++) {
+                    const float s = a / (float)GC_PATCH_STEPS;
+                    const float ws[3] = { (1 - s) * (1 - s), 2 * s * (1 - s), s * s };
+                    drawVert_t *out = &grid[b][a];
+
+                    Com_Memset(out, 0, sizeof(*out));
+                    for (j = 0; j < 3; j++) {
+                        for (i = 0; i < 3; i++) {
+                            const drawVert_t *c = &cp[(py + j) * width + px + i];
+                            const float       w = ws[i] * wt[j];
+
+                            VectorMA(out->xyz, w, c->xyz, out->xyz);
+                            VectorMA(out->normal, w, c->normal, out->normal);
+                            out->st[0] += w * LittleFloat(c->st[0]);
+                            out->st[1] += w * LittleFloat(c->st[1]);
+                            out->lightmap[0] += w * LittleFloat(c->lightmap[0]);
+                            out->lightmap[1] += w * LittleFloat(c->lightmap[1]);
+                        }
+                    }
+                }
+            }
+            for (b = 0; b < GC_PATCH_STEPS; b++) {
+                for (a = 0; a < GC_PATCH_STEPS; a++) {
+                    const drawVert_t *t0[3] = { &grid[b][a], &grid[b][a + 1], &grid[b + 1][a + 1] };
+                    const drawVert_t *t1[3] = { &grid[b][a], &grid[b + 1][a + 1], &grid[b + 1][a] };
+
+                    GC_AddTri(pass, t0, lightmap, slot, qtrue);
+                    GC_AddTri(pass, t1, lightmap, slot, qtrue);
+                }
+            }
+        }
+    }
+}
+
 /*
 ================
 R_GroundCoverLoadWorld
@@ -817,12 +914,14 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
         if (ground < 0 || (surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
             continue;
         }
-        // grass the player walks through is foliage, not ground
-        if (!(contents & CONTENTS_SOLID) || (contents & CONTENTS_FENCE)) {
+        // grass the player walks through is foliage, not ground; one not
+        // solid at all is taken for its curved patches only (the bocage's
+        // hills: the player walks on clip brushes under them)
+        if (contents & CONTENTS_FENCE) {
             continue;
         }
         gc.shaderSlot[i] = gc.numGrassShaders;
-        grounds[gc.numGrassShaders] = ground;
+        grounds[gc.numGrassShaders] = (contents & CONTENTS_SOLID) ? ground : ground | 0x100;
         Q_strncpyz(gc.shaderNames[gc.numGrassShaders], dshaders[i].shader, MAX_QPATH);
         gc.numGrassShaders++;
     }
@@ -836,7 +935,8 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     gc.shaders = ri.Malloc(gc.numGrassShaders * sizeof(gcShader_t));
     Com_Memset(gc.shaders, 0, gc.numGrassShaders * sizeof(gcShader_t));
     for (i = 0; i < gc.numGrassShaders; i++) {
-        gc.shaders[i].ground = grounds[i];
+        gc.shaders[i].ground = grounds[i] & 0xff;
+        gc.shaders[i].solid  = !(grounds[i] & 0x100);
     }
     ri.Free(grounds);
 
@@ -849,7 +949,8 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     dindexes   = (const int *)(fileBase + indexLump->fileofs);
     numIndexes = indexLump->filelen / sizeof(int);
 
-    // brush faces and triangle soups: count the upward triangles, then copy
+    // brush faces, triangle soups and curved patches: count the upward
+    // triangles, then copy
     for (pass = 0; pass < 2; pass++) {
         if (pass == 1) {
             gc.tris    = ri.Malloc(MAX(gc.numTris, 1) * sizeof(gcTri_t));
@@ -864,8 +965,9 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             int               nVerts = LittleLong(ds->numVerts);
             int               firstIndex = LittleLong(ds->firstIndex);
             int               nIndexes = LittleLong(ds->numIndexes);
+            int               lightmap = LittleLong(ds->lightmapNum);
 
-            if (slot < 0 || (type != MST_PLANAR && type != MST_TRIANGLE_SOUP)) {
+            if (slot < 0 || (type != MST_PLANAR && type != MST_TRIANGLE_SOUP && type != MST_PATCH)) {
                 continue;
             }
             // snow, gravel and sand brushes are as often roofs, beams and
@@ -874,13 +976,20 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             if (gc.shaders[slot].ground != GC_GROUND_GRASS && gc.shaders[slot].ground != GC_GROUND_MUD) {
                 continue;
             }
-            if (firstVert < 0 || firstVert + nVerts > numVerts || firstIndex < 0 || firstIndex + nIndexes > numIndexes) {
+            if (firstVert < 0 || firstVert + nVerts > numVerts) {
                 continue;
             }
 
+            if (type == MST_PATCH) {
+                GC_AddPatch(pass, &dverts[firstVert], LittleLong(ds->patchWidth), LittleLong(ds->patchHeight), nVerts,
+                            lightmap, slot);
+                continue;
+            }
+            if (!gc.shaders[slot].solid || firstIndex < 0 || firstIndex + nIndexes > numIndexes) {
+                continue;
+            }
             for (j = 0; j + 2 < nIndexes; j += 3) {
                 const drawVert_t *v[3];
-                vec3_t            e1, e2, n, vn;
                 int               k;
 
                 for (k = 0; k < 3; k++) {
@@ -890,41 +999,9 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
                     }
                     v[k] = &dverts[firstVert + idx];
                 }
-                if (k < 3) {
-                    continue;
+                if (k == 3) {
+                    GC_AddTri(pass, v, lightmap, slot, qfalse);
                 }
-
-                VectorSubtract(v[1]->xyz, v[0]->xyz, e1);
-                VectorSubtract(v[2]->xyz, v[0]->xyz, e2);
-                CrossProduct(e1, e2, n);
-                if (VectorNormalize(n) < 0.001f) {
-                    continue;
-                }
-                // the winding is either way; the vertex normals say which is up
-                VectorAdd(v[0]->normal, v[1]->normal, vn);
-                VectorAdd(vn, v[2]->normal, vn);
-                if (DotProduct(n, vn) < 0) {
-                    VectorNegate(n, n);
-                }
-                if (n[2] < GC_MIN_NORMAL_Z) {
-                    continue;
-                }
-
-                if (pass == 1) {
-                    gcTri_t *tri = &gc.tris[gc.numTris];
-
-                    for (k = 0; k < 3; k++) {
-                        VectorCopy(v[k]->xyz, tri->xyz[k]);
-                        tri->st[k][0] = LittleFloat(v[k]->st[0]);
-                        tri->st[k][1] = LittleFloat(v[k]->st[1]);
-                        tri->lm[k][0] = LittleFloat(v[k]->lightmap[0]);
-                        tri->lm[k][1] = LittleFloat(v[k]->lightmap[1]);
-                    }
-                    VectorCopy(n, tri->normal);
-                    tri->lightmap = LittleLong(ds->lightmapNum);
-                    tri->shader   = slot;
-                }
-                gc.numTris++;
             }
         }
     }
@@ -1520,6 +1597,7 @@ typedef struct {
     vec3_t xyz;
     vec3_t light;
     vec3_t tint;
+    float  normalZ; // how level the ground is there
 } gcSample_t;
 
 static qboolean GC_Clear(vec3_t xyz, float below, float above, int groundFlag)
@@ -1545,6 +1623,19 @@ static qboolean GC_Clear(vec3_t xyz, float below, float above, int groundFlag)
     }
     xyz[2] = trace.endpos[2];
     return qtrue;
+}
+
+// A patch is not solid (the player walks on clip brushes under it): it is
+// enough that nothing solid is over the place.
+static qboolean GC_ClearOver(const vec3_t xyz)
+{
+    trace_t trace;
+    vec3_t  start, end;
+
+    VectorSet(start, xyz[0], xyz[1], xyz[2] + 64);
+    VectorSet(end, xyz[0], xyz[1], xyz[2] + 2);
+    ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+    return !trace.startsolid && !trace.allsolid && trace.fraction >= 1.0f;
 }
 
 static qboolean GC_SampleTri(const gcTri_t *tri, float x, float y, gcSample_t *out, unsigned int *rnd)
@@ -1582,6 +1673,7 @@ static qboolean GC_SampleTri(const gcTri_t *tri, float x, float y, gcSample_t *o
     out->xyz[2] = b0 * tri->xyz[0][2] + b1 * tri->xyz[1][2] + b2 * tri->xyz[2][2];
     GC_LightAt(tri->lightmap, lm[0] * LIGHTMAP_SIZE, lm[1] * LIGHTMAP_SIZE, out->xyz, out->light);
     VectorCopy(gc.shaders[tri->shader].tint, out->tint);
+    out->normalZ = tri->normal[2];
     return qtrue;
 }
 
@@ -1635,6 +1727,7 @@ static qboolean GC_SampleTerrain(const gcTerrain_t *ter, float x, float y, gcSam
     out->xyz[2] = (h00 * (1 - ax) + h10 * ax) * (1 - ay) + (h01 * (1 - ax) + h11 * ax) * ay;
     GC_LightAt(ter->lightmap, ter->lmS + fx * ter->lmSpan, ter->lmT + fy * ter->lmSpan, out->xyz, out->light);
     VectorCopy(gc.shaders[ter->shader].tint, out->tint);
+    out->normalZ = 1.0f / sqrt(1.0f + dzdx * dzdx + dzdy * dzdy);
     return qtrue;
 }
 
@@ -1896,8 +1989,9 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
             if (ground == GC_GROUND_MUD && GC_WaterEdge(sample.xyz, 14.0f) <= 0.0f) {
                 continue;
             }
-            if (!GC_Clear(sample.xyz, type == GC_SRC_TERRAIN ? 16.0f : 3.0f, type == GC_SRC_TERRAIN ? 5.0f : 3.0f,
-                          GC_GroundFlag(ground))) {
+            if (type == GC_SRC_TRI && gc.tris[index].patch ? !GC_ClearOver(sample.xyz)
+                : !GC_Clear(sample.xyz, type == GC_SRC_TERRAIN ? 16.0f : 3.0f, type == GC_SRC_TERRAIN ? 5.0f : 3.0f,
+                            GC_GroundFlag(ground))) {
                 gc_dropCovered++;
                 gc.shaders[GC_SourceShader(type, index)].dropCovered++;
                 continue;
@@ -1924,7 +2018,9 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
             }
             tuft = &bt->tuft;
             VectorCopy(sample.xyz, tuft->root);
-            tuft->root[2] -= 1.5f; // into the ground, so no gap shows on a slope
+            // into the ground, so no gap shows under its downhill side: the
+            // steeper, the deeper
+            tuft->root[2] -= 1.5f + 3.0f * sqrt(Q_max(0.0f, 1.0f - sample.normalZ * sample.normalZ)) / Q_max(sample.normalZ, 0.3f);
             // most tufts are gone by half the distance, a few go on to it
             tuft->fadeEnd = 0.25f + 0.75f * GC_Rand(rnd) * GC_Rand(rnd);
             tuft->phase   = GC_Rand(rnd) * 2.0f * M_PI;
