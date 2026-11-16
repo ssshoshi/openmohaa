@@ -46,7 +46,7 @@ UP = np.array([0.0, 0.0, 1.0])
 
 class Level:
     def __init__(self, segs, sides, children, angle, ratio, rratio, start=0.3, gnarl=0.12, tropism=0.0,
-                 tip=0.35, angle_var=0.15, shape="round"):
+                 tip=0.35, angle_var=0.15, shape="round", upturn=0.0):
         self.segs = segs            # segments along a branch of this level
         self.sides = sides          # sides of its tube
         self.children = children    # branches of the next level standing on it
@@ -59,6 +59,7 @@ class Level:
         self.tip = tip              # its radius at the tip, of the base
         self.angle_var = angle_var
         self.shape = shape          # how its children's lengths go along it: "round" (longest in the middle), "cone" (longest first)
+        self.upturn = upturn        # sags near its foot and turns up toward its tip (a spruce's boughs)
 
 
 class Species:
@@ -80,23 +81,41 @@ def bush(replaces, bone, height, radius, stems, leaf, bark, seed, cards=4, card_
         leaf=leaf, bark=bark, bark_tile=40.0, seed=seed, lod=lod)
 
 
-def spruce(replaces, bone, height, radius, branches, seed, trunk_radius, start=0.22, cards=4, card_size=110.0,
+def spruce(replaces, bone, height, radius, branches, seed, trunk_radius, start=0.22, cards=2, card_size=110.0,
            lod=800.0):
     """Norway spruce (Picea abies), the tree of the Ardennes and of Norway: a straight stem to
-    the top, branches all the way up it, longest at the bottom, reaching out level and hanging
-    a little under their own sprays."""
+    the top, branches all the way up it, longest at the bottom, sagging from the stem and
+    turning up at their tips, hung all along with short side shoots dense with needles, and
+    in these woods snow lying thick on top of them."""
+    if not cards:  # the bare lower stems of the tall ones: a pole and a few dead boughs, as they were
+        return Species(
+            replaces=replaces, bone=bone, height=height, radius=radius, trunk_len=0.97, trunk_radius=trunk_radius,
+            levels=[
+                Level(8, 7, branches, math.radians(96), 0.42, 0.22, start=start, gnarl=0.008, tip=0.12, shape="cone",
+                      angle_var=0.08),
+                Level(3, 3, 0, math.radians(40), 0.5, 0.5, gnarl=0.05, tropism=-0.05, tip=0.3),
+            ],
+            cards=0, card_size=card_size, card_droop=0.3, puff=0.35, flare=0.2, flat=True,
+            leaf=dict(asset="ph:fir_tree_01:twig", tint=(0.72, 0.80, 0.74), twig=(58, 46, 36), leaf_len=0.36,
+                      density=1, snow=0.35, heavy=True),
+            bark=dict(asset="pine_bark", tint=(0.8, 0.78, 0.76)),
+            bark_tile=56.0, seed=seed, lod=lod, tex="spruce")
     return Species(
         replaces=replaces, bone=bone, height=height, radius=radius, trunk_len=0.97, trunk_radius=trunk_radius,
         levels=[
-            Level(8, 7, branches, math.radians(96), 0.42, 0.22, start=start, gnarl=0.008, tip=0.12, shape="cone",
-                  angle_var=0.08),
-            Level(3, 3, 0, math.radians(40), 0.5, 0.5, gnarl=0.05, tropism=-0.05, tip=0.3),
+            Level(8, 7, int(branches * 1.3), math.radians(96), 0.42, 0.16, start=start, gnarl=0.008, tip=0.12,
+                  shape="cone", angle_var=0.08),
+            # the boughs: thin, sagging then turning up, clothed in side shoots from near the stem
+            Level(5, 3, 7, math.radians(55), 0.34, 0.6, start=0.06, gnarl=0.04, tropism=-0.04, tip=0.25,
+                  upturn=0.12),
+            Level(2, 3, 0, math.radians(40), 0.5, 0.5, gnarl=0.06, tropism=-0.06, tip=0.3),
         ],
-        cards=cards, card_size=card_size, card_droop=0.3, puff=0.35, flare=0.2, flat=True,
+        cards=cards, card_size=card_size * 0.72, card_droop=0.3, puff=0.35, flare=0.2, flat=True,
         leaf=dict(asset="ph:fir_tree_01:twig", tint=(0.72, 0.80, 0.74), twig=(58, 46, 36), leaf_len=0.36, density=1,
-                  snow=0.9),  # the game's are all winter trees: snow lies on their boughs
+                  snow=0.35, heavy=True),  # the game's are all winter trees: snow lies on their boughs
         bark=dict(asset="pine_bark", tint=(0.8, 0.78, 0.76)),
-        bark_tile=56.0, seed=seed, lod=lod, tex="spruce")
+        bark_tile=56.0, seed=seed, lod=lod, tex="spruce", snowcells=True,
+        leader=0.05)  # the stem goes right up: its tip is a short leading shoot
 
 
 SPECIES = {
@@ -149,7 +168,7 @@ SPECIES = {
     "spruce_tall": spruce(["tree_winter_tallpine"], "Box02", 941.0, 260.0, 40, 61, 15.0),
     "spruce_fill": spruce(["tree_winter_fillpine"], "Box02", 928.0, 315.0, 36, 62, 16.0, start=0.3, card_size=125.0),
     "spruce_mid": spruce(["tree_winter_midpine"], "Box02", 498.0, 208.0, 28, 63, 9.0, start=0.12, card_size=95.0),
-    "spruce_small": spruce(["tree_winter_smallpine"], "Box01", 332.0, 106.0, 20, 64, 5.5, start=0.08, cards=3,
+    "spruce_small": spruce(["tree_winter_smallpine"], "Box01", 332.0, 106.0, 20, 64, 5.5, start=0.08, cards=2,
                            card_size=58.0),
     "stem_thin": spruce(["tree_winter_thintrunk"], "Box02", 854.0, 35.0, 9, 65, 9.0, start=0.45, cards=0),
     "stem_thick": spruce(["tree_winter_thicktrunk"], "thik trunk", 854.0, 57.0, 9, 66, 15.0, start=0.45, cards=0),
@@ -204,7 +223,7 @@ def grow(sp, rng, start, dirn, length, radius, level, branches, cards):
     pts, rads, d = [start], [radius], dirn
     for i in range(1, lv.segs + 1):
         t = i / lv.segs
-        d = norm(d + rng.normal(0, lv.gnarl, 3) + UP * lv.tropism)
+        d = norm(d + rng.normal(0, lv.gnarl, 3) + UP * (lv.tropism + lv.upturn * (2 * t - 1.2)))
         pts.append(pts[-1] + d * (length / lv.segs))
         rads.append(radius * (1 - t * (1 - lv.tip)))
     br = Branch(pts, rads, level)
@@ -229,7 +248,7 @@ def grow(sp, rng, start, dirn, length, radius, level, branches, cards):
                  min(pr * lv.rratio, pr * 0.92), level + 1, branches, cards)
         # and it runs on into a child at its tip
         p, pd, pr = br.at(1.0)
-        grow(sp, rng, p, pd, length * (0.45 if level else 0.9), pr, level + 1, branches, cards)
+        grow(sp, rng, p, pd, length * (0.45 if level else getattr(sp, "leader", 0.9)), pr, level + 1, branches, cards)
     else:
         for k in range(sp.cards):
             t = 0.12 + 0.88 * (k + rng.uniform(0.2, 0.8)) / sp.cards
@@ -319,6 +338,9 @@ def card(mesh, sp, p, d, scale, cell, roll, centre):
     if up[2] < 0:
         w, up = -w, -up
     w, up = w * math.cos(roll) + up * math.sin(roll), up * math.cos(roll) - w * math.sin(roll)
+    if getattr(sp, "snowcells", False):
+        # the bottom two cells carry the snow: sprays that lie facing the sky take them
+        cell = (cell % 2) + (2 if abs(up[2]) > 0.55 else 0)
     u0, v0 = (cell % 2) * 0.5, (cell // 2) * 0.5
     pad = 0.004
     verts = []
@@ -351,6 +373,20 @@ def build(name):
              norm(np.array([rng.normal(0, 0.02), rng.normal(0, 0.02), 1.0])),
              sp.height * (sp.trunk_len + 0.05), sp.trunk_radius, 0, branches, cards)
 
+    # A conifer's sprays deep inside its crown are not seen from outside but are drawn
+    # all the same, in every shadow map too: half of them go. (outer: how far out each
+    # spray stands, of the crown's reach at its height)
+    outer = [1.0] * len(cards)
+    if getattr(sp, "flat", False) and cards:
+        z = np.array([c[0][2] for c in cards])
+        r = np.array([math.hypot(c[0][0], c[0][1]) for c in cards])
+        bins = np.clip(((z - z.min()) / max(np.ptp(z), 1e-6) * 12).astype(int), 0, 11)
+        reach = np.array([r[bins == b].max() if (bins == b).any() else 1.0 for b in range(12)])
+        outer = list(r / np.maximum(reach[bins], 1e-6))
+        keep = [k for k in range(len(cards)) if outer[k] > 0.5 or k % 2 == 0]
+        cards = [cards[k] for k in keep]
+        outer = [outer[k] for k in keep]
+
     # fitted to the model it replaces: its height, and its radius about the trunk
     # (of what is drawn, so in a few rounds: the cards do not scale with the branches)
     fit = np.ones(3)
@@ -363,6 +399,9 @@ def build(name):
         centre = np.array([0.0, 0.0, sp.height * (0.5 if stems else 0.58)])
         bark, leaves = Mesh("bark"), Mesh("leaves")
         for b in fitted:
+            # a conifer's last shoots are the twigs in its sprays' pictures: no bark of their own
+            if getattr(sp, "flat", False) and b.level == len(sp.levels) - 1 and len(sp.levels) > 2 and sp.cards:
+                continue
             tube(bark, b, sp.levels[b.level].sides, sp.bark_tile, sp.flare if b.level == 0 else 0.0)
         for c in cards:
             card(leaves, sp, c[0] * fit, norm(c[1] * fit), c[2], c[3], c[4], centre)
@@ -378,13 +417,17 @@ def build(name):
         fit = last
         bark_far, leaves_far = Mesh("bark_far"), Mesh("leaves_far")
         for b in fitted:
-            if b.level == 0 or (b.level == 1 and not stems and len(sp.levels) > 2):
+            if b.level == 0 or (b.level == 1 and not stems and len(sp.levels) > 2 and not getattr(sp, "flat", False)):
                 thin = Branch(b.pts[::2] + ([b.pts[-1]] if len(b.pts) % 2 == 0 else []),
                               b.rads[::2] + ([b.rads[-1]] if len(b.rads) % 2 == 0 else []), b.level)
                 tube(bark_far, thin, 4 if b.level == 0 else 3, sp.bark_tile)
-        grown, larger = sp.card_size, 1.75
+        # (a conifer's: of the sprays out at its crown's edge, which make its outline,
+        # one in three, larger still)
+        stride, larger = (3, 2.0) if getattr(sp, "flat", False) else (3, 1.75)
+        grown = sp.card_size
         sp.card_size = grown * larger
-        for c in cards[::3]:
+        shell = [c for c, o in zip(cards, outer) if o > 0.6] if getattr(sp, "flat", False) else cards
+        for c in shell[::stride]:
             # centred where the middle of its smaller self was, so the crown keeps its
             # outline and does not bristle with sprays reaching out past it
             d = norm(c[1] * fit)
@@ -598,7 +641,7 @@ def main():
             if not os.path.exists(os.path.join(tex, shared + "_bark.tga")) or shared == name:
                 im, n = paint.leaf_atlas(sp.leaf["asset"], sp.leaf["tint"], sp.leaf["twig"], sp.seed,
                                          leaf_len=sp.leaf["leaf_len"], density=sp.leaf["density"],
-                                         snow=sp.leaf.get("snow", 0.0))
+                                         snow=sp.leaf.get("snow", 0.0), heavy=sp.leaf.get("heavy", False))
                 im.save(os.path.join(tex, shared + "_leaves.tga"))
                 n.save(os.path.join(tex, shared + "_leaves_n.tga"))
                 im, n = paint.bark(sp.bark["asset"], sp.bark["tint"])

@@ -131,7 +131,7 @@ def _turned(leaf, length, angle, squash, tint, tilt):
     return c, a, n, size
 
 
-def draw_spray(leaves, size, rng, tint, twig_rgb, leaf_len, density, snow=0.0):
+def draw_spray(leaves, size, rng, tint, twig_rgb, leaf_len, density, snow=0.0, heavy=False):
     """One cell: (rgb, alpha, normal) arrays, size x size."""
     S = size
     rgb = np.zeros((S, S, 3), np.float32)
@@ -203,7 +203,30 @@ def draw_spray(leaves, size, rng, tint, twig_rgb, leaf_len, density, snow=0.0):
         rgb[dst] = rgb[dst] * (1 - m) + c[src] * m
         nrm[dst] = nrm[dst] * (1 - m) + nm[src] * m
         alpha[dst] = np.maximum(alpha[dst], a[src])
+    if heavy:
+        _snow_load(rgb, alpha, nrm, stems, S, rng)
     return rgb, alpha, nrm
+
+
+def _snow_load(rgb, alpha, nrm, stems, S, rng):
+    """Snow lying thick on a spray: it settles where the needles are densest and fills the
+    gaps between them, in drifts broken up unevenly, whiter on their crowns and blue-grey
+    where they thin out; needle tips poke out round its edges."""
+    dense = ndimage.gaussian_filter(alpha / 255.0, S * 0.018)
+    broken = ndimage.gaussian_filter(rng.random((S, S)).astype(np.float32), S * 0.025)
+    broken = (broken - broken.mean()) / max(broken.std(), 1e-6)
+    fine = ndimage.gaussian_filter(rng.random((S, S)).astype(np.float32), S * 0.004)
+    fine = (fine - fine.mean()) / max(fine.std(), 1e-6)
+    lay = dense + 0.12 * broken + 0.035 * fine
+    cut = np.percentile(lay[alpha > 64], 55) if (alpha > 64).any() else 1.0
+    mass = np.clip((lay - cut) / 0.03, 0.0, 1.0)
+    depth = np.clip((lay - cut) / 0.15, 0.0, 1.0)
+    shade = 0.80 + 0.20 * depth  # whiter where it lies deep
+    snow = np.array((224.0, 229.0, 239.0), np.float32)[None, None, :] * shade[..., None]
+    m = mass[..., None]
+    rgb[:] = rgb * (1 - m) + snow * m
+    alpha[:] = np.maximum(alpha, mass * 255.0)
+    nrm[:] = nrm * (1 - m) + np.array((127.5, 127.5, 255.0), np.float32) * m
 
 
 def bleed(rgb, alpha, rounds=24):
@@ -224,8 +247,9 @@ def bleed(rgb, alpha, rounds=24):
     return rgb
 
 
-def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2, snow=0.0):
-    """(RGBA image, normal image): four sprays, 2x2, of the leaf set's leaves."""
+def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2, snow=0.0, heavy=False):
+    """(RGBA image, normal image): four sprays, 2x2, of the leaf set's leaves (heavy: the
+    bottom two laden with snow)."""
     rng = np.random.default_rng(seed)
     leaves = cut_leaves(asset)
     W = cell * 2
@@ -233,7 +257,7 @@ def leaf_atlas(asset, tint, twig_rgb, seed, cell=512, leaf_len=0.2, density=2, s
     alpha = np.zeros((W, W), np.float32)
     nrm = np.zeros((W, W, 3), np.float32)
     for i in range(4):
-        r, a, n = draw_spray(leaves, cell, rng, tint, twig_rgb, leaf_len, density, snow)
+        r, a, n = draw_spray(leaves, cell, rng, tint, twig_rgb, leaf_len, density, snow, heavy and i >= 2)
         y0, x0 = (i // 2) * cell, (i % 2) * cell
         rgb[y0:y0 + cell, x0:x0 + cell] = r
         alpha[y0:y0 + cell, x0:x0 + cell] = a
