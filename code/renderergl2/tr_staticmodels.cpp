@@ -694,12 +694,17 @@ void R_AddStaticModelSurfaces(void)
                     // ones' fade in over the same stretch (as the game's far
                     // sprites did); drawn from the card nothing fades, so it
                     // is one set or the other, changed half way, by how far
-                    // the tree stands from the eye (not from a shadow's view,
-                    // which must cast what is seen).
+                    // the tree stands from the eye (not from a shadow's view).
+                    // A shadow's view changes nearer (r_floraShadowLod): the
+                    // trees by the eye keep casting what is seen, so their
+                    // own shadows lie right on them, and the rest of a dense
+                    // wood casts its far models, which is most of the sun's
+                    // cascades.
                     if (SM->surfaceVaos && !SM->vaoColors && r_staticModelVao->integer && shader->stages[0]
                         && (shader->stages[0]->alphaGen == AGEN_DIST_FADE
                             || shader->stages[0]->alphaGen == AGEN_ONE_MINUS_DIST_FADE)) {
-                        const float change = (shader->fDistNear + shader->fDistRange * 0.5f) * r_floraLod->value;
+                        const float change = (shader->fDistNear + shader->fDistRange * 0.5f) * r_floraLod->value
+                                           * ((tr.viewParms.flags & VPF_DEPTHSHADOW) ? Com_Clamp(0.0f, 1.0f, r_floraShadowLod->value) : 1.0f);
                         const qboolean far_ = r_floraLod->value > 0.0f
                                            && DistanceSquared(tiki_worldorigin, tr.refdef.vieworg) > change * change;
 
