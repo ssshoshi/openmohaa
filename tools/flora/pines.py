@@ -232,16 +232,19 @@ def simplify(mo, pos, tris, error, prune=False):
     return out[:n].reshape(-1, 3).astype(np.int64)
 
 
-def axis_tube(pts, height, rings=8, sides=5):
+def axis_tube(pts, height, rings=8, sides=5, ground=0.0):
     """(positions, normals, uvs, triangles): a tube through the middle of the points, as wide
     as they reach round it at each height, the bark mapped once round it."""
     z0, z1 = pts[:, 2].min(), pts[:, 2].max()
     pos, nrm, uv, tris = [], [], [], []
+    low = z0  # (measured from where the bark starts; drawn down to the ground)
     along = 0.0
     last = None
     for r in range(rings + 1):
         z = z0 + (z1 - z0) * r / rings
         near = pts[np.abs(pts[:, 2] - z) < (z1 - z0) / rings]
+        if r == 0:
+            z = min(low, ground)
         c = near[:, :2].mean(0) if len(near) else (last if last is not None else np.zeros(2))
         rad = np.percentile(np.hypot(*(near[:, :2] - c).T), 70) if len(near) > 3 else 1.0
         if r == rings:
@@ -270,7 +273,11 @@ def build(parts, tree, height, radius, lod, bare=False):
     if bare:  # the stem itself: the bark close round its axis, from the ground to the top
         top = max(parts[i][0][np.unique(parts[i][3][g])][:, 1].max() for i, g in ps)
         def on_axis(i, g):
+            # (an upright piece is the stem, however far it leans: a thin one's whole
+            # length is one piece that strays well off the foot's line by its top)
             v = parts[i][0][np.unique(parts[i][3][g])]
+            if np.ptp(v[:, 1]) > 1.5 * max(np.ptp(v[:, 0]), np.ptp(v[:, 2])):
+                return True
             return np.percentile(np.hypot(v[:, 0] - foot[0], v[:, 2] - foot[1]), 90) < 0.03 * top
         ps = [(i, g) for i, g in ps if i not in CARD_PARTS and len(g) >= 40 and on_axis(i, g)]
     # z up, clockwise: file (x, y, z) -> model (x, -z, y), each triangle turned round
@@ -305,15 +312,17 @@ def build(parts, tree, height, radius, lod, bare=False):
         tris = f[np.concatenate(grps)][:, [0, 2, 1]]
         near = simplify(mo, p, tris, 1.5 * grain)
         (root if i in ROOT_PARTS else bark).add(p, n, uv, near)
+        if i in ROOT_PARTS and not bare:  # (the stem's foot, which the long pieces start above)
+            bark_far.add(p, n, uv, simplify(mo, p, tris, 6.0 * grain))
         if i in BARK_PARTS and not bare:
-            stems = [g for g in grps if np.ptp(p[np.unique(f[g])][:, 2]) > height * 0.3]
+            stems = [g for g in grps if np.ptp(p[np.unique(f[g])][:, 2]) > height * 0.1]
             if stems:
                 bark_far.add(p, n, uv, simplify(mo, p, f[np.concatenate(stems)][:, [0, 2, 1]], 6.0 * grain))
     if bare:
         # far off, a bare stem is a five-sided tube up its axis (its bark comes in many
         # short pieces that do not simplify)
         pts = np.concatenate([placed[i][0][np.unique(parts[i][3][g])] for i, g in ps if i in BARK_PARTS])
-        bark_far.add(*axis_tube(pts, height))
+        bark_far.add(*axis_tube(pts, height, ground=-0.02 * height))
 
     # the needle cards: each piece one card
     cards = []
