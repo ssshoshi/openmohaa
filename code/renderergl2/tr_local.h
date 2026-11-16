@@ -3267,6 +3267,7 @@ extern cvar_t *r_vaoCache;
 extern cvar_t *r_staticModelVao; // Added in OPM
 extern cvar_t *r_floraWind;      // Added in OPM
 extern cvar_t *r_floraLod;       // Added in OPM
+extern cvar_t *r_floraShadowLod; // Added in OPM
 extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
 extern cvar_t *r_frameHitchMsec;
