@@ -25,6 +25,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Added in OPM. The maps have flat grass: a texture on terrain and brushes
 // with `surfaceparm grass`. This stands tufts of grass on it near the view.
 //
+// Not only grass: each tuft is one kind of what grows (gcKind_t), a cell of
+// the one texture (groundcover_cover.tga, tools/groundcover/grass.py), so the
+// kinds cost nothing more to draw. Weeds and flowers grow in patches among
+// the grass, reeds at a water's edge (the tops of the map's water brushes),
+// dead grass through snow, dry scrub on stony and sandy ground: each ground
+// as the map's shaders name it (surfaceparm snow, gravel, sand), terrain
+// only, for those grounds are also roofs and beams. How much of each, and on
+// which ground, is the map's atmosphere file's (`cover`, tr_atmos.c).
+//
 // Nothing is stored for the whole map. At load the grass ground is gathered
 // (brush triangles and terrain patches, with their lightmaps), and binned in
 // cells of GC_CELL_SIZE. A cell's tufts are made the first time it comes in
@@ -99,6 +108,7 @@ typedef struct {
     qboolean hasMask;
     byte     mask[GC_MASK_SIZE * GC_MASK_SIZE]; // 0: bare, 255: grass
     vec3_t   tint;
+    int      ground;   // gcGround_t
 } gcShader_t;
 
 typedef struct {
@@ -128,7 +138,30 @@ typedef struct {
 typedef struct {
     gcTuft_t tuft;
     vec3_t   color;
+    int      kind;
 } gcBuildTuft_t;
+
+// a water surface's top, seen from above: reeds grow at its edge
+typedef struct {
+    float x0, y0, x1, y1, z;
+} gcWater_t;
+
+#define GC_MAX_WATER 256
+
+// how each kind stands: its height (units, from h0 to h0 + h1), its half
+// width of its height, and how far it sways (of a grass tuft's)
+static const struct {
+    float h0, h1, w0, w1, flex;
+} gcKindShape[GC_NUM_KINDS] = {
+    { 8, 14, 0.55f, 0.25f, 1.0f },  // grass
+    { 8, 14, 0.55f, 0.25f, 1.0f },  // grass, another clump
+    { 6, 7, 0.75f, 0.20f, 0.5f },   // weeds: low and broad
+    { 9, 12, 0.55f, 0.25f, 1.0f },  // grass in flower
+    { 5, 8, 0.60f, 0.25f, 0.8f },   // dead grass, half buried
+    { 9, 11, 0.80f, 0.20f, 0.35f }, // dry scrub: stiff twigs
+    { 30, 24, 0.38f, 0.12f, 1.8f }, // reeds: tall and narrow
+    { 8, 14, 0.55f, 0.25f, 1.0f },  // dry grass
+};
 
 typedef struct gcCell_s {
     int    firstRef;
@@ -166,6 +199,12 @@ static struct {
     int         numShaders;
     int        *shaderSlot; // file shader -> slot in shaders, or -1
     vec3_t      grassAlbedo; // the mean colour of the tufts' texture
+    qboolean    atlas;       // the texture has every kind (groundcover/cover), not two clumps of grass
+    float       groundDensity[GC_NUM_GROUNDS];
+    float       share[GC_NUM_GROUNDS][GC_NUM_KINDS];
+    gcWater_t   water[GC_MAX_WATER];
+    int         numWater;
+    int         kindCount[GC_NUM_KINDS]; // tufts of each kind made so far (groundcoverinfo)
     int         numGrassShaders;
     char      (*shaderNames)[MAX_QPATH];
     gcShader_t *shaders;
@@ -233,6 +272,7 @@ static cvar_t *r_groundCoverPush;
 static cvar_t *r_groundCoverBrightness;
 static cvar_t *r_groundCoverMask;
 static cvar_t *r_groundCoverGPU;
+static cvar_t *r_groundCoverKinds;
 
 void R_GroundCoverRegisterCvars(void)
 {
@@ -253,6 +293,8 @@ void R_GroundCoverRegisterCvars(void)
     // 1: the tufts are kept on the card and swayed by the vertex program;
     // 0: copied and swayed on the CPU in each pass, as before
     r_groundCoverGPU = ri.Cvar_Get("r_groundCoverGPU", "1", CVAR_ARCHIVE);
+    r_groundCoverKinds = ri.Cvar_Get("r_groundCoverKinds", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_groundCoverKinds, "What grows besides grass: weeds and flowers in the grass, reeds by water, dead grass through snow, scrub on the desert's stony ground, as each map's atmosphere file has it (cover). 0: grass on grass ground only, as before. Takes a map load");
 }
 
 /*
@@ -545,18 +587,152 @@ static void GC_MeasureGrassAlbedo(void)
         return;
     }
     if (format == GL_RGBA8) {
-        for (i = 0; i < width * height; i++) {
-            float a = pic[i * 4 + 3] / 255.0f;
-            sum[0] += pic[i * 4 + 0] * a;
-            sum[1] += pic[i * 4 + 1] * a;
-            sum[2] += pic[i * 4 + 2] * a;
-            weight += a;
+        // of the grass only: the first two cells of the kinds' texture
+        const int w = gc.atlas ? width / 2 : width, h = gc.atlas ? height / 2 : height;
+        int       x, y;
+
+        for (y = 0; y < h; y++) {
+            for (x = 0; x < w; x++) {
+                i = y * width + x;
+                float a = pic[i * 4 + 3] / 255.0f;
+                sum[0] += pic[i * 4 + 0] * a;
+                sum[1] += pic[i * 4 + 1] * a;
+                sum[2] += pic[i * 4 + 2] * a;
+                weight += a;
+            }
         }
         if (weight > 0) {
             VectorSet(gc.grassAlbedo, sum[0] / weight, sum[1] / weight, sum[2] / weight);
         }
     }
     ri.Free(pic);
+}
+
+// What grows on each ground: the renderer's own mix, and the map's
+// atmosphere file over it (R_AtmosCover).
+static void GC_SetupGrounds(void)
+{
+    static const float density[GC_NUM_GROUNDS] = { 1.0f, 0.5f, 0.0f, 0.0f, 1.0f };
+    int                g, k;
+
+    Com_Memset(gc.share, 0, sizeof(gc.share));
+    gc.share[GC_GROUND_GRASS][GC_KIND_WEEDS]   = 0.06f;
+    gc.share[GC_GROUND_GRASS][GC_KIND_FLOWERS] = 0.03f;
+    gc.share[GC_GROUND_GRASS][GC_KIND_REEDS]   = 0.8f;
+    gc.share[GC_GROUND_SNOW][GC_KIND_DEAD]     = 0.85f;
+    gc.share[GC_GROUND_SNOW][GC_KIND_DRY]      = 0.15f;
+    gc.share[GC_GROUND_GRAVEL][GC_KIND_SCRUB]  = 0.45f;
+    gc.share[GC_GROUND_GRAVEL][GC_KIND_DRY]    = 0.55f;
+    gc.share[GC_GROUND_SAND][GC_KIND_SCRUB]    = 0.3f;
+    gc.share[GC_GROUND_SAND][GC_KIND_DRY]      = 0.7f;
+    gc.share[GC_GROUND_MUD][GC_KIND_REEDS]     = 0.8f;
+
+    for (g = 0; g < GC_NUM_GROUNDS; g++) {
+        const atmosCover_t *c = R_AtmosCover(g);
+
+        gc.groundDensity[g] = density[g];
+        if (!c->set) {
+            continue;
+        }
+        gc.groundDensity[g] = c->density;
+        for (k = 0; k < GC_NUM_KINDS; k++) {
+            if (c->share[k] >= 0.0f) {
+                gc.share[g][k] = c->share[k];
+            }
+        }
+    }
+
+    // the old texture is grass and nothing else; mud is reeds at water,
+    // and a map with no water has none
+    if (!gc.numWater) {
+        gc.groundDensity[GC_GROUND_MUD] = 0.0f;
+    }
+    if (!gc.atlas || !r_groundCoverKinds->integer) {
+        for (g = GC_GROUND_GRASS + 1; g < GC_NUM_GROUNDS; g++) {
+            gc.groundDensity[g] = 0.0f;
+        }
+    }
+}
+
+// The ground a shader is, or -1: grass (brushes and terrain) and, of the
+// others, only those the map grows something on.
+static int GC_ShaderGround(int surfaceFlags)
+{
+    static const int flags[GC_NUM_GROUNDS] = { SURF_GRASS, SURF_SNOW, SURF_GRAVEL, SURF_SAND, SURF_MUD | SURF_DIRT };
+    int              g;
+
+    for (g = 0; g < GC_NUM_GROUNDS; g++) {
+        if ((surfaceFlags & flags[g]) && gc.groundDensity[g] > 0.0f) {
+            return g;
+        }
+    }
+    return -1;
+}
+
+static int GC_GroundFlag(int ground)
+{
+    static const int flags[GC_NUM_GROUNDS] = { SURF_GRASS, SURF_SNOW, SURF_GRAVEL, SURF_SAND, SURF_MUD | SURF_DIRT };
+    return flags[ground];
+}
+
+// The tops of the map's water: faces of water brushes that look up.
+static void GC_GatherWater(const dshader_t *dshaders, const dsurface_t *dsurfs, int numSurfs, const drawVert_t *dverts, int numVerts)
+{
+    int i, k;
+
+    gc.numWater = 0;
+    for (i = 0; i < numSurfs && gc.numWater < GC_MAX_WATER; i++) {
+        const dsurface_t *ds        = &dsurfs[i];
+        int               shaderNum = LittleLong(ds->shaderNum);
+        int               firstVert = LittleLong(ds->firstVert);
+        int               nVerts    = LittleLong(ds->numVerts);
+        gcWater_t        *w;
+        float             zsum = 0;
+
+        if (LittleLong(ds->surfaceType) != MST_PLANAR || shaderNum < 0 || shaderNum >= gc.numShaders) {
+            continue;
+        }
+        if (!(LittleLong(dshaders[shaderNum].contentFlags) & CONTENTS_WATER)) {
+            continue;
+        }
+        if (nVerts < 3 || firstVert < 0 || firstVert + nVerts > numVerts || LittleFloat(dverts[firstVert].normal[2]) < 0.9f) {
+            continue;
+        }
+        w     = &gc.water[gc.numWater];
+        w->x0 = w->y0 = 1e9f;
+        w->x1 = w->y1 = -1e9f;
+        for (k = 0; k < nVerts; k++) {
+            const float *xyz = dverts[firstVert + k].xyz;
+            w->x0 = MIN(w->x0, LittleFloat(xyz[0]));
+            w->y0 = MIN(w->y0, LittleFloat(xyz[1]));
+            w->x1 = MAX(w->x1, LittleFloat(xyz[0]));
+            w->y1 = MAX(w->y1, LittleFloat(xyz[1]));
+            zsum += LittleFloat(xyz[2]);
+        }
+        w->z = zsum / nVerts;
+        gc.numWater++;
+    }
+}
+
+// How much at a water's edge a place is, 0 to 1: from a little under the
+// water's level to `above` over it, at or near one of the map's water tops.
+static float GC_WaterEdge(const vec3_t at, float above)
+{
+    float best = 0;
+    int   i;
+
+    for (i = 0; i < gc.numWater; i++) {
+        const gcWater_t *w = &gc.water[i];
+        float            dz, f;
+
+        if (at[0] < w->x0 - 48 || at[0] > w->x1 + 48 || at[1] < w->y0 - 48 || at[1] > w->y1 + 48) {
+            continue;
+        }
+        dz = at[2] - w->z;
+        f  = Com_Clamp(0, 1, (above - dz) / 10.0f) * Com_Clamp(0, 1, (dz + 22.0f) / 8.0f);
+        best = MAX(best, f);
+    }
+    return best;
 }
 
 /*
@@ -583,6 +759,7 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     const int        *dindexes;
     int               numSurfs, numVerts, numIndexes, numPatches;
     int               pass, i, j;
+    int              *grounds;
 
     R_GroundCoverFree();
     gc_dropOutside = gc_dropSlope = gc_dropMask = gc_dropCovered = gc_kept = 0;
@@ -591,7 +768,13 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
         return;
     }
 
-    gc.shader = R_FindShader("groundcover/grass", LIGHTMAP_NONE, qtrue);
+    // every kind in one texture; a pak from before the kinds has only grass
+    gc.atlas  = qtrue;
+    gc.shader = R_FindShader("groundcover/cover", LIGHTMAP_NONE, qtrue);
+    if (gc.shader->defaultShader) {
+        gc.atlas  = qfalse;
+        gc.shader = R_FindShader("groundcover/grass", LIGHTMAP_NONE, qtrue);
+    }
     if (gc.shader->defaultShader) {
         ri.Printf(PRINT_WARNING, "Ground cover: no groundcover/grass shader (zzzzzzzzz-opm-groundcover.pk3)\n");
         Com_Memset(&gc, 0, sizeof(gc));
@@ -611,12 +794,26 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     gc.shaderSlot  = ri.Malloc(MAX(gc.numShaders, 1) * sizeof(int));
     gc.shaderNames = ri.Malloc(MAX(gc.numShaders, 1) * sizeof(*gc.shaderNames));
 
+    dsurfs   = (const dsurface_t *)(fileBase + surfLump->fileofs);
+    numSurfs = surfLump->filelen / sizeof(dsurface_t);
+    dverts   = (const drawVert_t *)(fileBase + vertLump->fileofs);
+    numVerts = vertLump->filelen / sizeof(drawVert_t);
+
+    // the water's tops, for reeds: before the grounds, for a map with no
+    // water grows nothing on its mud
+    if (gc.atlas && r_groundCoverKinds->integer) {
+        GC_GatherWater(dshaders, dsurfs, numSurfs, dverts, numVerts);
+    }
+    GC_SetupGrounds();
+
+    grounds = ri.Malloc(MAX(gc.numShaders, 1) * sizeof(int));
     for (i = 0; i < gc.numShaders; i++) {
         int surfaceFlags = LittleLong(dshaders[i].surfaceFlags);
         int contents     = LittleLong(dshaders[i].contentFlags);
+        int ground       = GC_ShaderGround(surfaceFlags);
 
         gc.shaderSlot[i] = -1;
-        if (!(surfaceFlags & SURF_GRASS) || (surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
+        if (ground < 0 || (surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
             continue;
         }
         // grass the player walks through is foliage, not ground
@@ -624,17 +821,23 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             continue;
         }
         gc.shaderSlot[i] = gc.numGrassShaders;
+        grounds[gc.numGrassShaders] = ground;
         Q_strncpyz(gc.shaderNames[gc.numGrassShaders], dshaders[i].shader, MAX_QPATH);
         gc.numGrassShaders++;
     }
 
     if (!gc.numGrassShaders) {
+        ri.Free(grounds);
         R_GroundCoverFree();
         return;
     }
 
     gc.shaders = ri.Malloc(gc.numGrassShaders * sizeof(gcShader_t));
     Com_Memset(gc.shaders, 0, gc.numGrassShaders * sizeof(gcShader_t));
+    for (i = 0; i < gc.numGrassShaders; i++) {
+        gc.shaders[i].ground = grounds[i];
+    }
+    ri.Free(grounds);
 
     gc.numLightmaps = lmLump->filelen / (LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3);
     if (gc.numLightmaps) {
@@ -642,10 +845,6 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
         Com_Memcpy(gc.lightmaps, fileBase + lmLump->fileofs, gc.numLightmaps * LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3);
     }
 
-    dsurfs     = (const dsurface_t *)(fileBase + surfLump->fileofs);
-    numSurfs   = surfLump->filelen / sizeof(dsurface_t);
-    dverts     = (const drawVert_t *)(fileBase + vertLump->fileofs);
-    numVerts   = vertLump->filelen / sizeof(drawVert_t);
     dindexes   = (const int *)(fileBase + indexLump->fileofs);
     numIndexes = indexLump->filelen / sizeof(int);
 
@@ -666,6 +865,12 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             int               nIndexes = LittleLong(ds->numIndexes);
 
             if (slot < 0 || (type != MST_PLANAR && type != MST_TRIANGLE_SOUP)) {
+                continue;
+            }
+            // snow, gravel and sand brushes are as often roofs, beams and
+            // walls' tops as ground: of those, terrain only (mud grows only
+            // at water, so its brushes too)
+            if (gc.shaders[slot].ground != GC_GROUND_GRASS && gc.shaders[slot].ground != GC_GROUND_MUD) {
                 continue;
             }
             if (firstVert < 0 || firstVert + nVerts > numVerts || firstIndex < 0 || firstIndex + nIndexes > numIndexes) {
@@ -782,8 +987,8 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     }
 
     gc.active = qtrue;
-    ri.Printf(PRINT_DEVELOPER, "Ground cover: %d grass shaders, %d triangles, %d terrain patches, %dx%d cells\n",
-        gc.numGrassShaders, gc.numTris, gc.numTerrain, gc.cellsX, gc.cellsY);
+    ri.Printf(PRINT_DEVELOPER, "Ground cover: %d ground shaders, %d triangles, %d terrain patches, %dx%d cells, %d water tops\n",
+        gc.numGrassShaders, gc.numTris, gc.numTerrain, gc.cellsX, gc.cellsY, gc.numWater);
 }
 
 /*
@@ -1116,6 +1321,12 @@ static void GC_LoadShaderMask(int slot)
     gs->hasMask = qfalse;
     VectorSet(gs->tint, 1, 1, 1);
 
+    // snow, gravel and sand: what grows there is its own colour, and grows
+    // anywhere on it (as thinly as the map says)
+    if (gs->ground != GC_GROUND_GRASS) {
+        return;
+    }
+
     R_LoadImageUncompressed(GC_GroundImageName(slot), &pic, &width, &height, &format);
     if (!pic || format != GL_RGBA8 || width <= 0 || height <= 0) {
         if (pic) {
@@ -1264,7 +1475,7 @@ typedef struct {
     vec3_t tint;
 } gcSample_t;
 
-static qboolean GC_Clear(vec3_t xyz, float below, float above)
+static qboolean GC_Clear(vec3_t xyz, float below, float above, int groundFlag)
 {
     trace_t trace;
     vec3_t  start, end;
@@ -1282,7 +1493,7 @@ static qboolean GC_Clear(vec3_t xyz, float below, float above)
     VectorSet(end, xyz[0], xyz[1], xyz[2] - below - 4);
     ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
     if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f || trace.endpos[2] > xyz[2] + above || trace.endpos[2] < xyz[2] - below
-        || !(trace.surfaceFlags & SURF_GRASS)) {
+        || !(trace.surfaceFlags & groundFlag)) {
         return qfalse;
     }
     xyz[2] = trace.endpos[2];
@@ -1400,11 +1611,87 @@ static float GC_ValueNoise(float x, float y)
     return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
 }
 
+// Snow, gravel and sand grow in clumps with bare ground between: about a
+// third of it, 0 to 1
+static float GC_Clumps(float x, float y)
+{
+    return Com_Clamp(0, 1, (0.6f * GC_ValueNoise(x / 110.0f + 5.3f, y / 110.0f - 3.1f) + 0.4f * GC_ValueNoise(x / 37.0f - 1.7f, y / 37.0f + 8.9f) - 0.5f) * 5.0f);
+}
+
 static float GC_Patchiness(float x, float y)
 {
     float n = 0.65f * GC_ValueNoise(x / 340.0f, y / 340.0f) + 0.35f * GC_ValueNoise(x / 97.0f + 17.3f, y / 97.0f - 5.1f);
     // thick, thin and a few bare spots, about as much grass as even
     return Com_Clamp(0, 1, (n - 0.22f) * 1.6f);
+}
+
+// What grows at a place on a ground, or -1 for nothing. On grass ground weeds and flowers come
+// in patches of their own among the grass, and reeds at a water's edge; the
+// grass is what is left. On the others the shares are of each other.
+static int GC_PickKind(int ground, const vec3_t at, unsigned int *rnd)
+{
+    const float *share = gc.share[ground];
+    float        r, total;
+    int          k;
+
+    if (!gc.atlas || !r_groundCoverKinds->integer) {
+        return GC_Rand(rnd) < 0.5f ? GC_KIND_GRASS : GC_KIND_GRASS2;
+    }
+
+    r = GC_Rand(rnd);
+    if (ground == GC_GROUND_MUD) {
+        return r < share[GC_KIND_REEDS] * GC_WaterEdge(at, 14.0f) ? GC_KIND_REEDS : -1;
+    }
+    if (ground == GC_GROUND_GRASS) {
+        float edge = gc.numWater && share[GC_KIND_REEDS] > 0.0f ? GC_WaterEdge(at, 30.0f) : 0.0f;
+        float weeds, flowers;
+
+        if (edge > 0.0f && r < share[GC_KIND_REEDS] * edge) {
+            return GC_KIND_REEDS;
+        }
+        r = GC_Rand(rnd);
+        // patches a few paces across: thick in some, none in most
+        weeds   = share[GC_KIND_WEEDS] * 3.0f * Com_Clamp(0, 1, (GC_ValueNoise(at[0] / 150.0f + 31.7f, at[1] / 150.0f - 12.2f) - 0.3f) * 2.0f);
+        flowers = share[GC_KIND_FLOWERS] * 5.0f * Com_Clamp(0, 1, (GC_ValueNoise(at[0] / 210.0f - 7.3f, at[1] / 210.0f + 3.9f) - 0.45f) * 2.5f);
+        if (r < weeds) {
+            return GC_KIND_WEEDS;
+        }
+        r -= weeds;
+        if (r < flowers) {
+            return GC_KIND_FLOWERS;
+        }
+        r -= flowers;
+        for (k = GC_KIND_DEAD; k < GC_NUM_KINDS; k++) {
+            if (k == GC_KIND_REEDS) {
+                continue;
+            }
+            if (r < share[k]) {
+                return k;
+            }
+            r -= share[k];
+        }
+        return GC_Rand(rnd) < 0.5f ? GC_KIND_GRASS : GC_KIND_GRASS2;
+    }
+
+    for (k = 0, total = 0; k < GC_NUM_KINDS; k++) {
+        total += share[k];
+    }
+    if (total <= 0.0f) {
+        return GC_KIND_DEAD;
+    }
+    r *= total;
+    for (k = 0; k < GC_NUM_KINDS; k++) {
+        if (r < share[k]) {
+            return k == GC_KIND_GRASS && GC_Rand(rnd) < 0.5f ? GC_KIND_GRASS2 : k;
+        }
+        r -= share[k];
+    }
+    return GC_KIND_DEAD;
+}
+
+static int GC_SourceShader(int type, int index)
+{
+    return type == GC_SRC_TRI ? gc.tris[index].shader : gc.terrain[index].shader;
 }
 
 static int GC_CompareTufts(const void *a, const void *b)
@@ -1515,8 +1802,10 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
                 continue;
             }
 
-            // the patches keep about half
-            w                = (gcBuild.x1 - gcBuild.x0) * (gcBuild.y1 - gcBuild.y0) * density * 2.0f;
+            // the patches keep about half; other grounds than grass grow
+            // as thinly as the map has it
+            w                = (gcBuild.x1 - gcBuild.x0) * (gcBuild.y1 - gcBuild.y0) * density * 2.0f
+                             * gc.groundDensity[gc.shaders[GC_SourceShader(gcBuild.type, gcBuild.index)].ground];
             gcBuild.attempts = (int)w + (GC_Rand(&gcBuild.rnd) < w - (int)w ? 1 : 0);
             continue;
         }
@@ -1532,6 +1821,7 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
             gcSample_t     sample;
             gcBuildTuft_t *bt;
             gcTuft_t      *tuft;
+            int            ground, kind;
             float          x = gcBuild.x0 + GC_Rand(rnd) * (gcBuild.x1 - gcBuild.x0);
             float          y = gcBuild.y0 + GC_Rand(rnd) * (gcBuild.y1 - gcBuild.y0);
             qboolean       ok;
@@ -1546,11 +1836,24 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
             if (!ok) {
                 continue;
             }
+            ground = gc.shaders[GC_SourceShader(type, index)].ground;
             if (GC_Patchiness(x, y) <= GC_Rand(rnd)) {
                 continue;
             }
-            if (!GC_Clear(sample.xyz, type == GC_SRC_TERRAIN ? 16.0f : 3.0f, type == GC_SRC_TERRAIN ? 5.0f : 3.0f)) {
+            if (ground != GC_GROUND_GRASS && ground != GC_GROUND_MUD && GC_Clumps(x, y) <= GC_Rand(rnd)) {
+                continue;
+            }
+            // mud grows only at water: no trace for the rest of it
+            if (ground == GC_GROUND_MUD && GC_WaterEdge(sample.xyz, 14.0f) <= 0.0f) {
+                continue;
+            }
+            if (!GC_Clear(sample.xyz, type == GC_SRC_TERRAIN ? 16.0f : 3.0f, type == GC_SRC_TERRAIN ? 5.0f : 3.0f,
+                          GC_GroundFlag(ground))) {
                 gc_dropCovered++;
+                continue;
+            }
+            kind = GC_PickKind(ground, sample.xyz, rnd);
+            if (kind < 0) {
                 continue;
             }
             gc_kept++;
@@ -1574,7 +1877,8 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
             // most tufts are gone by half the distance, a few go on to it
             tuft->fadeEnd = 0.25f + 0.75f * GC_Rand(rnd) * GC_Rand(rnd);
             tuft->phase   = GC_Rand(rnd) * 2.0f * M_PI;
-            tuft->flex    = 0.6f + 0.6f * GC_Rand(rnd);
+            tuft->flex    = (0.6f + 0.6f * GC_Rand(rnd)) * gcKindShape[kind].flex;
+            bt->kind      = kind;
 
             VectorScale(sample.light, bright * (0.85f + 0.25f * GC_Rand(rnd)), bt->color);
             bt->color[0] *= sample.tint[0];
@@ -1607,12 +1911,28 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
     for (n = 0; n < numTufts; n++) {
         gcTuft_t    *tuft = &cell->tufts[n];
         unsigned int rnd  = GC_Hash((unsigned int)(tufts[n].tuft.root[0] * 13.0f) ^ GC_Hash((unsigned int)(tufts[n].tuft.root[1] * 7.0f)));
-        float        h    = (8.0f + 14.0f * GC_Rand(&rnd)) * scale;
+        const int    kind = tufts[n].kind;
+        float        h    = (gcKindShape[kind].h0 + gcKindShape[kind].h1 * GC_Rand(&rnd)) * scale;
         float        yaw  = GC_Rand(&rnd) * M_PI;
-        float        halfw = h * (0.55f + 0.25f * GC_Rand(&rnd));
-        float        s0   = GC_Rand(&rnd) < 0.5f ? 0.0f : 0.5f;
+        float        halfw = h * (gcKindShape[kind].w0 + gcKindShape[kind].w1 * GC_Rand(&rnd));
+        float        s0, s1, t0, t1;
         vec3_t       lean, base, top;
         int          q;
+
+        // its cell of the texture: of the kinds' four by two, or of the old
+        // texture's two clumps side by side
+        if (gc.atlas) {
+            s0 = (kind & 3) * 0.25f;
+            s1 = s0 + 0.25f;
+            t0 = (kind >> 2) * 0.5f + 0.49f; // the foot
+            t1 = (kind >> 2) * 0.5f + 0.01f; // the tip
+        } else {
+            s0 = kind == GC_KIND_GRASS2 ? 0.5f : 0.0f;
+            s1 = s0 + 0.5f;
+            t0 = 0.98f;
+            t1 = 0.02f;
+        }
+        gc.kindCount[kind]++;
 
         *tuft = tufts[n].tuft;
         VectorSet(lean, (GC_Rand(&rnd) - 0.5f) * 0.3f * h, (GC_Rand(&rnd) - 0.5f) * 0.3f * h, 0);
@@ -1629,17 +1949,17 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
 
             // 0, 1 on the ground; 2, 3 at the tip
             VectorSubtract(tuft->root, dir, p);
-            GC_SetVert(&v[0], p, s0, 0.98f, base);
+            GC_SetVert(&v[0], p, s0, t0, base);
             VectorAdd(tuft->root, dir, p);
-            GC_SetVert(&v[1], p, s0 + 0.5f, 0.98f, base);
+            GC_SetVert(&v[1], p, s1, t0, base);
             VectorAdd(tuft->root, dir, p);
             VectorAdd(p, lean, p);
             p[2] += h;
-            GC_SetVert(&v[2], p, s0 + 0.5f, 0.02f, top);
+            GC_SetVert(&v[2], p, s1, t1, top);
             VectorSubtract(tuft->root, dir, p);
             VectorAdd(p, lean, p);
             p[2] += h;
-            GC_SetVert(&v[3], p, s0, 0.02f, top);
+            GC_SetVert(&v[3], p, s0, t1, top);
 
             ix[0] = first + 0;
             ix[1] = first + 1;
@@ -2184,7 +2504,7 @@ void R_GroundCoverInfo_f(void)
     for (ch = 0; ch < gc.numChunks; ch++) {
         pages += gc.chunks[ch]->numUsed;
     }
-    ri.Printf(PRINT_ALL, "Ground cover: %d grass shaders, %d triangles, %d terrain patches\n",
+    ri.Printf(PRINT_ALL, "Ground cover: %d ground shaders, %d triangles, %d terrain patches\n",
         gc.numGrassShaders, gc.numTris, gc.numTerrain);
     ri.Printf(PRINT_ALL, "  %d of %d cells made, %d tufts, %d KB; %d cells added last frame\n",
         built, gc.cellsX * gc.cellsY, tufts, bytes / 1024, gc.numDraws);
@@ -2195,6 +2515,24 @@ void R_GroundCoverInfo_f(void)
         gc.numChunks ? pages * 100 / (gc.numChunks * GC_CHUNK_PAGES) : 0);
     ri.Printf(PRINT_ALL, "  samples: %d kept; dropped %d outside, %d steep, %d bare texture, %d covered\n",
         gc_kept, gc_dropOutside, gc_dropSlope, gc_dropMask, gc_dropCovered);
+    {
+        char line[512];
+        int  k, g;
+
+        line[0] = 0;
+        for (k = 0; k < GC_NUM_KINDS; k++) {
+            if (gc.kindCount[k]) {
+                Q_strcat(line, sizeof(line), va(" %s %d", gcKindNames[k], gc.kindCount[k]));
+            }
+        }
+        ri.Printf(PRINT_ALL, "  kinds (%s):%s\n", !gc.atlas ? "grass only: no groundcover/cover shader"
+            : !r_groundCoverKinds->integer ? "grass only: r_groundCoverKinds 0" : "all", line[0] ? line : " none made");
+        line[0] = 0;
+        for (g = 0; g < GC_NUM_GROUNDS; g++) {
+            Q_strcat(line, sizeof(line), va(" %s %g", gcGroundNames[g], gc.groundDensity[g]));
+        }
+        ri.Printf(PRINT_ALL, "  grounds:%s; %d water tops\n", line, gc.numWater);
+    }
     ri.Printf(PRINT_ALL, "  drawn since the last report: %d cells, %d tufts\n", gc.backEndDraws, gc.backEndTufts);
     gc.backEndDraws = gc.backEndTufts = 0;
 
