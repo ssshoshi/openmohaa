@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "blender", "io_scene_mohaa"))
 from mohaa import skc, skd  # noqa: E402
 
 import paint  # noqa: E402
+import pines  # noqa: E402
 
 GOLDEN = math.radians(137.5)
 UP = np.array([0.0, 0.0, 1.0])
@@ -624,7 +625,29 @@ def main():
             print("%-12s replaces %s" % (n, ", ".join(sp.replaces)))
         return
     shaders = ""
+    # the winter trees from the player's pine collection, when they have it (tools/flora/pines.py)
+    pine_src = pines.source()
+    if pine_src:
+        print("pines from %s" % pine_src)
+        pine_parts = pines.load(pine_src)
+        pine_trees = pines.trees(pine_parts)
+        if not args.no_textures:
+            pines.textures(pine_src, os.path.join(args.out, "textures/opm/flora"))
     for name in args.species or SPECIES:
+        if pine_src and name in pines.PINES:
+            sp, cfg = SPECIES[name], pines.PINES[name]
+            meshes = pines.build(pine_parts, pine_trees[cfg["tree"]], sp.height, sp.radius, cfg["lod"],
+                                 cfg.get("bare", False))
+            model, anim, lo, hi = to_skd(name, sp, meshes)
+            write(os.path.join(args.out, "models/static/natural/opm_%s.skd" % name), model)
+            write(os.path.join(args.out, "models/static/natural/opm_%s.skc" % name), anim)
+            for game_model in sp.replaces:
+                write(os.path.join(args.out, "models/static/%s.tik" % game_model), tik_text(name, [m.name for m in meshes]))
+            shaders += pines.shader_text(name, meshes, cfg["lod"])
+            print("%-12s pine %2d  %s  %.0f x %.0f x %.0f" % (
+                name, cfg["tree"], "  ".join("%s %d" % (m.name, m.count()) for m in meshes),
+                hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]))
+            continue
         sp, meshes = build(name)
         bark, leaves = meshes[0], meshes[1]
         model, anim, lo, hi = to_skd(name, sp, meshes)
