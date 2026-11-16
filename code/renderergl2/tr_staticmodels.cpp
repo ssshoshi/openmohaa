@@ -303,7 +303,7 @@ static void R_SeatStaticFlora(void)
             }
             dx    = o->origin[0] - pSM->origin[0];
             dy    = o->origin[1] - pSM->origin[1];
-            reach = o->cull_radius + foot;
+            reach = o->cull_radius * 0.5f; // (over the rock itself: its sphere reaches well past it)
             rock  = dx * dx + dy * dy < reach * reach;
         }
         if (rock) {
