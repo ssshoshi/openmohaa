@@ -282,7 +282,10 @@ def build(parts, tree, height, radius, lod, bare=False, sink=0.0):
             if np.ptp(v[:, 1]) > 1.5 * max(np.ptp(v[:, 0]), np.ptp(v[:, 2])):
                 return True
             return np.percentile(np.hypot(v[:, 0] - foot[0], v[:, 2] - foot[1]), 90) < 0.03 * top
-        ps = [(i, g) for i, g in ps if i not in CARD_PARTS and len(g) >= 40 and on_axis(i, g)]
+        # (and all of its root flare, which reaches well out round the foot: without its
+        # wide pieces the foot stood open on two sides)
+        ps = [(i, g) for i, g in ps
+              if i in ROOT_PARTS or (i not in CARD_PARTS and len(g) >= 40 and on_axis(i, g))]
     # z up, clockwise: file (x, y, z) -> model (x, -z, y), each triangle turned round
     allv = np.concatenate([parts[i][0][np.unique(parts[i][3][g])] for i, g in ps])
     top = allv[:, 1].max()
@@ -469,9 +472,9 @@ def shader_text(name, meshes, lod, tex="pine"):
 }
 """ % {"n": name, "m": m.name, "img": img, "fade": fade}
         else:
-            # (the root flare is a sheet open underneath: seen from below a slope, or
-            # where the ground dips at its edge, one-sided it showed the sky through it)
-            cull = "\tcull none\n" if m.name in ("bark_root", "bark_far") else ""
+            # (one-sided, as the stems are: the engine sways a tree's two-sided surfaces
+            # as leaves, and a fluttering trunk looks of rubber)
+            cull = ""
             out += """opm_flora/%(n)s_%(m)s
 {
 	qer_editorimage %(img)s
