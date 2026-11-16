@@ -253,8 +253,8 @@ difference. A remade tree has a flared foot whose roots spread over the ground,
 and stood a hand over it they stuck out in the air, the bark going on down below
 them. Each is set down to the ground under its foot (the mean of round it: on a
 slope the roots go into the bank above and the bark below them runs on down the
-slope), its roots in it to a depth of its own; the light is still read where the
-map put it.
+slope), a little over it, so that some of the flare that runs on under its
+origin shows, as much as is its own; the light is still read where the map put it.
 
 Only the remade ones (their meshes opm_*): what is under a rock (a static
 model, which nothing traced meets) is left as it is.
@@ -282,7 +282,7 @@ static void R_SeatStaticFlora(void)
     for (i = 0; i < tr.world->numStaticModels; i++) {
         cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
         const float             size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
-        float                   foot, low, sum, bury, h;
+        float                   foot, low, sum, over, h;
         int                     n = 0;
         qboolean                rock = qfalse;
         vec3_t                  start, end;
@@ -332,13 +332,15 @@ static void R_SeatStaticFlora(void)
         }
         low = sum / n;
 
-        // how deep its roots go: each its own, from where it stands
+        // how much of its roots shows: each its own. The model's ground is its origin
+        // and the flare runs on under it (tools/flora/pines.py keeps the top of that
+        // as it is): stood a little over the ground, some of it is out
         h    = sin(pSM->origin[0] * 12.9898f + pSM->origin[1] * 78.233f) * 43758.5453f;
         h   -= floor(h);
-        bury = size * 0.014f * h; // (none to 12 units on a stem 854 tall)
+        over = size * (0.003f + 0.009f * h); // (2.5 to 10 units on a stem 854 tall)
 
         // (down as far as it takes; up only a little, out of a hollow it was sunk in)
-        low -= bury;
+        low += over;
         if (low > pSM->origin[2] + size * 0.05f) {
             low = pSM->origin[2] + size * 0.05f;
         }
