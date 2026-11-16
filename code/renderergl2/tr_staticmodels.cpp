@@ -251,8 +251,10 @@ Added in OPM. The game's trees were plain posts sunk in the ground, and the
 maps put them anywhere from a little under it to well over it: a post shows no
 difference. A remade tree has a flared foot whose roots spread over the ground,
 and stood a hand over it they stuck out in the air, the bark going on down below
-them. Each is set down where the ground under its foot is lowest, its roots in
-it to a depth of its own; the light is still read where the map put it.
+them. Each is set down to the ground under its foot (the mean of round it: on a
+slope the roots go into the bank above and the bark below them runs on down the
+slope), its roots in it to a depth of its own; the light is still read where the
+map put it.
 
 Only the remade ones (their meshes opm_*): what is under a rock (a static
 model, which nothing traced meets) is left as it is.
@@ -280,8 +282,9 @@ static void R_SeatStaticFlora(void)
     for (i = 0; i < tr.world->numStaticModels; i++) {
         cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
         const float             size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
-        float                   foot, low, bury, h;
-        qboolean                hit = qfalse, rock = qfalse;
+        float                   foot, low, sum, bury, h;
+        int                     n = 0;
+        qboolean                rock = qfalse;
         vec3_t                  start, end;
         trace_t                 trace;
 
@@ -308,7 +311,7 @@ static void R_SeatStaticFlora(void)
         }
 
         // the ground under the foot, at its middle and round it
-        low = 0.0f;
+        sum = 0.0f;
         for (k = 0; k < 9; k++) {
             const float a = k * (float)(M_PI / 4.0);
 
@@ -321,19 +324,18 @@ static void R_SeatStaticFlora(void)
             if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f) {
                 continue;
             }
-            if (!hit || trace.endpos[2] < low) {
-                low = trace.endpos[2];
-            }
-            hit = qtrue;
+            sum += trace.endpos[2];
+            n++;
         }
-        if (!hit) {
+        if (n < 5) {
             continue;
         }
+        low = sum / n;
 
         // how deep its roots go: each its own, from where it stands
         h    = sin(pSM->origin[0] * 12.9898f + pSM->origin[1] * 78.233f) * 43758.5453f;
         h   -= floor(h);
-        bury = size * (0.008f + 0.027f * h);
+        bury = size * 0.014f * h; // (none to 12 units on a stem 854 tall)
 
         // (down as far as it takes; up only a little, out of a hollow it was sunk in)
         low -= bury;
