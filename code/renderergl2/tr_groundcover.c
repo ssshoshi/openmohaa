@@ -109,6 +109,7 @@ typedef struct {
     byte     mask[GC_MASK_SIZE * GC_MASK_SIZE]; // 0: bare, 255: grass
     vec3_t   tint;
     int      ground;   // gcGround_t
+    int      kept, dropMask, dropCovered; // samples on it so far (groundcoverinfo)
 } gcShader_t;
 
 typedef struct {
@@ -1387,6 +1388,52 @@ static void GC_LoadShaderMask(int slot)
         gs->mask[i] = (byte)(Com_Clamp(0, 1, w) * 255);
     }
 
+    // Unless the texture is two things, a path through a field: then the
+    // middle may be the path's, and the cut goes between the two. Two
+    // things are two groups of green further apart than they are spread
+    // (a field's own light and dark grass are about 1.3 apart; a path and its
+    // verges 2 and more), each a good part of the texture.
+    {
+        const int n = GC_MASK_SIZE * GC_MASK_SIZE;
+        float     bestScore = 0, bestCut = 0, bestSep = 0;
+        int       b;
+
+        for (b = 1; b < 64; b++) {
+            const float cut = b / 128.0f - 0.25f;
+            float       sum0 = 0, sum1 = 0, sq0 = 0, sq1 = 0, n0 = 0, n1 = 0, m0, m1, score;
+
+            for (i = 0; i < n; i++) {
+                if (g[i] < cut) {
+                    sum0 += g[i];
+                    sq0 += g[i] * g[i];
+                    n0++;
+                } else {
+                    sum1 += g[i];
+                    sq1 += g[i] * g[i];
+                    n1++;
+                }
+            }
+            if (n0 < n * 0.08f || n1 < n * 0.08f) {
+                continue;
+            }
+            m0    = sum0 / n0;
+            m1    = sum1 / n1;
+            score = n0 * n1 * (m1 - m0) * (m1 - m0);
+            if (score > bestScore) {
+                const float sd0 = sqrt(Q_max(0.0f, sq0 / n0 - m0 * m0)), sd1 = sqrt(Q_max(0.0f, sq1 / n1 - m1 * m1));
+
+                bestScore = score;
+                bestCut   = cut;
+                bestSep   = (m1 - m0) / Q_max(sd0 + sd1, 1e-4f);
+            }
+        }
+        if (bestSep > 1.8f) {
+            for (i = 0; i < n; i++) {
+                gs->mask[i] = (byte)(Com_Clamp(0, 1, (g[i] - bestCut) / 0.02f + 0.5f) * 255);
+            }
+        }
+    }
+
     // a texture with no green in it is not grass to look at, whatever its
     // surfaceparm says: leave it bare rather than guess
     if (median < -0.01f) {
@@ -1526,6 +1573,7 @@ static qboolean GC_SampleTri(const gcTri_t *tri, float x, float y, gcSample_t *o
     }
     if (GC_MaskAt(tri->shader, st) <= GC_Rand(rnd)) {
         gc_dropMask++;
+        gc.shaders[tri->shader].dropMask++;
         return qfalse;
     }
 
@@ -1578,6 +1626,7 @@ static qboolean GC_SampleTerrain(const gcTerrain_t *ter, float x, float y, gcSam
     }
     if (GC_MaskAt(ter->shader, st) <= GC_Rand(rnd)) {
         gc_dropMask++;
+        gc.shaders[ter->shader].dropMask++;
         return qfalse;
     }
 
@@ -1850,6 +1899,7 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
             if (!GC_Clear(sample.xyz, type == GC_SRC_TERRAIN ? 16.0f : 3.0f, type == GC_SRC_TERRAIN ? 5.0f : 3.0f,
                           GC_GroundFlag(ground))) {
                 gc_dropCovered++;
+                gc.shaders[GC_SourceShader(type, index)].dropCovered++;
                 continue;
             }
             kind = GC_PickKind(ground, sample.xyz, rnd);
@@ -1857,6 +1907,7 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
                 continue;
             }
             gc_kept++;
+            gc.shaders[GC_SourceShader(type, index)].kept++;
 
             // A cell holds GC_MAX_TUFTS_CELL. Past that, each tuft that
             // stands replaces a kept one by chance, so every source keeps
@@ -2532,6 +2583,16 @@ void R_GroundCoverInfo_f(void)
             Q_strcat(line, sizeof(line), va(" %s %g", gcGroundNames[g], gc.groundDensity[g]));
         }
         ri.Printf(PRINT_ALL, "  grounds:%s; %d water tops\n", line, gc.numWater);
+        // what each ground shader has grown so far, and why not
+        for (k = 0; k < gc.numGrassShaders; k++) {
+            const gcShader_t *gs = &gc.shaders[k];
+
+            if (!gs->kept && !gs->dropMask && !gs->dropCovered) {
+                continue;
+            }
+            ri.Printf(PRINT_ALL, "    %-48s %-6s kept %6d, bare texture %6d, covered %6d%s\n", gc.shaderNames[k],
+                gcGroundNames[gs->ground], gs->kept, gs->dropMask, gs->dropCovered, gs->hasMask ? "" : " (no mask)");
+        }
     }
     ri.Printf(PRINT_ALL, "  drawn since the last report: %d cells, %d tufts\n", gc.backEndDraws, gc.backEndTufts);
     gc.backEndDraws = gc.backEndTufts = 0;
