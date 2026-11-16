@@ -52,6 +52,7 @@ import paint
 DEFAULT = "/mnt/d/Medal of Honor/models/Realistic Pine Conifer Tree Collection"
 MAX_VERTS, MAX_TRIS = 1000, 2000
 BARK_PARTS, CARD_PARTS, ROOT_PARTS = (0, 1), (2, 3, 4, 5), (6,)
+KEEP = 0.7  # (of the flare under the origin, kept as it is: see build)
 
 # which tree of the row (counted from the left, -x, as the trees are found) becomes
 # which game model: the young ones are bushy cones, the grown ones a tall bare stem
@@ -303,16 +304,19 @@ def build(parts, tree, height, radius, lod, bare=False, sink=0.0):
         return p, n, uv
 
     placed = {i: place(i) for i in {i for i, _ in ps}}
-    # the foot drawn down to `sink` below the origin: what is under the ground stretched
-    # deeper (what shows above it stays as it was), so the flare runs on into the ground
-    # wherever the ground falls away from the tree
+    # the foot drawn down to `sink` below the origin, for slopes: the flare as it is
+    # down to KEEP of the way to its lowest (the renderer sets the tree on the ground
+    # with some of that showing, R_SeatStaticFlora), and its last tips stretched on
+    # into the ground (stretching the whole of it stood a tall bell over the ground)
     wood = [placed[i][0][np.unique(parts[i][3][g])] for i, g in ps if i not in CARD_PARTS]
     low = min(w[:, 2].min() for w in wood)
     if sink and -sink < low < 0:
+        kept = KEEP * low
         for i in placed:
             if i not in CARD_PARTS:
                 z = placed[i][0][:, 2]
-                z[z < 0] *= sink / -low
+                tip = z < kept
+                z[tip] = kept + (z[tip] - kept) * (-sink - kept) / (low - kept)
     bark, root, leaves, snow = Mesh("bark"), Mesh("bark_root"), Mesh("leaves"), Mesh("snow")
     bark_far, leaves_far, snow_far = Mesh("bark_far"), Mesh("leaves_far"), Mesh("snow_far")
     centre = np.array([0.0, 0.0, height * 0.6])
