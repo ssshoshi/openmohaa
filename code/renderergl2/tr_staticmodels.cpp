@@ -243,6 +243,117 @@ static void R_StaticFloraVaos(void)
 R_InitStaticModels
 ==============
 */
+/*
+===============
+R_SeatStaticFlora
+
+Added in OPM. The game's trees were plain posts sunk in the ground, and the
+maps put them anywhere from a little under it to well over it: a post shows no
+difference. A remade tree has a flared foot whose roots spread over the ground,
+and stood a hand over it they stuck out in the air, the bark going on down below
+them. Each is set down where the ground under its foot is lowest, its roots in
+it to a depth of its own; the light is still read where the map put it.
+
+Only the remade ones (their meshes opm_*): what is under a rock (a static
+model, which nothing traced meets) is left as it is.
+===============
+*/
+static qboolean R_StaticFloraRemade(const cStaticModelUnpacked_t *pSM)
+{
+    const skelHeaderGame_t *skel;
+
+    if (!pSM->tiki || pSM->floraHeight <= 0.0f || pSM->tiki->numMeshes < 1) {
+        return qfalse;
+    }
+    skel = ri.TIKI_GetSkel(pSM->tiki->mesh[0]);
+    return skel && Q_stristr(skel->name, "opm_") != NULL;
+}
+
+static void R_SeatStaticFlora(void)
+{
+    int i, j, k, seated = 0;
+
+    if (!r_floraSeat->integer || !tr.world) {
+        return;
+    }
+
+    for (i = 0; i < tr.world->numStaticModels; i++) {
+        cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
+        const float             size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
+        float                   foot, low, bury, h;
+        qboolean                hit = qfalse, rock = qfalse;
+        vec3_t                  start, end;
+        trace_t                 trace;
+
+        if (!R_StaticFloraRemade(pSM)) {
+            continue;
+        }
+        foot = size * 0.04f; // (as far out as the roots spread)
+
+        // a rock is a model too, which the trace goes through
+        for (j = 0; j < tr.world->numStaticModels && !rock; j++) {
+            const cStaticModelUnpacked_t *o = &tr.world->staticModels[j];
+            float                         dx, dy, reach;
+
+            if (!o->tiki || !Q_stristr(o->model, "rock")) {
+                continue;
+            }
+            dx    = o->origin[0] - pSM->origin[0];
+            dy    = o->origin[1] - pSM->origin[1];
+            reach = o->cull_radius + foot;
+            rock  = dx * dx + dy * dy < reach * reach;
+        }
+        if (rock) {
+            continue;
+        }
+
+        // the ground under the foot, at its middle and round it
+        low = 0.0f;
+        for (k = 0; k < 9; k++) {
+            const float a = k * (float)(M_PI / 4.0);
+
+            start[0] = pSM->origin[0] + (k ? cos(a) * foot : 0.0f);
+            start[1] = pSM->origin[1] + (k ? sin(a) * foot : 0.0f);
+            start[2] = pSM->origin[2] + size * 0.1f;
+            VectorCopy(start, end);
+            end[2] = pSM->origin[2] - size * 0.3f;
+            ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+            if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f) {
+                continue;
+            }
+            if (!hit || trace.endpos[2] < low) {
+                low = trace.endpos[2];
+            }
+            hit = qtrue;
+        }
+        if (!hit) {
+            continue;
+        }
+
+        // how deep its roots go: each its own, from where it stands
+        h    = sin(pSM->origin[0] * 12.9898f + pSM->origin[1] * 78.233f) * 43758.5453f;
+        h   -= floor(h);
+        bury = size * (0.008f + 0.027f * h);
+
+        // (down as far as it takes; up only a little, out of a hollow it was sunk in)
+        low -= bury;
+        if (low > pSM->origin[2] + size * 0.05f) {
+            low = pSM->origin[2] + size * 0.05f;
+        }
+        if (fabs(low - pSM->origin[2]) < 0.5f) {
+            continue;
+        }
+
+        // the light still read over the ground
+        pSM->lightOrigin[2] = Q_max(pSM->origin[2], low + 16.0f);
+        pSM->origin[2]      = low;
+        VectorCopy(pSM->origin, pSM->baseOrigin);
+        seated++;
+    }
+
+    ri.Printf(PRINT_DEVELOPER, "R_SeatStaticFlora: %d remade trees set on the ground\n", seated);
+}
+
 void R_InitStaticModels(void)
 {
     cStaticModelUnpacked_t *pSM;
@@ -289,6 +400,7 @@ void R_InitStaticModels(void)
         // Added in OPM
         //  where the map placed it (RE_SetStaticModelTransform)
         VectorCopy(pSM->origin, pSM->baseOrigin);
+        VectorCopy(pSM->origin, pSM->lightOrigin);
         AxisCopy(pSM->axis, pSM->baseAxis);
         pSM->moved    = qfalse;
         pSM->rtCaster = 0;
@@ -493,6 +605,9 @@ void R_InitStaticModels(void)
 
     // Added in OPM: the game's own trees, with the map's light, where they are few
     R_StaticFloraVaos();
+
+    // Added in OPM: the remade trees stood on the ground
+    R_SeatStaticFlora();
 
     tr.refdef.numStaticModels    = tr.world->numStaticModels;
     tr.refdef.staticModels       = tr.world->staticModels;
