@@ -83,6 +83,7 @@ static cvar_t *r_snowFall;
 static cvar_t *r_snow;
 static cvar_t *r_snowCover;
 static cvar_t *r_snowSparkle;
+static cvar_t *r_snowPlaster;
 cvar_t        *r_rainPuddles;
 static cvar_t *r_rainPuddleShaders;
 static cvar_t *r_rainRoofShaders;
@@ -181,6 +182,8 @@ void R_WaterRegisterCvars(void)
     ri.Cvar_SetDescription(r_snowCover, "In the snow, how much of it lies on the tops of what is out under the sky and is not snow already (crates, walls, roofs, rocks): 0 none, 1 thick");
     r_snowSparkle = ri.Cvar_Get("r_snowSparkle", "1", CVAR_ARCHIVE);
     ri.Cvar_SetDescription(r_snowSparkle, "In the snow, how much the snow glitters in the light as the eye moves over it: 0 not at all");
+    r_snowPlaster = ri.Cvar_Get("r_snowPlaster", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_snowPlaster, "In the snow, the remade trees' trunks have snow blown against them in splotches, on the side the map's wind blows from: 0 off");
     r_rainPuddles = ri.Cvar_Get("r_rainPuddles", "0.35", CVAR_ARCHIVE);
     r_rainBeads   = ri.Cvar_Get("r_rainBeads", "1", CVAR_ARCHIVE);
     r_rainPuddleShaders = ri.Cvar_Get("r_rainPuddleShaders", "mudpath_trans2", CVAR_ARCHIVE);
@@ -2605,6 +2608,12 @@ static qboolean R_RainRoofShader(const shader_t *shader)
     return R_RainShaderInList(shader, r_rainRoofShaders, qfalse, &m);
 }
 
+// a remade tree's bark (tools/flora: opm_flora/<kind>_bark, _bark_far)
+static qboolean R_FloraBark(const shader_t *shader)
+{
+    return shader && !Q_stricmpn(shader->name, "opm_flora/", 10) && strstr(shader->name, "_bark") != NULL;
+}
+
 void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
 {
     vec4_t      v;
@@ -2619,8 +2628,11 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
     }
     beach = r_waterWet->integer && water.beachSet && water.shoreSet;
     rain  = r_waterWet->integer ? R_RainAmount() : 0.0f;
-    // snow lies on the world and what stands in it, not on men or what moves
-    snow  = (backEnd.currentEntity == &tr.worldEntity) ? R_SnowAmount() : 0.0f;
+    // snow lies on the world and what stands in it, not on men or what moves;
+    // of the static models, on the remade trees' bark (it lies on the boughs
+    // and the wind blows it against the trunks: SnowPlaster)
+    snow  = (backEnd.currentEntity == &tr.worldEntity || (backEnd.currentStaticModel && R_FloraBark(tess.shader)))
+          ? R_SnowAmount() : 0.0f;
     // a cut-out (a tree line, a hedge, a fence) is no wall the rain wets;
     // the terrain, alpha tested on some maps, is ground that it does
     if (pStage && (pStage->stateBits & GLS_ATEST_BITS) && !(tess.shader && tess.shader->isTerrain)) {
@@ -2672,6 +2684,19 @@ void R_WaterSetWet(shaderProgram_t *sp, const shaderStage_t *pStage)
         GLSL_SetUniformVec4(sp, UNIFORM_RAINCOVER, v);
         if (snow > 0.0f) {
             VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel, snow * Q_max(0.0f, r_snowSparkle->value), 0.0f);
+            // a remade tree's bark: the snow the wind blows against it, on
+            // the side it blows from (the shader's SnowPlaster)
+            if (r_snowPlaster->integer && R_FloraBark(tess.shader)) {
+                vec2_t dir;
+                float  strength, yaw;
+
+                R_AtmosWind(dir, &strength);
+                yaw = atan2(dir[1], dir[0]);
+                if (yaw < 0.0f) {
+                    yaw += 2.0f * M_PI;
+                }
+                v[3] = 10.0f + yaw;
+            }
         } else {
             VectorSet4(v, (float)fmod(backEnd.refdef.floatTime, 1000.0), rainCover.texel,
                 R_RainPuddleShader(tess.shader) ? Com_Clamp(0.0f, 1.0f, r_rainPuddles->value) : 0.0f,

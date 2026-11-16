@@ -624,8 +624,7 @@ static void GC_SetupGrounds(void)
     gc.share[GC_GROUND_GRASS][GC_KIND_WEEDS]   = 0.06f;
     gc.share[GC_GROUND_GRASS][GC_KIND_FLOWERS] = 0.03f;
     gc.share[GC_GROUND_GRASS][GC_KIND_REEDS]   = 0.8f;
-    gc.share[GC_GROUND_SNOW][GC_KIND_DEAD]     = 0.85f;
-    gc.share[GC_GROUND_SNOW][GC_KIND_DRY]      = 0.15f;
+    gc.share[GC_GROUND_SNOW][GC_KIND_DEAD]     = 1.0f; // (with snow caked on it)
     gc.share[GC_GROUND_GRAVEL][GC_KIND_SCRUB]  = 0.45f;
     gc.share[GC_GROUND_GRAVEL][GC_KIND_DRY]    = 0.55f;
     gc.share[GC_GROUND_SAND][GC_KIND_SCRUB]    = 0.3f;
@@ -2155,7 +2154,9 @@ static qboolean GC_BuildCell(gcCell_t *cell, int cellIndex, double buildStart)
 
         *tuft = tufts[n].tuft;
         VectorSet(lean, (GC_Rand(&rnd) - 0.5f) * 0.3f * h, (GC_Rand(&rnd) - 0.5f) * 0.3f * h, 0);
-        VectorScale(tufts[n].color, 0.55f, base);
+        // darker at the foot, in the grass's shade; not the dead grass, whose
+        // foot is the snow heaped round it
+        VectorScale(tufts[n].color, kind == GC_KIND_DEAD && gc.atlas ? 0.92f : 0.55f, base);
         VectorCopy(tufts[n].color, top);
 
         for (q = 0; q < GC_QUADS_TUFT; q++) {

@@ -9,7 +9,7 @@ tuft quad (code/renderergl2/tr_groundcover.c, GC_KIND_*), in this order,
 left to right, top row first:
 
     0 grass        1 grass (another clump)   2 weeds (plantain, dock)   3 grass in flower
-    4 dead grass   5 dry scrub               6 reeds                    7 dry grass
+    4 dead grass, snow caked on it (it grows through the snow)   5 dry scrub               6 reeds                    7 dry grass
 
 groundcover_grass.tga, 512x256: the first two cells alone, the texture of
 renderers from before the kinds (groundcover/grass).
@@ -253,6 +253,53 @@ def reeds(seed):
     return c
 
 
+def cake(c, seed):
+    """Snow caked on a clump, as on a winter map's dead grass: lying along the top of
+    every blade that bends over, in lumps where the blades are thickest, and heaped
+    round its foot where it stands in the snow."""
+    from scipy import ndimage
+    rng = np.random.default_rng(seed)
+    w, h = c.w, c.h
+    a = c.alpha > 0.5
+    noise = ndimage.gaussian_filter(rng.random((h, w)).astype(np.float32), 3 * SS)
+    noise = (noise - noise.mean()) / max(noise.std(), 1e-6)
+    # along the tops: blade below, open air above, a few pixels deep
+    top = np.zeros_like(a)
+    depth = 9 * SS
+    for k in range(1, depth + 1):
+        above = np.zeros_like(a)
+        above[k:, :] = a[:-k, :]
+        top |= a & ~above & (k <= depth * (0.6 + 0.4 * np.clip(noise, -1, 1)))
+    # a cap on the clump's mass: where the blades are thick, the top of it only
+    thick = ndimage.gaussian_filter(c.alpha, 4 * SS)
+    mass = thick > 0.17 + 0.05 * noise
+    cap_depth = (16 * SS * (0.6 + 0.4 * np.clip(noise, -1, 1))).astype(int)
+    above = np.zeros_like(mass)
+    lumps = np.zeros_like(mass)
+    for k in range(1, 16 * SS + 1):
+        above[:] = False
+        above[k:, :] = mass[:-k, :]
+        lumps |= mass & ~above & (k <= cap_depth)
+    snow = (top | lumps) & (rng.random((h, w)) > 0.08)
+    # the drift round its foot, its top ragged
+    cols = np.where(a[int(h * 0.9):].any(axis=0))[0]
+    if len(cols):
+        x0, x1 = cols.min(), cols.max()
+        xs = np.arange(w)
+        edge = np.clip(1.0 - np.abs(xs - (x0 + x1) / 2) / max((x1 - x0) / 2 + 6 * SS, 1), 0, 1) ** 0.5
+        ridge = h - 1 - h * (0.06 + 0.10 * edge + 0.025 * noise[int(h * 0.9), :])
+        foot = (np.arange(h)[:, None] > ridge[None, :]) & (edge[None, :] > 0)
+    else:
+        foot = np.zeros_like(a)
+    soft = ndimage.gaussian_filter(noise, 4 * SS)
+    shade = (0.9 + 0.1 * np.clip(0.5 + 0.5 * soft / max(soft.std(), 1e-6), 0, 1))[..., None]
+    white = np.array((226.0, 231.0, 240.0), np.float32)[None, None, :] * shade
+    m = (snow | foot)[..., None]
+    c.rgb[:] = np.where(m, white, c.rgb)
+    c.alpha[:] = np.where(snow | foot, 1.0, c.alpha)
+    return c
+
+
 def finish(c, width):
     """Down from the supersampled size: RGBA, the edges keeping the drawing's colour."""
     h = c.h // SS
@@ -273,7 +320,7 @@ def main():
 
     cells = [
         clump(1), clump(2), weeds(3), flowers(4),
-        clump(5, DEAD, blades=60, droop=0.45, tall=0.8), scrub(6), reeds(7), clump(8, DRY, blades=70, droop=0.2),
+        cake(clump(5, DEAD, blades=60, droop=0.45, tall=0.8), 5), scrub(6), reeds(7), clump(8, DRY, blades=70, droop=0.2),
     ]
     tiles = [finish(c, CELL) for c in cells]
     atlas = np.concatenate([np.concatenate(tiles[0:4], axis=1), np.concatenate(tiles[4:8], axis=1)], axis=0)

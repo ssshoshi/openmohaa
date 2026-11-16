@@ -222,6 +222,25 @@ float SnowLies(vec3 surfN, vec3 N, float open)
 	return open * slope * clamp((u_Wet.z * 1.5 - drift) * 3.0, 0.0, 1.0);
 }
 
+// Added in OPM: snow the wind has blown against a tree's trunk, on the side it
+// blows from, in splotches (u_RainParams.w: 10 plus the yaw it blows to, set
+// for the remade trees' bark only; under 5 none)
+float SnowPlaster(vec3 surfN)
+{
+	if (u_RainParams.w < 5.0)
+		return 0.0;
+	float yaw  = u_RainParams.w - 10.0;
+	vec2  from = -vec2(cos(yaw), sin(yaw));
+	float side = 1.0 - abs(surfN.z);
+	float face = dot(normalize(surfN.xy + vec2(1e-4)), from) * side;
+	// across the trunk and up it, so the splotches stand on it
+	vec2  q    = vec2(dot(var_WetPos.xy, vec2(-from.y, from.x)), var_WetPos.z);
+	float n    = WetNoise(q / 11.0) * 0.55 + WetNoise(q / 3.7) * 0.3 + WetNoise(q / 1.3) * 0.15;
+	// full on, the splotches run together; round the side, a few
+	float lim  = mix(0.66, 0.38, smoothstep(0.3, 0.95, face));
+	return smoothstep(0.0, 0.35, face) * smoothstep(lim, lim + 0.06, n);
+}
+
 // Added in OPM: the snow's own surface, not quite even: a number about one
 float SnowGrainTone(vec3 p)
 {
@@ -1062,13 +1081,13 @@ void main()
 
 	// Added in OPM: wet, the material before it is lit; the film flattens
 	// the normal map's bumps
-	if (wet.x > 0.0)
+	if (wet.x > 0.0 || u_RainParams.w > 5.0)
 	{
 	  // Added in OPM: snow lying on it: white, dull, the normal map's bumps
-	  // under it smoothed over
+	  // under it smoothed over (and blown against a trunk)
 	  if (u_Wet.w < -0.5)
 	  {
-		snowLie = SnowLies(wetSurfN, N, wet.x);
+		snowLie = max(SnowLies(wetSurfN, N, wet.x), SnowPlaster(wetSurfN));
 		wet     = vec3(0.0);
 		if (snowLie > 0.0)
 		{
@@ -1261,12 +1280,12 @@ void main()
 #else
 
 	// Added in OPM: wet, with no material maps: a porous dull surface
-	if (wet.x > 0.0)
+	if (wet.x > 0.0 || u_RainParams.w > 5.0)
 	{
-	  // Added in OPM: snow lying on it
+	  // Added in OPM: snow lying on it (and blown against a trunk)
 	  if (u_Wet.w < -0.5)
 	  {
-		snowLie = SnowLies(wetSurfN, wetSurfN, wet.x);
+		snowLie = max(SnowLies(wetSurfN, wetSurfN, wet.x), SnowPlaster(wetSurfN));
 		wet     = vec3(0.0);
 		diffuse.rgb = mix(diffuse.rgb, Lin(vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos)), snowLie);
 		gl_FragColor.rgb = diffuse.rgb * lightColor;
