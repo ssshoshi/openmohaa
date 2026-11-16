@@ -92,7 +92,8 @@ functions imported from the main executable
 //  6: CM_EnableBrush is present.
 //  7: R_SetWaterBlood, R_AddWaterRipples and R_SetLensSpots are present (and
 //  NULL when the renderer has no use for them).
-#define CGAME_IMPORT_API_VERSION 7
+//  8: TimeFraction is present.
+#define CGAME_IMPORT_API_VERSION 8
 
     /*
 ==================================================================
@@ -483,6 +484,12 @@ functions exported to the main executable
         void (*R_AddWaterRipples)(const float *ripples, int numRipples);
         //  What is on the camera's lens: see refexport_t.
         void (*R_SetLensSpots)(const float *spots, int numSpots);
+
+        // Added in OPM (apiversion 8)
+        //  The part of a millisecond (0..1) that the given serverTime dropped
+        //  when the engine handed it to cgame (cg.time, or a later frame's
+        //  playerState commandTime); 0 when unknown.
+        float (*TimeFraction)(int serverTime);
 
     } clientGameImport_t;
 

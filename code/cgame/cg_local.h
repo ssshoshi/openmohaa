@@ -455,6 +455,9 @@ extern "C" {
     extern cvar_t *cg_debugAnim;
     extern cvar_t *cg_debugAnimWatch;
     extern cvar_t *cg_errorDecay;
+    // Added in OPM: sub-millisecond time for what is seen (CG_TimeFraction)
+    extern cvar_t *cg_subMsecLerp;
+    float          CG_TimeFraction(int serverTime);
     extern cvar_t *cg_nopredict;
     extern cvar_t *cg_showmiss;
     extern cvar_t *cg_addMarks;
