@@ -1833,6 +1833,9 @@ typedef struct cStaticModelUnpacked_s {
     struct vao_s **surfaceVaos;
     qboolean       vaoColors; // they hold the map's own light for it (R_StaticFloraVaos)
     float          floraHeight;
+    // where the light grid is read for it: where the map put it, though a remade
+    // tree is set down onto the ground (R_SeatStaticFlora)
+    vec3_t         lightOrigin;
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
@@ -3267,6 +3270,7 @@ extern cvar_t *r_vaoCache;
 extern cvar_t *r_staticModelVao; // Added in OPM
 extern cvar_t *r_floraWind;      // Added in OPM
 extern cvar_t *r_floraLod;       // Added in OPM
+extern cvar_t *r_floraSeat;      // Added in OPM
 extern cvar_t *r_floraShadowLod; // Added in OPM
 extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
