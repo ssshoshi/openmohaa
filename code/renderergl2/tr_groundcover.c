@@ -112,6 +112,7 @@ typedef struct {
     vec3_t   tint;
     int      ground;   // gcGround_t
     qboolean solid;    // its brushes are solid (a patch need not be)
+    qboolean split;    // groundcover/shaders.txt's `grow`: only the greener part of its texture
     int      kept, dropMask, dropCovered; // samples on it so far (groundcoverinfo)
 } gcShader_t;
 
@@ -739,6 +740,68 @@ static float GC_WaterEdge(const vec3_t at, float above)
     return best;
 }
 
+// groundcover/shaders.txt (the ground cover's pak): the shaders that are not
+// what their surfaceparm says, a line each:
+//     bare <shader>   never grows anything (the top of a hedge flagged grass)
+//     grow <shader>   is grass ground whatever its flags; only the greener of
+//                     the two parts of its texture grows (a rock and grass blend)
+enum { GC_RULE_NONE, GC_RULE_BARE, GC_RULE_GROW };
+#define GC_MAX_RULES 256
+
+static struct {
+    char name[MAX_QPATH];
+    int  rule;
+} gcRules[GC_MAX_RULES];
+static int gcNumRules;
+
+static void GC_LoadRules(void)
+{
+    union {
+        char *c;
+        void *v;
+    } buffer;
+    char *text;
+
+    gcNumRules = 0;
+    if (ri.FS_ReadFile("groundcover/shaders.txt", &buffer.v) <= 0) {
+        return;
+    }
+    text = buffer.c;
+    for (;;) {
+        char        kind[16];
+        const char *token = COM_ParseExt(&text, qtrue);
+
+        if (!token[0]) {
+            break;
+        }
+        Q_strncpyz(kind, token, sizeof(kind));
+        token = COM_ParseExt(&text, qfalse);
+        if (!token[0] || gcNumRules >= GC_MAX_RULES) {
+            continue;
+        }
+        if (!Q_stricmp(kind, "bare") || !Q_stricmp(kind, "grow")) {
+            Q_strncpyz(gcRules[gcNumRules].name, token, MAX_QPATH);
+            gcRules[gcNumRules].rule = !Q_stricmp(kind, "bare") ? GC_RULE_BARE : GC_RULE_GROW;
+            gcNumRules++;
+        } else {
+            ri.Printf(PRINT_WARNING, "groundcover/shaders.txt: '%s' is not bare or grow\n", kind);
+        }
+    }
+    ri.FS_FreeFile(buffer.v);
+}
+
+static int GC_Rule(const char *shader)
+{
+    int i;
+
+    for (i = 0; i < gcNumRules; i++) {
+        if (!Q_stricmp(gcRules[i].name, shader)) {
+            return gcRules[i].rule;
+        }
+    }
+    return GC_RULE_NONE;
+}
+
 // One triangle of grass ground, if it looks up enough: counted in the first
 // pass, copied in the second.
 static void GC_AddTri(int pass, const drawVert_t *v[3], int lightmap, int slot, qboolean patch)
@@ -904,13 +967,21 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     }
     GC_SetupGrounds();
 
+    GC_LoadRules();
     grounds = ri.Malloc(MAX(gc.numShaders, 1) * sizeof(int));
     for (i = 0; i < gc.numShaders; i++) {
         int surfaceFlags = LittleLong(dshaders[i].surfaceFlags);
         int contents     = LittleLong(dshaders[i].contentFlags);
         int ground       = GC_ShaderGround(surfaceFlags);
+        int rule         = GC_Rule(dshaders[i].shader);
 
         gc.shaderSlot[i] = -1;
+        if (rule == GC_RULE_BARE) {
+            continue;
+        }
+        if (rule == GC_RULE_GROW && !(surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
+            ground = GC_GROUND_GRASS;
+        }
         if (ground < 0 || (surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
             continue;
         }
@@ -921,7 +992,7 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             continue;
         }
         gc.shaderSlot[i] = gc.numGrassShaders;
-        grounds[gc.numGrassShaders] = (contents & CONTENTS_SOLID) ? ground : ground | 0x100;
+        grounds[gc.numGrassShaders] = ((contents & CONTENTS_SOLID) ? ground : ground | 0x100) | (rule == GC_RULE_GROW ? 0x200 : 0);
         Q_strncpyz(gc.shaderNames[gc.numGrassShaders], dshaders[i].shader, MAX_QPATH);
         gc.numGrassShaders++;
     }
@@ -937,6 +1008,7 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
     for (i = 0; i < gc.numGrassShaders; i++) {
         gc.shaders[i].ground = grounds[i] & 0xff;
         gc.shaders[i].solid  = !(grounds[i] & 0x100);
+        gc.shaders[i].split  = (grounds[i] & 0x200) != 0;
     }
     ri.Free(grounds);
 
@@ -1504,7 +1576,7 @@ static void GC_LoadShaderMask(int slot)
                 bestSep   = (m1 - m0) / Q_max(sd0 + sd1, 1e-4f);
             }
         }
-        if (bestSep > 1.8f) {
+        if (bestSep > 1.8f || (gs->split && bestSep > 0.0f)) {
             for (i = 0; i < n; i++) {
                 gs->mask[i] = (byte)(Com_Clamp(0, 1, (g[i] - bestCut) / 0.02f + 0.5f) * 255);
             }
