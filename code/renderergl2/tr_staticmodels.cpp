@@ -251,9 +251,9 @@ Added in OPM. The game's trees were plain posts sunk in the ground, and the
 maps put them anywhere from a little under it to well over it: a post shows no
 difference. A remade tree has a flared foot whose roots spread over the ground,
 and stood a hand over it they stuck out in the air, the bark going on down below
-them. Each is set down to the ground under its foot (the mean of round it: on a
-slope the roots go into the bank above and the bark below them runs on down the
-slope), a little over it, so that some of the flare that runs on under its
+them. Each is set down to the ground under its foot (where it is lowest round
+it: on a slope the roots on the low side meet it and those above go into the
+bank; set at the mean, the low side's stood out on stilts), a little over it, so that some of the flare that runs on under its
 origin shows, as much as is its own; the light is still read where the map put it.
 
 Only the remade ones (their meshes opm_*): what is under a rock (a static
@@ -282,7 +282,7 @@ static void R_SeatStaticFlora(void)
     for (i = 0; i < tr.world->numStaticModels; i++) {
         cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
         const float             size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
-        float                   foot, low, sum, over, h;
+        float                   foot, low, over, h;
         int                     n = 0;
         qboolean                rock = qfalse;
         vec3_t                  start, end;
@@ -311,7 +311,7 @@ static void R_SeatStaticFlora(void)
         }
 
         // the ground under the foot, at its middle and round it
-        sum = 0.0f;
+        low = 0.0f;
         for (k = 0; k < 9; k++) {
             const float a = k * (float)(M_PI / 4.0);
 
@@ -324,13 +324,14 @@ static void R_SeatStaticFlora(void)
             if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f) {
                 continue;
             }
-            sum += trace.endpos[2];
+            if (!n || trace.endpos[2] < low) {
+                low = trace.endpos[2];
+            }
             n++;
         }
         if (n < 5) {
             continue;
         }
-        low = sum / n;
 
         // how much of its roots shows: each its own. The model's ground is its origin
         // and the flare runs on under it (tools/flora/pines.py keeps the top of that
