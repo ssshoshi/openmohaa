@@ -1,3 +1,5 @@
 // North Africa at night: a light breeze off the desert
 // where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
 wind 200 0.7 0.8
+// the stony desert ground: low dry scrub and yellowed grass in clumps (r_groundCover)
+cover gravel 0.3 scrub 0.45 dry 0.55

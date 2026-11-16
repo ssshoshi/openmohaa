@@ -4164,6 +4164,39 @@ void RB_GroundCoverBindVao(void);
 void RB_GroundCoverPushers(vec4_t out[8]);
 void RB_GroundCoverDrawElements(void);
 
+// Added in OPM: what grows on which ground (the cells of groundcover_cover.tga,
+// and the grounds the BSP names by surfaceparm). A map's mix is in its
+// atmosphere file (`cover`, tr_atmos.c).
+typedef enum {
+	GC_KIND_GRASS,
+	GC_KIND_GRASS2,
+	GC_KIND_WEEDS,
+	GC_KIND_FLOWERS,
+	GC_KIND_DEAD,
+	GC_KIND_SCRUB,
+	GC_KIND_REEDS,
+	GC_KIND_DRY,
+	GC_NUM_KINDS
+} gcKind_t;
+
+typedef enum {
+	GC_GROUND_GRASS,
+	GC_GROUND_SNOW,
+	GC_GROUND_GRAVEL,
+	GC_GROUND_SAND,
+	GC_GROUND_MUD, // mud or dirt: reeds at a water's edge, nothing else
+	GC_NUM_GROUNDS
+} gcGround_t;
+
+typedef struct {
+	qboolean set;                 // the map's file has a cover line for this ground
+	float    density;             // of r_groundCoverDensity
+	float    share[GC_NUM_KINDS]; // -1: as the renderer has it
+} atmosCover_t;
+
+extern const char *gcKindNames[GC_NUM_KINDS];
+extern const char *gcGroundNames[GC_NUM_GROUNDS];
+
 /*
 =============================================================
 WATER (tr_water.c)
@@ -4191,6 +4224,7 @@ void R_AtmosLoadWorld(const char *mapName);
 void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 void R_AtmosWind(vec2_t dir, float *strength);
 float R_AtmosGusts(void);
+const atmosCover_t *R_AtmosCover(int ground);
 // Added in OPM: blasts, and what they do to what grows (tr_atmos.c)
 int RE_AddBlast(const float *origin, float radius, float strength, float *shaken, int maxShaken);
 void R_BlastSway(const vec3_t at, vec4_t out);

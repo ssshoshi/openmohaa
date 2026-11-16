@@ -65,6 +65,24 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // over what the sun lights (glsl/shadowmask_fp.glsl): the sun's light dimmed
 // under them, along its rays, so a wall's shadow meets the ground's. A map
 // has none until its file says so; r_cloudShadows scales them.
+//
+// What grows on the ground (r_groundCover, tr_groundcover.c), one line a
+// ground: grass, snow, gravel, sand or mud, as the map's shaders name it
+// (surfaceparm). How thick, of r_groundCoverDensity, then what grows there
+// and how much of it, any of: grass weeds flowers dead scrub reeds dry.
+//
+//     // the desert: dry scrub and yellowed grass on the stony ground
+//     cover gravel 0.25 scrub 0.5 dry 0.5
+//     // no flowers in this field, and no reeds by its pond
+//     cover grass 1 flowers 0 reeds 0
+//
+// On grass ground weeds and flowers grow in patches among the grass and the
+// grass is what is left over; reeds is the chance a tuft at a water's edge is
+// a reed. On the others the shares are of each other. Snow ground grows dead
+// grass at 0.5 unless a map says otherwise, gravel and sand nothing; only
+// terrain is taken for them, not brushes (the roofs and beams are snow too).
+// Mud (and dirt) grows reeds at a water's edge and nothing anywhere else.
+// The ground cover reads it as the map loads, so it takes a map reload.
 
 #include "tr_local.h"
 
@@ -99,7 +117,11 @@ static struct {
 	float    windYaw, windStrength, windGusts;
 	float    cloudDark, cloudSize, cloudSpeed;
 	qboolean windGiven; // the cgame's wind cvars are this map's
+	atmosCover_t cover[GC_NUM_GROUNDS];
 } atmos;
+
+const char *gcKindNames[GC_NUM_KINDS]   = { "grass", "grass2", "weeds", "flowers", "dead", "scrub", "reeds", "dry" };
+const char *gcGroundNames[GC_NUM_GROUNDS] = { "grass", "snow", "gravel", "sand", "mud" };
 
 static void R_GradeNeutral(grade_t *g)
 {
@@ -173,6 +195,58 @@ static qboolean R_AtmosColour(char **text, vec3_t out)
 	return qtrue;
 }
 
+// cover <ground> <density> [<kind> <share>]...
+static void R_AtmosCoverLine(char **text)
+{
+	const char   *token = R_AtmosMoreOnLine(*text) ? COM_ParseExt(text, qfalse) : "";
+	atmosCover_t *c     = NULL;
+	float         v;
+	int           i;
+
+	for (i = 0; i < GC_NUM_GROUNDS; i++) {
+		if (!Q_stricmp(token, gcGroundNames[i])) {
+			c = &atmos.cover[i];
+		}
+	}
+	if (!c || R_AtmosNumbers(text, &v, 1) < 1) {
+		ri.Printf(PRINT_WARNING, "%s: cover needs a ground (grass, snow, gravel, sand or mud) and how thick\n", atmos.file);
+		return;
+	}
+	c->set     = qtrue;
+	c->density = Com_Clamp(0.0f, 4.0f, v);
+	while (R_AtmosMoreOnLine(*text)) {
+		char key[32];
+
+		Q_strncpyz(key, COM_ParseExt(text, qfalse), sizeof(key));
+		if (R_AtmosNumbers(text, &v, 1) < 1) {
+			ri.Printf(PRINT_WARNING, "%s: cover %s: '%s' wants how much\n", atmos.file, gcGroundNames[c - atmos.cover], key);
+			return;
+		}
+		for (i = 0; i < GC_NUM_KINDS; i++) {
+			if (!Q_stricmp(key, gcKindNames[i])) {
+				break;
+			}
+		}
+		if (i == GC_NUM_KINDS) {
+			ri.Printf(PRINT_WARNING, "%s: cover: '%s' does not grow here (grass weeds flowers dead scrub reeds dry)\n", atmos.file, key);
+			continue;
+		}
+		c->share[i == GC_KIND_GRASS2 ? GC_KIND_GRASS : i] = Q_max(0.0f, v);
+	}
+}
+
+/*
+=============
+R_AtmosCover
+
+What the map's file says grows on a ground (set is qfalse when it says nothing).
+=============
+*/
+const atmosCover_t *R_AtmosCover(int ground)
+{
+	return &atmos.cover[ground];
+}
+
 static void R_AtmosGradeLine(char **text)
 {
 	const char *token = R_AtmosMoreOnLine(*text) ? COM_ParseExt(text, qfalse) : "";
@@ -218,6 +292,7 @@ static void R_AtmosReadFile(const char *mapName)
 		void *v;
 	} buffer;
 	char *text;
+	int   i;
 
 	atmos.found  = qfalse;
 	atmos.graded = qfalse;
@@ -229,6 +304,15 @@ static void R_AtmosReadFile(const char *mapName)
 	atmos.cloudDark    = 0.0f;
 	atmos.cloudSize    = 2600.0f;
 	atmos.cloudSpeed   = 45.0f;
+	for (i = 0; i < GC_NUM_GROUNDS; i++) {
+		int k;
+
+		atmos.cover[i].set     = qfalse;
+		atmos.cover[i].density = 0.0f;
+		for (k = 0; k < GC_NUM_KINDS; k++) {
+			atmos.cover[i].share[k] = -1.0f;
+		}
+	}
 	Com_sprintf(atmos.file, sizeof(atmos.file), "atmos/%s.txt", mapName);
 	if (ri.FS_ReadFile(atmos.file, &buffer.v) <= 0) {
 		return;
@@ -256,6 +340,8 @@ static void R_AtmosReadFile(const char *mapName)
 				atmos.windStrength = n > 1 ? Com_Clamp(0.0f, 4.0f, v[1]) : 1.0f;
 				atmos.windGusts    = n > 2 ? Com_Clamp(0.0f, 2.0f, v[2]) : 1.0f;
 			}
+		} else if (!Q_stricmp(token, "cover")) {
+			R_AtmosCoverLine(&text);
 		} else if (!Q_stricmp(token, "clouds")) {
 			float v[3];
 			const int n = R_AtmosNumbers(&text, v, 3);
@@ -658,6 +744,21 @@ static void R_AtmosInfo_f(void)
 				m->gamma[0], m->gamma[1], m->gamma[2], m->gain[0], m->gain[1], m->gain[2]);
 			ri.Printf(PRINT_ALL, "  grade contrast %g  saturation %g  vibrance %g  vignette %g  grain %g\n", m->contrast,
 				m->saturation, m->vibrance, m->vignette, m->grain);
+		}
+		for (int i = 0; i < GC_NUM_GROUNDS; i++) {
+			const atmosCover_t *c = &atmos.cover[i];
+			char                line[256];
+
+			if (!c->set) {
+				continue;
+			}
+			Com_sprintf(line, sizeof(line), "  cover %s %g", gcGroundNames[i], c->density);
+			for (int k = 0; k < GC_NUM_KINDS; k++) {
+				if (c->share[k] >= 0.0f) {
+					Q_strcat(line, sizeof(line), va(" %s %g", gcKindNames[k], c->share[k]));
+				}
+			}
+			ri.Printf(PRINT_ALL, "%s\n", line);
 		}
 	}
 	{
