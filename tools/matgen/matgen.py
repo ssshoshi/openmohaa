@@ -52,6 +52,12 @@ SKIP_DIRS = (
 # which are under textures/models/).
 ROOTS = ("textures/", "models/")
 
+# Character skins get a specular map but no normal map. Their faces, folds
+# and creases are modelled or painted in already, and DeepBump reads that
+# painted shading as relief: a ridge round every face where skin meets hair,
+# grime in the cheeks, folds shaded twice. In game that looked dirty.
+NO_NORMAL_DIRS = ("textures/models/human/", "models/human/")
+
 # Model skins are cut into islands and don't tile, so their relief is
 # integrated without wrapping, like a clampmap's.
 NO_WRAP_DIRS = ("textures/models/", "models/")
@@ -684,7 +690,8 @@ def plan_jobs(vfs, args):
         if use and use.unlit and not use.lit:
             stats["skipped_unlit"] += 1
             continue
-        want_n = base + "_n" not in bases and base + "_nh" not in bases
+        want_n = (base + "_n" not in bases and base + "_nh" not in bases
+                  and not base.startswith(NO_NORMAL_DIRS))
         want_s = base + "_s" not in bases
         if not (want_n or want_s):
             stats["authored"] += 1
