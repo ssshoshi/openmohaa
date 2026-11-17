@@ -209,7 +209,10 @@ def mix(terms):
     return out
 
 
-def weights_of(skin, max_weights, min_weight):
+def weights_of(skin, max_weights, min_weight, first=None):
+    """The weights to write, strongest kept. The game turns a vertex's normal
+    by its FIRST weight's bone (tr_model.cpp SkelVertGetNormal, and the GPU
+    path), so `first` goes first when it is kept; otherwise the strongest."""
     items = [(b, e[0], e) for b, e in skin.items() if e[0] > 1e-6]
     items.sort(key=lambda x: -x[1])
     kept = [x for x in items if x[1] >= min_weight][:max_weights] or items[:1]
@@ -218,8 +221,76 @@ def weights_of(skin, max_weights, min_weight):
     for b, w, e in kept:
         o = (e[1] / w, e[2] / w, e[3] / w)  # the offset is exact for this bone
         out.append((b, w / total, o))
-    out.sort(key=lambda x: x[0])
+    lead = first if any(b == first for b, _, _ in out) else out[0][0]
+    out.sort(key=lambda x: (x[0] != lead, x[0]))
     return out
+
+
+def bone_rotations(skd):
+    """rot(a, b): the 3x3 rotation taking a vector in bone b's frame to bone
+    a's, or None. A vertex's normal is kept in its first bone's frame, and
+    bones that meet (Spine2 and the shoulder helpers) are up to 180 degrees
+    apart, so normals can only be mixed once they are in one frame. Each
+    weight's offset is the vertex in that bone's frame, so a vertex with
+    weights on a and b is one point seen from both: the rotation is fitted
+    (Kabsch) over all such vertexes, and bones that share none are reached
+    through the others."""
+    import itertools
+    import numpy as np
+
+    pts = {}
+    for s in skd.surfaces:
+        for v in s.verts:
+            for (a, _, oa), (b, _, ob) in itertools.combinations(v.weights, 2):
+                if a == b:
+                    continue
+                if a > b:
+                    a, b, oa, ob = b, a, ob, oa
+                pts.setdefault((a, b), []).append((oa, ob))
+    direct = {}
+    for (a, b), pp in pts.items():
+        if len(pp) < 3:
+            continue
+        A = np.array([x[0] for x in pp])
+        B = np.array([x[1] for x in pp])
+        H = (B - B.mean(0)).T @ (A - A.mean(0))
+        U, S, Vt = np.linalg.svd(H)
+        if S[1] < 1e-3 * max(S[0], 1e-9):
+            continue  # the points are on a line: no rotation from them
+        d = np.sign(np.linalg.det(Vt.T @ U.T)) or 1.0
+        R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T  # b's frame -> a's
+        direct[(a, b)] = (R, len(pp))
+
+    # a spanning tree over the bones, the best fitted pairs first
+    adj = {}
+    for (a, b), (R, n) in direct.items():
+        adj.setdefault(a, []).append((n, b, R))
+        adj.setdefault(b, []).append((n, a, R.T))
+    to_root, root_of = {}, {}
+    for start in sorted(adj):
+        if start in to_root:
+            continue
+        to_root[start], root_of[start] = np.eye(3), start
+        frontier = [start]
+        while frontier:
+            x = frontier.pop()
+            for n, y, R in sorted(adj[x], key=lambda e: -e[0]):
+                if y not in to_root:
+                    to_root[y] = to_root[x] @ R  # y -> x -> root
+                    root_of[y] = start
+                    frontier.append(y)
+
+    def rot(a, b):
+        if a == b:
+            return None  # the same frame
+        if (min(a, b), max(a, b)) in direct:
+            R = direct[(min(a, b), max(a, b))][0]
+            return R if a < b else R.T
+        if a in root_of and b in root_of and root_of[a] == root_of[b]:
+            return to_root[a].T @ to_root[b]
+        return False  # no way to relate them
+
+    return rot
 
 
 def morphs_of(v):
@@ -238,7 +309,7 @@ def dot(a, b):
 # --- one Loop level
 
 
-def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
+def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None, rot=None):
     n = len(s.verts)
     tris = s.tris
     if n < 3 or not tris:
@@ -312,6 +383,31 @@ def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
     skins = [skin_of(s.verts[reps[t]]) for t in range(nt)]
     morphs = [morphs_of(s.verts[reps[t]]) for t in range(nt)]
     normals = [s.verts[reps[t]].normal for t in range(nt)]
+    firsts = [s.verts[reps[t]].weights[0][0] for t in range(nt)]
+    max_weights = max(len(v.weights) for v in s.verts)
+
+    def normal_in(lead, terms):
+        """the mixed normal, in bone `lead`'s frame"""
+        acc = [0.0, 0.0, 0.0]
+        for a, u in terms:
+            n = normals[u]
+            R = rot(lead, firsts[u]) if rot and firsts[u] != lead else None
+            if R is False:
+                continue  # unrelated frames: leave it out
+            if R is not None:
+                n = tuple(float(R[i][0] * n[0] + R[i][1] * n[1] + R[i][2] * n[2]) for i in range(3))
+            for i in range(3):
+                acc[i] += a * n[i]
+        return normalize(tuple(acc))
+
+    def finish(terms, prefer):
+        """weights (the preferred bone first when kept) and the normal in the
+        frame of whichever bone is first"""
+        sk = mix([(a, skins[u]) for a, u in terms])
+        w = weights_of(sk, max_weights, min_weight, first=prefer)
+        if len(terms) == 1 and w[0][0] == firsts[terms[0][1]]:
+            return sk, w, normals[terms[0][1]]
+        return sk, w, normal_in(w[0][0], terms)
 
     # the vertexes moved
     new_skin, new_morph, new_normal = [], [], []
@@ -331,9 +427,10 @@ def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
             else:
                 beta = (1.0 / k) * (0.625 - (0.375 + 0.25 * math.cos(2 * math.pi / k)) ** 2)
                 terms = [(1.0 - k * beta, t)] + [(beta, u) for u in neighbours[t]]
-        new_skin.append(mix([(a, skins[u]) for a, u in terms]))
+        sk, w, nr = finish(terms, firsts[t])
+        new_skin.append(w)
         new_morph.append(mix([(a, morphs[u]) for a, u in terms]))
-        new_normal.append(normalize(tuple(sum(a * normals[u][i] for a, u in terms) for i in range(3))))
+        new_normal.append(nr)
 
     # the edges' new vertexes, per welded edge
     edge_skin, edge_morph, edge_normal = {}, {}, {}
@@ -343,17 +440,16 @@ def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
             terms = [(0.5, a), (0.5, b)]
         else:
             terms = [(0.375, a), (0.375, b), (0.125, opp[0]), (0.125, opp[1])]
-        edge_skin[key] = mix([(w, skins[u]) for w, u in terms])
+        _, ew, nr = finish(terms, firsts[a])
+        edge_skin[key] = ew
         edge_morph[key] = mix([(w, morphs[u]) for w, u in terms])
-        edge_normal[key] = normalize(tuple(sum(w * normals[u][i] for w, u in terms) for i in range(3)))
-
-    max_weights = max(len(v.weights) for v in s.verts)
+        edge_normal[key] = nr
     out = Surface()
     out.ident, out.name, out.static = s.ident, s.name, s.static
 
     for i, v in enumerate(s.verts):
         t = topo[i]
-        w = weights_of(new_skin[t], max_weights, min_weight)
+        w = new_skin[t]
         m = sorted((mi, tuple(val)) for mi, val in new_morph[t].items())
         out.verts.append(Vertex(new_normal[t], v.uv, w, m))
     out.collapse = list(s.collapse)
@@ -371,14 +467,13 @@ def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
         tx, ty = topo[x], topo[y]
         tkey = (min(tx, ty), max(tx, ty))
         if tx == ty or tkey not in edge_skin:
-            sk = mix([(0.5, skins[tx]), (0.5, skins[ty])])
+            _, sk, nr = finish([(0.5, tx), (0.5, ty)], firsts[tx])
             mo = mix([(0.5, morphs[tx]), (0.5, morphs[ty])])
-            nr = normalize(tuple(normals[tx][i] + normals[ty][i] for i in range(3)))
         else:
             sk, mo, nr = edge_skin[tkey], edge_morph[tkey], edge_normal[tkey]
         uv = ((s.verts[x].uv[0] + s.verts[y].uv[0]) * 0.5, (s.verts[x].uv[1] + s.verts[y].uv[1]) * 0.5)
         idx = len(out.verts)
-        out.verts.append(Vertex(nr, uv, weights_of(sk, max_weights, min_weight), sorted((mi, tuple(val)) for mi, val in mo.items())))
+        out.verts.append(Vertex(nr, uv, sk, sorted((mi, tuple(val)) for mi, val in mo.items())))
         # it goes before either end does: to whichever end stays longer
         keep = x if s.collapseIndex[x] >= s.collapseIndex[y] else y
         out.collapse.append(keep)
@@ -395,10 +490,16 @@ def subdivide(s, crease_cos, decal_tris, min_weight, smooth_bone=None):
     return out
 
 
-def winners(pattern):
+def winners(pattern, skip=()):
+    """The copy of each matching model the game loads, from the paks other
+    than `skip`: the smooth pak itself, once installed, would otherwise be
+    read back and smoothed a second time."""
     rx = re.compile(pattern, re.I)
+    skip = {os.path.basename(x).lower() for x in skip}
     win = {}
     for name, files in paks.index().items():
+        if os.path.basename(name).lower() in skip:
+            continue
         for f in files:
             if f.lower().endswith(".skd") and rx.search(f):
                 win[f.lower()] = (f, name)
@@ -424,7 +525,7 @@ def main():
     args = ap.parse_args()
 
     if args.list:
-        for path, pak in winners(args.list):
+        for path, pak in winners(args.list, [args.pk3]):
             try:
                 skd = parse(paks.read(pak, path))
             except ValueError as e:
@@ -436,7 +537,7 @@ def main():
 
     if args.roundtrip:
         good = bad = 0
-        for path, pak in winners(args.roundtrip):
+        for path, pak in winners(args.roundtrip, [args.pk3]):
             if roundtrip_ok(paks.read(pak, path)):
                 good += 1
             else:
@@ -449,7 +550,7 @@ def main():
         crease_cos = math.cos(math.radians(args.crease))
         z = zipfile.ZipFile(args.pk3, "w", zipfile.ZIP_DEFLATED)
         total = done = 0
-        for path, pak in winners(args.smooth):
+        for path, pak in winners(args.smooth, [args.pk3]):
             data = paks.read(pak, path)
             try:
                 skd = parse(data)
@@ -470,8 +571,9 @@ def main():
             def smooth_bone(b, names=names):
                 return 0 <= b < len(names) and bool(bone_rx.search(names[b]))
 
+            rot = bone_rotations(skd)
             for i, s in enumerate(skd.surfaces):
-                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight, smooth_bone)
+                out = subdivide(s, crease_cos, args.decal_tris, args.min_weight, smooth_bone, rot)
                 if out:
                     skd.surfaces[i] = out
                     changed += 1
