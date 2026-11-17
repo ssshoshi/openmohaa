@@ -264,11 +264,15 @@ float SnowPlaster(vec3 surfN)
 float BarkSnow(vec3 surfN, inout vec3 N, float lies, float plate, inout vec3 colour)
 {
 	vec2  from, q;
-	float depth = max(SnowPlasterDepth(surfN, from, q), lies * 1.2);
+	float blown = SnowPlasterDepth(surfN, from, q);
+	// on the faces turned up, deep here, thin there, not one even sheet
+	float laid  = lies * (0.45 + 0.9 * WetNoise(var_WetPos.xy / 6.5));
+	float depth = max(blown, laid);
 	if (depth <= 0.0)
 		return 0.0;
 	// where it lies on the faces turned up, it is laid out over them
-	if (lies * 1.2 >= depth)
+	bool  onTop = laid >= blown;
+	if (onTop)
 		q = var_WetPos.xy;
 
 	// the bark's ridges: how far its normal map turns it up and into the wind
@@ -286,7 +290,8 @@ float BarkSnow(vec3 surfN, inout vec3 N, float lies, float plate, inout vec3 col
 	float l0 = WetNoise(q / 1.6);
 	vec2  lg = vec2(WetNoise((q + vec2(0.35, 0.0)) / 1.6) - l0, WetNoise((q + vec2(0.0, 0.35)) / 1.6) - l0) * 2.2;
 	vec3  across = vec3(-from.y, from.x, 0.0);
-	vec3  snowN  = normalize(surfN - (across * lg.x + vec3(0.0, 0.0, 1.0) * lg.y) * thick);
+	vec3  slope  = onTop ? vec3(lg, 0.0) : across * lg.x + vec3(0.0, 0.0, lg.y);
+	vec3  snowN  = normalize(surfN - slope * thick);
 	N = normalize(mix(N, snowN, hide * mix(0.45, 1.0, thick)));
 
 	// thin, it is grey-blue with the bark's dark through it; deep, white,
