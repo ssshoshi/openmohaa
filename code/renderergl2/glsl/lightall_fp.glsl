@@ -919,6 +919,84 @@ vec4 hitCube(vec3 ray, vec3 pos, vec3 invSize, float lod, samplerCube tex)
 }
 #endif
 
+#if defined(USE_GROUNDVARY)
+// Added in OPM: the ground's texture, which is one small picture laid again
+// and again, varied across the map (r_groundVariation, tr_atmos.c). It is
+// laid a little out of true, pushed this way and that over a few tiles'
+// length, so that its repeat is no straight row; far off, where a tile is a
+// few pixels and its repeat a grid, it is blended with itself laid several
+// times the size; and everywhere it is a little lighter and darker, warmer
+// and cooler in patches of two sizes. A lightall of the ground's own
+// (USE_GROUNDVARY): nothing else runs this.
+uniform vec4 u_GroundVary;  // how strong the patches, one over their size, how much of the far look, one over where it is whole
+uniform vec4 u_GroundVary2; // how far the texture is pushed, in tiles; from what slope to what it is ground to lie on
+
+// two noises at once, of a cheaper cast than the rain's: this is run for
+// every pixel of ground
+vec2 GroundHash2(vec2 p)
+{
+	vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+vec2 GroundNoise2(vec2 p)
+{
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+
+	return mix(mix(GroundHash2(i), GroundHash2(i + vec2(1.0, 0.0)), u.x),
+		mix(GroundHash2(i + vec2(0.0, 1.0)), GroundHash2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+// where on the map: a slope and a wall take their height with them, so that
+// neither is drawn in stripes
+vec2 GroundAt()
+{
+	return (var_WetPos.xy + var_WetPos.z * vec2(0.6, 0.8)) * u_GroundVary.y;
+}
+
+// How much it is ground to lie on, not a bank's face or a wall: what is
+// snow or dirt by its flag is also a cliff, a flight of steps and a painted
+// line of trees, which keep their texture as it was laid and take only the
+// patches
+float GroundFlat()
+{
+	vec3 n = cross(dFdx(var_WetPos), dFdy(var_WetPos));
+
+	return smoothstep(u_GroundVary2.y, u_GroundVary2.z, abs(n.z) / max(length(n), 1e-6));
+}
+
+vec2 GroundWarp(vec2 tc, float flat_)
+{
+	return tc + (GroundNoise2(GroundAt() * 2.3 + 7.3) - 0.5) * (u_GroundVary2.x * flat_);
+}
+
+vec3 GroundVary(vec3 c, vec2 tc, float flat_)
+{
+	// (read where every pixel reads it: its mip is the screen's to say. Not
+	// turned: a road's ruts and a field's furrows keep their way)
+	vec3  big = texture2D(u_DiffuseMap, tc * 0.27 + vec2(0.37, 0.61)).rgb;
+	float far = u_GroundVary.z * flat_ * smoothstep(0.1, 1.0, distance(u_ViewOrigin, var_WetPos) * u_GroundVary.w);
+
+	c = mix(c, big, far);
+
+	// wide patches and, turned and a third the size, lesser ones: how light,
+	// and how warm
+	vec2  q     = GroundAt();
+	vec2  wide  = GroundNoise2(q);
+	vec2  mid   = GroundNoise2(vec2(q.x * 0.866 - q.y * 0.5, q.x * 0.5 + q.y * 0.866) * 3.3 + 17.0);
+	float light = wide.x * 0.6 + mid.x * 0.4 - 0.5;
+	float warm  = wide.y * 0.7 + mid.y * 0.3 - 0.5;
+
+	c *= 1.0 + u_GroundVary.x * 0.9 * light;
+	c *= 1.0 + u_GroundVary.x * 0.22 * warm * vec3(1.0, 0.15, -1.0);
+	return c;
+}
+#endif
+
 void main()
 {
 	vec3 viewDir, lightColor, ambientColor, reflectance;
@@ -969,6 +1047,10 @@ void main()
 #endif
 
 	vec2 texCoords = var_TexCoords.xy;
+#if defined(USE_GROUNDVARY)
+	float groundFlat = GroundFlat();
+	texCoords = GroundWarp(texCoords, groundFlat);
+#endif
 
 #if defined(USE_PARALLAXMAP)
 	vec3 offsetDir = E * tangentToWorld;
@@ -990,6 +1072,9 @@ void main()
 #endif
 
 	vec4 diffuse = texture2D(u_DiffuseMap, texCoords);
+#if defined(USE_GROUNDVARY)
+	diffuse.rgb = GroundVary(diffuse.rgb, texCoords, groundFlat);
+#endif
 	
 	float alpha = diffuse.a * var_Color.a;
 	if (u_AlphaTest == 1)

@@ -1575,6 +1575,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		vec4_t texMatrix[8];
 		qboolean rtLit;
 		int rtKind;
+		qboolean groundVary = qfalse; // Added in OPM: the stage is drawn by the ground's own lightall (r_groundVariation)
 
 		if ( !pStage )
 		{
@@ -1681,6 +1682,18 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			if (r_lightmap->integer && ((index & LIGHTDEF_LIGHTTYPE_MASK) == LIGHTDEF_USE_LIGHTMAP))
 			{
 				index = LIGHTDEF_USE_TCGEN_AND_TCMOD;
+			}
+
+			// Added in OPM: the world's ground, its texture varied across the
+			// map (not where only a depth is wanted: that never comes here
+			// in the view's own depth pass, and a shadow's has no colour)
+			if (backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel && !tess.groundCover
+				&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP)) && R_AtmosGroundShader(tess.shader)
+				// (a cut-out that is grass by its flag is a hedge, not ground)
+				&& (!(pStage->stateBits & GLS_ATEST_BITS) || tess.shader->isTerrain))
+			{
+				index |= LIGHTDEF_GROUNDVARY;
+				groundVary = qtrue;
 			}
 
 			if (tess.groundCover)
@@ -1996,6 +2009,14 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.ori.transformMatrix);
 		// Added in OPM: wet below the tide's mark (lightall)
 		R_WaterSetWet(sp, pStage);
+		if (groundVary)
+		{
+			vec4_t v, v2;
+
+			R_AtmosGroundVary(tess.shader, v, v2);
+			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDVARY, v);
+			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDVARY2, v2);
+		}
 		// Added in OPM: reflections of what is on the screen
 		R_SsrSetUniforms(sp);
 
