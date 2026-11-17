@@ -258,9 +258,10 @@ float SnowPlaster(vec3 surfN)
 // see-through and broken into flecks at its edge; where it is deep it lies
 // in lumps, the hollows between them in its own blue shade. lies: what lies
 // on the faces turned up (SnowLies); N: the bark's normal map, made the
-// snow's lumps where it is deep. Gives how much of the bark it hides, and
-// its colour (before Lin) in colour.
-float BarkSnow(vec3 surfN, inout vec3 N, float lies, inout vec3 colour)
+// snow's lumps where it is deep; plate: how far the bark's picture here
+// stands out light from round it (BarkPlate), where it clings first. Gives
+// how much of the bark it hides, and its colour (before Lin) in colour.
+float BarkSnow(vec3 surfN, inout vec3 N, float lies, float plate, inout vec3 colour)
 {
 	vec2  from, q;
 	float depth = max(SnowPlasterDepth(surfN, from, q), lies * 1.2);
@@ -274,12 +275,12 @@ float BarkSnow(vec3 surfN, inout vec3 N, float lies, inout vec3 colour)
 	vec3  d     = N - surfN;
 	float ridge = clamp(d.z * 2.5 + dot(d.xy, from) * 1.5, -1.0, 1.0);
 	// the snow's grain, and its broken rim
-	float fleck = WetNoise(q / 0.45) * 0.6 + WetNoise(q / 0.17) * 0.4;
-	float cover = depth + 0.35 * ridge + 0.45 * (fleck - 0.5) - 0.15;
-	float hide  = smoothstep(0.0, 0.55, cover);
+	float fleck = WetNoise(q / 1.3) * 0.6 + WetNoise(q / 0.55) * 0.4;
+	float cover = depth + 0.3 * ridge + 0.5 * plate + 0.4 * (fleck - 0.5) - 0.1;
+	float hide  = smoothstep(0.05, 0.45, cover);
 	if (hide <= 0.0)
 		return 0.0;
-	float thick = smoothstep(0.3, 1.1, cover);
+	float thick = smoothstep(0.35, 1.0, cover);
 
 	// lumps: a slope of the snow's own, across the trunk and up it
 	float l0 = WetNoise(q / 1.6);
@@ -292,9 +293,18 @@ float BarkSnow(vec3 surfN, inout vec3 N, float lies, inout vec3 colour)
 	// grainy, its hollows shaded
 	float tone   = 0.86 + 0.14 * (WetNoise(q / 2.3) * 0.5 + fleck * 0.5);
 	float hollow = clamp(0.5 - l0, 0.0, 0.5) * thick;
-	colour  = mix(vec3(0.62, 0.68, 0.78), vec3(0.88, 0.91, 0.96), thick) * tone;
-	colour *= mix(vec3(1.0), vec3(0.78, 0.84, 0.95), hollow * 1.4);
-	return hide * mix(0.6, 1.0, thick);
+	colour  = mix(vec3(0.74, 0.78, 0.86), vec3(0.93, 0.95, 0.98), thick) * tone;
+	colour *= mix(vec3(1.0), vec3(0.80, 0.86, 0.96), hollow * 1.4);
+	return hide * mix(0.7, 1.0, thick);
+}
+
+// Added in OPM: the bark's plates, where snow clings, and its furrows, where
+// it does not: how much lighter its picture is here than round it (-1 to 1)
+float BarkPlate(vec2 tc)
+{
+	float here  = dot(texture2D(u_DiffuseMap, tc).rgb, vec3(0.3, 0.59, 0.11));
+	float round = dot(texture2D(u_DiffuseMap, tc, 4.0).rgb, vec3(0.3, 0.59, 0.11));
+	return clamp((here - round) / max(round, 0.03) * 1.5, -1.0, 1.0);
 }
 
 // Added in OPM: the snow's own surface, not quite even: a number about one
@@ -1146,7 +1156,7 @@ void main()
 		vec3 snowCol = vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos);
 		if (u_RainParams.w > 5.0)
 			// a remade tree's bark: in grains and lumps, thin at its edges (BarkSnow)
-			snowLie = BarkSnow(wetSurfN, N, SnowLies(wetSurfN, N, wet.x), snowCol);
+			snowLie = BarkSnow(wetSurfN, N, SnowLies(wetSurfN, N, wet.x), BarkPlate(texCoords), snowCol);
 		else
 			snowLie = SnowLies(wetSurfN, N, wet.x);
 		wet     = vec3(0.0);
@@ -1350,7 +1360,7 @@ void main()
 		vec3 snowCol = vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos);
 		vec3 snowN   = wetSurfN;
 		if (u_RainParams.w > 5.0)
-			snowLie = BarkSnow(wetSurfN, snowN, SnowLies(wetSurfN, wetSurfN, wet.x), snowCol);
+			snowLie = BarkSnow(wetSurfN, snowN, SnowLies(wetSurfN, wetSurfN, wet.x), BarkPlate(texCoords), snowCol);
 		else
 			snowLie = SnowLies(wetSurfN, wetSurfN, wet.x);
 		wet     = vec3(0.0);
