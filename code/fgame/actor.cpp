@@ -3003,6 +3003,11 @@ Actor::Actor()
     m_bForceAttackPlayer = false;
 
     m_iLookFlags            = 0;
+    m_fGazeUntil            = 0;
+    m_fGazeNextPick         = 0;
+    m_fGazeNextCheck        = 0;
+    m_bGazeSubtle           = false;
+    m_bGazeActive           = false;
     m_iNextLookTime         = 0;
     m_fLookAroundFov        = 45;
     m_bHasDesiredLookDest   = false;
@@ -3578,7 +3583,13 @@ void Actor::UpdateBoneControllers(void)
         EyeDelta.AngleVectorsLeft(&fwd, NULL, NULL);
         VectorCopy(fwd, edict->s.eyeVector);
     } else {
-        VectorClear(edict->s.eyeVector);
+        // Added in OPM: half a forward vector means alive, eyes at rest (the
+        // skeletor blinks them); none means dead, eyes still
+        if (IsDead()) {
+            VectorClear(edict->s.eyeVector);
+        } else {
+            VectorSet(edict->s.eyeVector, 0.5f, 0, 0);
+        }
         VectorClear(LocalLookAngles);
     }
 
@@ -3605,7 +3616,7 @@ void Actor::UpdateBoneControllers(void)
         }
     }
 
-    if (!(m_iLookFlags & 1)) {
+    if (!(m_iLookFlags & 1) && !m_bGazeSubtle) {
         if (yawError > 25) {
             max_change = (yawError - 25) * 0.2f;
         } else if (yawError < -25) {
@@ -3649,10 +3660,15 @@ void Actor::UpdateBoneControllers(void)
         yawError -= max_change;
     }
 
-    if (yawError > 15.f) {
-        max_change = (yawError - 15.f) * level.frametime * 4.f;
-    } else if (yawError < -15.f) {
-        max_change = (yawError + 15.f) * level.frametime * 4.f;
+    // Added in OPM: someone glanced at gets the face, not just the eyes; the
+    // stock dead zones left idle poses (most hold the chin up) looking past
+    // whoever was close
+    const float yawDead = m_bGazeActive ? 6.f : 15.f;
+
+    if (yawError > yawDead) {
+        max_change = (yawError - yawDead) * level.frametime * 4.f;
+    } else if (yawError < -yawDead) {
+        max_change = (yawError + yawDead) * level.frametime * 4.f;
     } else {
         max_change = 0;
     }
@@ -3670,9 +3686,9 @@ void Actor::UpdateBoneControllers(void)
     // clamp head yaw to 60 degrees
     headAngles[1] = Q_clamp_float(headAngles[1], -60, 60);
 
-    error = 15.f;
+    error = m_bGazeActive ? 3.f : 15.f;
 
-    if (fabs(LocalLookAngles[0]) < 15) {
+    if (fabs(LocalLookAngles[0]) < error) {
         error = fabs(LocalLookAngles[0]);
     }
 
@@ -3691,7 +3707,7 @@ void Actor::UpdateBoneControllers(void)
     headAngles[0] = Q_clamp_float(headAngles[0], -35, 35);
     headAngles[2] = 0;
 
-    if (m_iLookFlags & 1) {
+    if ((m_iLookFlags & 1) || m_bGazeSubtle) {
         // half view
         headAngles[0] /= 2.f;
         headAngles[1] /= 2.f;
@@ -3719,6 +3735,10 @@ void Actor::UpdateBoneControllers(void)
     new_angles[1] = tmp_angles[1] + max_change;
     new_angles[2] = 0;
     SetControllerAngles(ARMS_TAG, new_angles);
+
+    // Added in OPM: AmbientLook sets these again each think it still glances
+    m_bGazeSubtle = false;
+    m_bGazeActive = false;
 }
 
 /*
@@ -4809,7 +4829,7 @@ void Actor::IdleLook(void)
 {
     if (m_pLookEntity) {
         LookAtLookEntity();
-    } else {
+    } else if (!AmbientLook(false, CurrentThink() == THINK_ANIM)) {
         ForwardLook();
     }
 }
@@ -4825,7 +4845,7 @@ void Actor::IdleLook(vec3_t dir)
 {
     if (m_pLookEntity) {
         LookAtLookEntity();
-    } else {
+    } else if (!AmbientLook(true, false)) {
         SetDesiredLookDir(dir);
     }
 }

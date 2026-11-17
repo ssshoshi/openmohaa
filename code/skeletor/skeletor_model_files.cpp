@@ -213,7 +213,8 @@ void skeletor_c::LoadMorphTargetNames(skelHeaderGame_t *modelHeader)
             m_targetLookUp = morphTargetIndex;
         } else if (!strncmp(newTargetName, "EYES_down", 9)) {
             m_targetLookDown = morphTargetIndex;
-        } else if (!strncmp(newTargetName, "EYES_blink", 9)) {
+        } else if (!strncmp(newTargetName, "EYES_blink", 9) || !strncmp(newTargetName, "EYE_blink", 9)) {
+            // Added in OPM: the heads name it EYE_blink
             m_targetBlink = morphTargetIndex;
         }
 

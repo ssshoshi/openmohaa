@@ -912,6 +912,17 @@ public:
     SafePtr<SimpleEntity> m_pLookEntity;
     /* look flags(should be a bool) */
     int m_iLookFlags;
+    // Added in OPM: who an idle actor is glancing at (g_actorGaze), until
+    // when, and when it next looks for someone; not archived, a loaded save
+    // starts looking afresh
+    SafePtr<Sentient> m_pGazeTarget;
+    float             m_fGazeUntil;
+    float             m_fGazeNextPick;
+    float             m_fGazeNextCheck;
+    // head goes half way and the torso stays put: the eyes do the rest
+    bool m_bGazeSubtle;
+    // a glance this think: the head lines up closer than the stock dead zones
+    bool m_bGazeActive;
     /* entity to point at */
     SafePtr<SimpleEntity> m_pPointEntity;
     /* entity to turn to */
@@ -1402,6 +1413,10 @@ public:
     void           LookAtLookEntity(void);
     void           IdleLook(void);
     void           IdleLook(vec3_t dir);
+    // Added in OPM
+    bool           AmbientLook(bool bMoving, bool bSubtle);
+    void           ClearGaze(void);
+    bool           GazeCandidate(Sentient *pOther, bool bMoving, float *pScore);
     void           SetDesiredLookDir(vec3_t dir);
     void           SetDesiredLookAnglesRelative(vec3_t ang);
     void           EventLookAt(Event *ev);

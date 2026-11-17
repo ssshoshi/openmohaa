@@ -99,7 +99,7 @@ private:
     short int                m_targetLookDown;
     short int                m_targetLookCrossed;
     short int                m_targetBlink;
-    short int                m_timeNextBlink;
+    int                      m_timeNextBlink; // OPM: was a short holding Sys_Milliseconds()
     short int                m_headBoneIndex;
     vec3_t                   m_eyeTargetPos;
     vec3_t                   m_eyePrevTargetPos;
