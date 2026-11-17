@@ -2227,6 +2227,18 @@ void R_RenderView (viewParms_t *parms) {
 	numDrawSurfs = tr.refdef.numDrawSurfs;
 	if ( numDrawSurfs > MAX_DRAWSURFS ) {
 		numDrawSurfs = MAX_DRAWSURFS;
+		// Added in OPM: said, as a view past the end draws nothing (a frame of
+		// fog, when the lights' faces had filled the list)
+		{
+			static int lastWarned;
+			const int  now = ri.Milliseconds();
+
+			if (now - lastWarned > 5000 || now < lastWarned) {
+				lastWarned = now;
+				ri.Printf(PRINT_WARNING, "R_RenderView: %d draw surfaces, more than MAX_DRAWSURFS (%d); view flags 0x%x lost %d\n",
+					tr.refdef.numDrawSurfs, MAX_DRAWSURFS, tr.viewParms.flags, tr.refdef.numDrawSurfs - Q_max(firstDrawSurf, MAX_DRAWSURFS));
+			}
+		}
 	}
 
 	{

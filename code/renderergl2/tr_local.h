@@ -2209,7 +2209,10 @@ void		R_Modellist_f (void);
 #define	MAX_SKINS				1024
 
 
-#define	MAX_DRAWSURFS			0x10000
+// Added in OPM: 0x10000 before. All the views of a scene share the list, and
+// the realtime lights' faces, the sun's cascades and the main view together
+// went past it (R_RtFaceRoom). 24 bytes a surface, twice (the sort's scratch).
+#define	MAX_DRAWSURFS			0x40000
 #define	DRAWSURF_MASK			(MAX_DRAWSURFS-1)
 
 /*

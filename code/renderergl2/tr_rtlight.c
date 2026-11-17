@@ -3773,6 +3773,7 @@ it reaches, added up. The texels no surface covers take their neighbours'.
 static float R_RtReach(const vec4_t colorRange, float cutoff);
 static float R_RtSlotCode(int slot);
 static void  R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face);
+static qboolean R_RtFaceRoom(void);
 
 #define RT_BAKE_BATCH  16  // lamps whose faces are drawn a frame: half of the whole tiles each frame
 #define RT_BAKE_WAIT   (RT_SKY_WAIT + 2)
@@ -5107,6 +5108,22 @@ static float R_RtFaceScaleMin(void)
 	return R_RtFaceScale(Q_min(r_rtShadowTile->integer, R_RtBakedTile()) / 2);
 }
 
+/*
+Is there room for another face in the frame's draw surfaces? Every face is a
+view of its own, and all the views of a scene share one list (MAX_DRAWSURFS):
+the main view is set up after the lights' faces, so when a turn brought a few
+lamps into view at once, their faces (some hundreds of surfaces each) filled
+it (72000 surfaces before the main view, on m6l2a), and the main view, past
+its end, drew nothing: a frame of fog with the lamps' glows in it. The faces
+stop at half of it, and those not drawn are drawn on a later frame.
+*/
+#define RT_FACE_DRAWSURFS (MAX_DRAWSURFS / 2)
+
+static qboolean R_RtFaceRoom(void)
+{
+	return tr.refdef.numDrawSurfs < RT_FACE_DRAWSURFS ? qtrue : qfalse;
+}
+
 static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 {
 	viewParms_t parms;
@@ -6276,7 +6293,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 			}
 			// one in quarter tiles come near: to whole tiles, if one is to be
 			// had, its faces drawn there now so that it is not dark a frame
-			if (l->staticSlot >= RT_SLOTS_BIG && l->staticReady && i < RT_SLOTS_UPGRADE && R_RtFindSlot(qtrue) >= 0) {
+			if (l->staticSlot >= RT_SLOTS_BIG && l->staticReady && i < RT_SLOTS_UPGRADE && R_RtFaceRoom() && R_RtFindSlot(qtrue) >= 0) {
 				R_RtStaticSlot(index, qtrue);
 				for (f = 0; f < 6; f++) {
 					R_RtRenderFace(l, 0, l->staticSlot, f);
@@ -6298,17 +6315,23 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 				movingLights++;
 				for (f = 0; f < 6; f++) {
-					if (inView & (1 << f)) {
-						R_RtRenderFace(l, 0, l->staticSlot, f);
-						rt.movingDrawn++;
-						l->staticFaces |= 1 << f;
+					if (!(inView & (1 << f))) {
+						continue;
 					}
+					// no room left this frame: drawn again once there is
+					if (!R_RtFaceRoom()) {
+						l->staticFaces &= ~(1 << f);
+						continue;
+					}
+					R_RtRenderFace(l, 0, l->staticSlot, f);
+					rt.movingDrawn++;
+					l->staticFaces |= 1 << f;
 				}
 			}
 			{
 				const qboolean rushed = chosen && !l->staticReady && l->inViewFrame == rt.frame;
 
-#define RT_FACE_ALLOWED (budget > 0 || (rushed && burst > 0))
+#define RT_FACE_ALLOWED ((budget > 0 || (rushed && burst > 0)) && R_RtFaceRoom())
 #define RT_FACE_SPENT() (budget > 0 ? budget-- : burst--)
 				for (f = 0; f < 6 && RT_FACE_ALLOWED && rt.frame - l->movedFrame > RT_LIGHT_SETTLE_FRAMES; f++) {
 					if (l->staticFaces & (1 << f)) {
@@ -6420,9 +6443,15 @@ void R_RtRenderShadows(const refdef_t *fd)
 						drawn = l->dynamicDrawn;
 					} else {
 						for (f = 0; f < 6; f++) {
-							if (drawn & (1 << f)) {
-								R_RtRenderFace(l, 1, slot, f);
+							if (!(drawn & (1 << f))) {
+								continue;
 							}
+							// no room left this frame: as if out of view
+							if (!R_RtFaceRoom()) {
+								drawn &= ~(1 << f);
+								continue;
+							}
+							R_RtRenderFace(l, 1, slot, f);
 						}
 						l->dynamicDrawn = drawn;
 						l->dynamicFrame = rt.frame;
