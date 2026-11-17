@@ -31,9 +31,334 @@ qboolean        g_bInfostaticmodels = qfalse;
 
 /*
 ==============
+R_StaticModelVaos
+
+Added in OPM: a model the light grid lights has the same vertexes wherever it
+stands (the map's own light for it is a colour for each vertex of each one),
+so its surfaces are put on the card once, here, and drawn from there
+(RB_StaticMeshVao) instead of being copied into the batch every frame, every
+pass. Their colour array is left off: the grid's light is given for the draw.
+==============
+*/
+#define STATIC_VAO_SURFACES 1024
+
+static struct {
+    const skelSurfaceGame_t *surf;
+    vao_t                   *vao;
+} staticVaos[STATIC_VAO_SURFACES];
+static int numStaticVaos;
+
+static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf, const color4ub_t *colors)
+{
+    static srfVert_t verts[TIKI_MAX_VERTEXES];
+    static glIndex_t indexes[TIKI_MAX_TRIANGLES * 3];
+    static vec3_t    sdirs[TIKI_MAX_VERTEXES], tdirs[TIKI_MAX_VERTEXES];
+    vao_t           *vao;
+    int              i;
+
+    // (one with the map's own colours is that model's alone)
+    for (i = 0; i < numStaticVaos && !colors; i++) {
+        if (staticVaos[i].surf == surf) {
+            return staticVaos[i].vao;
+        }
+    }
+    if ((!colors && numStaticVaos == STATIC_VAO_SURFACES) || tr.numVaos > MAX_VAOS - 256 || !surf->pStaticXyz || surf->numVerts > TIKI_MAX_VERTEXES
+        || surf->numTriangles > TIKI_MAX_TRIANGLES || surf->numVerts < 3 || surf->numTriangles < 1) {
+        return NULL;
+    }
+
+    Com_Memset(verts, 0, sizeof(verts[0]) * surf->numVerts);
+    for (i = 0; i < surf->numVerts; i++) {
+        VectorCopy(surf->pStaticXyz[i], verts[i].xyz);
+        verts[i].st[0]       = surf->pStaticTexCoords[i][0][0];
+        verts[i].st[1]       = surf->pStaticTexCoords[i][0][1];
+        verts[i].lightmap[0] = surf->pStaticTexCoords[i][1][0];
+        verts[i].lightmap[1] = surf->pStaticTexCoords[i][1][1];
+        R_VaoPackNormal(verts[i].normal, surf->pStaticNormal[i]);
+        if (colors) {
+            verts[i].color[0] = colors[i][0] * 0xffff / 0xff;
+            verts[i].color[1] = colors[i][1] * 0xffff / 0xff;
+            verts[i].color[2] = colors[i][2] * 0xffff / 0xff;
+            verts[i].color[3] = colors[i][3] * 0xffff / 0xff;
+        } else {
+            verts[i].color[0] = verts[i].color[1] = verts[i].color[2] = verts[i].color[3] = 0xffff;
+        }
+        VectorClear(sdirs[i]);
+        VectorClear(tdirs[i]);
+    }
+    for (i = 0; i < surf->numTriangles * 3; i += 3) {
+        const int a = surf->pTriangles[i], b = surf->pTriangles[i + 1], c = surf->pTriangles[i + 2];
+        vec3_t    sdir, tdir;
+
+        indexes[i]     = a;
+        indexes[i + 1] = b;
+        indexes[i + 2] = c;
+        if (a >= surf->numVerts || b >= surf->numVerts || c >= surf->numVerts) {
+            return NULL;
+        }
+        R_CalcTexDirs(sdir, tdir, verts[a].xyz, verts[b].xyz, verts[c].xyz, verts[a].st, verts[b].st, verts[c].st);
+        VectorAdd(sdirs[a], sdir, sdirs[a]);
+        VectorAdd(sdirs[b], sdir, sdirs[b]);
+        VectorAdd(sdirs[c], sdir, sdirs[c]);
+        VectorAdd(tdirs[a], tdir, tdirs[a]);
+        VectorAdd(tdirs[b], tdir, tdirs[b]);
+        VectorAdd(tdirs[c], tdir, tdirs[c]);
+    }
+    for (i = 0; i < surf->numVerts; i++) {
+        vec3_t tangent, bitangent;
+        vec4_t packMe;
+
+        packMe[3] = R_CalcTangentSpace(tangent, bitangent, surf->pStaticNormal[i], sdirs[i], tdirs[i]);
+        VectorCopy(tangent, packMe);
+        R_VaoPackTangent(verts[i].tangent, packMe);
+    }
+
+    vao = R_CreateVao2(va("static model surface %d", tr.numVaos), surf->numVerts, verts, surf->numTriangles * 3, indexes);
+    if (colors) {
+        return vao;
+    }
+    if (vao) {
+        R_BindVao(vao);
+        qglDisableVertexAttribArray(ATTR_INDEX_COLOR);
+        vao->attribs[ATTR_INDEX_COLOR].enabled = 0;
+        R_BindNullVao();
+    }
+    staticVaos[numStaticVaos].surf = surf;
+    staticVaos[numStaticVaos].vao  = vao;
+    numStaticVaos++;
+    return vao;
+}
+
+static void R_StaticModelVaos(cStaticModelUnpacked_t *pSM, const char *name, float top)
+{
+    int numSurfaces = 0;
+    int j, k, n;
+
+    pSM->surfaceVaos = NULL;
+    pSM->vaoColors   = qfalse;
+    pSM->floraHeight = 0.0f;
+    if (!pSM->noVertexData || !glRefConfig.vertexArrayObject) {
+        return;
+    }
+
+    for (j = 0; j < pSM->tiki->numMeshes; j++) {
+        const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+        if (skel) {
+            numSurfaces += skel->numSurfaces;
+        }
+    }
+    if (!numSurfaces) {
+        return;
+    }
+    pSM->surfaceVaos = (vao_t **)ri.Hunk_Alloc(numSurfaces * sizeof(vao_t *), h_dontcare);
+    for (j = 0, n = 0; j < pSM->tiki->numMeshes; j++) {
+        skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+        skelSurfaceGame_t *surf;
+
+        for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext, n++) {
+            pSM->surfaceVaos[n] = R_StaticSurfaceVao(surf, NULL);
+        }
+    }
+
+    // a tree or a bush: the wind moves it
+    if ((strstr(name, "/tree_") || strstr(name, "/bush_")) && top > 8.0f) {
+        pSM->floraHeight = top;
+    }
+}
+
+/*
+==============
+R_StaticFloraVaos
+
+Added in OPM: the game's own trees and bushes keep the map's light, a colour
+for each vertex of each one, so each gets its surfaces on the card with its
+own colours: then the wind can move it as it does the remade ones
+(RB_StaticMeshVao). Only on a map where they are few enough (palms in the
+desert, a hedge's worth): a forest of them stays as it was.
+==============
+*/
+#define STATIC_FLORA_VAOS 2000
+
+static qboolean R_StaticFloraOwnLight(const cStaticModelUnpacked_t *pSM)
+{
+    return pSM->tiki && !pSM->noVertexData && !pSM->surfaceVaos && pSM->numVertexData > 0
+        && (strstr(pSM->model, "tree_") || strstr(pSM->model, "bush_")) && pSM->tiki->a->maxs[2] > 8.0f;
+}
+
+static void R_StaticFloraVaos(void)
+{
+    int i, j, k, n, count = 0;
+
+    if (!glRefConfig.vertexArrayObject || !tr.world->staticModelData) {
+        return;
+    }
+    for (i = 0; i < tr.world->numStaticModels; i++) {
+        const cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
+
+        if (R_StaticFloraOwnLight(pSM)) {
+            for (j = 0; j < pSM->tiki->numMeshes; j++) {
+                const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+                count += skel ? skel->numSurfaces : 0;
+            }
+        }
+    }
+    if (!count || count > STATIC_FLORA_VAOS) {
+        return;
+    }
+    for (i = 0; i < tr.world->numStaticModels; i++) {
+        cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
+        const color4ub_t       *colors;
+        int                     numSurfaces = 0;
+
+        if (!R_StaticFloraOwnLight(pSM)) {
+            continue;
+        }
+        for (j = 0; j < pSM->tiki->numMeshes; j++) {
+            const skelHeaderGame_t *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+
+            numSurfaces += skel ? skel->numSurfaces : 0;
+        }
+        if (!numSurfaces) {
+            continue;
+        }
+        colors           = (const color4ub_t *)&tr.world->staticModelData[pSM->firstVertexData];
+        pSM->surfaceVaos = (vao_t **)ri.Hunk_Alloc(numSurfaces * sizeof(vao_t *), h_dontcare);
+        for (j = 0, n = 0; j < pSM->tiki->numMeshes; j++) {
+            skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+            skelSurfaceGame_t *surf;
+
+            for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext, n++) {
+                pSM->surfaceVaos[n] = R_StaticSurfaceVao(surf, colors + pSM->surfaces[n].ofsStaticData);
+            }
+        }
+        pSM->vaoColors   = qtrue;
+        pSM->floraHeight = pSM->tiki->a->maxs[2];
+    }
+}
+
+/*
+==============
 R_InitStaticModels
 ==============
 */
+/*
+===============
+R_SeatStaticFlora
+
+Added in OPM. The game's trees were plain posts sunk in the ground, and the
+maps put them anywhere from a little under it to well over it: a post shows no
+difference. A remade tree has a flared foot whose roots spread over the ground,
+and stood a hand over it they stuck out in the air, the bark going on down below
+them. Each is set down to the ground under its foot (where it is lowest round
+it: on a slope the roots on the low side meet it and those above go into the
+bank; set at the mean, the low side's stood out on stilts), a little over it, so that some of the flare that runs on under its
+origin shows, as much as is its own; the light is still read where the map put it.
+
+Only the remade ones (their meshes opm_*): what is under a rock (a static
+model, which nothing traced meets) is left as it is.
+===============
+*/
+static qboolean R_StaticFloraRemade(const cStaticModelUnpacked_t *pSM)
+{
+    const skelHeaderGame_t *skel;
+
+    if (!pSM->tiki || pSM->floraHeight <= 0.0f || pSM->tiki->numMeshes < 1) {
+        return qfalse;
+    }
+    skel = ri.TIKI_GetSkel(pSM->tiki->mesh[0]);
+    return skel && Q_stristr(skel->name, "opm_") != NULL;
+}
+
+static void R_SeatStaticFlora(void)
+{
+    int i, j, k, seated = 0;
+
+    if (!r_floraSeat->integer || !tr.world) {
+        return;
+    }
+
+    for (i = 0; i < tr.world->numStaticModels; i++) {
+        cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
+        const float             size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
+        float                   foot, low, over, h;
+        int                     n = 0;
+        qboolean                rock = qfalse;
+        vec3_t                  start, end;
+        trace_t                 trace;
+
+        if (!R_StaticFloraRemade(pSM)) {
+            continue;
+        }
+        foot = size * 0.04f; // (as far out as the roots spread)
+
+        // a rock is a model too, which the trace goes through
+        for (j = 0; j < tr.world->numStaticModels && !rock; j++) {
+            const cStaticModelUnpacked_t *o = &tr.world->staticModels[j];
+            float                         dx, dy, reach;
+
+            if (!o->tiki || !Q_stristr(o->model, "rock")) {
+                continue;
+            }
+            dx    = o->origin[0] - pSM->origin[0];
+            dy    = o->origin[1] - pSM->origin[1];
+            reach = o->cull_radius * 0.5f; // (over the rock itself: its sphere reaches well past it)
+            rock  = dx * dx + dy * dy < reach * reach;
+        }
+        if (rock) {
+            continue;
+        }
+
+        // the ground under the foot, at its middle and round it
+        low = 0.0f;
+        for (k = 0; k < 9; k++) {
+            const float a = k * (float)(M_PI / 4.0);
+
+            start[0] = pSM->origin[0] + (k ? cos(a) * foot : 0.0f);
+            start[1] = pSM->origin[1] + (k ? sin(a) * foot : 0.0f);
+            start[2] = pSM->origin[2] + size * 0.1f;
+            VectorCopy(start, end);
+            end[2] = pSM->origin[2] - size * 0.3f;
+            ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
+            if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f) {
+                continue;
+            }
+            if (!n || trace.endpos[2] < low) {
+                low = trace.endpos[2];
+            }
+            n++;
+        }
+        if (n < 5) {
+            continue;
+        }
+
+        // how much of its roots shows: each its own. The model's ground is its origin
+        // and the flare runs on under it (tools/flora/pines.py keeps the top of that
+        // as it is): stood a little over the ground, some of it is out
+        h    = sin(pSM->origin[0] * 12.9898f + pSM->origin[1] * 78.233f) * 43758.5453f;
+        h   -= floor(h);
+        over = size * (0.003f + 0.009f * h); // (2.5 to 10 units on a stem 854 tall)
+
+        // (down as far as it takes; up only a little, out of a hollow it was sunk in)
+        low += over;
+        if (low > pSM->origin[2] + size * 0.05f) {
+            low = pSM->origin[2] + size * 0.05f;
+        }
+        if (fabs(low - pSM->origin[2]) < 0.5f) {
+            continue;
+        }
+
+        // the light still read over the ground
+        pSM->lightOrigin[2] = Q_max(pSM->origin[2], low + 16.0f);
+        pSM->origin[2]      = low;
+        VectorCopy(pSM->origin, pSM->baseOrigin);
+        seated++;
+    }
+
+    ri.Printf(PRINT_DEVELOPER, "R_SeatStaticFlora: %d remade trees set on the ground\n", seated);
+}
+
 void R_InitStaticModels(void)
 {
     cStaticModelUnpacked_t *pSM;
@@ -43,6 +368,7 @@ void R_InitStaticModels(void)
     int                     i, j, k, l;
 
     g_bInfostaticmodels = qfalse;
+    numStaticVaos       = 0; // Added in OPM: the last map's went with it
 
     if (tr.overbrightShift) {
         for (i = 0; i < tr.world->numStaticModelData; i++) {
@@ -79,6 +405,7 @@ void R_InitStaticModels(void)
         // Added in OPM
         //  where the map placed it (RE_SetStaticModelTransform)
         VectorCopy(pSM->origin, pSM->baseOrigin);
+        VectorCopy(pSM->origin, pSM->lightOrigin);
         AxisCopy(pSM->axis, pSM->baseAxis);
         pSM->moved    = qfalse;
         pSM->rtCaster = 0;
@@ -276,7 +603,16 @@ void R_InitStaticModels(void)
                 }
             }
         }
+
+        // Added in OPM: on the card, if the grid lights it
+        R_StaticModelVaos(pSM, szTemp, maxs[2]);
     }
+
+    // Added in OPM: the game's own trees, with the map's light, where they are few
+    R_StaticFloraVaos();
+
+    // Added in OPM: the remade trees stood on the ground
+    R_SeatStaticFlora();
 
     tr.refdef.numStaticModels    = tr.world->numStaticModels;
     tr.refdef.staticModels       = tr.world->staticModels;
@@ -473,6 +809,29 @@ void R_AddStaticModelSurfaces(void)
                 for (j = 0; j < skelmodel->numSurfaces; j++, surface = surface->pNext, dsurf++, s_surface++) {
                     shader = tr.shaders[dsurf->hShader[0]];
 
+                    // Added in OPM: a remade tree's distance levels. Its near
+                    // surfaces' shaders fade out with distance and its far
+                    // ones' fade in over the same stretch (as the game's far
+                    // sprites did); drawn from the card nothing fades, so it
+                    // is one set or the other, changed half way, by how far
+                    // the tree stands from the eye (not from a shadow's view).
+                    // A shadow's view changes nearer (r_floraShadowLod): the
+                    // trees by the eye keep casting what is seen, so their
+                    // own shadows lie right on them, and the rest of a dense
+                    // wood casts its far models, which is most of the sun's
+                    // cascades.
+                    if (SM->surfaceVaos && !SM->vaoColors && r_staticModelVao->integer && shader->stages[0]
+                        && (shader->stages[0]->alphaGen == AGEN_DIST_FADE
+                            || shader->stages[0]->alphaGen == AGEN_ONE_MINUS_DIST_FADE)) {
+                        const float change = (shader->fDistNear + shader->fDistRange * 0.5f) * r_floraLod->value
+                                           * ((tr.viewParms.flags & VPF_DEPTHSHADOW) ? Com_Clamp(0.0f, 1.0f, r_floraShadowLod->value) : 1.0f);
+                        const qboolean far_ = r_floraLod->value > 0.0f
+                                           && DistanceSquared(tiki_worldorigin, tr.refdef.vieworg) > change * change;
+
+                        if (far_ != (shader->stages[0]->alphaGen == AGEN_ONE_MINUS_DIST_FADE)) {
+                            continue;
+                        }
+                    } else
                     if (shader->numUnfoggedPasses == 1 && !r_nocull->integer) {
                         switch (shader->stages[0]->alphaGen) {
                         case AGEN_DIST_FADE:

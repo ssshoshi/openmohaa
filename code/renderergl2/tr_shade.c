@@ -326,6 +326,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
 	tess.skin.valid = qfalse;
 	tess.skin.deferred = qfalse;
 	tess.groundCover = qfalse;
+	tess.flora = qfalse;
 	tess.terrain = qfalse;
 	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
@@ -1609,6 +1610,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 					index |= LIGHTDEF_GROUNDCOVER;
 				}
 
+				if (tess.flora)
+				{
+					index |= LIGHTDEF_FLORA;
+				}
+
 				if (tess.skelGpu.active)
 				{
 					index &= ~(LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION);
@@ -1693,6 +1699,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			if (tess.groundCover)
 			{
 				index |= LIGHTDEF_GROUNDCOVER;
+			}
+
+			if (tess.flora)
+			{
+				index |= LIGHTDEF_FLORA;
 			}
 
 			if (tess.skelGpu.active)
@@ -1814,6 +1825,19 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			// who stands in it (in the gore dents' uniform, which the
 			// tufts' lightall has no other use for)
 			RB_GroundCoverPushers(pushers);
+			GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, (const vec4_t *)pushers, 8);
+		}
+
+		// Added in OPM: how a tree sways (RB_StaticMeshVao), in the tufts' uniform
+		if (tess.flora)
+		{
+			vec4_t pushers[8], who[8];
+
+			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDCOVER, tess.floraParams);
+			// a blast's throw first, then who stands in it (as the grass's)
+			RB_GroundCoverPushers(who);
+			Vector4Copy(tess.floraBlast, pushers[0]);
+			Com_Memcpy(pushers[1], who[0], sizeof(vec4_t) * 7);
 			GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, (const vec4_t *)pushers, 8);
 		}
 
@@ -2278,6 +2302,19 @@ static qboolean RB_StageUsesVertexAlphaGen( const shaderStage_t *pStage )
 ** is what the GL1 renderer arrives at by transforming the view origin through
 ** the model's axes.
 */
+// Added in OPM: a stage of it fades by its vertexes, which only tess has
+qboolean RB_ShaderFadesVertexes( const shader_t *shader )
+{
+	int i;
+
+	for ( i = 0; i < MAX_SHADER_STAGES; i++ ) {
+		if ( shader->stages[i] && RB_StageUsesVertexAlphaGen( shader->stages[i] ) ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 static void RB_ComputeVertexAlphaGen( void )
 {
 	const shaderStage_t *pStage = NULL;
@@ -2812,6 +2849,7 @@ void RB_EndSurface( void ) {
 	tess.useCacheVao = qfalse;
 	tess.useInternalVao = qfalse;
 	tess.groundCover = qfalse;
+	tess.flora = qfalse;
 	tess.polys = qfalse;
 	tess.skelGpu.active = qfalse;
 

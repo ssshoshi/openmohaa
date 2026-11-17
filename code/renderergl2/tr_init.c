@@ -265,6 +265,11 @@ cvar_t	*r_saveFontData;
 cvar_t	*r_marksOnTriangleMeshes;
 
 cvar_t	*r_vaoCache;
+cvar_t	*r_staticModelVao; // Added in OPM
+cvar_t	*r_floraWind;      // Added in OPM
+cvar_t	*r_floraLod;       // Added in OPM
+cvar_t	*r_floraSeat;      // Added in OPM
+cvar_t	*r_floraShadowLod; // Added in OPM
 cvar_t	*r_gpuTimerSync;
 cvar_t	*r_gpuTimers;
 cvar_t	*r_frameHitchMsec;
@@ -1909,6 +1914,17 @@ void R_Register( void )
 	// frozen (orch_campos): three views, cache off and on, the same pixels but
 	// for 0.018% of one view; off against off, the same. So it is on.
 	r_vaoCache = ri.Cvar_Get("r_vaoCache", "1", CVAR_ARCHIVE);
+	// Added in OPM
+	r_staticModelVao = ri.Cvar_Get("r_staticModelVao", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_staticModelVao, "Static models the light grid lights (remade trees and props) are drawn from the graphics card instead of being copied to it every frame (0: copied, as before)");
+	r_floraLod = ri.Cvar_Get("r_floraLod", "1", CVAR_ARCHIVE);
+	r_floraSeat = ri.Cvar_Get("r_floraSeat", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraSeat, "Remade trees set down onto the ground under them as the map loads, their roots in it to a depth of their own (0: where the map put them)");
+	ri.Cvar_SetDescription(r_floraLod, "How far off remade trees change to their lighter far models, times what each is made for (1: as made, 2 twice as far, 0 never: always the full model)");
+	r_floraShadowLod = ri.Cvar_Get("r_floraShadowLod", "0.35", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraShadowLod, "How far off remade trees cast their shadows from their far models, of where they are seen to change (r_floraLod): the trees near keep casting what is seen. 1: as seen; 0.35: a dense wood's shadows cost half");
+	r_floraWind = ri.Cvar_Get("r_floraWind", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraWind, "How far the wind moves remade trees and bushes: trunks bend, boughs sway and leaves flutter, harder under a gust (1: as made, 0 still; r_wind and the map's wind scale it too)");
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
 	R_WaterRegisterCvars();
@@ -2554,6 +2570,7 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.SetWaterBlood = RE_SetWaterBlood;
 	re.AddWaterRipples = RE_AddWaterRipples;
 	re.SetLensSpots = RE_SetLensSpots;
+	re.AddBlast = RE_AddBlast;
 	re.TIKI_Orientation = RE_TIKI_Orientation;
 	re.TIKI_IsOnGround = RE_TIKI_IsOnGround;
 	re.SetFrameNumber = RE_SetFrameNumber;

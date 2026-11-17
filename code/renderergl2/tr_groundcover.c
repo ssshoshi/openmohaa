@@ -1994,6 +1994,16 @@ void RB_GroundCoverPushers(vec4_t out[GC_PUSHERS])
             dists[k] = d;
         }
     }
+    // Added in OPM: and where something blew up, it lies flat (the two
+    // newest blasts, in the last places: the farthest of who stands in it)
+    if (reach > 0.0f) {
+        vec4_t flat[2];
+        int    n = R_BlastPushers(flat, 2);
+
+        for (i = 0; i < n; i++) {
+            Vector4Copy(flat[i], out[GC_PUSHERS - 1 - i]);
+        }
+    }
     Com_Memcpy(kept, out, sizeof(kept));
     keptTime = backEnd.refdef.floatTime;
     VectorCopy(view, keptView);

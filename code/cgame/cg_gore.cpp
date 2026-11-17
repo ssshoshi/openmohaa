@@ -40,6 +40,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_gore.h"
+#include "cg_lens.h"
 #include "cg_physics.h"
 #include "cg_physics_ragdoll.h"
 #include "cg_ragdoll.h"
@@ -3927,6 +3928,8 @@ void CG_GoreBlast_f(void)
     CG_RagdollNoteExplosion(end, kind);
     CG_GoreNoteExplosion(end, kind);
     CG_PhysicsNoteExplosion(end, kind);
+    // (the lens, and the trees and grass round it)
+    CG_LensBlast(end, kind, qfalse);
 }
 
 // Where a part's stump is now, on the body as drawn, and which way it faces.

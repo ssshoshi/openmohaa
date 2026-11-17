@@ -1197,7 +1197,7 @@ void RB_Grid_SetupEntity()
 
 void RB_Grid_SetupStaticModel()
 {
-    RB_SetupStaticModelGridLighting(&tr.refdef, backEnd.currentStaticModel, backEnd.currentStaticModel->origin);
+    RB_SetupStaticModelGridLighting(&tr.refdef, backEnd.currentStaticModel, backEnd.currentStaticModel->lightOrigin);
 }
 
 void RB_Light_Fullbright(unsigned char *colors)

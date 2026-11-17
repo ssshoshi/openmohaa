@@ -880,11 +880,14 @@ enum
 	// Added in OPM: a skeletal model posed by the vertex program from the
 	// frame's bones (tr_skelgpu.c); built the first time it is asked for
 	LIGHTDEF_SKEL_GPU            = 0x0800,
+	// Added in OPM: a tree or bush drawn from the card, swayed by the wind in
+	// the vertex program (RB_StaticMeshVao); built the first time it is asked for
+	LIGHTDEF_FLORA               = 0x1000,
 	// Added in OPM: the world's ground, whose texture is varied across the
 	// map (r_groundVariation, tr_atmos.c); built the first time it is asked for
-	LIGHTDEF_GROUNDVARY          = 0x1000,
-	LIGHTDEF_ALL                 = 0x1FFF,
-	LIGHTDEF_COUNT               = 0x2000
+	LIGHTDEF_GROUNDVARY          = 0x2000,
+	LIGHTDEF_ALL                 = 0x3FFF,
+	LIGHTDEF_COUNT               = 0x4000
 };
 
 enum
@@ -1835,6 +1838,17 @@ typedef struct cStaticModelUnpacked_s {
     //  made when the map loads: they are the same for every view, and a frame
     //  draws many (the sun cascades, the lights' shadows, the cubemaps).
     staticSurface_t *surfaces;
+
+    // Added in OPM
+    //  Those surfaces on the card, for a model the light grid lights
+    //  (R_StaticModelVaos), and how tall it stands if it is a tree or a bush,
+    //  which the wind sways (0: it is not).
+    struct vao_s **surfaceVaos;
+    qboolean       vaoColors; // they hold the map's own light for it (R_StaticFloraVaos)
+    float          floraHeight;
+    // where the light grid is read for it: where the map put it, though a remade
+    // tree is set down onto the ground (R_SeatStaticFlora)
+    vec3_t         lightOrigin;
 } cStaticModelUnpacked_t;
 
 typedef struct refSprite_s {
@@ -3266,6 +3280,11 @@ extern cvar_t* r_showportal;
 //=========================
 
 extern cvar_t *r_vaoCache;
+extern cvar_t *r_staticModelVao; // Added in OPM
+extern cvar_t *r_floraWind;      // Added in OPM
+extern cvar_t *r_floraLod;       // Added in OPM
+extern cvar_t *r_floraSeat;      // Added in OPM
+extern cvar_t *r_floraShadowLod; // Added in OPM
 extern cvar_t *r_gpuTimerSync;
 extern cvar_t *r_gpuTimers;
 extern cvar_t *r_frameHitchMsec;
@@ -3649,6 +3668,13 @@ typedef struct shaderCommands_s
 	qboolean    groundCover;
 	qboolean    terrain;    // Added in OPM: a terrain patch is in the batch (lamp shadows draw its one side)
 	vec4_t      groundCoverParams;
+
+	// Added in OPM: the batch is a tree's or a bush's surface, drawn from
+	// the card (RB_StaticMeshVao), which the vertex program sways: time, its
+	// height (negative: leaves, which flutter), wind, where it blows to
+	qboolean    flora;
+	vec4_t      floraParams;
+	vec4_t      floraBlast; // which way a blast throws it and how far (of its height), how hard it shakes
 
 	// Added in OPM: the batch is polygons (marks, decals): the realtime
 	// bounce lights them from the probes where they are (R_RtSetUniforms)
@@ -4183,6 +4209,10 @@ void R_AtmosLoadWorld(const char *mapName);
 void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 void R_AtmosWind(vec2_t dir, float *strength);
 float R_AtmosGusts(void);
+// Added in OPM: blasts, and what they do to what grows (tr_atmos.c)
+int RE_AddBlast(const float *origin, float radius, float strength, float *shaken, int maxShaken);
+void R_BlastSway(const vec3_t at, vec4_t out);
+int R_BlastPushers(vec4_t *out, int max);
 void R_AtmosCloudShadows(vec4_t out, int tmu);
 qboolean R_AtmosGroundShader(const shader_t *shader);
 void R_AtmosGroundVary(const shader_t *shader, vec4_t out, vec4_t out2);
@@ -4282,6 +4312,7 @@ void RE_SetFrameNumber(int frameNumber);
 void R_UpdatePoseInternal(refEntity_t* model);
 void RB_SkelMesh(skelSurfaceGame_t* sf);
 void RB_StaticMesh(staticSurface_t* staticSurf);
+qboolean RB_ShaderFadesVertexes(const shader_t *shader); // Added in OPM
 void RB_Static_BuildDLights();
 void R_InfoStaticModels_f(void);
 void R_PrintInfoStaticModels();

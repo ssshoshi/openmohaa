@@ -876,6 +876,7 @@ void CL_InitCGameDLL( clientGameImport_t *cgi, clientGameExport_t **cge ) {
 	cgi->R_SetWaterBlood			= re.SetWaterBlood;
 	cgi->R_AddWaterRipples			= re.AddWaterRipples;
 	cgi->R_SetLensSpots			= re.SetLensSpots;
+	cgi->R_AddBlast				= re.AddBlast;
 	cgi->apiversion					= CGAME_IMPORT_API_VERSION;
 	// FIXME
 	//cgi->pUnknownVar				= NULL;

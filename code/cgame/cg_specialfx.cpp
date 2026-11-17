@@ -430,6 +430,12 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_OPM_BREATH:
             szEffectModel = "models/fx/opm_breath.tik";
             break;
+        case SFX_OPM_LEAVES_TREE:
+            szEffectModel = "models/fx/opm_leaves_tree.tik";
+            break;
+        case SFX_OPM_LEAVES_BUSH:
+            szEffectModel = "models/fx/opm_leaves_bush.tik";
+            break;
         default:
             szEffectModel = "models/fx/bh_stone_hard.tik";
             break;
