@@ -4153,6 +4153,7 @@ void R_GroundCoverInfo_f(void);
 void RB_SurfaceGroundCover(void *surface);
 void RB_SurfaceGroundCoverVerts(int numVerts, srfVert_t *verts, int numIndexes, glIndex_t *indexes);
 void RB_GroundCoverBindVao(void);
+void RB_GroundCoverPushers(vec4_t out[8]);
 void RB_GroundCoverDrawElements(void);
 
 /*

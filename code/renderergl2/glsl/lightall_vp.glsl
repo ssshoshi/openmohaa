@@ -110,6 +110,14 @@ varying vec3   var_RtNormal;
 #if defined(USE_GROUNDCOVER)
 uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows to (radians, under 7) with how gusty it is in tenths times 7 over it
 
+// Added in OPM: who stands in the grass (tr_groundcover.c's GC_Pushers): where
+// his feet are and how far round them it gives way, 0 for none. (The gore
+// dents' uniform, which the tufts' own lightall has no other use for.)
+#if defined(USE_GROUNDCOVER)
+#define GC_PUSHERS 8
+uniform vec4   u_SkelDents[GC_PUSHERS];
+#endif
+
 // Added in OPM: two noises at once, for the gusts
 vec2 GcHash2(vec2 p)
 {
@@ -455,6 +463,35 @@ void main()
 
 		position.xy += vec2(cos(to), sin(to)) * lean;
 		position.z  -= min(lean * lean / (2.0 * max(position.z - root.z, 6.0)), 0.5 * max(position.z - root.z, 0.0));
+
+		// Added in OPM: it gives way round whoever stands in it: pressed
+		// outward from his feet and down, most where he stands
+		if (attr_Tangent.w > 0.0)
+		{
+			vec2  out2  = vec2(0.0);
+			float press = 0.0;
+
+			for (int k = 0; k < GC_PUSHERS; k++)
+			{
+				vec4  pu = u_SkelDents[k];
+				vec2  d  = root.xy - pu.xy;
+				float r2 = dot(d, d);
+
+				if (r2 < pu.w * pu.w && abs(root.z - pu.z) < 64.0)
+				{
+					float dist = sqrt(r2);
+					float f    = 1.0 - dist / pu.w;
+
+					f      = f * f * (3.0 - 2.0 * f);
+					out2  += (dist > 0.5 ? d / dist : vec2(1.0, 0.0)) * f;
+					press  = max(press, f);
+				}
+			}
+			float height = max(position.z - root.z, 0.0);
+
+			position.xy += out2 * (height * 0.75 * sink);
+			position.z  -= press * height * 0.6 * sink;
+		}
 	}
 #endif
 

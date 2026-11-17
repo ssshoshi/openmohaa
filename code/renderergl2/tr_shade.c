@@ -1808,7 +1808,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		// Added in OPM: how a ground cover cell sways (RB_SurfaceGroundCover)
 		if (tess.groundCover)
 		{
+			vec4_t pushers[8];
+
 			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDCOVER, tess.groundCoverParams);
+			// who stands in it (in the gore dents' uniform, which the
+			// tufts' lightall has no other use for)
+			RB_GroundCoverPushers(pushers);
+			GLSL_SetUniformSkelDents(sp, UNIFORM_SKELDENTS, (const vec4_t *)pushers, 8);
 		}
 
 		// Added in OPM: the model the vertex program poses (tr_skelgpu.cpp)

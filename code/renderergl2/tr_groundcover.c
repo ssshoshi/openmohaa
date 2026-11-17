@@ -229,6 +229,7 @@ static cvar_t *r_groundCoverDensity;
 static cvar_t *r_groundCoverDistance;
 static cvar_t *r_groundCoverHeight;
 static cvar_t *r_groundCoverWind;
+static cvar_t *r_groundCoverPush;
 static cvar_t *r_groundCoverBrightness;
 static cvar_t *r_groundCoverMask;
 static cvar_t *r_groundCoverGPU;
@@ -243,6 +244,8 @@ void R_GroundCoverRegisterCvars(void)
     r_groundCoverDistance = ri.Cvar_Get("r_groundCoverDistance", "1600", CVAR_ARCHIVE);
     r_groundCoverHeight = ri.Cvar_Get("r_groundCoverHeight", "1", CVAR_ARCHIVE);
     r_groundCoverWind = ri.Cvar_Get("r_groundCoverWind", "1", CVAR_ARCHIVE);
+    r_groundCoverPush = ri.Cvar_Get("r_groundCoverPush", "1", CVAR_ARCHIVE);
+    ri.Cvar_SetDescription(r_groundCoverPush, "The grass gives way round the feet of whoever stands in it, the player and the soldiers near: 0 off, 1 as wide as a man, up to 3");
     // upright blades catch less of the light than the ground they stand on
     r_groundCoverBrightness = ri.Cvar_Get("r_groundCoverBrightness", "0.85", CVAR_ARCHIVE);
     // 1: no grass where the ground's texture is not green (paths, dirt)
@@ -1917,6 +1920,85 @@ static void GC_Wind(const float *root, float phase, float time, float yaw, float
     *lean  = (sway * 2.2f + 1.2f) * gust * (1.0f - 0.45f * Q_min(gusty, 1.0f)) + g * (13.0f + sway * 3.0f + flut * 2.0f);
 }
 
+/*
+================
+GC_Pushers
+
+Added in OPM: who stands in the grass, which gives way round his feet
+(r_groundCoverPush): the nearest of the view's whole models that are a
+man's size, and the eye's own feet. Where, and how far round it (0: none).
+================
+*/
+#define GC_PUSHERS 8
+
+void RB_GroundCoverPushers(vec4_t out[GC_PUSHERS])
+{
+    static vec4_t kept[GC_PUSHERS];
+    static float  keptTime = -1.0f;
+    static vec3_t keptView;
+    const float  *view = backEnd.refdef.vieworg;
+    const float   reach = Com_Clamp(0.0f, 96.0f, r_groundCoverPush->value * 30.0f);
+    float         dists[GC_PUSHERS];
+    int           count = 0, i, k;
+
+    if (keptTime == backEnd.refdef.floatTime && VectorCompare(keptView, view)) {
+        Com_Memcpy(out, kept, sizeof(kept));
+        return;
+    }
+    Com_Memset(out, 0, sizeof(vec4_t) * GC_PUSHERS);
+    if (reach > 0.0f) {
+        // the eye's own feet (drawn or not: the first person has no body
+        // in every view)
+        if (!(backEnd.refdef.rdflags & RDF_NOWORLDMODEL)) {
+            VectorSet4(out[0], view[0], view[1], view[2] - 60.0f, reach);
+            dists[0] = 0.0f;
+            count    = 1;
+        }
+        for (i = 0; i < backEnd.refdef.num_entities; i++) {
+            const refEntity_t *e = &backEnd.refdef.entities[i].e;
+            float              d;
+
+            // a model of its own, a man's size: not what he carries, nor
+            // the hands and the weapon in view, nor a helmet on the ground
+            if (e->reType != RT_MODEL || !e->tiki || e->parentEntity != ENTITYNUM_NONE
+                || (e->renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK)) || e->radius < 40.0f) {
+                continue;
+            }
+            d = DistanceSquared(e->origin, view);
+            if (d > 900.0f * 900.0f) {
+                continue;
+            }
+            // (the player's own body, where the eye's feet already are)
+            if (count && (e->origin[0] - out[0][0]) * (e->origin[0] - out[0][0])
+                + (e->origin[1] - out[0][1]) * (e->origin[1] - out[0][1]) < 24.0f * 24.0f
+                && fabs(e->origin[2] - out[0][2]) < 64.0f) {
+                continue;
+            }
+            // a place of its own, or the place of the farthest kept if it is nearer
+            if (count < GC_PUSHERS) {
+                k = count++;
+            } else {
+                int farthest = 1;
+
+                for (k = 2; k < GC_PUSHERS; k++) {
+                    if (dists[k] > dists[farthest]) {
+                        farthest = k;
+                    }
+                }
+                if (dists[farthest] <= d) {
+                    continue;
+                }
+                k = farthest;
+            }
+            VectorSet4(out[k], e->origin[0], e->origin[1], e->origin[2], reach);
+            dists[k] = d;
+        }
+    }
+    Com_Memcpy(kept, out, sizeof(kept));
+    keptTime = backEnd.refdef.floatTime;
+    VectorCopy(view, keptView);
+}
+
 void RB_SurfaceGroundCover(void *surface)
 {
     const srfGroundCover_t *draw = (const srfGroundCover_t *)surface;
@@ -1932,6 +2014,7 @@ void RB_SurfaceGroundCover(void *surface)
     int                     n, i;
 
     float                   yaw, gusty;
+    vec4_t                  pushers[GC_PUSHERS];
 
     {
         float strength;
@@ -1945,6 +2028,8 @@ void RB_SurfaceGroundCover(void *surface)
         }
         gusty = floor(Com_Clamp(0.0f, 2.0f, R_AtmosGusts()) * 10.0f + 0.5f) * 0.1f;
     }
+
+    RB_GroundCoverPushers(pushers);
 
     gc.backEndDraws++;
     gc.backEndTufts += draw->numTufts;
@@ -1994,9 +2079,28 @@ void RB_SurfaceGroundCover(void *surface)
         d    = Distance(tuft->root, view);
         sink = Com_Clamp(0, 1, (end - d) / (end * 0.2f));
 
+        float           press = 0.0f;
+        vec2_t          away = { 0.0f, 0.0f };
+
         GC_Wind(tuft->root, tuft->phase, time, yaw, gusty, to, &lean);
         lean *= tuft->flex * wind * sink;
         VectorSet(offset, to[0] * lean, to[1] * lean, 0.0f);
+
+        // it gives way round whoever stands in it (as lightall_vp.glsl)
+        for (i = 0; i < GC_PUSHERS; i++) {
+            const float dx = tuft->root[0] - pushers[i][0], dy = tuft->root[1] - pushers[i][1];
+            const float r2 = dx * dx + dy * dy;
+
+            if (r2 < pushers[i][3] * pushers[i][3] && fabs(tuft->root[2] - pushers[i][2]) < 64.0f) {
+                const float dist = sqrt(r2);
+                float       f = 1.0f - dist / pushers[i][3];
+
+                f = f * f * (3.0f - 2.0f * f);
+                away[0] += (dist > 0.5f ? dx / dist : 1.0f) * f;
+                away[1] += (dist > 0.5f ? dy / dist : 0.0f) * f;
+                press = Q_max(press, f);
+            }
+        }
 
         for (i = 0; i < GC_VERTS_TUFT; i++, xyz += 4) {
             if (sink < 1.0f) {
@@ -2010,6 +2114,13 @@ void RB_SurfaceGroundCover(void *surface)
 
                 VectorAdd(xyz, offset, xyz);
                 xyz[2] -= Q_min(lean * lean / (2.0f * Q_max(height, 6.0f)), 0.5f * Q_max(height, 0.0f));
+                {
+                    const float stands = Q_max(xyz[2] - tuft->root[2], 0.0f);
+
+                    xyz[0] += away[0] * stands * 0.75f * sink;
+                    xyz[1] += away[1] * stands * 0.75f * sink;
+                    xyz[2] -= press * stands * 0.6f * sink;
+                }
             }
         }
     }
