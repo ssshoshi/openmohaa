@@ -1,0 +1,12 @@
+// The ground cover's own word on shaders that are not what their surfaceparm
+// says (code/renderergl2/tr_groundcover.c, GC_LoadRules). A line each:
+//   bare <shader>   never grows anything
+//   grow <shader>   grass ground whatever its flags; only the greener of the
+//                   two parts of its texture grows
+// Read as a map loads.
+
+// the leafy top of the bocage's hedge walls (m4l1, m4l2), flagged grass
+bare textures/misc_outside/bocage_fencetop
+
+// the bocage's banks where grass gives onto bare rock (m4l1): flagged rock
+grow textures/wilderness/m3l3_rockgrasstrans

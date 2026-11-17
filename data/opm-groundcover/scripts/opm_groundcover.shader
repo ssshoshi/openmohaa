@@ -18,3 +18,22 @@ groundcover/grass
 		rgbGen exactVertex
 	}
 }
+
+// Every kind of what grows (r_groundCoverKinds): eight cells of
+// groundcover_cover.tga, drawn by tools/groundcover/grass.py: grass, another
+// clump, weeds, grass in flower; dead grass, dry scrub, reeds, dry grass. The
+// renderer takes this one when it is here and groundcover/grass when not.
+groundcover/cover
+{
+	surfaceparm nonsolid
+	surfaceparm nomarks
+	surfaceparm alphashadow
+	cull none
+	nopicmip
+	{
+		map textures/opm/groundcover_cover.tga
+		alphaFunc GE128
+		depthWrite
+		rgbGen exactVertex
+	}
+}
