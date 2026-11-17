@@ -1,0 +1,3 @@
+// Norway in the snow: a hard, gusty wind down the fjord
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 315 1.3 1.3

@@ -1,0 +1,3 @@
+// The bocage: a summer breeze over the fields
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 150 0.9 1

@@ -1,0 +1,3 @@
+// Brittany, the town: the same wind
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 240 1 1

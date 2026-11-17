@@ -1852,6 +1852,71 @@ Drawing (back end)
 =============================================================================
 */
 
+// Added in OPM: the wind on a tuft, as glsl/lightall_vp.glsl works it out for
+// the tufts on the card: which way its tips go and how far (for a flex of
+// one), in gusts. The same noise, the same numbers.
+static void GC_Hash2(float x, float y, float *out)
+{
+    float p[3] = { x * 0.1031f, y * 0.1030f, x * 0.0973f };
+    float d;
+    int   i;
+
+    for (i = 0; i < 3; i++) {
+        p[i] -= floor(p[i]);
+    }
+    d = p[0] * (p[1] + 33.33f) + p[1] * (p[2] + 33.33f) + p[2] * (p[0] + 33.33f);
+    for (i = 0; i < 3; i++) {
+        p[i] += d;
+    }
+    out[0] = (p[0] + p[1]) * p[2];
+    out[1] = (p[0] + p[2]) * p[1];
+    out[0] -= floor(out[0]);
+    out[1] -= floor(out[1]);
+}
+
+static void GC_Noise2(float x, float y, float *out)
+{
+    const float ix = floor(x), iy = floor(y);
+    const float fx = x - ix, fy = y - iy;
+    const float ux = fx * fx * (3.0f - 2.0f * fx), uy = fy * fy * (3.0f - 2.0f * fy);
+    float       a[2], b[2], c[2], d[2];
+    int         i;
+
+    GC_Hash2(ix, iy, a);
+    GC_Hash2(ix + 1.0f, iy, b);
+    GC_Hash2(ix, iy + 1.0f, c);
+    GC_Hash2(ix + 1.0f, iy + 1.0f, d);
+    for (i = 0; i < 2; i++) {
+        const float top = a[i] + (b[i] - a[i]) * ux, bottom = c[i] + (d[i] - c[i]) * ux;
+
+        out[i] = top + (bottom - top) * uy;
+    }
+}
+
+static float GC_Smoothstep(float a, float b, float x)
+{
+    x = Com_Clamp(0.0f, 1.0f, (x - a) / (b - a));
+    return x * x * (3.0f - 2.0f * x);
+}
+
+static void GC_Wind(const float *root, float phase, float time, float yaw, float gusty, vec2_t dir, float *lean)
+{
+    const float wx = cos(yaw), wy = sin(yaw);
+    const float gust = 0.6f + 0.4f * sin(time * 0.31f + root[0] * 0.0021f + root[1] * 0.0013f);
+    const float sway = sin(time * 1.9f + phase + (root[0] + root[1]) * 0.011f) * 0.65f + sin(time * 3.7f + phase * 1.7f) * 0.35f;
+    const float burst = GC_Smoothstep(0.2f, 0.75f, 0.5f + 0.5f * sin(time * 0.21f + 2.0f * sin(time * 0.083f)));
+    const float flut = sin(time * 7.3f + phase * 2.3f + root[0] * 0.03f);
+    float       n[2], g, to;
+
+    GC_Noise2((root[0] * wx + root[1] * wy - time * 220.0f) / 520.0f, (root[1] * wx - root[0] * wy) / 900.0f + time * 0.013f, n);
+    g  = gusty * GC_Smoothstep(0.4f, 0.8f, n[0]) * (0.35f + 0.65f * burst);
+    to = yaw + gusty * ((n[1] - 0.5f) * 1.5f + sin(time * 0.047f) * 0.21f + sin(time * 0.113f + 1.3f) * 0.14f);
+
+    dir[0] = cos(to);
+    dir[1] = sin(to);
+    *lean  = (sway * 2.2f + 1.2f) * gust * (1.0f - 0.45f * Q_min(gusty, 1.0f)) + g * (13.0f + sway * 3.0f + flut * 2.0f);
+}
+
 void RB_SurfaceGroundCover(void *surface)
 {
     const srfGroundCover_t *draw = (const srfGroundCover_t *)surface;
@@ -1866,11 +1931,19 @@ void RB_SurfaceGroundCover(void *surface)
     int                     firstVert;
     int                     n, i;
 
+    float                   yaw, gusty;
+
     {
         float strength;
 
         R_AtmosWind(windDir, &strength);
         wind *= strength;
+        // where it blows to, from 0 up to a turn, and how gusty in tenths
+        yaw = atan2(windDir[1], windDir[0]);
+        if (yaw < 0.0f) {
+            yaw += 2.0f * M_PI;
+        }
+        gusty = floor(Com_Clamp(0.0f, 2.0f, R_AtmosGusts()) * 10.0f + 0.5f) * 0.1f;
     }
 
     gc.backEndDraws++;
@@ -1887,7 +1960,9 @@ void RB_SurfaceGroundCover(void *surface)
         }
         if (!tess.groundCover) {
             tess.groundCover = qtrue;
-            VectorSet4(tess.groundCoverParams, time, range, wind, atan2(windDir[1], windDir[0]));
+            // (the gustiness rides over the yaw, which is under 7: the
+            // vertex program takes the two apart)
+            VectorSet4(tess.groundCoverParams, time, range, wind, yaw + 7.0f * floor(gusty * 10.0f + 0.5f));
             gc.batchChunk = cell->chunk;
             gc.batchSize  = 0;
         }
@@ -1911,17 +1986,17 @@ void RB_SurfaceGroundCover(void *surface)
         const gcTuft_t *tuft = &cell->tufts[n];
         float          *xyz  = tess.xyz[firstVert + n * GC_VERTS_TUFT];
         float           end  = tuft->fadeEnd * range;
-        float           d, sink, sway, gust;
+        float           d, sink, lean;
+        vec2_t          to;
         vec3_t          offset;
 
         // sinks into the ground over the last fifth of its distance
         d    = Distance(tuft->root, view);
         sink = Com_Clamp(0, 1, (end - d) / (end * 0.2f));
 
-        gust = 0.6f + 0.4f * sin(time * 0.31f + tuft->root[0] * 0.0021f + tuft->root[1] * 0.0013f);
-        sway = sin(time * 1.9f + tuft->phase + (tuft->root[0] + tuft->root[1]) * 0.011f) * 0.65f
-             + sin(time * 3.7f + tuft->phase * 1.7f) * 0.35f;
-        VectorScale(windDir, (sway * 2.2f + 1.2f) * gust * tuft->flex * wind * sink, offset);
+        GC_Wind(tuft->root, tuft->phase, time, yaw, gusty, to, &lean);
+        lean *= tuft->flex * wind * sink;
+        VectorSet(offset, to[0] * lean, to[1] * lean, 0.0f);
 
         for (i = 0; i < GC_VERTS_TUFT; i++, xyz += 4) {
             if (sink < 1.0f) {
@@ -1929,9 +2004,12 @@ void RB_SurfaceGroundCover(void *surface)
                 xyz[1] = tuft->root[1] + (xyz[1] - tuft->root[1]) * sink;
                 xyz[2] = tuft->root[2] + (xyz[2] - tuft->root[2]) * sink;
             }
-            // the tips
+            // the tips, which come down as they go over
             if ((i & 3) >= 2) {
+                const float height = xyz[2] - tuft->root[2];
+
                 VectorAdd(xyz, offset, xyz);
+                xyz[2] -= Q_min(lean * lean / (2.0f * Q_max(height, 6.0f)), 0.5f * Q_max(height, 0.0f));
             }
         }
     }

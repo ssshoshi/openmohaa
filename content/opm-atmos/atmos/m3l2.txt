@@ -1,0 +1,3 @@
+// Normandy behind the beach, the same day: the sea wind, slackened inland
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 60 1 1

@@ -49,15 +49,19 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //
 // The wind and the clouds:
 //
-//     // where the wind blows to (degrees, as yaw: 0 is +x, 90 +y), how hard
-//     wind    120 1.2
+//     // where the wind blows to (degrees, as yaw: 0 is +x, 90 +y), how
+//     // hard, and how gusty (0 steady, 1 as any map is, to 2)
+//     wind    120 1.2 1
 //     // the clouds' shadows: how dark (0 to 1), how big a cloud is (units),
 //     // how fast they drift (units a second)
 //     clouds  0.5 2600 45
 //
 // The wind is the one the ground cover leans with and the clouds drift on,
 // and the cgame's rain slant and smoke are given it (vss_wind_x, vss_wind_y);
-// with no line it is the wind there always was. The clouds' shadows drift
+// with no line it blows as it always did. It comes in gusts (r_windGusts,
+// glsl/lightall_vp.glsl): fronts of harder wind carried downwind across the
+// map, in bursts with lulls between, each from a quarter of its own up to
+// some 40 degrees off, under which the grass leans over and flutters. The clouds' shadows drift
 // over what the sun lights (glsl/shadowmask_fp.glsl): the sun's light dimmed
 // under them, along its rays, so a wall's shadow meets the ground's. A map
 // has none until its file says so; r_cloudShadows scales them.
@@ -103,6 +107,7 @@ static cvar_t *r_gradeGain;
 static cvar_t *r_gradeVignette;
 static cvar_t *r_gradeGrain;
 static cvar_t *r_wind;
+static cvar_t *r_windGusts;
 static cvar_t *r_cloudShadows;
 static cvar_t *r_groundVariation;
 static cvar_t *r_groundFar;
@@ -133,7 +138,7 @@ static struct {
 	qboolean graded; // the file has a grade line
 	grade_t  grade;
 	qboolean windSet; // the file has a wind line
-	float    windYaw, windStrength;
+	float    windYaw, windStrength, windGusts;
 	float    cloudDark, cloudSize, cloudSpeed;
 	qboolean groundSet; // the file has a ground line
 	float    groundPatches, groundSize, groundFar, groundFarDist, groundWarp;
@@ -264,6 +269,7 @@ static void R_AtmosReadFile(const char *mapName)
 	atmos.windSet      = qfalse;
 	atmos.windYaw      = WIND_YAW_DEFAULT;
 	atmos.windStrength = 1.0f;
+	atmos.windGusts    = 1.0f;
 	atmos.cloudDark    = 0.0f;
 	atmos.cloudSize    = 2600.0f;
 	atmos.cloudSpeed   = 45.0f;
@@ -289,8 +295,8 @@ static void R_AtmosReadFile(const char *mapName)
 		if (!Q_stricmp(token, "grade")) {
 			R_AtmosGradeLine(&text);
 		} else if (!Q_stricmp(token, "wind")) {
-			float v[2];
-			const int n = R_AtmosNumbers(&text, v, 2);
+			float v[3];
+			const int n = R_AtmosNumbers(&text, v, 3);
 
 			if (n < 1) {
 				ri.Printf(PRINT_WARNING, "%s: wind needs where it blows to, in degrees\n", atmos.file);
@@ -298,6 +304,7 @@ static void R_AtmosReadFile(const char *mapName)
 				atmos.windSet      = qtrue;
 				atmos.windYaw      = v[0];
 				atmos.windStrength = n > 1 ? Com_Clamp(0.0f, 4.0f, v[1]) : 1.0f;
+				atmos.windGusts    = n > 2 ? Com_Clamp(0.0f, 2.0f, v[2]) : 1.0f;
 			}
 		} else if (!Q_stricmp(token, "clouds")) {
 			float v[3];
@@ -364,6 +371,19 @@ void R_AtmosLoadWorld(const char *mapName)
 		ri.Cvar_Set("vss_wind_y", "4");
 		atmos.windGiven = qfalse;
 	}
+}
+
+/*
+=============
+R_AtmosGusts
+
+How gusty the wind is: 0 steady, 1 as any map is, to 2 (r_windGusts scales
+the map's).
+=============
+*/
+float R_AtmosGusts(void)
+{
+	return Com_Clamp(0.0f, 2.0f, (tr.world ? atmos.windGusts : 1.0f) * Q_max(0.0f, r_windGusts->value));
 }
 
 /*
@@ -775,8 +795,8 @@ static void R_AtmosInfo_f(void)
 		float  strength;
 
 		R_AtmosWind(dir, &strength);
-		ri.Printf(PRINT_ALL, "Wind to %g degrees (%.2f %.2f), strength %g%s\n", tr.world ? atmos.windYaw : WIND_YAW_DEFAULT, dir[0],
-			dir[1], strength, atmos.windSet ? "" : " (no wind line: as it always was)");
+		ri.Printf(PRINT_ALL, "Wind to %g degrees (%.2f %.2f), strength %g, gusts %g%s\n", tr.world ? atmos.windYaw : WIND_YAW_DEFAULT,
+			dir[0], dir[1], strength, R_AtmosGusts(), atmos.windSet ? "" : " (no wind line: where it always blew)");
 		if (atmos.cloudDark > 0.0f) {
 			ri.Printf(PRINT_ALL, "Cloud shadows %g dark (x r_cloudShadows %g), clouds %g units, drifting %g a second\n", atmos.cloudDark,
 				r_cloudShadows->value, atmos.cloudSize, atmos.cloudSpeed * strength);
@@ -857,6 +877,8 @@ void R_AtmosInit(void)
 	ri.Cvar_SetDescription(r_gradeGrain, "Film grain over the picture, 0 to 1");
 	r_wind = ri.Cvar_Get("r_wind", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_wind, "How hard the wind blows: the ground cover leans with it and the clouds' shadows drift on it (1: as the map has it, 0 still)");
+	r_windGusts = ri.Cvar_Get("r_windGusts", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_windGusts, "The wind comes in gusts: fronts of harder wind crossing the map in bursts, each from its own quarter, under which the grass leans over and flutters. 0: the steady sway there always was, 1: as the map has it (atmos/<map>.txt), up to 2");
 	r_cloudShadows = ri.Cvar_Get("r_cloudShadows", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_cloudShadows, "The shadows of clouds drifting over what the sun lights, on maps whose atmos/<map>.txt has clouds: 0 none, 1 as dark as the map has them. Needs r_sunShadows");
 	r_groundVariation = ri.Cvar_Get("r_groundVariation", "1", CVAR_ARCHIVE);

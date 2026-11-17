@@ -108,7 +108,26 @@ varying vec3   var_RtNormal;
 // the tuft stands, and in w how far this vertex sways (0 on the ground);
 // attr_TexCoord1 its phase, and the fraction of the draw distance it reaches
 #if defined(USE_GROUNDCOVER)
-uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows to (radians)
+uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows to (radians, under 7) with how gusty it is in tenths times 7 over it
+
+// Added in OPM: two noises at once, for the gusts
+vec2 GcHash2(vec2 p)
+{
+	vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+vec2 GcNoise2(vec2 p)
+{
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+
+	return mix(mix(GcHash2(i), GcHash2(i + vec2(1.0, 0.0)), u.x),
+		mix(GcHash2(i + vec2(0.0, 1.0)), GcHash2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
 #endif
 
 #if defined(USE_VERTEX_ANIMATION)
@@ -414,7 +433,28 @@ void main()
 		           + sin(t * 3.7 + phase * 1.7) * 0.35;
 
 		position = root + (position - root) * sink;
-		position += vec3(cos(u_GroundCover.w), sin(u_GroundCover.w), 0.0) * ((sway * 2.2 + 1.2) * gust * attr_Tangent.w * u_GroundCover.z * sink);
+
+		// Added in OPM: the wind comes in gusts (tr_groundcover.c's GC_Wind
+		// is the same, for tufts not on the card). Fronts of harder wind,
+		// wider than they are deep, are carried downwind over the map; they
+		// come in bursts with lulls between; each blows from its own
+		// quarter, and the whole wind veers as it goes. Under a gust the
+		// tuft leans hard that way, flutters, and its tips come down as
+		// they go over. With no gustiness it is the sway there always was.
+		float level = floor(u_GroundCover.w / 7.0);
+		float yaw   = u_GroundCover.w - level * 7.0;
+		float gusty = level * 0.1;
+		vec2  wdir  = vec2(cos(yaw), sin(yaw));
+		vec2  n     = GcNoise2(vec2((dot(root.xy, wdir) - t * 220.0) / 520.0, dot(root.xy, vec2(-wdir.y, wdir.x)) / 900.0 + t * 0.013));
+		float burst = smoothstep(0.2, 0.75, 0.5 + 0.5 * sin(t * 0.21 + 2.0 * sin(t * 0.083)));
+		float g     = gusty * smoothstep(0.4, 0.8, n.x) * (0.35 + 0.65 * burst);
+		float to    = yaw + gusty * ((n.y - 0.5) * 1.5 + sin(t * 0.047) * 0.21 + sin(t * 0.113 + 1.3) * 0.14);
+		float flut  = sin(t * 7.3 + phase * 2.3 + root.x * 0.03);
+		float lean  = ((sway * 2.2 + 1.2) * gust * (1.0 - 0.45 * min(gusty, 1.0)) + g * (13.0 + sway * 3.0 + flut * 2.0))
+		            * attr_Tangent.w * u_GroundCover.z * sink;
+
+		position.xy += vec2(cos(to), sin(to)) * lean;
+		position.z  -= min(lean * lean / (2.0 * max(position.z - root.z, 6.0)), 0.5 * max(position.z - root.z, 0.0));
 	}
 #endif
 
