@@ -1913,6 +1913,10 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			}
 
 			RB_SetGlobalFogUniforms(sp, pStage);
+			// Added in OPM: what is drawn after the opaque world (blood,
+			// decals, glass, sprites) takes the volumetric air in front of
+			// it (r_volumetric 2); opaque stages before it get none
+			R_FroxelSetFog(sp, pStage->stateBits);
 
 			GLSL_SetUniformVec4(sp, UNIFORM_BASECOLOR, baseColor);
 			GLSL_SetUniformVec4(sp, UNIFORM_VERTCOLOR, vertColor);
