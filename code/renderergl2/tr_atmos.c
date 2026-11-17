@@ -65,6 +65,34 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // over what the sun lights (glsl/shadowmask_fp.glsl): the sun's light dimmed
 // under them, along its rays, so a wall's shadow meets the ground's. A map
 // has none until its file says so; r_cloudShadows scales them.
+//
+// The ground:
+//
+//     // its patches: how strong (0 none, 0.5 as any map has them), how big
+//     // (units); then how much of the far look (0 to 1), how far off it is
+//     // whole (units), and how far the texture is pushed out of true (in
+//     // tiles)
+//     ground  0.5 900 0.5 1500 0.2
+//
+// A ground texture is one small picture laid out again and again, which
+// shows as soon as a field, a yard or a beach is seen whole. The world's
+// ground (terrain, and the faces the map has as grass, dirt, sand, mud,
+// gravel or snow) is drawn in patches a little lighter and darker, warmer
+// and cooler across the map; its texture is pushed a little out of true,
+// this way and that over a few tiles' length, so that its repeat is no
+// straight row; and far off, where a tile is a few pixels and its repeat a
+// grid, it is blended with itself laid several times the size
+// (glsl/lightall_fp.glsl, USE_GROUNDVARY: a lightall of the ground's own,
+// so nothing else pays for it). The last two are for earth only, lying
+// level: the terrain, and brushwork that is grass, dirt, sand, mud or
+// gravel and nowhere wood or metal. What snow lies on (roofs, steps,
+// bunker walls), a picture made to be laid once (a crater, a path's
+// border: R_AtmosImageTiles), what runs one way (furrows, planks) and what
+// is no ground to lie on (a cliff, a painted line of trees) keep their
+// place and take the patches alone. Every map has it, at the numbers above
+// without a line; r_groundVariation scales the patches and the push,
+// r_groundFar the far look. `atmosinfo ground` lists what is ground on the
+// map and which of it takes the patches alone.
 
 #include "tr_local.h"
 
@@ -81,9 +109,23 @@ static cvar_t *r_gradeGrain;
 static cvar_t *r_wind;
 static cvar_t *r_windGusts;
 static cvar_t *r_cloudShadows;
+static cvar_t *r_groundVariation;
+static cvar_t *r_groundFar;
 
 #define WIND_YAW_DEFAULT 36.87f // the ground cover's wind as it always was: (0.8, 0.6)
 #define CLOUD_SIZE       256
+// the ground of a map with no ground line
+#define GROUND_PATCHES   0.5f
+#define GROUND_SIZE      900.0f
+#define GROUND_FAR       0.5f
+#define GROUND_FAR_DIST  1500.0f
+#define GROUND_WARP      0.2f
+// what is ground by its surface flags; what of it is earth, to lay out of
+// true (snow is put on every roof, wall and step it lies on); and what is
+// built, which never is (a plank floor is mud to walk on in the rain)
+#define GROUND_FLAGS     (SURF_GRASS | SURF_DIRT | SURF_SAND | SURF_MUD | SURF_GRAVEL | SURF_SNOW)
+#define EARTH_FLAGS      (SURF_GRASS | SURF_DIRT | SURF_SAND | SURF_MUD | SURF_GRAVEL)
+#define BUILT_FLAGS      (SURF_WOOD | SURF_METAL | SURF_GLASS | SURF_PAPER | SURF_CARPET | SURF_GRILL)
 
 typedef struct {
 	vec3_t lift, gamma, gain;
@@ -98,6 +140,8 @@ static struct {
 	qboolean windSet; // the file has a wind line
 	float    windYaw, windStrength, windGusts;
 	float    cloudDark, cloudSize, cloudSpeed;
+	qboolean groundSet; // the file has a ground line
+	float    groundPatches, groundSize, groundFar, groundFarDist, groundWarp;
 	qboolean windGiven; // the cgame's wind cvars are this map's
 } atmos;
 
@@ -229,6 +273,12 @@ static void R_AtmosReadFile(const char *mapName)
 	atmos.cloudDark    = 0.0f;
 	atmos.cloudSize    = 2600.0f;
 	atmos.cloudSpeed   = 45.0f;
+	atmos.groundSet     = qfalse;
+	atmos.groundPatches = GROUND_PATCHES;
+	atmos.groundSize    = GROUND_SIZE;
+	atmos.groundFar     = GROUND_FAR;
+	atmos.groundFarDist = GROUND_FAR_DIST;
+	atmos.groundWarp    = GROUND_WARP;
 	Com_sprintf(atmos.file, sizeof(atmos.file), "atmos/%s.txt", mapName);
 	if (ri.FS_ReadFile(atmos.file, &buffer.v) <= 0) {
 		return;
@@ -267,6 +317,20 @@ static void R_AtmosReadFile(const char *mapName)
 				atmos.cloudSize  = n > 1 ? Q_max(64.0f, v[1]) : 2600.0f;
 				atmos.cloudSpeed = n > 2 ? v[2] : 45.0f;
 			}
+		} else if (!Q_stricmp(token, "ground")) {
+			float v[5];
+			const int n = R_AtmosNumbers(&text, v, 5);
+
+			if (n < 1) {
+				ri.Printf(PRINT_WARNING, "%s: ground needs how strong its patches are\n", atmos.file);
+			} else {
+				atmos.groundSet     = qtrue;
+				atmos.groundPatches = Com_Clamp(0.0f, 2.0f, v[0]);
+				atmos.groundSize    = n > 1 ? Q_max(64.0f, v[1]) : GROUND_SIZE;
+				atmos.groundFar     = n > 2 ? Com_Clamp(0.0f, 1.0f, v[2]) : GROUND_FAR;
+				atmos.groundFarDist = n > 3 ? Q_max(128.0f, v[3]) : GROUND_FAR_DIST;
+				atmos.groundWarp    = n > 4 ? Com_Clamp(0.0f, 1.0f, v[4]) : GROUND_WARP;
+			}
 		} else {
 			// a newer file's setting: not this build's to read
 			ri.Printf(PRINT_DEVELOPER, "%s: '%s' is not known to this build\n", atmos.file, token);
@@ -275,6 +339,8 @@ static void R_AtmosReadFile(const char *mapName)
 	}
 	ri.FS_FreeFile(buffer.v);
 }
+
+static void R_AtmosGroundFlags(void);
 
 /*
 =============
@@ -286,6 +352,7 @@ The map's atmosphere, as it loads (or `atmosreload`).
 void R_AtmosLoadWorld(const char *mapName)
 {
 	R_AtmosReadFile(mapName);
+	R_AtmosGroundFlags();
 	// the last map's cloud image went with its images
 	tr.cloudShadowImage = NULL;
 
@@ -334,6 +401,217 @@ void R_AtmosWind(vec2_t dir, float *strength)
 	dir[0]    = cos(yaw);
 	dir[1]    = sin(yaw);
 	*strength = (tr.world ? atmos.windStrength : 1.0f) * Q_max(0.0f, r_wind->value);
+}
+
+/*
+=============
+R_AtmosGroundShader
+
+Whether the shader is ground whose texture is varied across the map: what
+terrain is drawn with, and what the map has as grass, dirt, sand, mud,
+gravel or snow (R_AtmosGroundFlags). (Not stone, wood or brick: those are
+laid in courses, which pushing them out of true would bend.)
+=============
+*/
+qboolean R_AtmosGroundShader(const shader_t *shader)
+{
+	if (!shader || !tr.world || shader == tr.defaultShader || shader->defaultShader || shader->isSky || shader->isWater) {
+		return qfalse;
+	}
+	if (r_groundVariation->value <= 0.0f && r_groundFar->value <= 0.0f) {
+		return qfalse;
+	}
+	if (atmos.groundPatches <= 0.0f && atmos.groundFar <= 0.0f && atmos.groundWarp <= 0.0f) {
+		return qfalse;
+	}
+	return shader->isTerrain || (shader->groundFlags & GROUND_FLAGS) != 0;
+}
+
+// Whether a ground texture is a material, which may be laid out of true and
+// over itself at another size and still be itself, or a picture made to be
+// laid once. A terrain cell's border of grass against earth changes from one
+// edge to the other far more than from one texel to the next; a shell
+// crater, with sand all round it, has a middle that is nothing like its rim.
+static qboolean R_AtmosImageTiles(image_t *image)
+{
+	int    level = 0, w, h, x, y, c;
+	byte  *pic;
+	double seamX = 0, seamY = 0, stepX = 0, stepY = 0;
+	double rim[3] = {0, 0, 0}, mid[3] = {0, 0, 0}, apart = 0;
+	int    rimCount = 0, midCount = 0;
+
+	if (!image || !qglGetTexImageOPM || image->imgName[0] == '*'
+		|| (image->flags & (IMGFLAG_CLAMPTOEDGE | IMGFLAG_CLAMPTOEDGE_S | IMGFLAG_CLAMPTOEDGE_T))) {
+		return qfalse;
+	}
+	if (image->flags & IMGFLAG_MIPMAP) {
+		while ((image->uploadWidth >> (level + 1)) >= 32 && (image->uploadHeight >> (level + 1)) >= 32) {
+			level++;
+		}
+	}
+	w = Q_max(1, image->uploadWidth >> level);
+	h = Q_max(1, image->uploadHeight >> level);
+	if (w < 8 || h < 8 || w > 1024 || h > 1024) {
+		return qfalse;
+	}
+	pic = ri.Hunk_AllocateTempMemory(w * h * 4);
+	GL_BindToTMU(image, TB_COLORMAP);
+	qglGetTexImageOPM(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pic);
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < w; x++) {
+			const byte *at    = pic + (y * w + x) * 4;
+			const byte *right = pic + (y * w + (x + 1) % w) * 4;
+			const byte *down  = pic + (((y + 1) % h) * w + x) * 4;
+			int         dx = 0, dy = 0;
+
+			for (c = 0; c < 4; c++) {
+				dx += abs(at[c] - right[c]);
+				dy += abs(at[c] - down[c]);
+			}
+			if (x == w - 1) {
+				seamX += dx;
+			} else {
+				stepX += dx;
+			}
+			if (y == h - 1) {
+				seamY += dy;
+			} else {
+				stepY += dy;
+			}
+			// its outer eighth all round, and its middle half
+			if (x < w / 8 || x >= w - w / 8 || y < h / 8 || y >= h - h / 8) {
+				for (c = 0; c < 3; c++) {
+					rim[c] += at[c];
+				}
+				rimCount++;
+			} else if (x >= w / 4 && x < w - w / 4 && y >= h / 4 && y < h - h / 4) {
+				for (c = 0; c < 3; c++) {
+					mid[c] += at[c];
+				}
+				midCount++;
+			}
+		}
+	}
+	ri.Hunk_FreeTempMemory(pic);
+	for (c = 0; c < 3; c++) {
+		apart += fabs(rim[c] / Q_max(1, rimCount) - mid[c] / Q_max(1, midCount)) / 3.0;
+	}
+	seamX /= h;
+	seamY /= w;
+	stepX /= h * (w - 1);
+	stepY /= w * (h - 1);
+	ri.Printf(PRINT_DEVELOPER, "ground %s: seam %.1f %.1f, step %.1f %.1f, middle %.1f from rim\n", image->imgName, seamX, seamY,
+		stepX, stepY, apart);
+	// (the seam over four channels of 255: 8 is a step nobody sees. The
+	// middle from the rim, of 255: the stock craters and rocks are over 30,
+	// the roads with their ruts and the banded yards 11 to 19, sand, grass
+	// and snow under 9. And what runs one way, planks, furrows, corrugated
+	// iron, changes half as much again across as along)
+	return seamX <= stepX * 2.0 + 8.0 && seamY <= stepY * 2.0 + 8.0 && apart <= 25.0
+		&& Q_max(stepX, stepY) <= Q_min(stepX, stepY) * 1.5 + 1.0;
+}
+
+// The same of a shader: of every texture it draws
+static qboolean R_AtmosShaderTiles(const shader_t *shader)
+{
+	int      i;
+	qboolean any = qfalse;
+
+	for (i = 0; i < MAX_SHADER_STAGES && shader->stages[i]; i++) {
+		const shaderStage_t *stage = shader->stages[i];
+		image_t             *image = stage->bundle[0].image[0];
+
+		if (!stage->active || !image || stage->bundle[0].isLightmap || stage->bundle[0].tcGen == TCGEN_LIGHTMAP
+			|| image == tr.whiteImage) {
+			continue;
+		}
+		if (!R_AtmosImageTiles(image)) {
+			return qfalse;
+		}
+		any = qtrue;
+	}
+	return any;
+}
+
+/*
+=============
+R_AtmosGroundFlags
+
+The world's shaders are told whether they are ground by the map (the
+renderer reads no surfaceparm grass or snow from a shader script: those are
+the map compiler's and the game's). A face's flags are in the map's shader
+list: the script's surfaceparm, or what the mapper gave the face (a texture
+with no script has only that), so one texture is there several times, as
+rock here and gravel there. A shader that is ground on any face is ground.
+The flags say what a boot sounds like on it, not what it is: snow is on the
+roofs and steps it lies on, mud on a plank floor. So only what is earth and
+nowhere built is laid out of true, and the rest takes the patches alone.
+=============
+*/
+static void R_AtmosGroundFlags(void)
+{
+	int i, j;
+
+	// (the last map's, where its shaders are still there)
+	for (j = 0; j < tr.numShaders; j++) {
+		tr.shaders[j]->groundFlags = 0;
+		tr.shaders[j]->groundTiles = qfalse;
+	}
+	if (!tr.world) {
+		return;
+	}
+	for (i = 0; i < tr.world->numShaders; i++) {
+		const dshader_t *d     = &tr.world->shaders[i];
+		const int        flags = d->surfaceFlags & (GROUND_FLAGS | BUILT_FLAGS);
+
+		if (!flags || (d->surfaceFlags & (SURF_NODRAW | SURF_SKY))) {
+			continue;
+		}
+		for (j = 0; j < tr.numShaders; j++) {
+			if (!Q_stricmp(tr.shaders[j]->name, d->shader)) {
+				tr.shaders[j]->groundFlags |= flags;
+			}
+		}
+	}
+	// a material to lay out of true: what the terrain is drawn with, and of
+	// the brushwork what is earth and nowhere built
+	for (j = 0; j < tr.numShaders; j++) {
+		shader_t *sh = tr.shaders[j];
+
+		if (sh == tr.defaultShader || sh->defaultShader) {
+			continue;
+		}
+		if (sh->isTerrain || ((sh->groundFlags & EARTH_FLAGS) && !(sh->groundFlags & BUILT_FLAGS))) {
+			sh->groundTiles = R_AtmosShaderTiles(sh);
+		}
+	}
+}
+
+/*
+=============
+R_AtmosGroundVary
+
+For the ground's lightall: how strong its patches, one over their size, how
+much of the far look, one over where that is whole; and how far its texture
+is pushed out of true, in tiles, and between what slopes (its normal's
+height) that and the far look come in.
+=============
+*/
+void R_AtmosGroundVary(const shader_t *shader, vec4_t out, vec4_t out2)
+{
+	// (a picture made to be laid once is left as it was laid)
+	const qboolean tiles = !shader || shader->groundTiles;
+
+	// how level it must lie for that: the terrain up a fair slope, the
+	// brushwork all but flat (a roof's pitch is not ground)
+	const qboolean terrain = shader && shader->isTerrain;
+
+	VectorSet4(out2, tiles ? atmos.groundWarp * Com_Clamp(0.0f, 2.0f, r_groundVariation->value) : 0.0f, terrain ? 0.45f : 0.85f,
+		terrain ? 0.75f : 0.95f, 0.0f);
+	out[0] = atmos.groundPatches * Com_Clamp(0.0f, 2.0f, r_groundVariation->value);
+	out[1] = 1.0f / atmos.groundSize;
+	out[2] = tiles ? Com_Clamp(0.0f, 1.0f, atmos.groundFar * Q_max(0.0f, r_groundFar->value)) : 0.0f;
+	out[3] = 1.0f / atmos.groundFarDist;
 }
 
 // A noise of clouds that meets itself at its edges: 0 clear sky, 255 the
@@ -526,6 +804,28 @@ static void R_AtmosInfo_f(void)
 			ri.Printf(PRINT_ALL, "No cloud shadows\n");
 		}
 	}
+	{
+		vec4_t v, v2;
+
+		R_AtmosGroundVary(NULL, v, v2);
+		if (v[0] <= 0.0f && v[2] <= 0.0f && v2[0] <= 0.0f) {
+			ri.Printf(PRINT_ALL, "The ground is not varied (r_groundVariation, r_groundFar)\n");
+		} else {
+			int i, n = 0;
+
+			for (i = 0; i < tr.numShaders; i++) {
+				if (R_AtmosGroundShader(tr.shaders[i])) {
+					n++;
+					if (ri.Cmd_Argc() > 1 && !Q_stricmp(ri.Cmd_Argv(1), "ground")) {
+						ri.Printf(PRINT_ALL, "  %s%s%s\n", tr.shaders[i]->name, tr.shaders[i]->isTerrain ? " (terrain)" : "",
+							tr.shaders[i]->groundTiles ? "" : ": patches only");
+					}
+				}
+			}
+			ri.Printf(PRINT_ALL, "The ground's patches %g strong, %g units; its far look %g, whole at %g units; pushed %g of a tile%s; %d shaders are ground (atmosinfo ground lists them)\n",
+				v[0], atmos.groundSize, v[2], atmos.groundFarDist, v2[0], atmos.groundSet ? "" : " (no ground line)", n);
+		}
+	}
 	if (!r_grade->integer) {
 		ri.Printf(PRINT_ALL, "r_grade 0: the picture is not graded\n");
 		return;
@@ -581,6 +881,10 @@ void R_AtmosInit(void)
 	ri.Cvar_SetDescription(r_windGusts, "The wind comes in gusts: fronts of harder wind crossing the map in bursts, each from its own quarter, under which the grass leans over and flutters. 0: the steady sway there always was, 1: as the map has it (atmos/<map>.txt), up to 2");
 	r_cloudShadows = ri.Cvar_Get("r_cloudShadows", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_cloudShadows, "The shadows of clouds drifting over what the sun lights, on maps whose atmos/<map>.txt has clouds: 0 none, 1 as dark as the map has them. Needs r_sunShadows");
+	r_groundVariation = ri.Cvar_Get("r_groundVariation", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_groundVariation, "The ground's texture (terrain, grass, dirt, sand, mud, gravel, snow) is a little lighter and darker, warmer and cooler in patches across the map, and laid a little out of true, so that it does not show as one picture laid again and again in rows: 0 off, 1 as the map has it (atmos/<map>.txt), up to 2");
+	r_groundFar = ri.Cvar_Get("r_groundFar", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_groundFar, "Far off, the ground's texture is blended with itself laid several times the size, in place of a grid of small tiles: 0 off, 1 as the map has it (atmos/<map>.txt)");
 	ri.Cmd_AddCommand("atmosinfo", R_AtmosInfo_f);
 	ri.Cmd_AddCommand("atmosreload", R_AtmosReload_f);
 }
