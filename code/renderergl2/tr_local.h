@@ -763,6 +763,14 @@ typedef struct shader_s {
     // Added in OPM: the terrain is drawn with it (R_LoadTerrain): ground the
     // rain wets, even with an alpha test, where a cut-out takes none of it
     qboolean isTerrain;
+    // Added in OPM: what the map's faces have it as, of the ground's flags
+    // (grass, dirt, sand, mud, gravel, snow) and of what is built (wood,
+    // metal...), by the map's own shader list (R_AtmosGroundFlags):
+    // r_groundVariation
+    int groundFlags;
+    // and its texture is a material, which may be laid out of true and
+    // over itself at another size, not a picture laid once (R_AtmosImageTiles)
+    qboolean groundTiles;
 } shader_t;
 
 enum
@@ -872,8 +880,11 @@ enum
 	// Added in OPM: a skeletal model posed by the vertex program from the
 	// frame's bones (tr_skelgpu.c); built the first time it is asked for
 	LIGHTDEF_SKEL_GPU            = 0x0800,
-	LIGHTDEF_ALL                 = 0x0FFF,
-	LIGHTDEF_COUNT               = 0x1000
+	// Added in OPM: the world's ground, whose texture is varied across the
+	// map (r_groundVariation, tr_atmos.c); built the first time it is asked for
+	LIGHTDEF_GROUNDVARY          = 0x1000,
+	LIGHTDEF_ALL                 = 0x1FFF,
+	LIGHTDEF_COUNT               = 0x2000
 };
 
 enum
@@ -1146,6 +1157,8 @@ typedef enum
 	UNIFORM_GRADEMISC,      // vignette, grain, a number a frame, whether there is a grade
 	UNIFORM_CLOUDSHADOW,    // Added in OPM: the clouds' shadows (shadowmask_fp.glsl): how dark, one over their size, their drift
 	UNIFORM_CLOUDSHADOWMAP,
+	UNIFORM_GROUNDVARY,     // Added in OPM: the ground's variation (lightall, USE_GROUNDVARY): how strong its patches, one over their size, how much of the far look, one over where that is whole
+	UNIFORM_GROUNDVARY2,    // how far its texture is pushed out of true, in tiles
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -4169,6 +4182,8 @@ void R_AtmosLoadWorld(const char *mapName);
 void R_GradeUniforms(vec4_t lift, vec4_t gamma, vec4_t gain, vec4_t misc);
 void R_AtmosWind(vec2_t dir, float *strength);
 void R_AtmosCloudShadows(vec4_t out, int tmu);
+qboolean R_AtmosGroundShader(const shader_t *shader);
+void R_AtmosGroundVary(const shader_t *shader, vec4_t out, vec4_t out2);
 qboolean R_FroxelFogOn(void);
 extern cvar_t *r_volumetricSmoke;
 qboolean R_FroxelTakesSprite(const refSprite_t *sprite);
