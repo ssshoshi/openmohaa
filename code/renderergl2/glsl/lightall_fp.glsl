@@ -225,20 +225,76 @@ float SnowLies(vec3 surfN, vec3 N, float open)
 // Added in OPM: snow the wind has blown against a tree's trunk, on the side it
 // blows from, in splotches (u_RainParams.w: 10 plus the yaw it blows to, set
 // for the remade trees' bark only; under 5 none)
-float SnowPlaster(vec3 surfN)
+// (SnowPlasterDepth: how deep, about 0 to 1.5, rising slowly from nothing at
+// a splotch's rim rather than cut off there; from: the way the wind blows
+// from; q: across the trunk and up it)
+float SnowPlasterDepth(vec3 surfN, out vec2 from, out vec2 q)
 {
+	from = vec2(1.0, 0.0);
+	q    = vec2(0.0);
 	if (u_RainParams.w < 5.0)
 		return 0.0;
 	float yaw  = u_RainParams.w - 10.0;
-	vec2  from = -vec2(cos(yaw), sin(yaw));
+	from = -vec2(cos(yaw), sin(yaw));
 	float side = 1.0 - abs(surfN.z);
 	float face = dot(normalize(surfN.xy + vec2(1e-4)), from) * side;
 	// across the trunk and up it, so the splotches stand on it
-	vec2  q    = vec2(dot(var_WetPos.xy, vec2(-from.y, from.x)), var_WetPos.z);
+	q = vec2(dot(var_WetPos.xy, vec2(-from.y, from.x)), var_WetPos.z);
 	float n    = WetNoise(q / 11.0) * 0.55 + WetNoise(q / 3.7) * 0.3 + WetNoise(q / 1.3) * 0.15;
 	// full on, the splotches run together; round the side, a few
 	float lim  = mix(0.66, 0.38, smoothstep(0.3, 0.95, face));
-	return smoothstep(0.0, 0.35, face) * smoothstep(lim, lim + 0.06, n);
+	return smoothstep(0.0, 0.35, face) * max(n - lim + 0.1, 0.0) / 0.25;
+}
+
+float SnowPlaster(vec3 surfN)
+{
+	vec2 from, q;
+	return smoothstep(0.35, 0.65, SnowPlasterDepth(surfN, from, q));
+}
+
+// Added in OPM: snow on a remade tree's bark (u_RainParams.w over 5), not a
+// coat of paint: it catches first on the ridges of the bark that face up and
+// into the wind, so where it is thin the bark's own relief shows through it,
+// see-through and broken into flecks at its edge; where it is deep it lies
+// in lumps, the hollows between them in its own blue shade. lies: what lies
+// on the faces turned up (SnowLies); N: the bark's normal map, made the
+// snow's lumps where it is deep. Gives how much of the bark it hides, and
+// its colour (before Lin) in colour.
+float BarkSnow(vec3 surfN, inout vec3 N, float lies, inout vec3 colour)
+{
+	vec2  from, q;
+	float depth = max(SnowPlasterDepth(surfN, from, q), lies * 1.2);
+	if (depth <= 0.0)
+		return 0.0;
+	// where it lies on the faces turned up, it is laid out over them
+	if (lies * 1.2 >= depth)
+		q = var_WetPos.xy;
+
+	// the bark's ridges: how far its normal map turns it up and into the wind
+	vec3  d     = N - surfN;
+	float ridge = clamp(d.z * 2.5 + dot(d.xy, from) * 1.5, -1.0, 1.0);
+	// the snow's grain, and its broken rim
+	float fleck = WetNoise(q / 0.45) * 0.6 + WetNoise(q / 0.17) * 0.4;
+	float cover = depth + 0.35 * ridge + 0.45 * (fleck - 0.5) - 0.15;
+	float hide  = smoothstep(0.0, 0.55, cover);
+	if (hide <= 0.0)
+		return 0.0;
+	float thick = smoothstep(0.3, 1.1, cover);
+
+	// lumps: a slope of the snow's own, across the trunk and up it
+	float l0 = WetNoise(q / 1.6);
+	vec2  lg = vec2(WetNoise((q + vec2(0.35, 0.0)) / 1.6) - l0, WetNoise((q + vec2(0.0, 0.35)) / 1.6) - l0) * 2.2;
+	vec3  across = vec3(-from.y, from.x, 0.0);
+	vec3  snowN  = normalize(surfN - (across * lg.x + vec3(0.0, 0.0, 1.0) * lg.y) * thick);
+	N = normalize(mix(N, snowN, hide * mix(0.45, 1.0, thick)));
+
+	// thin, it is grey-blue with the bark's dark through it; deep, white,
+	// grainy, its hollows shaded
+	float tone   = 0.86 + 0.14 * (WetNoise(q / 2.3) * 0.5 + fleck * 0.5);
+	float hollow = clamp(0.5 - l0, 0.0, 0.5) * thick;
+	colour  = mix(vec3(0.62, 0.68, 0.78), vec3(0.88, 0.91, 0.96), thick) * tone;
+	colour *= mix(vec3(1.0), vec3(0.78, 0.84, 0.95), hollow * 1.4);
+	return hide * mix(0.6, 1.0, thick);
 }
 
 // Added in OPM: the snow's own surface, not quite even: a number about one
@@ -1087,14 +1143,20 @@ void main()
 	  // under it smoothed over (and blown against a trunk)
 	  if (u_Wet.w < -0.5)
 	  {
-		snowLie = max(SnowLies(wetSurfN, N, wet.x), SnowPlaster(wetSurfN));
+		vec3 snowCol = vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos);
+		if (u_RainParams.w > 5.0)
+			// a remade tree's bark: in grains and lumps, thin at its edges (BarkSnow)
+			snowLie = BarkSnow(wetSurfN, N, SnowLies(wetSurfN, N, wet.x), snowCol);
+		else
+			snowLie = SnowLies(wetSurfN, N, wet.x);
 		wet     = vec3(0.0);
 		if (snowLie > 0.0)
 		{
-			diffuse.rgb  = mix(diffuse.rgb, Lin(vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos)), snowLie);
+			diffuse.rgb  = mix(diffuse.rgb, Lin(snowCol), snowLie);
 			specular.rgb = mix(specular.rgb, vec3(0.03), snowLie);
 			roughness    = mix(roughness, 0.8, snowLie);
-			N  = normalize(mix(N, wetSurfN, snowLie));
+			if (u_RainParams.w <= 5.0)
+				N  = normalize(mix(N, wetSurfN, snowLie));
 		}
 	  }
 	  else
@@ -1285,9 +1347,14 @@ void main()
 	  // Added in OPM: snow lying on it (and blown against a trunk)
 	  if (u_Wet.w < -0.5)
 	  {
-		snowLie = max(SnowLies(wetSurfN, wetSurfN, wet.x), SnowPlaster(wetSurfN));
+		vec3 snowCol = vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos);
+		vec3 snowN   = wetSurfN;
+		if (u_RainParams.w > 5.0)
+			snowLie = BarkSnow(wetSurfN, snowN, SnowLies(wetSurfN, wetSurfN, wet.x), snowCol);
+		else
+			snowLie = SnowLies(wetSurfN, wetSurfN, wet.x);
 		wet     = vec3(0.0);
-		diffuse.rgb = mix(diffuse.rgb, Lin(vec3(0.85, 0.88, 0.93) * SnowGrainTone(var_WetPos)), snowLie);
+		diffuse.rgb = mix(diffuse.rgb, Lin(snowCol), snowLie);
 		gl_FragColor.rgb = diffuse.rgb * lightColor;
 	  }
 	  else
