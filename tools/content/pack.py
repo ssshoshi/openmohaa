@@ -9,8 +9,12 @@ applied to it. A *.derive file makes images from the game's own, one
 `<path in the pak> <game path> scale <k>` a line: its colours times k. A
 *.fetch file lists files that are not ours either and are not in the game,
 one `<path in the pak> <url>` a line: each is downloaded when the pak is built
-(once; kept in ~/.cache/openmohaa-content) and goes in at its path. Any other file is our own and goes in as it is, at its path under the
-folder.
+(once; kept in ~/.cache/openmohaa-content) and goes in at its path. A
+*.generate file names tools of ours, one a line (a path in the repository):
+each is run with `--out <folder>` and every file it writes there goes in at
+its path, in place of a patched file of the same path; if it fails (it may
+need the internet, once) the pak is built without its files. Any other file
+is our own and goes in as it is, at its path under the folder.
 
     pack.py                         build every pak into build/content/
     pack.py opm-cabinet-ragdoll     build just that one
@@ -225,6 +229,7 @@ def fetch(path, url):
 def build(name, game, out):
     folder = os.path.join(CONTENT, name)
     files = {}
+    generators = []
     for dirpath, _, filenames in os.walk(folder):
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
@@ -252,6 +257,9 @@ def build(name, game, out):
                             path, data, pak = additive(game, line)
                             files[path] = data
                             print(f"  {path}  (made from {os.path.basename(pak)})")
+            elif fn.endswith(".generate"):
+                with open(full) as f:
+                    generators += [line.split("#")[0].strip() for line in f if line.split("#")[0].strip()]
             elif fn.endswith(".fetch"):
                 count = 0
                 with open(full) as f:
@@ -267,6 +275,22 @@ def build(name, game, out):
                 with open(full, "rb") as f:
                     files[rel] = f.read()
                 print(f"  {rel}")
+
+    # made by our own tools, last: what they make replaces a patched file
+    for tool in generators:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = subprocess.run([sys.executable, os.path.join(ROOT, tool), "--out", tmp], capture_output=True, text=True)
+            if run.returncode:
+                print(f"  {tool} failed, its files are left out: {(run.stderr or run.stdout).strip().splitlines()[-1:]}")
+                continue
+            count = 0
+            for dirpath, _, filenames in os.walk(tmp):
+                for fn in filenames:
+                    full = os.path.join(dirpath, fn)
+                    with open(full, "rb") as f:
+                        files[os.path.relpath(full, tmp).replace(os.sep, "/")] = f.read()
+                    count += 1
+            print(f"  {count} files made by {tool}")
 
     os.makedirs(out, exist_ok=True)
     prefix = LATE_PREFIX if os.path.isfile(os.path.join(folder, LOAD_LAST)) else PREFIX

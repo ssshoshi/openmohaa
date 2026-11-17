@@ -314,7 +314,9 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_GradeGain",       GLSL_VEC4 },
 	{ "u_GradeMisc",       GLSL_VEC4 },
 	{ "u_CloudShadow",     GLSL_VEC4 },
-	{ "u_CloudShadowMap",  GLSL_INT }
+	{ "u_CloudShadowMap",  GLSL_INT },
+	{ "u_GroundVary",      GLSL_VEC4 },
+	{ "u_GroundVary2",     GLSL_VEC4 }
 };
 
 typedef enum
@@ -2232,6 +2234,11 @@ static qboolean GLSL_InitLightallShader(int i)
 	if ((i & LIGHTDEF_FLORA) && lightType == LIGHTDEF_USE_LIGHTMAP)
 		return qfalse;
 
+	// Added in OPM: the ground is the world's own surfaces
+	if ((i & LIGHTDEF_GROUNDVARY) && (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION
+		| LIGHTDEF_GROUNDCOVER | LIGHTDEF_SKEL_GPU | LIGHTDEF_FLORA)))
+		return qfalse;
+
 	attribs = ATTR_POSITION | ATTR_TEXCOORD | ATTR_COLOR | ATTR_NORMAL;
 
 	extradefines[0] = '\0';
@@ -2358,6 +2365,11 @@ static qboolean GLSL_InitLightallShader(int i)
 	if (i & LIGHTDEF_FLORA)
 	{
 		Q_strcat(extradefines, 1024, "#define USE_FLORA\n");
+	}
+
+	if (i & LIGHTDEF_GROUNDVARY)
+	{
+		Q_strcat(extradefines, 1024, "#define USE_GROUNDVARY\n");
 	}
 
 	if (i & LIGHTDEF_SKEL_GPU)
@@ -2765,7 +2777,8 @@ void GLSL_InitGPUShaders(void)
 		// Pre-build every permutation a surface with no material maps can
 		// need, which covers all of stock MOH:AA. Anything carrying a normal,
 		// specular or deluxe map is left to GLSL_GetLightallShader.
-		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER | LIGHTDEF_SKEL_GPU | LIGHTDEF_FLORA))
+		if (i & (LIGHTDEF_USE_NORMALMAP | LIGHTDEF_USE_SPECULARMAP | LIGHTDEF_USE_DELUXEMAP | LIGHTDEF_GROUNDCOVER | LIGHTDEF_SKEL_GPU
+			| LIGHTDEF_FLORA | LIGHTDEF_GROUNDVARY))
 			continue;
 
 		if (!GLSL_InitLightallShader(i))
