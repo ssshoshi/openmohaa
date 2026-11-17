@@ -289,6 +289,30 @@ void GL_SetModelviewMatrix(mat4_t matrix)
 
 
 /*
+=================
+RB_ClearToFog
+
+Added in OPM: the clear colour where the map's fog shows past the last thing
+drawn. Under r_linearLighting the frame holds light, and the fog on a surface
+is its colour as shown turned to light (Fog() in the shaders): cleared to the
+colour as it stands, what lay past the far plane showed several times
+brighter than the fog in front of it, a pale wall behind a dark wood.
+=================
+*/
+static void RB_ClearToFog( void )
+{
+	vec3_t c;
+
+	VectorCopy( backEnd.globalFogColor, c );
+	if ( R_RtLinear() && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
+		c[0] = pow( Q_max( c[0], 0.0f ), 2.2f );
+		c[1] = pow( Q_max( c[1], 0.0f ), 2.2f );
+		c[2] = pow( Q_max( c[2], 0.0f ), 2.2f );
+	}
+	qglClearColor( c[0], c[1], c[2], 1.0f );
+}
+
+/*
 ================
 RB_Hyperspace
 
@@ -390,8 +414,7 @@ void RB_BeginDrawingView (void) {
 		&& backEnd.globalFogEnabled && !tr.skyRendered && !tr.portalRendered )
 	{
 		clearBits |= GL_COLOR_BUFFER_BIT;
-		qglClearColor( backEnd.globalFogColor[0], backEnd.globalFogColor[1],
-			backEnd.globalFogColor[2], backEnd.globalFogColor[3] );
+		RB_ClearToFog();
 	}
 	//=========================
 
@@ -407,7 +430,7 @@ void RB_BeginDrawingView (void) {
 	{
 		clearBits |= GL_COLOR_BUFFER_BIT;
 		if (backEnd.globalFogEnabled)
-			qglClearColor( backEnd.globalFogColor[0], backEnd.globalFogColor[1], backEnd.globalFogColor[2], 1.0f );
+			RB_ClearToFog();
 		else
 			qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
 	}
