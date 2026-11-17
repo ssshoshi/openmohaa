@@ -10,6 +10,12 @@ Only dropping a new vertex's weakest weights (`--min-weight`, past the most the 
 - Welded where position, weights and normal agree (UV seams are not edges); an edge whose normals differ past
   `--crease` degrees, or the end of a surface, keeps its line (boundary rules).
 - Pieces apart from the rest under `--decal-tris` triangles are cut, not smoothed, so they stay on what they sit on.
+- Normals: the game turns a vertex's normal by its FIRST weight's bone only, so each normal is in that bone's frame.
+  Every vertex keeps its first bone first, and normals from vertexes led by other bones are turned into that frame
+  before they are mixed (the turn between two bones is fitted from the vertexes weighted to both). Without this the
+  scientist's coat went dark blue at the shoulders and hem: its shoulder vertexes were read in Spine2's frame, about
+  180 degrees from the shoulder helpers'.
+- The pk3 it writes is never read back as input, so rerunning it with the pak installed starts from the game's models.
 - Texture coordinates are cut, not smoothed. Morph targets (faces) are carried like positions.
 - Only vertexes whose strongest bone matches `--bones` are smoothed (default: shoulders, arms, hands, neck, head, so
   helmets too); the rest keep their place and edges touching them are only cut in half, and a surface with nothing to
