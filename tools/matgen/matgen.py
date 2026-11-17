@@ -858,9 +858,12 @@ def main():
     for base, entry, preset, clamp, want_n, want_s in jobs:
         key = job_key(entry, preset, clamp, args)
         prev = manifest.get(base)
+        # want_n is not in the key (adding it would regenerate everything),
+        # so a texture that has lost its normal map is redone here
         if prev and prev["key"] == key and all(
                 os.path.exists(os.path.join(out_dir, n))
-                for n in prev["files"]):
+                for n in prev["files"]) and (want_n or not any(
+                    n.endswith(("_n.jpg", "_nh.png")) for n in prev["files"])):
             new_manifest[base] = prev
             continue
         # the worker decides between _n and _nh, so the files come later
