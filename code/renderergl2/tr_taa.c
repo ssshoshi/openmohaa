@@ -66,7 +66,7 @@ void R_TaaRegisterCvars(void)
 	r_taaJitter = ri.Cvar_Get("r_taaJitter", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_taaJitter, "Whether r_taa nudges the camera each frame (0: blend only, for testing)");
 	r_taaDebug = ri.Cvar_Get("r_taaDebug", "0", CVAR_CHEAT);
-	ri.Cvar_SetDescription(r_taaDebug, "1: show how far r_taa found each pixel had moved (red across, green up, blue where it started again)");
+	ri.Cvar_SetDescription(r_taaDebug, "1: show how far r_taa found each pixel had moved (red across, green up, blue where it started again); 2: leave the pass out (the view is still nudged), to compare");
 }
 
 /*
@@ -264,6 +264,10 @@ void RB_Taa(FBO_t *src, ivec4_t box)
 	if (!tr.taaFbo[0] || !tr.taaFbo[1] || !sp->program || !src || !src->colorImage[0] || !tr.renderDepthImage) {
 		return;
 	}
+	// (r_taaDebug 2: the pass left out, to measure what it costs)
+	if (r_taaDebug->integer == 2) {
+		return;
+	}
 	if (taa.frame == tr.frameCount) {
 		// a second view of the world in one frame keeps the blend of the first
 		return;
@@ -324,7 +328,7 @@ void RB_Taa(FBO_t *src, ivec4_t box)
 	GLSL_SetUniformMat4(sp, UNIFORM_TAAREPROJECT, reprojectf);
 	// the view weapon is drawn in the first 0.3 of the depth (RB_RenderDrawSurfList's
 	// depth hack): the world is only that near closer than about four units
-	VectorSet4(params, Com_Clamp(0.02f, 1.0f, r_taaBlend->value), valid ? 1.0f : 0.0f, 0.3f, r_taaDebug->integer ? 1.0f : 0.0f);
+	VectorSet4(params, Com_Clamp(0.02f, 1.0f, r_taaBlend->value), valid ? 1.0f : 0.0f, 0.3f, r_taaDebug->integer == 1 ? 1.0f : 0.0f);
 	GLSL_SetUniformVec4(sp, UNIFORM_TAAPARAMS, params);
 	VectorSet4(area, box[0] / w, box[1] / h, box[2] / w, box[3] / h);
 	GLSL_SetUniformVec4(sp, UNIFORM_TAABOX, area);
@@ -332,6 +336,7 @@ void RB_Taa(FBO_t *src, ivec4_t box)
 	GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, metrics);
 
 	RB_InstantQuad2(quadVerts, texCoords);
+
 
 	FBO_FastBlit(tr.taaFbo[taa.current], box, src, box, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
