@@ -228,12 +228,12 @@ skeletor_c::skeletor_c(dtiki_t *tiki)
     m_frameRadius                 = 64;
     m_frameList.numActionFrames   = 0;
     m_frameList.numMovementFrames = 0;
-    m_targetLookLeft              = 0;
-    m_targetLookRight             = 0;
-    m_targetLookUp                = 0;
-    m_targetLookDown              = 0;
-    m_targetLookCrossed           = 0;
-    m_targetBlink                 = 0;
+    m_targetLookLeft              = -1;
+    m_targetLookRight             = -1;
+    m_targetLookUp                = -1;
+    m_targetLookDown              = -1;
+    m_targetLookCrossed           = -1;
+    m_targetBlink                 = -1;
 
     VectorClear(m_eyeTargetPos);
     VectorClear(m_eyePrevTargetPos);
@@ -1171,66 +1171,77 @@ int skeletor_c::GetMorphWeightFrame(int *data)
         }
     }
 
-    if (m_headBoneIndex >= 0 && !VectorCompareEpsilon(m_eyeTargetPos, vec3_origin, EPSILON)) {
-        SkelVec3        lookPos    = m_eyeTargetPos;
+    // Fixed in OPM: the decompiled version multiplied where it should have
+    // added, tested the target index instead of the amount for up/down and
+    // assumed which head bone axis is up and which is left. The eye target
+    // is a direction in model space; take it into the head bone's frame and
+    // read it against the head's own up and left (whichever bone axes point
+    // that way in the model), so the eyes cover what the head turn did not.
+    // A short target (the game sends half a forward vector) is a living face
+    // with its eyes at rest.
+    if (m_headBoneIndex >= 0 && m_targetLookLeft >= 0 && m_targetLookRight >= 0 && m_targetLookUp >= 0
+        && m_targetLookDown >= 0 && VectorLengthSquared(m_eyeTargetPos) > 0.5f) {
         const SkelMat4& headOrient = GetBoneFrame(m_headBoneIndex);
-        SkelMat4        invHeadOrient;
-        invHeadOrient.TransposeRotOf(headOrient);
+        vec3_t          lookDir;
+        float           leftDot = 0, upDot = 0;
+        float           bestLeft = 0, bestUp = 0;
+        int             i;
 
-        SkelVec3 temp = lookPos;
-        lookPos[0]    = temp[0] * invHeadOrient[0][0] * temp[1] * invHeadOrient[1][0] + temp[2] * invHeadOrient[2][0];
-        lookPos[1]    = temp[0] * invHeadOrient[0][1] * temp[1] * invHeadOrient[1][1] + temp[2] * invHeadOrient[2][1];
-        lookPos[2]    = temp[0] * invHeadOrient[0][2] * temp[1] * invHeadOrient[1][2] + temp[2] * invHeadOrient[2][2];
+        VectorCopy(m_eyeTargetPos, lookDir);
+        VectorNormalize(lookDir);
 
-        float lookLeftAmount = lookPos[2] * 100 + data[m_targetLookLeft] - data[m_targetLookRight];
-        float lookUpAmount   = lookPos[0] * 100 + data[m_targetLookUp] - data[m_targetLookDown];
+        // rows 0..2 are the head bone's axes in model space
+        for (i = 0; i < 3; i++) {
+            const float *axis = headOrient[i];
+            const float  len  = sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+            float        l, u;
 
-        const float s = VectorLengthSquared(lookPos);
-
-        if (s == 0.0) {
-            lookPos[0] = 1.0;
-        } else if (s != 1.0) {
-            float l = 1.0 / sqrt(s);
-            VectorScale(lookPos, l, lookPos);
+            if (len < 0.0001f) {
+                continue;
+            }
+            l = axis[1] / len; // model +Y is the model's left
+            u = axis[2] / len; // model +Z is up
+            if (fabs(l) > fabs(bestLeft)) {
+                bestLeft = l;
+                leftDot  = (axis[0] * lookDir[0] + axis[1] * lookDir[1] + axis[2] * lookDir[2]) / len;
+                if (l < 0) {
+                    leftDot = -leftDot;
+                }
+            }
+            if (fabs(u) > fabs(bestUp)) {
+                bestUp = u;
+                upDot  = (axis[0] * lookDir[0] + axis[1] * lookDir[1] + axis[2] * lookDir[2]) / len;
+                if (u < 0) {
+                    upDot = -upDot;
+                }
+            }
         }
 
-        if (m_targetLookLeft >= 0 && m_targetLookRight >= 0 && m_targetLookUp >= 0 && m_targetLookDown >= 0) {
-            if (lookLeftAmount > 0.0) {
-                if (lookLeftAmount > 100.0) {
-                    lookLeftAmount = 100.0;
-                }
+        // a full morph is the eye at its stop, about 40 degrees off centre
+        float lookLeftAmount = leftDot * 155.f + data[m_targetLookLeft] - data[m_targetLookRight];
+        float lookUpAmount   = upDot * 155.f + data[m_targetLookUp] - data[m_targetLookDown];
 
-                data[m_targetLookLeft]  = lookLeftAmount;
-                data[m_targetLookRight] = 0;
-            } else {
-                if (lookLeftAmount < -100.0) {
-                    lookLeftAmount = -100.0;
-                }
+        if (lookLeftAmount > 0) {
+            data[m_targetLookLeft]  = (int)Q_min(lookLeftAmount, 100.f);
+            data[m_targetLookRight] = 0;
+        } else {
+            data[m_targetLookLeft]  = 0;
+            data[m_targetLookRight] = (int)Q_min(-lookLeftAmount, 100.f);
+        }
 
-                data[m_targetLookLeft]  = 0;
-                data[m_targetLookRight] = -lookLeftAmount;
-            }
-
-            if (m_targetLookUp > 0.0) {
-                if (lookUpAmount > 100.0) {
-                    lookUpAmount = 100.0;
-                }
-
-                data[m_targetLookUp]   = lookUpAmount;
-                data[m_targetLookDown] = 0;
-            } else {
-                if (lookUpAmount < -133.0) {
-                    lookUpAmount = -133.0;
-                }
-
-                data[m_targetLookUp]   = 0.0;
-                data[m_targetLookDown] = (-lookUpAmount * 0.75);
-            }
+        if (lookUpAmount > 0) {
+            data[m_targetLookUp]   = (int)Q_min(lookUpAmount, 100.f);
+            data[m_targetLookDown] = 0;
+        } else {
+            data[m_targetLookUp]   = 0;
+            data[m_targetLookDown] = (int)(Q_min(-lookUpAmount, 133.f) * 0.75f);
         }
     }
 
     // check for blink
-    if (m_targetBlink >= 0) {
+    // Added in OPM: only the living blink; the game sends an eye target
+    // (straight ahead when looking at nothing) for a living actor only
+    if (m_targetBlink >= 0 && !VectorCompareEpsilon(m_eyeTargetPos, vec3_origin, EPSILON)) {
         int sysMilliseconds;
         int blinkAmount;
 
@@ -1252,7 +1263,9 @@ int skeletor_c::GetMorphWeightFrame(int *data)
                     data[m_targetBlink] = blinkAmount;
                 }
             } else {
-                m_timeNextBlink = rand() / 5 + sysMilliseconds - 1000;
+                // Fixed in OPM: rand() / 5 is up to days where RAND_MAX is
+                // large; people blink every two to six seconds
+                m_timeNextBlink = sysMilliseconds + 2000 + rand() % 4000;
             }
         }
     }
