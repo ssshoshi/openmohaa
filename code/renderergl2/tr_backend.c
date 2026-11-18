@@ -2558,6 +2558,10 @@ const void *RB_PostProcess(const void *data)
 	// (r_volumetric 2 is drawn in the view, between the opaque world and
 	// what comes after it: RB_FroxelOpaqueDone)
 
+	// Added in OPM: the frames blended (r_taa), before what glows of them
+	if (srcFbo && !backEnd.viewParms.isPortal)
+		RB_Taa(srcFbo, srcBox);
+
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)
 		RB_Bloom(srcFbo, srcBox);

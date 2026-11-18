@@ -1162,6 +1162,10 @@ typedef enum
 	UNIFORM_CLOUDSHADOWMAP,
 	UNIFORM_GROUNDVARY,     // Added in OPM: the ground's variation (lightall, USE_GROUNDVARY): how strong its patches, one over their size, how much of the far look, one over where that is whole
 	UNIFORM_GROUNDVARY2,    // how far its texture is pushed out of true, in tiles
+	UNIFORM_TAAHISTORYMAP,  // Added in OPM: r_taa (taa_fp.glsl): the blend of the frames before
+	UNIFORM_TAAREPROJECT,   // this view's clip space to the last frame's
+	UNIFORM_TAAPARAMS,
+	UNIFORM_TAABOX,
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -1391,6 +1395,13 @@ typedef struct {
 	vec4_t		waterReflectPlane; // normal, distance
 	vec2_t		waterReflectShare; // of the image across and up
 	mat4_t		waterReflectMvp;
+
+	// Added in OPM: r_taa (tr_taa.c): the main view of the world, to be
+	// nudged (set where the view is made), whether it was, and by how much
+	// in clip space
+	qboolean	taaWanted;
+	qboolean	taaActive;
+	vec2_t		taaJitter;
 } viewParms_t;
 
 
@@ -2368,6 +2379,7 @@ typedef enum {
 	GPUTIMER_SPRITES,  // Added in OPM: RC_SPRITE_SURFS
 	GPUTIMER_AO,       // Added in OPM: r_gtao
 	GPUTIMER_VOLUME,   // Added in OPM: r_volumetric
+	GPUTIMER_TAA,      // Added in OPM: r_taa
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2679,6 +2691,8 @@ typedef struct {
 	image_t					*renderDepthImage;
 	image_t					*pshadowMaps[MAX_DRAWN_PSHADOWS];
 	image_t					*screenScratchImage;
+	// Added in OPM: r_taa's blend of the frames, two taking turns (tr_taa.c)
+	image_t					*taaImage[2];
 	// Added in OPM: SMAA (tr_smaa.c)
 	image_t					*smaaEdgesImage;
 	image_t					*smaaBlendImage;
@@ -2723,6 +2737,7 @@ typedef struct {
 	FBO_t					*pshadowFbos[MAX_DRAWN_PSHADOWS];
 	FBO_t					*screenScratchFbo;
 	FBO_t					*smaaEdgesFbo;	// Added in OPM: SMAA (tr_smaa.c)
+	FBO_t					*taaFbo[2];	// Added in OPM: r_taa (tr_taa.c), taking turns
 	FBO_t					*smaaBlendFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
@@ -2804,6 +2819,7 @@ typedef struct {
 	shaderProgram_t waterShader; // Added in OPM (tr_water.c)
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
+	shaderProgram_t taaShader;     // Added in OPM: r_taa (tr_taa.c)
 	shaderProgram_t smaaShader[3]; // Added in OPM: SMAA's edges, weights, blend (tr_smaa.c)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
@@ -4296,6 +4312,15 @@ qboolean R_SmaaWanted(void);
 void R_SmaaCreateImages(int width, int height);
 void R_SmaaCreateFbos(void);
 qboolean RB_Smaa(FBO_t *src, ivec4_t box, FBO_t *dst);
+
+// Added in OPM: temporal anti-aliasing (tr_taa.c)
+extern cvar_t *r_taa;
+void R_TaaRegisterCvars(void);
+qboolean R_TaaWanted(void);
+void R_TaaCreateImages(int width, int height, int format);
+void R_TaaCreateFbos(void);
+void R_TaaJitter(viewParms_t *parms);
+void RB_Taa(FBO_t *src, ivec4_t box);
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);

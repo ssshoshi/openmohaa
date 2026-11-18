@@ -729,6 +729,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 	parms.fovY = tr.refdef.fov_y;
 	
 	parms.stereoFrame = tr.refdef.stereoFrame;
+	// Added in OPM: the view r_taa nudges, when it is of the world (tr_taa.c)
+	parms.taaWanted = !(fd->rdflags & RDF_NOWORLDMODEL);
 
 	VectorCopy( fd->vieworg, parms.ori.origin );
 	VectorCopy( fd->viewaxis[0], parms.ori.axis[0] );

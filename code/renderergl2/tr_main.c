@@ -2196,6 +2196,8 @@ void R_RenderView (viewParms_t *parms) {
 	R_RotateForViewer ();
 
 	R_SetupProjection(&tr.viewParms, r_zproj->value, tr.viewParms.zFar, qtrue);
+	// Added in OPM: r_taa's nudge, after the frustum is set (tr_taa.c)
+	R_TaaJitter(&tr.viewParms);
 
 	//
 	// OPENMOHAA-specific stuff

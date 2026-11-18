@@ -65,6 +65,8 @@ extern const char *fallbackShader_lens_vp;
 extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_bloom_vp;
 extern const char *fallbackShader_bloom_fp;
+extern const char *fallbackShader_taa_vp;
+extern const char *fallbackShader_taa_fp;
 extern const char *fallbackShader_smaa_vp;
 extern const char *fallbackShader_smaa_fp;
 extern const char *fallbackShader_smaa_lib;
@@ -316,7 +318,11 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_CloudShadow",     GLSL_VEC4 },
 	{ "u_CloudShadowMap",  GLSL_INT },
 	{ "u_GroundVary",      GLSL_VEC4 },
-	{ "u_GroundVary2",     GLSL_VEC4 }
+	{ "u_GroundVary2",     GLSL_VEC4 },
+	{ "u_TaaHistoryMap",  GLSL_INT },
+	{ "u_TaaReproject",   GLSL_MAT16 },
+	{ "u_TaaParams",      GLSL_VEC4 },
+	{ "u_TaaBox",         GLSL_VEC4 },
 };
 
 typedef enum
@@ -3170,6 +3176,26 @@ void GLSL_InitGPUShaders(void)
 			numEtcShaders++;
 		}
 
+		// the frames blended (r_taa, tr_taa.c)
+		if (R_TaaWanted())
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			if (GLSL_InitGPUShader(&tr.taaShader, "taa", attribs, qtrue, extradefines, qtrue, fallbackShader_taa_vp, fallbackShader_taa_fp))
+			{
+				GLSL_InitUniforms(&tr.taaShader);
+				GLSL_SetUniformInt(&tr.taaShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+				GLSL_SetUniformInt(&tr.taaShader, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+				GLSL_SetUniformInt(&tr.taaShader, UNIFORM_TAAHISTORYMAP, TB_NORMALMAP);
+				GLSL_FinishGPUShader(&tr.taaShader);
+				numEtcShaders++;
+			}
+			else
+			{
+				ri.Printf(PRINT_WARNING, "WARNING: the TAA program did not compile, r_taa does nothing\n");
+			}
+		}
+
 		// the bloom (RB_Bloom): its levels halved and widened
 		attribs = ATTR_POSITION | ATTR_TEXCOORD;
 		extradefines[0] = '\0';
@@ -3334,6 +3360,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.waterShader);
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
+	GLSL_DeleteGPUShader(&tr.taaShader);
 	GLSL_DeleteGPUShader(&tr.bloomShader);
 	for (i = 0; i < 3; i++)
 		GLSL_DeleteGPUShader(&tr.smaaShader[i]);
