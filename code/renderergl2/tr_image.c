@@ -3134,6 +3134,8 @@ void R_CreateBuiltinImages( void ) {
 
 		// Added in OPM: r_taa's blend of the frames, as the frame is (tr_taa.c)
 		R_TaaCreateImages(width, height, hdrFormat);
+		// Added in OPM: r_motionBlur's smeared frame (tr_motionblur.c)
+		R_MotionBlurCreateImages(width, height, hdrFormat);
 
 		// Added in OPM: r_ssr's copy of the last frame, before its glow and tone map
 		if (r_ssr->integer)
