@@ -4321,6 +4321,8 @@ void R_TaaCreateImages(int width, int height, int format);
 void R_TaaCreateFbos(void);
 void R_TaaJitter(viewParms_t *parms);
 void RB_Taa(FBO_t *src, ivec4_t box);
+void RB_TaaOpaqueDone(void);
+void RB_TaaLateView(void);
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);

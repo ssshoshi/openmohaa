@@ -46,6 +46,7 @@ cvar_t *r_taa;
 cvar_t *r_taaBlend;
 cvar_t *r_taaJitter;
 cvar_t *r_taaDebug;
+cvar_t *r_taaTransparents;
 
 static struct {
 	int     current;     // the image written this frame
@@ -53,6 +54,7 @@ static struct {
 	int     box[4];      // the view's box then
 	double  viewProj[16]; // the camera then, without its nudge
 	vec3_t  origin;
+	int     lateFrame; // tr.frameCount when it ran under what is blended (RB_TaaOpaqueDone)
 } taa;
 
 void R_TaaRegisterCvars(void)
@@ -65,6 +67,9 @@ void R_TaaRegisterCvars(void)
 	ri.Cvar_SetDescription(r_taaBlend, "How much of each new frame r_taa takes in (lower: smoother, slower to catch up)");
 	r_taaJitter = ri.Cvar_Get("r_taaJitter", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_taaJitter, "Whether r_taa nudges the camera each frame (0: blend only, for testing)");
+	r_taaTransparents = ri.Cvar_Get("r_taaTransparents", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_taaTransparents, "1: r_taa blends the opaque world only, and what is blended over it (smoke, fire, sprites, glass, water, decals) is drawn after, "
+		"sharp and still, not smeared by the frames before (needs MSAA off); 0: all of it blended with the frames before");
 	r_taaDebug = ri.Cvar_Get("r_taaDebug", "0", CVAR_CHEAT);
 	ri.Cvar_SetDescription(r_taaDebug, "1: show how far r_taa found each pixel had moved (red across, green up, blue where it started again); 2: leave the pass out (the view is still nudged), to compare");
 }
@@ -351,4 +356,77 @@ void RB_Taa(FBO_t *src, ivec4_t box)
 	taa.current = !taa.current;
 
 	R_GpuTimerEnd(GPUTIMER_TAA);
+}
+
+/*
+=================
+R_TaaUnjitter
+
+Takes this frame's nudge back out of a view's projection.
+=================
+*/
+static void R_TaaUnjitter(viewParms_t *vp)
+{
+	vp->projectionMatrix[8] += vp->taaJitter[0];
+	vp->projectionMatrix[9] += vp->taaJitter[1];
+	vp->taaJitter[0] = vp->taaJitter[1] = 0.0f;
+}
+
+/*
+=================
+RB_TaaOpaqueDone
+
+Back end, in the main view once its opaque world is drawn (and the air
+summed over it, RB_FroxelOpaqueDone), before anything blended: the frames
+are blended here, and what is drawn after (smoke, fire, sprites, glass,
+water, marks) goes on over the blend with the camera's nudge taken out, so
+it is neither smeared by the frames before nor shaken by the nudge. Its
+edges are left to SMAA. With MSAA the frame cannot be read here (it is a
+multisampled buffer until the post process resolves it): the blend is then
+done there, with everything in it (r_taaTransparents 0 does the same).
+=================
+*/
+void RB_TaaOpaqueDone(void)
+{
+	FBO_t  *fbo = glState.currentFBO;
+	ivec4_t box;
+
+	if (!r_taa->integer || !r_taaTransparents->integer || !backEnd.viewParms.taaActive || backEnd.depthFill
+		|| backEnd.projection2D || !fbo || !fbo->colorImage[0] || taa.frame == tr.frameCount) {
+		return;
+	}
+
+	box[0] = backEnd.viewParms.viewportX;
+	box[1] = backEnd.viewParms.viewportY;
+	box[2] = backEnd.viewParms.viewportWidth;
+	box[3] = backEnd.viewParms.viewportHeight;
+	RB_Taa(fbo, box);
+	if (taa.frame != tr.frameCount) {
+		return;
+	}
+	taa.lateFrame = tr.frameCount;
+
+	R_TaaUnjitter(&backEnd.viewParms);
+	FBO_Bind(fbo);
+	qglViewport(box[0], box[1], box[2], box[3]);
+	qglScissor(box[0], box[1], box[2], box[3]);
+	GL_SetProjectionMatrix(backEnd.viewParms.projectionMatrix);
+}
+
+/*
+=================
+RB_TaaLateView
+
+Back end, for a pass of the same view after the blend (the sprites,
+RB_SpriteSurfs): drawn without the nudge too.
+=================
+*/
+void RB_TaaLateView(void)
+{
+	if (taa.lateFrame != tr.frameCount || !backEnd.viewParms.taaActive) {
+		return;
+	}
+
+	R_TaaUnjitter(&backEnd.viewParms);
+	GL_SetProjectionMatrix(backEnd.viewParms.projectionMatrix);
 }
