@@ -26,10 +26,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // r_motionBlurShutter of a 60 Hz frame would have seen it move: the same smear
 // at any frame rate. How far each pixel moved:
 //
-//  - the skeletal models (soldiers, the dead as ragdolls, the player's own
-//    body) are drawn again over the frame, posed from this frame's bones and
-//    from the last frame's, kept for each of them here (glsl/mbobject_*.glsl,
-//    r_motionBlurObjects);
+//  - the models that moved since the last frame are drawn again over the
+//    frame, where they are and where they were (glsl/mbobject_*.glsl,
+//    r_motionBlurObjects): the skeletal ones (soldiers, the dead as ragdolls,
+//    vehicles, the player's own body) posed from this frame's bones and from
+//    the last frame's, kept for each of them here; the brush ones (doors,
+//    lifts, what a script moves) by where they were;
 //  - anything else, from its depth and the two cameras (glsl/mbvelocity_fp.glsl).
 //
 // Then the longest smear in each tile of MB_TILE pixels and about it
@@ -85,6 +87,7 @@ The skeletal models' last poses, a frame ago
 typedef struct {
 	int              entityNumber; // ENTITYNUM_NONE: told by where it is
 	const dtiki_t   *tiki;
+	qhandle_t        hModel;       // a brush model's (doors), with no tiki
 	int              frame;        // tr.frameCount it was drawn in
 	int              taken;        // the frame a model took it for its own
 	float            scale;
@@ -102,6 +105,8 @@ static int    mbNumModels;
 static int    mbModel[MAX_REFENTITIES];
 static int    mbModelBones[MAX_REFENTITIES];
 static int    mbModelHistory[MAX_REFENTITIES];
+static byte   mbModelMoved[MAX_REFENTITIES];
+static int    mbNumMoving;
 static float  mbModelTransform[MAX_REFENTITIES][16];
 static float  mbModelView[MAX_REFENTITIES][16];
 static int    mbSeenFrame[MAX_REFENTITIES + 1];
@@ -252,7 +257,7 @@ static int RB_MbSurfaceModel(const drawSurf_t *ds, shader_t **shader)
 	int      entityNum, fogNum, dlighted, pshadowed;
 	qboolean staticModel;
 
-	if (*ds->surface != SF_TIKI_SKEL) {
+	if (*ds->surface == SF_SPRITE) {
 		return -1;
 	}
 	R_DecomposeSort(ds->sort, &entityNum, shader, &fogNum, &dlighted, &pshadowed, &staticModel);
@@ -261,6 +266,12 @@ static int RB_MbSurfaceModel(const drawSurf_t *ds, shader_t **shader)
 		return -1;
 	}
 	return entityNum;
+}
+
+// what a skeletal model is scaled by (its bones are not), 1 for a brush model
+static float R_MbScale(const trRefEntity_t *ent)
+{
+	return ent->e.tiki ? ent->e.tiki->load_scale * ent->e.scale : 1.0f;
 }
 
 // the pose a model had a frame ago: the entity's, or the nearest of the same
@@ -274,7 +285,8 @@ static int R_MbFindHistory(const trRefEntity_t *ent, int numBones)
 	for (i = 0; i < MB_HISTORY; i++) {
 		const mbHistory_t *h = &mbHistory[i];
 
-		if (h->frame != tr.frameCount - 1 || h->taken == tr.frameCount || h->tiki != ent->e.tiki || h->numBones != numBones) {
+		if (h->frame != tr.frameCount - 1 || h->taken == tr.frameCount || h->tiki != ent->e.tiki || h->hModel != ent->e.hModel
+			|| h->numBones != numBones) {
 			continue;
 		}
 		if (ent->e.entityNumber != ENTITYNUM_NONE) {
@@ -303,6 +315,7 @@ static void RB_MbGatherModels(void)
 	int            i;
 
 	mbNumModels = 0;
+	mbNumMoving = 0;
 	for (i = 0; i < mb.numSurfs; i++) {
 		const int      entityNum = RB_MbSurfaceModel(&mb.surfs[i], &shader);
 		trRefEntity_t *ent;
@@ -316,12 +329,16 @@ static void RB_MbGatherModels(void)
 
 		ent = &mb.entities[entityNum];
 		// the view weapon goes with the camera, and is left sharp
-		if (!ent->e.tiki || (ent->e.renderfx & RF_DEPTHHACK)) {
+		if (ent->e.reType != RT_MODEL || (ent->e.renderfx & RF_DEPTHHACK)) {
 			continue;
 		}
-		numBones = ri.TIKI_GetNumChannels(ent->e.tiki);
-		if (numBones <= 0 || ent->e.bonestart < 0 || ent->e.bonestart + numBones > MAX_SKELBONES) {
-			continue;
+		// a skeletal model, or one of the map's brush models (no bones)
+		numBones = 0;
+		if (ent->e.tiki) {
+			numBones = ri.TIKI_GetNumChannels(ent->e.tiki);
+			if (numBones <= 0 || ent->e.bonestart < 0 || ent->e.bonestart + numBones > MAX_SKELBONES) {
+				continue;
+			}
 		}
 
 		R_RotateForEntity(ent, &backEnd.viewParms, &ori);
@@ -331,6 +348,18 @@ static void RB_MbGatherModels(void)
 		mbModelHistory[mbNumModels] = R_MbFindHistory(ent, numBones);
 		Com_Memcpy(mbModelTransform[mbNumModels], ori.transformMatrix, sizeof(mbModelTransform[0]));
 		Com_Memcpy(mbModelView[mbNumModels], ori.modelMatrix, sizeof(mbModelView[0]));
+
+		// drawn again only if it moved: what is where it was moves only as
+		// the camera does, which its depth tells as well
+		{
+			const int h = mbModelHistory[mbNumModels];
+
+			mbModelMoved[mbNumModels] = h >= 0
+				&& (memcmp(mbHistory[h].transform, ori.transformMatrix, sizeof(mbHistory[h].transform))
+					|| mbHistory[h].scale != R_MbScale(ent)
+					|| (numBones && memcmp(mbHistory[h].bones, &TIKI_Skel_Bones[ent->e.bonestart], numBones * sizeof(skelBoneCache_t))));
+			mbNumMoving += mbModelMoved[mbNumModels];
+		}
 		mbNumModels++;
 	}
 }
@@ -348,7 +377,8 @@ static void RB_MbKeepModels(void)
 		// a slot no model has had since the frame before last, else one of
 		// the last frame's no model took
 		for (i = 0; !h && i < MB_HISTORY; i++) {
-			if (!mbHistory[i].tiki || mbHistory[i].frame < tr.frameCount - 1) {
+			// (frame 0: never used; a brush model's has no tiki)
+			if (mbHistory[i].frame < tr.frameCount - 1) {
 				h = &mbHistory[i];
 			}
 		}
@@ -361,19 +391,22 @@ static void RB_MbKeepModels(void)
 			continue;
 		}
 
-		if (h->maxBones < num) {
+		if (num && h->maxBones < num) {
 			if (h->bones) {
 				ri.Free(h->bones);
 			}
 			h->bones    = (skelBoneCache_t *)ri.Malloc(num * sizeof(skelBoneCache_t));
 			h->maxBones = num;
 		}
-		Com_Memcpy(h->bones, &TIKI_Skel_Bones[ent->e.bonestart], num * sizeof(skelBoneCache_t));
+		if (num) {
+			Com_Memcpy(h->bones, &TIKI_Skel_Bones[ent->e.bonestart], num * sizeof(skelBoneCache_t));
+		}
 		h->entityNumber = ent->e.entityNumber;
 		h->tiki         = ent->e.tiki;
+		h->hModel       = ent->e.hModel;
 		h->frame        = tr.frameCount;
 		h->taken        = tr.frameCount; // not a slot for another model this frame
-		h->scale        = ent->e.tiki->load_scale * ent->e.scale;
+		h->scale        = R_MbScale(ent);
 		h->numBones     = num;
 		VectorCopy(ent->e.origin, h->origin);
 		Com_Memcpy(h->transform, mbModelTransform[k], sizeof(h->transform));
@@ -391,11 +424,17 @@ static void RB_MbSendPrevBones(void)
 		const int            num   = mbModelBones[k];
 		const int            h     = mbModelHistory[k];
 
+		if (!mbModelMoved[k] || !num) {
+			continue;
+		}
 		Com_Memcpy(&mbPrevBones[start], h >= 0 ? mbHistory[h].bones : &TIKI_Skel_Bones[start], num * sizeof(skelBoneCache_t));
 		lo = MIN(lo, start);
 		hi = MAX(hi, start + num);
 	}
 
+	if (hi <= lo) {
+		return;
+	}
 	t0 = lo * 4;
 	t1 = hi * 4;
 	while (t0 < t1) {
@@ -443,13 +482,14 @@ void RB_MotionBlurDrawTess(void)
 			GLSL_SetUniformSkelMorphs(sp, UNIFORM_SKELMORPHS, tess.skelGpu.morphs, (tess.skelGpu.numMorphs + 3) / 4);
 		}
 	} else {
-		// posed on the CPU: moved as the whole model moved
-		if (!tess.useInternalVao) {
-			return;
-		}
+		// a brush model, or a skeletal one posed on the CPU (moved as the
+		// whole model moved): from tess, or from where its surfaces bound
+		// their vertexes (the world's, the vertex cache's)
 		sp = &tr.mbObjectShader[0];
-		RB_SkinMaterialize();
-		RB_UpdateTessVao(ATTR_POSITION);
+		if (tess.useInternalVao) {
+			RB_SkinMaterialize();
+			RB_UpdateTessVao(ATTR_POSITION);
+		}
 		GLSL_BindProgram(sp);
 	}
 
@@ -499,7 +539,7 @@ static void RB_MbDrawModels(const ivec4_t box, const double viewProj[16], const 
 		const int         entityNum = RB_MbSurfaceModel(ds, &shader);
 		int               k;
 
-		if (entityNum < 0 || mbSeenFrame[entityNum] != tr.frameCount || (k = mbSlot[entityNum]) < 0) {
+		if (entityNum < 0 || mbSeenFrame[entityNum] != tr.frameCount || (k = mbSlot[entityNum]) < 0 || !mbModelMoved[k]) {
 			continue;
 		}
 
@@ -514,11 +554,11 @@ static void RB_MbDrawModels(const ivec4_t box, const double viewProj[16], const 
 			R_MbMultiply(proj, mbModelView[k], mb.drawMvp);
 			R_MbMultiply(viewProj, mbModelTransform[k], mb.drawNow);
 			R_MbMultiply(mb.viewProj, h >= 0 ? mbHistory[h].transform : mbModelTransform[k], mb.drawWas);
-			VectorSet4(mb.drawParams, h >= 0 ? mbHistory[h].scale : ent->e.tiki->load_scale * ent->e.scale, 0.0f, box[2], box[3]);
+			VectorSet4(mb.drawParams, h >= 0 ? mbHistory[h].scale : R_MbScale(ent), 0.0f, box[2], box[3]);
 		}
 
 		RB_BeginSurface(shader, 0, 0);
-		RB_SkelMesh((skelSurfaceGame_t *)ds->surface);
+		rb_surfaceTable[*ds->surface](ds->surface);
 		RB_EndSurface();
 	}
 
@@ -587,12 +627,13 @@ void RB_MotionBlur(FBO_t *src, ivec4_t box)
 	models = r_motionBlurObjects->integer && mb.markFrame == tr.frameCount && tr.mbObjectShader[0].program
 		&& tr.mbObjectShader[1].program && tr.motionPrevBoneImage;
 	mbNumModels = 0;
+	mbNumMoving = 0;
 	if (models) {
 		RB_MbGatherModels();
 	}
 
 	// nothing to smear: the camera as it was, and no model that could move
-	if (valid && !mbNumModels) {
+	if (valid && !mbNumMoving) {
 		for (i = 0; i < 16 && fabs(viewProj[i] - mb.viewProj[i]) < 1e-6; i++) {
 		}
 		valid = i < 16;
@@ -623,7 +664,7 @@ void RB_MotionBlur(FBO_t *src, ivec4_t box)
 		tilesW = (box[2] + MB_TILE - 1) / MB_TILE;
 		tilesH = (box[3] + MB_TILE - 1) / MB_TILE;
 
-		if (mbNumModels) {
+		if (mbNumMoving) {
 			RB_MbDrawModels(box, viewProj, depth);
 		}
 
@@ -639,7 +680,7 @@ void RB_MotionBlur(FBO_t *src, ivec4_t box)
 		GL_BindToTMU(tr.motionObjectImage, TB_LIGHTMAP);
 		GLSL_SetUniformMat4(sp, UNIFORM_TAAREPROJECT, reprojectf);
 		// the view weapon is drawn in the first 0.3 of the depth (as r_taa has it)
-		VectorSet4(params, shutter, r_motionBlurMax->value, 0.3f, mbNumModels ? 1.0f : 0.0f);
+		VectorSet4(params, shutter, r_motionBlurMax->value, 0.3f, mbNumMoving ? 1.0f : 0.0f);
 		GLSL_SetUniformVec4(sp, UNIFORM_TAAPARAMS, params);
 		GLSL_SetUniformVec4(sp, UNIFORM_TAABOX, area);
 		GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, metrics);
@@ -686,7 +727,7 @@ void RB_MotionBlur(FBO_t *src, ivec4_t box)
 		GL_BindToTMU(tr.motionVelocityImage, TB_LIGHTMAP);
 		GL_BindToTMU(tr.motionTileImage[2], TB_NORMALMAP);
 		GLSL_SetUniformVec4(sp, UNIFORM_MBPARAMS, edges);
-		VectorSet4(params, (float)(tr.frameCount & 63), r_motionBlurDebug->integer, 0.0f, 0.0f);
+		VectorSet4(params, (float)(tr.frameCount & 63), r_motionBlurDebug->integer ? 1.0f : 0.0f, 0.0f, 0.0f);
 		GLSL_SetUniformVec4(sp, UNIFORM_TAAPARAMS, params);
 		GLSL_SetUniformVec4(sp, UNIFORM_BLOOMTEXEL, metrics);
 		GL_BindToTMU(tr.motionObjectImage, TB_DELUXEMAP);
