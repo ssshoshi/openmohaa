@@ -1085,6 +1085,22 @@ void main()
 	float silInv = silDet != 0.0 ? 1.0 / silDet : 0.0;
 	vec2  silGradA = vec2(parallaxGy.y * silGx.x - parallaxGx.y * silGy.x, parallaxGx.x * silGy.x - parallaxGy.x * silGx.x) * silInv;
 	vec2  silGradB = vec2(parallaxGy.y * silGx.y - parallaxGx.y * silGy.y, parallaxGx.x * silGy.y - parallaxGy.x * silGx.y) * silInv;
+
+	// The prepass stops here where the whole ray (from where the march
+	// starts, to a little past the relief's full depth) stays inside the
+	// edges: the coordinates are linear along it, so nothing can be cut
+	// away and the depth is the face's own. Only the pixels within a
+	// relief's reach of an outside edge pay for the march.
+	if (u_DepthOnly != 0)
+	{
+		vec2 silStep = vec2(dot(silGradA, offsetDir.xy), dot(silGradB, offsetDir.xy));
+		vec2 silNear = abs(var_Silhouette - silStep * r_parallaxMapOffset), silFar = abs(var_Silhouette + silStep * 1.05);
+		if (!parallaxOn || max(max(silNear.x, silNear.y), max(silFar.x, silFar.y)) <= 1.0)
+		{
+			gl_FragColor = vec4(0.0);
+			return;
+		}
+	}
   #endif
 
 	if (parallaxOn)
