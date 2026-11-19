@@ -252,6 +252,10 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	backEndData->entities[r_numentities].rtCaster = 0;
 	backEndData->entities[r_numentities].posedScene = 0;
 	backEndData->entities[r_numentities].poseId = 0;
+	// Added in OPM: set for skeletal models alone (R_AddSkelSurfaces); a
+	// brush model (a door) left with the flag of the model that had the slot
+	// before was left out of the depth prepass, and of the depth read after it
+	backEndData->entities[r_numentities].prepassSkip = qfalse;
 	backEndData->entities[r_numentities].lightingCalculated = qfalse;
 	backEndData->entities[r_numentities].bLightGridCalculated = qfalse;
 	backEndData->entities[r_numentities].sphereCalculated = qfalse;
