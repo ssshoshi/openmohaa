@@ -78,7 +78,8 @@ const char *const gpuTimerNames[GPUTIMER_COUNT] = {
 	"sprites",
 	"ao",
 	"volume",
-	"taa"
+	"taa",
+	"motionblur"
 };
 
 /*

@@ -2564,6 +2564,10 @@ const void *RB_PostProcess(const void *data)
 	// Added in OPM: the frames blended (r_taa), before what glows of them
 	if (srcFbo && !backEnd.viewParms.isPortal)
 		RB_Taa(srcFbo, srcBox);
+	// Added in OPM: the camera's movement smeared (r_motionBlur), after the
+	// frames are blended and before what glows
+	if (srcFbo && !backEnd.viewParms.isPortal)
+		RB_MotionBlur(srcFbo, srcBox);
 
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)

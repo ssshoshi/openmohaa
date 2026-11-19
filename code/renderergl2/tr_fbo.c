@@ -486,6 +486,8 @@ void FBO_Init(void)
 
 	// Added in OPM: r_taa (tr_taa.c)
 	R_TaaCreateFbos();
+	// Added in OPM: r_motionBlur (tr_motionblur.c)
+	R_MotionBlurCreateFbos();
 
 	// Added in OPM: r_ssr
 	if (tr.ssrPrevImage)

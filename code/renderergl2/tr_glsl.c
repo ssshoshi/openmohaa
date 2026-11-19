@@ -66,6 +66,8 @@ extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_bloom_vp;
 extern const char *fallbackShader_bloom_fp;
 extern const char *fallbackShader_taa_vp;
+extern const char *fallbackShader_motionblur_vp;
+extern const char *fallbackShader_motionblur_fp;
 extern const char *fallbackShader_taa_fp;
 extern const char *fallbackShader_smaa_vp;
 extern const char *fallbackShader_smaa_fp;
@@ -3196,6 +3198,25 @@ void GLSL_InitGPUShaders(void)
 			}
 		}
 
+		// the camera's movement smeared (r_motionBlur, tr_motionblur.c)
+		if (R_MotionBlurWanted())
+		{
+			attribs = ATTR_POSITION | ATTR_TEXCOORD;
+			extradefines[0] = '\0';
+			if (GLSL_InitGPUShader(&tr.motionBlurShader, "motionblur", attribs, qtrue, extradefines, qtrue, fallbackShader_motionblur_vp, fallbackShader_motionblur_fp))
+			{
+				GLSL_InitUniforms(&tr.motionBlurShader);
+				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+				GLSL_FinishGPUShader(&tr.motionBlurShader);
+				numEtcShaders++;
+			}
+			else
+			{
+				ri.Printf(PRINT_WARNING, "WARNING: the motion blur program did not compile, r_motionBlur does nothing\n");
+			}
+		}
+
 		// the bloom (RB_Bloom): its levels halved and widened
 		attribs = ATTR_POSITION | ATTR_TEXCOORD;
 		extradefines[0] = '\0';
@@ -3361,6 +3382,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.taaShader);
+	GLSL_DeleteGPUShader(&tr.motionBlurShader);
 	GLSL_DeleteGPUShader(&tr.bloomShader);
 	for (i = 0; i < 3; i++)
 		GLSL_DeleteGPUShader(&tr.smaaShader[i]);

@@ -188,8 +188,8 @@ void R_TaaJitter(viewParms_t *parms)
 	parms->projectionMatrix[9] -= parms->taaJitter[1];
 }
 
-// column major, as mat4_t
-static void R_TaaMultiply(const double *a, const double *b, double *out)
+// column major, as mat4_t (also tr_motionblur.c's)
+void R_TaaMultiply(const double *a, const double *b, double *out)
 {
 	int r, c;
 
@@ -201,7 +201,7 @@ static void R_TaaMultiply(const double *a, const double *b, double *out)
 	}
 }
 
-static qboolean R_TaaInverse(const double *m, double *out)
+qboolean R_TaaInverse(const double *m, double *out)
 {
 	double inv[16], det;
 	int    i;
