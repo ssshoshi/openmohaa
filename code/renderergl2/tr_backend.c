@@ -597,6 +597,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			// Added in OPM: the light in the air, over the opaque world,
 			// for what comes after it to take at its own depth
 			RB_FroxelOpaqueDone();
+			// Added in OPM: the frames blended, under what is blended (r_taa)
+			RB_TaaOpaqueDone();
 		}
 
 		//
@@ -844,6 +846,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	if (!beachDrawn && !backEnd.depthFill) {
 		RB_BeachDraw();
 		RB_FroxelOpaqueDone();
+		RB_TaaOpaqueDone();
 	}
 	RB_SurfProfEnd();
 
@@ -2558,6 +2561,10 @@ const void *RB_PostProcess(const void *data)
 	// (r_volumetric 2 is drawn in the view, between the opaque world and
 	// what comes after it: RB_FroxelOpaqueDone)
 
+	// Added in OPM: the frames blended (r_taa), before what glows of them
+	if (srcFbo && !backEnd.viewParms.isPortal)
+		RB_Taa(srcFbo, srcBox);
+
 	// Added in OPM: what is brighter than white glows, before the tone map
 	if (srcFbo && r_hdr->integer)
 		RB_Bloom(srcFbo, srcBox);
@@ -3015,6 +3022,8 @@ const void* RB_SpriteSurfs(const void* data) {
 
     backEnd.refdef = cmd->refdef;
     backEnd.viewParms = cmd->viewParms;
+	// Added in OPM: after r_taa's blend, without its nudge
+	RB_TaaLateView();
 	
     RB_SetupFog();
     RB_RenderSpriteSurfList(cmd->drawSurfs, cmd->numDrawSurfs);

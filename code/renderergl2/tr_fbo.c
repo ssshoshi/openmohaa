@@ -484,6 +484,9 @@ void FBO_Init(void)
 		R_CheckFBO(tr.waterReflectFbo);
 	}
 
+	// Added in OPM: r_taa (tr_taa.c)
+	R_TaaCreateFbos();
+
 	// Added in OPM: r_ssr
 	if (tr.ssrPrevImage)
 	{

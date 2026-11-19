@@ -3132,6 +3132,9 @@ void R_CreateBuiltinImages( void ) {
 			tr.screenSsaoImage = R_CreateImage("*screenSsao", NULL, width / 2, height / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
 		}
 
+		// Added in OPM: r_taa's blend of the frames, as the frame is (tr_taa.c)
+		R_TaaCreateImages(width, height, hdrFormat);
+
 		// Added in OPM: r_ssr's copy of the last frame, before its glow and tone map
 		if (r_ssr->integer)
 		{
