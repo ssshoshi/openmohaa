@@ -1529,8 +1529,8 @@ typedef struct srfBspSurface_s
 	int             numVerts;
 	srfVert_t      *verts;
 
-	// Added in OPM: a face beside an outside corner, its edge coordinate in
-	// its vertices' normal[3] (r_parallaxSilhouette, tr_texalign.c)
+	// Added in OPM: a face beside outside edges, its edge coordinates in
+	// its vertices' normal[3] and lightdir[3] (r_parallaxSilhouette, tr_texalign.c)
 	qboolean        parallaxSilhouette;
 	
 	// SF_GRID specific variables after here
@@ -3713,7 +3713,7 @@ typedef struct shaderCommands_s
 	// distance, wind)
 	qboolean    groundCover;
 	qboolean    terrain;    // Added in OPM: a terrain patch is in the batch (lamp shadows draw its one side)
-	qboolean    parallaxSilhouette; // Added in OPM: a face beside an outside corner is in it (r_parallaxSilhouette)
+	qboolean    parallaxSilhouette; // Added in OPM: its faces are beside outside edges (r_parallaxSilhouette, RB_RenderSilhouetteFaces)
 	vec4_t      groundCoverParams;
 
 	// Added in OPM: the batch is a tree's or a bush's surface, drawn from

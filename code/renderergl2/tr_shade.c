@@ -1585,7 +1585,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 
 		// Added in OPM: the main view's prepass of a batch with a face beside
-		// an outside corner (r_parallaxSilhouette) runs the stage's own
+		// an outside edge (r_parallaxSilhouette) runs the stage's own
 		// program, which cuts the relief away there as the main pass will,
 		// and stops once it has: the sun's shadow mask and everything else
 		// that reads this depth must see the corner as it is drawn

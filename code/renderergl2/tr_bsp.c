@@ -4077,12 +4077,14 @@ void RE_LoadWorldMap( const char *name ) {
 	//=========================
 
 	// determine vertex light directions
-	// Added in OPM: textures that carry on round corners (r_texAlign)
-	R_TexAlignWorld(&s_worldData);
-	R_LoadStep( "R_TexAlignWorld" );
-
 	R_CalcVertexLightDirs();
 	R_LoadStep( "R_CalcVertexLightDirs" );
+
+	// Added in OPM: textures that carry on round corners (r_texAlign), and
+	// the parallax's outside edges, after the light directions: their w
+	// holds one of the edge coordinates (r_parallaxSilhouette)
+	R_TexAlignWorld(&s_worldData);
+	R_LoadStep( "R_TexAlignWorld" );
 
 	// determine which parts of the map are in sunlight
 	if (0)

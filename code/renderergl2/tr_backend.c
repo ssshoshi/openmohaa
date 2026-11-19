@@ -477,6 +477,71 @@ void RB_BeginDrawingView (void) {
 
 /*
 ==================
+RB_SilhouetteFace
+
+Added in OPM: a world face beside an outside edge of a parallax texture
+(r_parallaxSilhouette, tr_texalign.c)
+==================
+*/
+static qboolean RB_SilhouetteFace( const drawSurf_t *drawSurf ) {
+	return *drawSurf->surface == SF_FACE && ((const srfBspSurface_t *)drawSurf->surface)->parallaxSilhouette
+		&& ((drawSurf->sort >> QSORT_REFENTITYNUM_SHIFT) & REFENTITYNUM_MASK) == REFENTITYNUM_WORLD
+		&& !(drawSurf->sort & (1 << QSORT_STATICMODEL_SHIFT));
+}
+
+/*
+==================
+RB_RenderSilhouetteFaces
+
+Added in OPM: the depth prepass of the faces beside outside edges of
+parallax textures, in batches of their own: they run their stages' own
+programs, which cut the relief away there (RB_IterateStagesGeneric), while
+the rest of their shaders' faces keep the plain depth program.
+==================
+*/
+static void RB_RenderSilhouetteFaces( drawSurf_t *drawSurfs, int numDrawSurfs ) {
+	shader_t *shader, *oldShader = NULL;
+	int       i, entityNum, fogNum, dlighted, pshadowed;
+	qboolean  bStaticModel;
+
+	backEnd.currentEntity = &tr.worldEntity;
+	backEnd.currentStaticModel = NULL;
+	backEnd.currentSphere = &backEnd.spareSphere;
+	backEnd.ori = backEnd.viewParms.world;
+	GL_SetModelviewMatrix( backEnd.ori.modelMatrix );
+
+	for (i = 0; i < numDrawSurfs; i++) {
+		drawSurf_t *drawSurf = &drawSurfs[i];
+
+		if (!RB_SilhouetteFace(drawSurf)) {
+			continue;
+		}
+		R_DecomposeSort( drawSurf->sort, &entityNum, &shader, &fogNum, &dlighted, &pshadowed, &bStaticModel );
+		if (!shader || (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL)) {
+			continue;
+		}
+		if (shader != oldShader) {
+			if (oldShader) {
+				RB_EndSurface();
+			}
+			RB_BeginSurface( shader, 0, 0 );
+			backEnd.pc.c_surfBatches++;
+			tess.rtMask = 0;
+			tess.shaderTime = backEnd.refdef.floatTime - shader->timeOffset;
+			oldShader = shader;
+		}
+		tess.rtMask |= drawSurf->rtMask;
+		RB_SurfProfSurface( *drawSurf->surface );
+		rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
+		RB_SurfProfSwitch( SURFPROF_LIST );
+	}
+	if (oldShader) {
+		RB_EndSurface();
+	}
+}
+
+/*
+==================
 RB_RenderDrawSurfList
 ==================
 */
@@ -502,6 +567,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// out as many small draws in every cascade (~0.8 ms of sun pass).
 	const qboolean	cubemapsUsed = !backEnd.depthFill
 		&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP | VPF_NOCUBEMAPS));
+	// Added in OPM: the depth prepass leaves the faces beside parallax
+	// textures' outside edges for batches of their own (RB_RenderSilhouetteFaces)
+	const qboolean	silhouetteSplit = backEnd.depthFill && r_parallaxSilhouette->integer
+		&& !(backEnd.viewParms.flags & (VPF_DEPTHSHADOW | VPF_SHADOWMAP));
+	int				silhouetteFaces = 0;
 
 	// save original time for entity shader offsets
 	originalTime = backEnd.refdef.floatTime;
@@ -547,6 +617,10 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	//=========================
 
 	for (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {
+		if (silhouetteSplit && RB_SilhouetteFace(drawSurf)) {
+			silhouetteFaces++;
+			continue;
+		}
 		cubemapIndex = cubemapsUsed ? drawSurf->cubemapIndex : 0;
 		if ( drawSurf->sort == (unsigned)oldSort && cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && (shader->sort != SS_OPAQUE && shader->sort != SS_PORTAL))
@@ -843,6 +917,15 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// draw the contents of the last shader batch
 	if (oldShader != NULL) {
 		RB_EndSurface();
+	}
+	// Added in OPM: the prepass of the faces it left out, from the world
+	if (silhouetteFaces) {
+		if (oldDepthRange || wasCrosshair) {
+			GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+			qglDepthRange( 0, 1 );
+		}
+		backEnd.refdef.floatTime = originalTime;
+		RB_RenderSilhouetteFaces( drawSurfs, numDrawSurfs );
 	}
 	// Added in OPM: the beach, when nothing blended came after the world
 	if (!beachDrawn && !backEnd.depthFill) {

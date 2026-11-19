@@ -54,11 +54,11 @@ uniform vec4      u_CubeMapInfo;
 uniform int       u_AlphaTest;
 
 #if defined(USE_PARALLAX_SILHOUETTE)
-// Added in OPM: across a face beside an outside corner, -1 and 1 at the
-// corners' edges (a face with one has it at one end and keeps the other
-// inside), 0 on any other face (tr_texalign.c); the depth prepass of a
-// batch with such a face stops once the relief is cut away
-varying float     var_Silhouette;
+// Added in OPM: across a face beside outside edges, along its horizontal
+// axis and its other one, -1 and 1 at the edges (a face with one at one end
+// keeps the other inside), 0 on any other face (tr_texalign.c); the depth
+// prepass of such faces stops once the relief is cut away
+varying vec2      var_Silhouette;
 uniform int       u_DepthOnly;
 #endif
 
@@ -1077,12 +1077,14 @@ void main()
 	bool  parallaxOn = reliefPixels >= 0.5;
 
   #if defined(USE_PARALLAX_SILHOUETTE)
-	// Added in OPM: how the edge coordinate changes over the texture. Both
-	// are linear over the face, so from the pixel's own differences the
-	// gradient is exact (and 0 on a face beside no corner).
-	float silGx = dFdx(var_Silhouette), silGy = dFdy(var_Silhouette);
+	// Added in OPM: how the edge coordinates change over the texture. They
+	// and it are linear over the face, so from the pixel's own differences
+	// the gradients are exact (and 0 on a face beside no edge).
+	vec2  silGx = dFdx(var_Silhouette), silGy = dFdy(var_Silhouette);
 	float silDet = parallaxGx.x * parallaxGy.y - parallaxGx.y * parallaxGy.x;
-	vec2  silGrad = silDet != 0.0 ? vec2(parallaxGy.y * silGx - parallaxGx.y * silGy, parallaxGx.x * silGy - parallaxGy.x * silGx) / silDet : vec2(0.0);
+	float silInv = silDet != 0.0 ? 1.0 / silDet : 0.0;
+	vec2  silGradA = vec2(parallaxGy.y * silGx.x - parallaxGx.y * silGy.x, parallaxGx.x * silGy.x - parallaxGy.x * silGx.x) * silInv;
+	vec2  silGradB = vec2(parallaxGy.y * silGx.y - parallaxGx.y * silGy.y, parallaxGx.x * silGy.y - parallaxGy.x * silGx.y) * silInv;
   #endif
 
 	if (parallaxOn)
@@ -1090,11 +1092,12 @@ void main()
 		vec2 parallaxOffset = offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap, parallaxGx, parallaxGy, clamp(ceil(reliefPixels), 4.0, 16.0));
 
   #if defined(USE_PARALLAX_SILHOUETTE)
-		// Added in OPM: silhouette parallax. The ray went out past the
-		// corner's edge before it met the relief: beyond it there is no wall
-		// (the face round the corner faces away, or the ray could not have
+		// Added in OPM: silhouette parallax. The ray went out past an
+		// outside edge before it met the relief: beyond it there is no wall
+		// (the face round the edge faces away, or the ray could not have
 		// gone that way), so the mortar there is a notch in the outline
-		if (abs(var_Silhouette + dot(silGrad, parallaxOffset)) > 1.0)
+		vec2 silAt = var_Silhouette + vec2(dot(silGradA, parallaxOffset), dot(silGradB, parallaxOffset));
+		if (max(abs(silAt.x), abs(silAt.y)) > 1.0)
 			discard;
   #endif
 
@@ -1108,6 +1111,12 @@ void main()
 		gl_FragColor = vec4(0.0);
 		return;
 	}
+  #if defined(USE_PARALLAX_SILHOUETTE_DEBUG)
+	// r_parallaxSilhouette 2: the edge coordinates, red across the horizontal
+	// axis, green across the other, blue where the face has none
+	gl_FragColor = vec4(abs(var_Silhouette), dot(abs(var_Silhouette), vec2(1.0)) == 0.0 ? 0.5 : 0.0, 1.0);
+	return;
+  #endif
 #endif
 
 	vec4 diffuse = texture2D(u_DiffuseMap, texCoords);

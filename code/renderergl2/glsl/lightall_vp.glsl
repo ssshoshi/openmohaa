@@ -32,9 +32,10 @@ attribute vec4 attr_BoneWeights;
 attribute vec3 attr_Position;
 #endif
 #if defined(USE_PARALLAX_SILHOUETTE)
-// Added in OPM: w, where the face's outside corners are (tr_texalign.c)
+// Added in OPM: w, where the face's outside edges are across its horizontal
+// axis; attr_LightDirection's w, across its other axis (tr_texalign.c)
 attribute vec4 attr_Normal;
-varying float  var_Silhouette;
+varying vec2   var_Silhouette;
 #else
 attribute vec3 attr_Normal;
 #endif
@@ -55,6 +56,8 @@ attribute vec4 attr_BoneWeights;
 
 #if defined(USE_SKEL_GPU)
 attribute vec4 attr_LightDirection; // a weight
+#elif defined(USE_PARALLAX_SILHOUETTE)
+attribute vec4 attr_LightDirection;
 #elif defined(USE_LIGHT) && !defined(USE_LIGHT_VECTOR)
 attribute vec3 attr_LightDirection;
 #endif
@@ -434,7 +437,7 @@ void main()
 	vec3 tangent   = attr_Tangent.xyz;
   #endif
   #if defined(USE_PARALLAX_SILHOUETTE)
-	var_Silhouette = attr_Normal.w;
+	var_Silhouette = vec2(attr_Normal.w, attr_LightDirection.w);
   #endif
 #endif
 
@@ -651,7 +654,7 @@ void main()
 	// and the normal map shades the realtime lights alone (lightall_fp.glsl)
 	vec3 L = vec3(0.0);
 #elif defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
-	vec3 L = attr_LightDirection;
+	vec3 L = attr_LightDirection.xyz;
   #if defined(USE_MODELMATRIX)
 	L = (u_ModelMatrix * vec4(L, 0.0)).xyz;
   #endif

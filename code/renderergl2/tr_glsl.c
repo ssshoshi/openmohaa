@@ -2312,7 +2312,12 @@ static qboolean GLSL_InitLightallShader(int i)
 
 				// Added in OPM: the relief cut away at outside corners
 				if (r_parallaxSilhouette->integer)
+				{
 					Q_strcat(extradefines, 1024, "#define USE_PARALLAX_SILHOUETTE\n");
+					attribs |= ATTR_LIGHTDIRECTION; // the second edge coordinate (tr_texalign.c)
+					if (r_parallaxSilhouette->integer == 2)
+						Q_strcat(extradefines, 1024, "#define USE_PARALLAX_SILHOUETTE_DEBUG\n");
+				}
 
 				Q_strcat(extradefines, 1024, va("#define r_parallaxMapOffset %f\n", r_parallaxMapOffset->value));
 			}

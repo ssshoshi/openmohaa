@@ -42,14 +42,18 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //   longest first; round a closed loop (a building) the wrap rarely comes
 //   out to whole repeats, so one corner keeps a seam, the shortest.
 //
-// The same corners give the parallax its silhouette (r_parallaxSilhouette):
-// at an outside corner the relief of a face is cut away where the ray into
-// it goes out past the edge before it meets the relief, so the mortar runs
-// out as notches in the outline instead of the wall ending in a straight
-// line. A face beside one gets a coordinate across it in its vertices'
-// normal[3] (unused: always 0), -1 and 1 at the corners' edges, which the
-// shader carries along the ray (lightall_fp.glsl); this works with or
-// without r_texAlign, which only lines the notches up on both sides.
+// Outside edges also give the parallax its silhouette (r_parallaxSilhouette):
+// where a parallax face meets another drawn face at an outside edge
+// (vertical corners, wall tops, ledges, sills: each face lies behind the
+// other's plane), its relief is cut away where the ray into it goes out past
+// the edge before it meets the relief, so the mortar runs out as notches in
+// the outline instead of the wall ending in a straight line. Such a face
+// gets two coordinates across it, along its horizontal axis in its vertices'
+// normal[3] and along its other axis in lightdir[3] (both unused: always 0),
+// -1 and 1 at the outside edges, which the shader carries along the ray
+// (lightall_fp.glsl). The ray only goes out past an edge whose other face
+// faces away, so only the outline is cut. It works with or without
+// r_texAlign, which only lines the notches up on both sides of a corner.
 
 #include "tr_local.h"
 
@@ -69,9 +73,9 @@ typedef struct {
 	vec3_t           grad[2];  // how s and t change with position (in the face's plane)
 	float            base[2];  // s and t at the origin
 	int              wall;     // the wall (union find root through walls[])
-	int              silEdges; // its ends at an outside corner: 1 the low end of across, 2 the high one
-	vec3_t           across;   // horizontal, in its plane
-	float            acrossMin, acrossMax;
+	vec3_t           silAxis[2];   // in its plane: horizontal (or x on a floor), and the other
+	float            silMin[2], silMax[2];
+	float            silLen[2][2]; // how long its ends (low, high) along each axis are at an outside edge
 } taFace_t;
 
 typedef struct {
@@ -340,74 +344,343 @@ static qboolean TA_ParallaxShader(const shader_t *sh)
 	return st && st->glslShaderGroup == tr.lightallShader && (st->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP) && !(st->stateBits & GLS_ATEST_BITS);
 }
 
-/*
-=================
-TA_SilhouetteSide
+// a side of a face's outline, for r_parallaxSilhouette
+typedef struct {
+	int    face;
+	vec3_t dir;     // along it, one way for every side on the same line
+	vec3_t line;    // the point of its line nearest the origin
+	float  t0, t1;  // where it runs along dir
+	vec3_t inward;  // into the face from the side, in its plane
+	int    next;
+} taEdge_t;
 
-Marks the end of the face a side of it is at as an outside corner.
-=================
-*/
-static void TA_SilhouetteSide(taFace_t *f, const taSide_t *sd)
+static unsigned TA_HashLine(const vec3_t line, const vec3_t dir)
 {
-	static const vec3_t up = { 0, 0, 1 };
-	float               x;
-	int                 i;
+	int i;
+	unsigned h = 0;
 
-	if (!f->silEdges) {
-		CrossProduct(up, f->n, f->across);
-		if (VectorNormalize(f->across) < 0.5f) {
-			return;
-		}
-		f->acrossMin = f->acrossMax = DotProduct(f->across, f->cv->verts[0].xyz);
+	for (i = 0; i < 3; i++) {
+		h = h * 2654435761u ^ (unsigned)(int)floor(line[i] + 0.5f) * 73856093u ^ (unsigned)(int)floor(dir[i] * 16.0f + 0.5f) * 19349663u;
+	}
+	return h & (TA_HASH - 1);
+}
+
+static void TA_SilhouetteAxes(taFace_t *f)
+{
+	static const vec3_t up = { 0, 0, 1 }, east = { 1, 0, 0 };
+	int                 c, i;
+
+	CrossProduct(up, f->n, f->silAxis[0]);
+	if (VectorNormalize(f->silAxis[0]) < 0.1f) {
+		// a floor or a ceiling
+		VectorMA(east, -DotProduct(east, f->n), f->n, f->silAxis[0]);
+		VectorNormalize(f->silAxis[0]);
+	}
+	CrossProduct(f->n, f->silAxis[0], f->silAxis[1]);
+	VectorNormalize(f->silAxis[1]);
+	for (c = 0; c < 2; c++) {
+		f->silMin[c] = f->silMax[c] = DotProduct(f->silAxis[c], f->cv->verts[0].xyz);
 		for (i = 1; i < f->cv->numVerts; i++) {
-			x = DotProduct(f->across, f->cv->verts[i].xyz);
-			f->acrossMin = Q_min(f->acrossMin, x);
-			f->acrossMax = Q_max(f->acrossMax, x);
-		}
-		if (f->acrossMax - f->acrossMin < 1.0f) {
-			return;
+			float x = DotProduct(f->silAxis[c], f->cv->verts[i].xyz);
+			f->silMin[c] = Q_min(f->silMin[c], x);
+			f->silMax[c] = Q_max(f->silMax[c], x);
 		}
 	}
-	x = f->across[0] * sd->x + f->across[1] * sd->y;
-	f->silEdges |= fabs(x - f->acrossMin) < fabs(x - f->acrossMax) ? 1 : 2;
+}
+
+/*
+=================
+TA_SilhouetteEdge
+
+Counts how much of an end of the face is at an outside edge (open: the
+length of it no face of its plane carries on past). An edge not square to
+one of its axes, or not at an end, gives nothing.
+=================
+*/
+static void TA_SilhouetteEdge(taFace_t *f, const taEdge_t *e, float t0, float t1, float open)
+{
+	vec3_t perp, mid;
+	int    c;
+
+	CrossProduct(f->n, e->dir, perp);
+	VectorMA(e->line, 0.5f * (t0 + t1), e->dir, mid);
+	for (c = 0; c < 2; c++) {
+		float x;
+
+		if (fabs(DotProduct(perp, f->silAxis[c])) < 0.995f || f->silMax[c] - f->silMin[c] < 1.0f) {
+			continue;
+		}
+		x = DotProduct(f->silAxis[c], mid);
+		if (fabs(x - f->silMin[c]) < 0.5f) {
+			f->silLen[c][0] += open;
+		} else if (fabs(x - f->silMax[c]) < 0.5f) {
+			f->silLen[c][1] += open;
+		}
+	}
+}
+
+/*
+=================
+TA_Open
+
+How much of where an edge's pair meet (t0 to t1) no face of the same plane
+carries the face on past the edge: touching detail brushes keep the faces
+between them, which make an outside corner with each brush's front face
+although the wall goes on, and cutting there would open a slit in it. Only
+an opaque face carries a wall on.
+=================
+*/
+static float TA_Open(const taEdge_t *edges, const int *hash, const taEdge_t *e, float t0, float t1)
+{
+	const taFace_t *f = &taFaces[e->face];
+	float           cover[32][2], open = 0, at = t0;
+	int             j, k, n = 0;
+
+	for (j = hash[TA_HashLine(e->line, e->dir)]; j != -1 && n < 32; j = edges[j].next) {
+		const taEdge_t *ec = &edges[j];
+		const taFace_t *fc = &taFaces[ec->face];
+		vec3_t          diff;
+
+		if (ec->face == e->face || DotProduct(ec->dir, e->dir) < 0.9999f || DotProduct(fc->n, f->n) < 0.999f || fabs(fc->d - f->d) > 0.5f
+			|| DotProduct(ec->inward, e->inward) > -0.9f || fc->surf->shader->sort != SS_OPAQUE
+			|| (fc->surf->shader->stages[0]->stateBits & GLS_ATEST_BITS)) {
+			continue;
+		}
+		VectorSubtract(ec->line, e->line, diff);
+		if (VectorLength(diff) > 0.1f || Q_min(ec->t1, t1) <= Q_max(ec->t0, t0)) {
+			continue;
+		}
+		cover[n][0] = Q_max(ec->t0, t0);
+		cover[n][1] = Q_min(ec->t1, t1);
+		n++;
+	}
+	// the stretches left uncovered, in order along the edge
+	for (;;) {
+		float next = t1, nextEnd = t1;
+
+		for (k = 0; k < n; k++) {
+			if (cover[k][1] > at && cover[k][0] < next) {
+				next = Q_max(cover[k][0], at);
+				nextEnd = cover[k][1];
+			}
+		}
+		open += next - at;
+		if (next >= t1) {
+			break;
+		}
+		// past every stretch that starts by where this one ends
+		at = nextEnd;
+		for (k = 0; k < n; k++) {
+			if (cover[k][0] <= at && cover[k][1] > at) {
+				at = cover[k][1];
+				k = -1;
+			}
+		}
+		if (at >= t1) {
+			break;
+		}
+	}
+	return open;
 }
 
 /*
 =================
 TA_SilhouetteWrite
 
-The coordinate across a face beside an outside corner, -1 and 1 at its
-ends there; an end at no corner is kept just inside, at 0, so that the
-ray going out past it cuts nothing away (the gradient stays that of the
-whole width).
+The coordinates across a face beside outside edges, -1 and 1 at its ends
+there. An end that is not (or not nearly all of it: a stretch of it that
+carries on into the next face would be cut through) is kept just inside,
+at 0, so that the ray going out past it cuts nothing away; the gradient
+stays that of the whole width. Returns whether it has any.
 =================
 */
-static void TA_SilhouetteWrite(taFace_t *f)
+static qboolean TA_SilhouetteWrite(taFace_t *f)
 {
-	float lo, hi, width = f->acrossMax - f->acrossMin;
-	int   i;
+	float    lo[2], hi[2];
+	qboolean any = qfalse;
+	int      c, i;
 
-	switch (f->silEdges) {
-	case 1:
-		lo = -1.0f;
-		hi = 0.0f;
-		break;
-	case 2:
-		lo = 0.0f;
-		hi = 1.0f;
-		break;
-	default:
-		lo = -1.0f;
-		hi = 1.0f;
-		break;
+	for (c = 0; c < 2; c++) {
+		// how long its ends are: its extent along the other axis
+		float    endLen = f->silMax[!c] - f->silMin[!c];
+		qboolean atLo = f->silLen[c][0] >= 0.9f * endLen, atHi = f->silLen[c][1] >= 0.9f * endLen;
+
+		lo[c] = atLo ? -1.0f : 0.0f;
+		hi[c] = atHi ? 1.0f : 0.0f;
+		if (atLo && !atHi) {
+			hi[c] = 0.0f;
+		} else if (atHi && !atLo) {
+			lo[c] = 0.0f;
+		}
+		any |= atLo || atHi;
+		if ((atLo || atHi) && r_parallaxSilhouette->integer == 2) {
+			ri.Printf(PRINT_DEVELOPER, "silface %.0f %.0f %.0f n %.2f %.2f %.2f axis%d %.2f %.2f %.2f [%.0f %.0f] ends %.0f %.0f of %.0f %s\n",
+				f->centroid[0], f->centroid[1], f->centroid[2], f->n[0], f->n[1], f->n[2], c, f->silAxis[c][0], f->silAxis[c][1], f->silAxis[c][2],
+				f->silMin[c], f->silMax[c], f->silLen[c][0], f->silLen[c][1], endLen, f->surf->shader->name);
+		}
+	}
+	if (!any) {
+		return qfalse;
 	}
 	for (i = 0; i < f->cv->numVerts; i++) {
-		float x = (DotProduct(f->across, f->cv->verts[i].xyz) - f->acrossMin) / width;
-		float w = lo + (hi - lo) * Com_Clamp(0.0f, 1.0f, x);
+		srfVert_t *v = &f->cv->verts[i];
 
-		f->cv->verts[i].normal[3] = (int16_t)(w * 32767.0f + (w > 0.0f ? 0.5f : -0.5f));
+		for (c = 0; c < 2; c++) {
+			float    x = (DotProduct(f->silAxis[c], v->xyz) - f->silMin[c]) / Q_max(f->silMax[c] - f->silMin[c], 1.0f);
+			float    w = lo[c] + (hi[c] - lo[c]) * Com_Clamp(0.0f, 1.0f, x);
+			int16_t *out = c == 0 ? &v->normal[3] : &v->lightdir[3];
+
+			*out = (int16_t)(w * 32767.0f + (w > 0.0f ? 0.5f : -0.5f));
+		}
 	}
 	f->cv->parallaxSilhouette = qtrue;
+	return qtrue;
+}
+
+/*
+=================
+TA_Silhouettes
+
+Finds the outside edges of parallax faces: sides of two faces' outlines on
+one line, each face behind the other's plane. Returns the faces given the
+coordinates; counts the edges.
+=================
+*/
+static int TA_Silhouettes(int *numEdges)
+{
+	taEdge_t *edges;
+	int      *hash;
+	int       i, j, k, n = 0, maxEdges = 0, faces = 0;
+
+	*numEdges = 0;
+	for (i = 0; i < taNumFaces; i++) {
+		maxEdges += taFaces[i].cv->numIndexes;
+	}
+	edges = ri.Hunk_AllocateTempMemory(Q_max(maxEdges, 1) * sizeof(*edges) + TA_HASH * sizeof(int));
+	hash = (int *)(edges + Q_max(maxEdges, 1));
+	for (i = 0; i < TA_HASH; i++) {
+		hash[i] = -1;
+	}
+
+	for (i = 0; i < taNumFaces; i++) {
+		taFace_t        *f = &taFaces[i];
+		srfBspSurface_t *cv = f->cv;
+
+		TA_SilhouetteAxes(f);
+		for (j = 0; j < cv->numIndexes; j += 3) {
+			for (k = 0; k < 3; k++) {
+				int          a = cv->indexes[j + k], b = cv->indexes[j + (k + 1) % 3], l, m, shared = 0;
+				const float *pa = cv->verts[a].xyz, *pb = cv->verts[b].xyz;
+				taEdge_t    *e;
+				float        len, ta, tb;
+				unsigned     h;
+
+				// a side of the outline: no other triangle of the face has it
+				for (l = 0; l < cv->numIndexes && !shared; l += 3) {
+					for (m = 0; m < 3; m++) {
+						if (cv->indexes[l + m] == b && cv->indexes[l + (m + 1) % 3] == a) {
+							shared = 1;
+						}
+					}
+				}
+				if (shared || n >= maxEdges) {
+					continue;
+				}
+				e = &edges[n];
+				VectorSubtract(pb, pa, e->dir);
+				len = VectorNormalize(e->dir);
+				if (len < 1.0f) {
+					continue;
+				}
+				// one way for every side on the line
+				for (l = 0; l < 3 && fabs(e->dir[l]) < 1e-4f; l++) {
+				}
+				if (l < 3 && e->dir[l] < 0) {
+					VectorNegate(e->dir, e->dir);
+				}
+				ta = DotProduct(pa, e->dir);
+				tb = DotProduct(pb, e->dir);
+				e->t0 = Q_min(ta, tb);
+				e->t1 = Q_max(ta, tb);
+				VectorMA(pa, -ta, e->dir, e->line);
+				CrossProduct(f->n, e->dir, e->inward);
+				VectorNormalize(e->inward);
+				if (DotProduct(e->inward, f->centroid) - DotProduct(e->inward, pa) < 0) {
+					VectorNegate(e->inward, e->inward);
+				}
+				e->face = i;
+				h = TA_HashLine(e->line, e->dir);
+				e->next = hash[h];
+				hash[h] = n++;
+			}
+		}
+	}
+
+	for (i = 0; i < n; i++) {
+		const taEdge_t *ea = &edges[i];
+		taFace_t       *fa = &taFaces[ea->face];
+
+		for (j = hash[TA_HashLine(ea->line, ea->dir)]; j != -1; j = edges[j].next) {
+			const taEdge_t *eb = &edges[j];
+			taFace_t       *fb = &taFaces[eb->face];
+			vec3_t          diff;
+			float           t0, t1, openA, openB;
+			qboolean        pa, pb;
+
+			if (j <= i || eb->face == ea->face || DotProduct(ea->dir, eb->dir) < 0.9999f) {
+				continue;
+			}
+			VectorSubtract(ea->line, eb->line, diff);
+			if (VectorLength(diff) > 0.1f) {
+				continue;
+			}
+			t0 = Q_max(ea->t0, eb->t0);
+			t1 = Q_min(ea->t1, eb->t1);
+			if (t1 - t0 < 1.0f) {
+				continue;
+			}
+			// outside: each face round it lies behind the other's plane
+			if (DotProduct(eb->inward, fa->n) > -0.25f || DotProduct(ea->inward, fb->n) > -0.25f) {
+				continue;
+			}
+			openA = TA_ParallaxShader(fa->surf->shader) ? TA_Open(edges, hash, ea, t0, t1) : 0;
+			openB = TA_ParallaxShader(fb->surf->shader) ? TA_Open(edges, hash, eb, t0, t1) : 0;
+			pa = openA >= 1.0f;
+			pb = openB >= 1.0f;
+			if (!pa && !pb) {
+				continue;
+			}
+			if (r_parallaxSilhouette->integer == 2) {
+				ri.Printf(PRINT_DEVELOPER, "siledge %.0f %.0f %.0f - %.0f %.0f %.0f, faces %.0f %.0f %.0f / %.0f %.0f %.0f\n",
+					ea->line[0] + ea->dir[0] * t0, ea->line[1] + ea->dir[1] * t0, ea->line[2] + ea->dir[2] * t0,
+					ea->line[0] + ea->dir[0] * t1, ea->line[1] + ea->dir[1] * t1, ea->line[2] + ea->dir[2] * t1,
+					fa->centroid[0], fa->centroid[1], fa->centroid[2], fb->centroid[0], fb->centroid[1], fb->centroid[2]);
+			}
+			if (pa) {
+				TA_SilhouetteEdge(fa, ea, t0, t1, openA);
+			}
+			if (pb) {
+				TA_SilhouetteEdge(fb, eb, t0, t1, openB);
+			}
+			(*numEdges)++;
+			if (t1 - t0 >= 96.0f) {
+				vec3_t p;
+
+				VectorMA(ea->line, 0.5f * (t0 + t1), ea->dir, p);
+				ri.Printf(PRINT_DEVELOPER, "texalign: outside edge at %.0f %.0f %.0f, %.0f long, along %.2f %.2f %.2f, faces %.2f %.2f %.2f / %.2f %.2f %.2f, %s / %s\n",
+					p[0], p[1], p[2], t1 - t0, ea->dir[0], ea->dir[1], ea->dir[2], fa->n[0], fa->n[1], fa->n[2], fb->n[0], fb->n[1], fb->n[2],
+					fa->surf->shader->name, fb->surf->shader->name);
+			}
+		}
+	}
+
+	for (i = 0; i < taNumFaces; i++) {
+		if (TA_SilhouetteWrite(&taFaces[i])) {
+			faces++;
+		}
+	}
+	ri.Hunk_FreeTempMemory(edges);
+	return faces;
 }
 
 /*
@@ -445,6 +718,16 @@ void R_TexAlignWorld(world_t *world)
 		if (TA_SetupFace(f)) {
 			taNumFaces++;
 		}
+	}
+
+	// Added in OPM: the parallax's outside edges (r_parallaxSilhouette)
+	if (doSilhouette) {
+		silFaces = TA_Silhouettes(&silCorners);
+		ri.Printf(PRINT_ALL, "texalign: %d outside edges of parallax textures cut their relief away (%d faces)\n", silCorners, silFaces);
+	}
+	if (!doAlign) {
+		ri.Hunk_FreeTempMemory(taFaces);
+		return;
 	}
 
 	// walls: faces of one plane and shader placed alike (by plane and shader
@@ -565,20 +848,6 @@ void R_TexAlignWorld(world_t *world)
 			if (z1 - z0 < 1.0f) {
 				continue;
 			}
-			// Added in OPM: an outside corner, where the relief can be cut
-			// away (each face round it lies behind the other's plane)
-			if (doSilhouette && TA_ParallaxShader(fa->surf->shader) && DotProduct(sb->inward, fa->n) < -0.25f
-				&& DotProduct(sa->inward, fb->n) < -0.25f) {
-				TA_SilhouetteSide(&taFaces[sa->face], sa);
-				TA_SilhouetteSide(&taFaces[sb->face], sb);
-				silCorners++;
-				if (z1 - z0 >= 96.0f) {
-					ri.Printf(PRINT_DEVELOPER, "texalign: outside corner at %.0f %.0f, %.0f to %.0f, %s\n", sa->x, sa->y, z0, z1, fa->surf->shader->name);
-				}
-			}
-			if (!doAlign) {
-				continue;
-			}
 			stat_pairs++;
 			VectorSet(p, sa->x, sa->y, 0.5f * (z0 + z1));
 			if (!TA_Link(fa, sa, fb, sb, p, &comp, &delta)) {
@@ -623,13 +892,6 @@ void R_TexAlignWorld(world_t *world)
 		}
 	}
 
-	for (i = 0; i < taNumFaces; i++) {
-		if (taFaces[i].silEdges) {
-			TA_SilhouetteWrite(&taFaces[i]);
-			silFaces++;
-		}
-	}
-
 	// move each wall's faces
 	for (i = 0; i < taNumFaces; i++) {
 		taFace_t *f = &taFaces[i];
@@ -655,12 +917,6 @@ void R_TexAlignWorld(world_t *world)
 	ri.Hunk_FreeTempMemory(taWalls);
 	ri.Hunk_FreeTempMemory(taFaces);
 
-	if (doSilhouette) {
-		ri.Printf(PRINT_ALL, "texalign: %d outside corners of parallax textures cut their relief away (%d faces)\n", silCorners, silFaces);
-	}
-	if (!doAlign) {
-		return;
-	}
 	ri.Printf(PRINT_ALL, "texalign: %d walls of the same texture meet at %d vertical corners: %d carry the texture on (%d faces slid), "
 		"%d keep a seam (round a loop), %d could not, in %d ms\n",
 		numWalls, stat_pairs, aligned, moved, seams, stat_unfold, ri.Milliseconds() - startTime);
@@ -675,6 +931,7 @@ void R_TexAlignRegisterCvars(void)
 	ri.Cvar_SetDescription(r_texAlign, "Slides textures along walls as maps load so that, where two walls of the same texture meet at a "
 		"vertical corner, the texture (and its normal and height map) carries on round it instead of jumping");
 	r_parallaxSilhouette = ri.Cvar_Get("r_parallaxSilhouette", "0", CVAR_ARCHIVE | CVAR_LATCH);
-	ri.Cvar_SetDescription(r_parallaxSilhouette, "With r_parallaxMapping: at outside vertical corners of the same parallax texture, the relief "
-		"is cut away where the view ray leaves the wall past the corner, so mortar shows as notches in the outline");
+	ri.Cvar_SetDescription(r_parallaxSilhouette, "With r_parallaxMapping: at the outside edges of parallax textures (corners, wall tops, "
+		"ledges), the relief is cut away where the view ray leaves the face past the edge, so mortar shows as notches in the outline. "
+		"2 shows each face's edge coordinates instead (red, green; blue: none)");
 }
