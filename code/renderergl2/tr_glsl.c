@@ -68,6 +68,10 @@ extern const char *fallbackShader_bloom_fp;
 extern const char *fallbackShader_taa_vp;
 extern const char *fallbackShader_motionblur_vp;
 extern const char *fallbackShader_motionblur_fp;
+extern const char *fallbackShader_mbobject_vp;
+extern const char *fallbackShader_mbobject_fp;
+extern const char *fallbackShader_mbvelocity_fp;
+extern const char *fallbackShader_mbtile_fp;
 extern const char *fallbackShader_taa_fp;
 extern const char *fallbackShader_smaa_vp;
 extern const char *fallbackShader_smaa_fp;
@@ -325,6 +329,13 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_TaaReproject",   GLSL_MAT16 },
 	{ "u_TaaParams",      GLSL_VEC4 },
 	{ "u_TaaBox",         GLSL_VEC4 },
+	{ "u_MbCurrent",      GLSL_MAT16 },
+	{ "u_MbPrevious",     GLSL_MAT16 },
+	{ "u_MbParams",       GLSL_VEC4 },
+	{ "u_MbDepth",        GLSL_VEC4 },
+	{ "u_MbPrevBones",    GLSL_INT },
+	{ "u_MbVelocityMap",  GLSL_INT },
+	{ "u_MbTileMap",      GLSL_INT },
 };
 
 typedef enum
@@ -3201,19 +3212,79 @@ void GLSL_InitGPUShaders(void)
 		// the camera's movement smeared (r_motionBlur, tr_motionblur.c)
 		if (R_MotionBlurWanted())
 		{
+			qboolean ok;
+
 			attribs = ATTR_POSITION | ATTR_TEXCOORD;
-			extradefines[0] = '\0';
-			if (GLSL_InitGPUShader(&tr.motionBlurShader, "motionblur", attribs, qtrue, extradefines, qtrue, fallbackShader_motionblur_vp, fallbackShader_motionblur_fp))
+			Com_sprintf(extradefines, sizeof(extradefines), "#define MB_TILE %d\n", MB_TILE);
+			ok = GLSL_InitGPUShader(&tr.motionBlurShader, "motionblur", attribs, qtrue, extradefines, qtrue, fallbackShader_motionblur_vp, fallbackShader_motionblur_fp);
+			if (ok)
 			{
 				GLSL_InitUniforms(&tr.motionBlurShader);
 				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
-				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_MBVELOCITYMAP, TB_LIGHTMAP);
+				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_MBTILEMAP, TB_NORMALMAP);
+				GLSL_SetUniformInt(&tr.motionBlurShader, UNIFORM_SCREENDEPTHMAP, TB_DELUXEMAP);
 				GLSL_FinishGPUShader(&tr.motionBlurShader);
 				numEtcShaders++;
 			}
-			else
+
+			// each pixel's smear
+			if (ok && (ok = GLSL_InitGPUShader(&tr.mbVelocityShader, "mbvelocity", attribs, qtrue, extradefines, qtrue, fallbackShader_motionblur_vp, fallbackShader_mbvelocity_fp)))
 			{
-				ri.Printf(PRINT_WARNING, "WARNING: the motion blur program did not compile, r_motionBlur does nothing\n");
+				GLSL_InitUniforms(&tr.mbVelocityShader);
+				GLSL_SetUniformInt(&tr.mbVelocityShader, UNIFORM_SCREENDEPTHMAP, TB_COLORMAP);
+				GLSL_SetUniformInt(&tr.mbVelocityShader, UNIFORM_MBVELOCITYMAP, TB_LIGHTMAP);
+				GLSL_FinishGPUShader(&tr.mbVelocityShader);
+				numEtcShaders++;
+			}
+
+			// the longest about each tile, in it and round it
+			for (i = 0; ok && i < 3; i++)
+			{
+				static const char *const tileDefines[3] = { "#define MB_ROWS\n", "", "#define MB_NEIGHBOUR\n" };
+				static const char *const tileNames[3]   = { "mbtilerows", "mbtile", "mbneighbour" };
+
+				Com_sprintf(extradefines, sizeof(extradefines), "#define MB_TILE %d\n%s", MB_TILE, tileDefines[i]);
+				if ((ok = GLSL_InitGPUShader(&tr.mbTileShader[i], tileNames[i], attribs, qtrue, extradefines, qtrue, fallbackShader_motionblur_vp, fallbackShader_mbtile_fp)))
+				{
+					GLSL_InitUniforms(&tr.mbTileShader[i]);
+					GLSL_SetUniformInt(&tr.mbTileShader[i], UNIFORM_MBVELOCITYMAP, TB_COLORMAP);
+					GLSL_FinishGPUShader(&tr.mbTileShader[i]);
+					numEtcShaders++;
+				}
+			}
+
+			if (!ok)
+			{
+				ri.Printf(PRINT_WARNING, "WARNING: the motion blur programs did not compile, r_motionBlur does nothing\n");
+			}
+
+			// the moving models, posed on the CPU and by the vertex program
+			for (i = 0; ok && tr.skelBoneImage && i < 2; i++)
+			{
+				attribs = ATTR_POSITION | ATTR_TEXCOORD;
+				extradefines[0] = '\0';
+				if (i)
+				{
+					Com_sprintf(extradefines, sizeof(extradefines), "#define USE_SKEL_GPU\n#define SKEL_BONE_ROW %d\n#define SKEL_MAX_DENTS %d\n#define SKEL_MAX_MORPHS %d\n",
+						SKEL_GPU_BONE_ROW, SKEL_GPU_MAX_DENTS, SKEL_GPU_MAX_MORPHS);
+					attribs |= ATTR_POSITION2 | ATTR_NORMAL2 | ATTR_TANGENT2 | ATTR_BONE_INDEXES | ATTR_LIGHTCOORD | ATTR_PAINTCOLOR
+						| ATTR_BONE_WEIGHTS | ATTR_LIGHTDIRECTION | ATTR_COLOR;
+				}
+				if (GLSL_InitGPUShader(&tr.mbObjectShader[i], i ? "mbobjectskel" : "mbobject", attribs, qtrue, extradefines, qtrue, fallbackShader_mbobject_vp, fallbackShader_mbobject_fp))
+				{
+					GLSL_InitUniforms(&tr.mbObjectShader[i]);
+					GLSL_SetUniformInt(&tr.mbObjectShader[i], UNIFORM_MBPREVBONES, TB_COLORMAP);
+					GLSL_SetUniformInt(&tr.mbObjectShader[i], UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+					GLSL_SetUniformInt(&tr.mbObjectShader[i], UNIFORM_SKELBONES, TMU_SKELBONES);
+					GLSL_SetUniformInt(&tr.mbObjectShader[i], UNIFORM_SKELMORPHMAP, TMU_SKELMORPHS);
+					GLSL_FinishGPUShader(&tr.mbObjectShader[i]);
+					numEtcShaders++;
+				}
+				else
+				{
+					ri.Printf(PRINT_WARNING, "WARNING: the motion blur's model program did not compile, r_motionBlur smears only the camera's movement\n");
+				}
 			}
 		}
 
@@ -3383,6 +3454,15 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.taaShader);
 	GLSL_DeleteGPUShader(&tr.motionBlurShader);
+	GLSL_DeleteGPUShader(&tr.mbVelocityShader);
+	for (i = 0; i < 3; i++)
+	{
+		GLSL_DeleteGPUShader(&tr.mbTileShader[i]);
+	}
+	for (i = 0; i < 2; i++)
+	{
+		GLSL_DeleteGPUShader(&tr.mbObjectShader[i]);
+	}
 	GLSL_DeleteGPUShader(&tr.bloomShader);
 	for (i = 0; i < 3; i++)
 		GLSL_DeleteGPUShader(&tr.smaaShader[i]);

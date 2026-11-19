@@ -2833,16 +2833,20 @@ void RB_EndSurface( void ) {
 	//
 	// Added in OPM: timed apart from the surfaces that filled it (r_gpuTimers)
 	surfProfPrev = RB_SurfProfSwitch(SURFPROF_DRAW);
-	tess.currentStageIteratorFunc();
+	// Added in OPM: a moving model drawn for r_motionBlur, for how far it moved
+	if (backEnd.motionObjects)
+		RB_MotionBlurDrawTess();
+	else
+		tess.currentStageIteratorFunc();
 
 	//
 	// draw debugging stuff
 	//
 	// (a ground cover cell drawn from the card left nothing in tess to show)
-	if ( r_showtris->integer && !tess.groundCover && !tess.skelGpu.active ) {
+	if ( r_showtris->integer && !tess.groundCover && !tess.skelGpu.active && !backEnd.motionObjects ) {
 		DrawTris (input);
 	}
-	if ( r_shownormals->integer && !tess.groundCover && !tess.skelGpu.active ) {
+	if ( r_shownormals->integer && !tess.groundCover && !tess.skelGpu.active && !backEnd.motionObjects ) {
 		DrawNormals (input);
 	}
 	RB_SurfProfSwitch(surfProfPrev);

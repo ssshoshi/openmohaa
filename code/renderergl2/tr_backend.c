@@ -597,6 +597,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			// Added in OPM: the light in the air, over the opaque world,
 			// for what comes after it to take at its own depth
 			RB_FroxelOpaqueDone();
+			// Added in OPM: what moved, for r_motionBlur (before r_taa takes its nudge out)
+			RB_MotionBlurOpaqueDone(drawSurfs, numDrawSurfs);
 			// Added in OPM: the frames blended, under what is blended (r_taa)
 			RB_TaaOpaqueDone();
 		}
@@ -846,6 +848,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	if (!beachDrawn && !backEnd.depthFill) {
 		RB_BeachDraw();
 		RB_FroxelOpaqueDone();
+		RB_MotionBlurOpaqueDone(drawSurfs, numDrawSurfs);
 		RB_TaaOpaqueDone();
 	}
 	RB_SurfProfEnd();
