@@ -73,7 +73,7 @@ typedef unsigned int vaoCacheGlIndex_t;
 #define SHADERNUM_BITS	14
 #define MAX_SHADERS		(1<<SHADERNUM_BITS)
 
-#define	MAX_FBOS      64
+#define	MAX_FBOS      96 // Added in OPM: 64 was full with r_motionBlur's
 #define MAX_VISCOUNTS 5
 #define MAX_VAOS      4096
 
@@ -1166,6 +1166,13 @@ typedef enum
 	UNIFORM_TAAREPROJECT,   // this view's clip space to the last frame's
 	UNIFORM_TAAPARAMS,
 	UNIFORM_TAABOX,
+	UNIFORM_MBCURRENT,      // Added in OPM: r_motionBlur's moving models (mbobject_vp.glsl): the model to this frame's clip space
+	UNIFORM_MBPREVIOUS,     // and as it was to the last frame's
+	UNIFORM_MBPARAMS,
+	UNIFORM_MBDEPTH,        // the projection's [10] and [14], to tell distances by
+	UNIFORM_MBPREVBONES,    // the last frame's bones
+	UNIFORM_MBVELOCITYMAP,  // each pixel's smear
+	UNIFORM_MBTILEMAP,      // the longest about each tile
 
 	UNIFORM_COUNT
 } uniform_t;
@@ -2610,6 +2617,7 @@ typedef struct {
 	FBO_t *last2DFBO;
 	qboolean    colorMask[4];
 	qboolean    depthFill;
+	qboolean    motionObjects; // Added in OPM: r_motionBlur drawing the moving models' movements (RB_MotionBlurDrawTess)
 	qboolean    depthPrepassed; // Added in OPM: this view's depth is already laid down (r_earlyZ)
 	qboolean    gtaoOn;         // Added in OPM: r_gtao's occlusion is there for the view being drawn (TMU_RTAO)
 	qboolean    softDepth; // Added in OPM: the view's depth is in tr.hdrDepthImage (soft particles)
@@ -2695,6 +2703,10 @@ typedef struct {
 	// Added in OPM: r_taa's blend of the frames, two taking turns (tr_taa.c)
 	image_t					*taaImage[2];
 	image_t					*motionBlurImage; // Added in OPM: r_motionBlur's smeared frame (tr_motionblur.c)
+	image_t					*motionObjectImage;   // the moving models' movements
+	image_t					*motionVelocityImage; // each pixel's smear and distance
+	image_t					*motionTileImage[3];  // the longest smear in each tile's rows, each tile, and about it
+	image_t					*motionPrevBoneImage; // the last frame's bones, where this frame's are in tr.skelBoneImage
 	// Added in OPM: SMAA (tr_smaa.c)
 	image_t					*smaaEdgesImage;
 	image_t					*smaaBlendImage;
@@ -2741,6 +2753,9 @@ typedef struct {
 	FBO_t					*smaaEdgesFbo;	// Added in OPM: SMAA (tr_smaa.c)
 	FBO_t					*taaFbo[2];	// Added in OPM: r_taa (tr_taa.c), taking turns
 	FBO_t					*motionBlurFbo;	// Added in OPM: r_motionBlur (tr_motionblur.c)
+	FBO_t					*motionObjectFbo;
+	FBO_t					*motionVelocityFbo;
+	FBO_t					*motionTileFbo[3];
 	FBO_t					*smaaBlendFbo;
 	FBO_t					*textureScratchFbo[2];
 	FBO_t                   *quarterFbo[2];
@@ -2824,6 +2839,9 @@ typedef struct {
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
 	shaderProgram_t taaShader;     // Added in OPM: r_taa (tr_taa.c)
 	shaderProgram_t motionBlurShader; // Added in OPM: r_motionBlur (tr_motionblur.c)
+	shaderProgram_t mbObjectShader[2]; // its moving models: posed on the CPU, by the vertex program
+	shaderProgram_t mbVelocityShader;
+	shaderProgram_t mbTileShader[3];   // the longest smear in the tiles' rows, the tiles, and about them
 	shaderProgram_t smaaShader[3]; // Added in OPM: SMAA's edges, weights, blend (tr_smaa.c)
 	shaderProgram_t rippleShader; // Added in OPM: the water's ripples, a step (tr_water.c)
 	shaderProgram_t beachShader[2]; // Added in OPM: the wet beach, darkened and then lit (tr_water.c)
@@ -4337,6 +4355,9 @@ qboolean R_MotionBlurWanted(void);
 void R_MotionBlurCreateImages(int width, int height, int format);
 void R_MotionBlurCreateFbos(void);
 void RB_MotionBlur(FBO_t *src, ivec4_t box);
+void RB_MotionBlurOpaqueDone(drawSurf_t *drawSurfs, int numDrawSurfs);
+void RB_MotionBlurDrawTess(void);
+#define MB_TILE 16 // pixels a side of r_motionBlur's tiles
 void R_LensRegisterCvars(void);
 void RE_SetLensSpots(const float *spots, int num);
 void RB_LensDraw(FBO_t *fbo, ivec4_t box);
