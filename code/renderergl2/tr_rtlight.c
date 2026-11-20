@@ -53,6 +53,8 @@ cvar_t *r_rtScale;
 cvar_t *r_rtShadows;
 cvar_t *r_rtShadowTile;
 cvar_t *r_rtFacesPerFrame;
+static cvar_t *r_rtFacesMsec;
+static cvar_t *r_rtSlotKeep;
 cvar_t *r_rtMaxLights;
 cvar_t *r_rtShadowSlope;
 cvar_t *r_rtAmbient;
@@ -154,6 +156,7 @@ typedef struct {
 	float    weight;       // eases in and out, so that a light never pops
 	int      chosen;       // the frame it was last among the lights chosen
 	int      lastUsed;     // frame
+	float    keepReach;    // how far it lights (R_RtReach), when last sorted: which to keep in the atlas (R_RtFindSlot)
 	int      source;       // its sphere light (tr.sLights)
 	int      mergedInto;   // while loading: the light at its fixture it went into, -1 none
 	int      visFrame;     // the frame a leaf the view may see listed it
@@ -227,6 +230,9 @@ static struct {
 	int        particleVerts;
 	int        numPacked;
 	int        facesDrawn; // this frame, for r_rtDebug
+	double     faceUsec;   // this frame: time spent setting up the faces of what stands still (r_rtFacesMsec)
+	vec3_t     viewOrigin; // this frame's
+	qboolean   seenValid;  // this frame's lights were marked by the map's lists (visFrame)
 	int        staticDrawn;
 	int        invalidated;
 	int        movingDrawn;  // this frame, for r_rtDebug: faces drawn for lights that moved
@@ -297,6 +303,10 @@ void R_RtRegister(void)
 	r_rtShadowTile = ri.Cvar_Get("r_rtShadowTile", "256", CVAR_ARCHIVE | CVAR_LATCH);
 	ri.Cvar_CheckRange(r_rtShadowTile, 64, 512, qtrue);
 	r_rtFacesPerFrame = ri.Cvar_Get("r_rtFacesPerFrame", "12", CVAR_ARCHIVE);
+	r_rtFacesMsec = ri.Cvar_Get("r_rtFacesMsec", "1.5", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtFacesMsec, "The most time a frame spends setting up the realtime lights' shadows of what stands still, in ms (drawing them takes about twice as long again): turning to a street of lamps redrew dozens in one frame. The rest wait for the next frames (0: no limit, only r_rtFacesPerFrame)");
+	r_rtSlotKeep = ri.Cvar_Get("r_rtSlotKeep", "1", 0);
+	ri.Cvar_SetDescription(r_rtSlotKeep, "Which realtime light gives up its shadows when a new one needs room: 1 the furthest for its reach, so that turning on the spot keeps the near ones; 0 the one used longest ago (a full turn then redrew every lamp). Not archived: an A/B switch");
 	r_rtShadowSlope = ri.Cvar_Get("r_rtShadowSlope", "2", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtShadowSlope, "How far the side of the world's faces towards a lamp is pushed back in its shadow, by the slope of its depth: the ground shadowed itself in blotches where the light came in low. Lamp shadows are redrawn when the lamps are next lit (vid_restart for all)");
 	r_rtMaxLights = ri.Cvar_Get("r_rtMaxLights", "24", CVAR_ARCHIVE);
@@ -5124,6 +5134,19 @@ static qboolean R_RtFaceRoom(void)
 	return tr.refdef.numDrawSurfs < RT_FACE_DRAWSURFS ? qtrue : qfalse;
 }
 
+/*
+Is there time left this frame for another face of what stands still
+(r_rtFacesMsec)? Counted in faces alone, a turn that brought lamps into view
+drew forty and more in one frame (the budget and its burst for lamps come into
+the view), a frame of 20-40 ms among ones of 12. The first is always drawn, so
+that a slow face cannot hold the rest back for good.
+*/
+static qboolean R_RtFaceTime(void)
+{
+	return r_rtFacesMsec->value <= 0.0f || rt.faceUsec <= 0.0
+		|| rt.faceUsec < r_rtFacesMsec->value * 1000.0 ? qtrue : qfalse;
+}
+
 static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 {
 	viewParms_t parms;
@@ -5151,7 +5174,14 @@ static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 	R_RtFaceAxes(face, parms.ori.axis);
 	VectorCopy(l->origin, parms.pvsOrigin);
 
-	R_RenderView(&parms);
+	{
+		const double start = R_MicroSeconds();
+
+		R_RenderView(&parms);
+		if (atlas != 1) {
+			rt.faceUsec += R_MicroSeconds() - start;
+		}
+	}
 	rt.facesDrawn++;
 }
 
@@ -5459,22 +5489,62 @@ static int R_RtDynamicSlot(rtLight_t *l, int index)
 
 // A free slot of whole tiles (big) or quarter tiles in the atlas of what
 // stands still, else the one used longest ago; -1 none
+/*
+A slot for a light: a free one, or the one of a light not used this frame.
+Giving up the one used longest ago is the worst choice when turning on the
+spot: a full turn sees more lamps than there are slots (119 to 74 on m1l2b),
+and the oldest is always the next one the view comes back to, so every lamp
+was redrawn on every turn, dozens of faces a frame. The one furthest from the
+view for how far it lights is given up instead (r_rtSlotKeep), so the near
+ones stay drawn wherever the view turns; those the map's lists say cannot be
+seen from here are given up before any.
+*/
+static float R_RtKeepScore(const rtLight_t *l)
+{
+	if (l->keepReach <= 0.0f) {
+		return 1e30f;
+	}
+	return Q_max(64.0f, Distance(l->origin, rt.viewOrigin)) / l->keepReach;
+}
+
 static int R_RtFindSlot(qboolean big)
 {
 	const int first = big ? 0 : RT_SLOTS_BIG, last = big ? RT_SLOTS_BIG : RT_SLOTS;
+	const qboolean keepNear = r_rtSlotKeep->integer ? qtrue : qfalse;
 	int       i, best = -1, oldest = 0x7fffffff;
+	qboolean  bestUnseen = qfalse;
+	float     bestScore = -1.0f;
 
 	for (i = first; i < last; i++) {
-		int owner = rt.staticOwner[i];
+		int              owner = rt.staticOwner[i];
+		const rtLight_t *o;
 
 		if (owner < 0) {
 			return i;
 		}
-		if (rt.lights[owner].lastUsed == rt.frame) {
+		o = &rt.lights[owner];
+		if (o->lastUsed == rt.frame) {
 			continue;
 		}
-		if (rt.lights[owner].lastUsed < oldest) {
-			oldest = rt.lights[owner].lastUsed;
+		if (keepNear) {
+			// not seen from here (left out of this frame's sort): oldest first
+			const qboolean unseen = rt.seenValid && o->visFrame != rt.frame && o->entity < 0 ? qtrue : qfalse;
+			const float    score  = unseen ? 0.0f : R_RtKeepScore(o);
+
+			if (best >= 0 && bestUnseen && !unseen) {
+				continue;
+			}
+			if (best < 0 || (unseen && !bestUnseen)
+				|| (unseen ? o->lastUsed < oldest : score > bestScore)) {
+				best       = i;
+				bestUnseen = unseen;
+				bestScore  = score;
+				oldest     = o->lastUsed;
+			}
+			continue;
+		}
+		if (o->lastUsed < oldest) {
+			oldest = o->lastUsed;
 			best   = i;
 		}
 	}
@@ -6113,6 +6183,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	rt.frame++;
 	rt.facesDrawn  = 0;
 	rt.staticDrawn = 0;
+	rt.faceUsec    = 0;
+	VectorCopy(fd->vieworg, rt.viewOrigin);
 	rt.invalidated = 0;
 	rt.movingDrawn = 0;
 	rt.waiting     = 0;
@@ -6161,6 +6233,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	// the view take what room is left, so that one just off the screen is
 	// most often lit already as the view turns to it.
 	seen = R_RtMarkSeenLights(fd->vieworg);
+	rt.seenValid = seen;
 	R_RtViewSpots(fd);
 	for (i = 0; i < rt.numLights && numSorted < 1024; i++) {
 		rtLight_t *l = &rt.lights[i];
@@ -6181,6 +6254,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 		if (lightReach == 0.0f || lightReach < -0.5f) {
 			continue; // it gives nothing anywhere
 		}
+		l->keepReach = lightReach;
 
 		// how big the light's pool is on the screen, as reach over distance,
 		// kept inverted to sort nearest first; the lit a little ahead, so none
@@ -6293,7 +6367,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 			}
 			// one in quarter tiles come near: to whole tiles, if one is to be
 			// had, its faces drawn there now so that it is not dark a frame
-			if (l->staticSlot >= RT_SLOTS_BIG && l->staticReady && i < RT_SLOTS_UPGRADE && R_RtFaceRoom() && R_RtFindSlot(qtrue) >= 0) {
+			if (l->staticSlot >= RT_SLOTS_BIG && l->staticReady && i < RT_SLOTS_UPGRADE && R_RtFaceRoom() && R_RtFaceTime() && R_RtFindSlot(qtrue) >= 0) {
 				R_RtStaticSlot(index, qtrue);
 				for (f = 0; f < 6; f++) {
 					R_RtRenderFace(l, 0, l->staticSlot, f);
@@ -6318,8 +6392,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 					if (!(inView & (1 << f))) {
 						continue;
 					}
-					// no room left this frame: drawn again once there is
-					if (!R_RtFaceRoom()) {
+					// no room or time left this frame: drawn again once there is
+					if (!R_RtFaceRoom() || !R_RtFaceTime()) {
 						l->staticFaces &= ~(1 << f);
 						continue;
 					}
@@ -6331,7 +6405,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 			{
 				const qboolean rushed = chosen && !l->staticReady && l->inViewFrame == rt.frame;
 
-#define RT_FACE_ALLOWED ((budget > 0 || (rushed && burst > 0)) && R_RtFaceRoom())
+#define RT_FACE_ALLOWED ((budget > 0 || (rushed && burst > 0)) && R_RtFaceRoom() && R_RtFaceTime())
 #define RT_FACE_SPENT() (budget > 0 ? budget-- : burst--)
 				for (f = 0; f < 6 && RT_FACE_ALLOWED && rt.frame - l->movedFrame > RT_LIGHT_SETTLE_FRAMES; f++) {
 					if (l->staticFaces & (1 << f)) {
@@ -6584,8 +6658,8 @@ void R_RtRenderShadows(const refdef_t *fd)
 	tr.rtAmbient[3] = R_RtCutoff();
 
 	if (r_rtDebug->integer) {
-		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved, %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
-			tr.rtNumActive, numChosen, numSorted, numInView, rt.waiting, rt.easing, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.invalidated, numBodies, rt.numPacked,
+		ri.Printf(PRINT_ALL, "realtime lighting: %d of %d lights lit (%d may be seen, %d reach into the view; %d waiting for shadows, %d easing in), %d movers (%d of %d in a dynamic light's range out of its reach or light lists), faces drawn %d standing %d moving (%d lights) %d for lights that moved (%.2f ms setting up what stands), %d changes to what stands, %d bodies and parts (%d sent), %d particle draws (%d vertexes)\n",
+			tr.rtNumActive, numChosen, numSorted, numInView, rt.waiting, rt.easing, numMovers, rt.moverCulled, rt.moverPairs, rt.staticDrawn, rt.facesDrawn - rt.staticDrawn - rt.movingDrawn, dynamicSlots, rt.movingDrawn, rt.faceUsec / 1000.0, rt.invalidated, numBodies, rt.numPacked,
 			rt.particleDraws, rt.particleVerts);
 		{
 			int live = 0, k;
