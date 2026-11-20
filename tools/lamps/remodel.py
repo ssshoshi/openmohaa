@@ -45,9 +45,29 @@ SHADERS = os.path.join(HERE, "..", "..", "data", "opm-lamps", "scripts", "opm_la
 # the glow over the glass of its own texture (glass.py), which is drawn whole
 GLASS_EXTRA = (0.35, 0.33, 0.30)
 
-# a lantern's clear glass: its tint, warmed by the flame, and the flame's light caught on it
-LANTERN_GLASS = (0.85, 0.72, 0.52)
-LANTERN_CATCH = (0.07, 0.05, 0.03)
+# a lantern's clear glass: what it does to what is behind it (a filter), and
+# the light on it: the flame's, caught (lit), or the night's sheen (put out)
+LANTERN_GLASS = (0.97, 0.88, 0.72)
+LANTERN_CATCH = (0.55, 0.55, 0.55)
+LANTERN_FLICKER = "wave noise 0.85 0.22 0 5"  # lit: the flame's light on the glass, flickering with it
+LANTERN_GLOW = "textures/opm/lamps/lantern_glow.tga"  # glass.py lantern-glow: brightest at the flame
+
+
+def LANTERN_GLASS_SHADER(image, tint, catch, lit):
+    """A lantern's clear glass, lit (the flame's light caught on it, which
+    blooms: q3map_opmglow) or put out (opm_lamps.shader's _off, its sheen).
+
+    Seen through: a filter over what is behind it (GL_DST_COLOR), and its light
+    added evenly. Not blended by alpha with alphaGen oneMinusDot: in MOH:AA that
+    scales a stage's colour (as GL1 does), not its alpha, so the glass drew
+    nothing, and on these models (posed on the CPU) it came out whole, the
+    glass white. One-sided: drawn both ways the far pane and the near one
+    blended in no order, a ragged slab in the middle. Drawn after the additive
+    sprites (sort 12), the flame's among them."""
+    return ["{", "\tsurfaceparm nolightmap", "\tsort 12"] + (["\tq3map_opmglow"] if lit else []) + [
+        "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_DST_COLOR GL_ZERO", "\t\trgbGen const %.2f %.2f %.2f" % tint, "\t}",
+        "\t{", "\t\tmap %s" % (LANTERN_GLOW if lit else image), "\t\tblendFunc GL_ONE GL_ONE",
+        ("\t\trgbGen " + LANTERN_FLICKER) if lit else ("\t\trgbGen const %.2f %.2f %.2f" % catch), "\t}", "}"]
 
 # how each kind's glass glows, lit from inside: added over the lit glass
 GLOW = {
@@ -109,11 +129,7 @@ def glass_shader(model, entry):
             # (alphaGen oneMinusDot, as the game's own lantern glass); a faint
             # catch of the flame's light over it, which alone blooms
             # (q3map_opmglow): drawn whole and glowing it was a bulb
-            return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap", "\tq3map_opmglow",
-                              "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA",
-                              "\t\trgbGen const %.2f %.2f %.2f" % LANTERN_GLASS, "\t\talphaGen oneMinusDot 0.12 0.6", "\t}",
-                              "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE",
-                              "\t\trgbGen const %.2f %.2f %.2f" % LANTERN_CATCH, "\t}", "}", ""])
+            return "\n".join([name] + LANTERN_GLASS_SHADER(image, LANTERN_GLASS, LANTERN_CATCH, True) + [""])
         if "glass" in entry:
             # its own glass, lit from inside alike whichever way a face of it
             # turns: the texture whole (its shading is in it), and more over it.

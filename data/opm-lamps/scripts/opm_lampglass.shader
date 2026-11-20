@@ -524,36 +524,34 @@ opm_wallsconce_candle_glass
 
 opm_swinging_lantern_glass
 {
-	cull none
 	surfaceparm nolightmap
+	sort 12
 	q3map_opmglow
 	{
 		map textures/opm/lamps/swinging_lantern_glass.tga
-		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-		rgbGen const 0.85 0.72 0.52
-		alphaGen oneMinusDot 0.12 0.6
+		blendFunc GL_DST_COLOR GL_ZERO
+		rgbGen const 0.97 0.88 0.72
 	}
 	{
-		map textures/opm/lamps/swinging_lantern_glass.tga
+		map textures/opm/lamps/lantern_glow.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.07 0.05 0.03
+		rgbGen wave noise 0.85 0.22 0 5
 	}
 }
 
 opm_german_lantern_glass
 {
-	cull none
 	surfaceparm nolightmap
+	sort 12
 	q3map_opmglow
 	{
 		map textures/opm/lamps/german_lantern_glass.tga
-		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-		rgbGen const 0.85 0.72 0.52
-		alphaGen oneMinusDot 0.12 0.6
+		blendFunc GL_DST_COLOR GL_ZERO
+		rgbGen const 0.97 0.88 0.72
 	}
 	{
-		map textures/opm/lamps/german_lantern_glass.tga
+		map textures/opm/lamps/lantern_glow.tga
 		blendFunc GL_ONE GL_ONE
-		rgbGen const 0.07 0.05 0.03
+		rgbGen wave noise 0.85 0.22 0 5
 	}
 }

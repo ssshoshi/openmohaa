@@ -4085,7 +4085,9 @@ static shader_t *FinishShader( void ) {
 			|| !Q_stricmpn(shader.name, "opm_glow", 8)
 			|| (!Q_stricmpn(shader.name, "opm_", 4) && len > 6 && !Q_stricmp(shader.name + len - 6, "_glass"))) ? qtrue : qfalse;
 		// a vehicle's lens slit: small, so brighter than a bulb to show
-		shader.emissiveScale = !Q_stricmpn(shader.name, "opm_glow", 8) ? 3.0f : 1.0f;
+		// a lantern's flame (opm_flame_lantern): small, and the light of it
+		shader.emissiveScale = !Q_stricmpn(shader.name, "opm_glow", 8) ? 3.0f
+			: !Q_stricmpn(shader.name, "opm_flame_", 10) ? 1.8f : 1.0f;
 	}
 
 	//

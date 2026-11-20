@@ -1,0 +1,18 @@
+TIKI
+// The swinging lantern's flame (models/lights/swinging_lantern.tik attaches it
+// at tag_barrel, content/opm-lamp-states): the game's unit square turned to
+// the viewer, playing tools/lamps/flame.py's loop (opm_flame_lantern), twice
+// the size of the game's lanternflame.tik and set lower, onto the wick
+setup
+{
+	scale 3.2
+	path models/fx/unitsquare
+	skelmodel unitsquare.skd
+	surface material1 shader opm_flame_lantern
+	origin 0 0 1.5
+}
+
+animations
+{
+	idle	unitsquare.skc
+}

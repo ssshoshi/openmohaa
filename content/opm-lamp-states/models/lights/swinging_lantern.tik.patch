@@ -1,9 +1,13 @@
 --- a/models/lights/swinging_lantern.tik
 +++ b/models/lights/swinging_lantern.tik
-@@ -7,6 +7,10 @@
+@@ -6,13 +6,22 @@
+ 	skelmodel lantern.skd
  	surface glantern shader glantern
  	surface glanternglass shader glanternglass
- 	surface glanterncull shader glanterncull
+-	surface glanterncull shader glanterncull
++	// its cut-out card (the handle) with the glass cut away cleanly: the 4x
++	// upscale's noise let a third of the glass through, a grey plane in it
++	surface glanterncull shader opm_glanterncull
 +	// the remodelled glass (opm-lampmodels): lit from inside, and its second skin
 +	// not, once light_off has put the lantern out
 +	surface opm_swinging_lantern_glass shader opm_swinging_lantern_glass
@@ -11,12 +15,21 @@
  }
  init 
  {
-@@ -25,6 +29,8 @@
+ 	server
+ 	{
+-		attachmodel models/fx/lanternflame.tik tag_barrel 1
++		// its flame bigger, swaying, set on the wick (opm-lamps' opm_lanternflame.tik)
++		attachmodel models/fx/opm_lanternflame.tik tag_barrel 1
++		// and not the remodel's own (opm_flame), a bright pulsing teardrop
++		surface opm_flame +nodraw
+ //		attachmodel models/emitters/lanternflame.tik tag_barrel 1
+ 	}
+ }
+@@ -25,6 +34,7 @@
  		server 
  		{
  			enter removeattachedmodel tag_barrel
 +			enter surface opm_swinging_lantern_glass +skin1
-+			enter surface opm_flame +nodraw
  		}
  	}
  }

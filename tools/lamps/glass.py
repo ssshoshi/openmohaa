@@ -43,3 +43,37 @@ def write(name, tint):
     path = os.path.join(OUT, name + "_glass.tga")
     glass_image(tint, seed=sum(map(ord, name))).save(path)
     return path
+
+
+def lantern_glow_image(v_flame=0.55, seed=3):
+    """The light of a lantern's flame on its glass (opm_lampglass.shader's
+    lantern glass, added over it): warm, brightest round the flame's height
+    and falling away to the neck and the foot, a little frosting in it; not
+    the even wash that read as flat orange."""
+    rng = np.random.default_rng(seed)
+    v = (np.arange(H) + 0.5) / H
+    # down the glass from the flame it stays bright further than up it
+    # (v runs from the neck, 0, down to the foot, 1)
+    spread = np.where(v < v_flame, 0.24, 0.5)
+    glow = 0.12 + 0.88 * np.exp(-((v - v_flame) / spread) ** 2)
+    lum = np.repeat(glow[:, None], W, axis=1)
+    noise = rng.normal(0, 1, (H // 4, W // 4))
+    noise = np.array(Image.fromarray(((noise * 0.5 + 0.5) * 255).clip(0, 255).astype(np.uint8))
+                     .resize((W, H), Image.BICUBIC)) / 255.0 - 0.5
+    lum = np.clip(lum * (1 + 0.16 * noise), 0, 1)
+    rgb = lum[:, :, None] * np.array([1.0, 0.72, 0.40])[None, None, :]
+    return Image.fromarray((rgb * 255).round().astype(np.uint8), "RGB")
+
+
+def write_lantern_glow():
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, "lantern_glow.tga")
+    lantern_glow_image().save(path)
+    return path
+
+
+if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:] == ["lantern-glow"]:
+        print(write_lantern_glow())
