@@ -54,3 +54,20 @@ opm_swinging_lantern_glass_off
 		rgbGen lightingSpherical
 	}
 }
+
+// The Opel truck with its blackout headlights on (models/vehicles/opeltruck.tik's
+// opel1 second skin, chosen by the renderer while its live headlights are on,
+// lamps.txt glowsurface): the paint as ever, and the slit in each lens cover
+// glowing, brighter than white so that it blooms (opm_glow: only the unlit stage)
+opm_glow_opel
+{
+	{
+		map textures/models/vehicles/OpelTruck/opel.tga
+		rgbGen lightingSpherical
+	}
+	{
+		map textures/opm/vehicles/opel_slit.png
+		blendFunc GL_ONE GL_ONE
+		rgbGen const 1 0.86 0.62
+	}
+}

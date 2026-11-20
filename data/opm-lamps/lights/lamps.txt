@@ -15,7 +15,9 @@
 //                            // headlight (a vehicle's: a light from each bulb, the way
 //                            // spot points, while the surface lightsurface names is
 //                            // drawn; that fake beam and the fake flares at its lenses,
-//                            // the model flare names, are not drawn), or surface (the
+//                            // the model flare names, are not drawn; the surface
+//                            // glowsurface names takes its second skin, a glowing
+//                            // lens), or surface (the
 //                            // block names a shader, not a model: a lamp built of
 //                            // brushes; its faces glow and the map's light by each
 //                            // comes from it)
@@ -427,19 +429,22 @@ models/miscobj/searchlightbase.tik
 
 // ---------------------------------------------------------------- headlights
 
-// the Opel truck's (m1l1's truck following the player's): its "light left" and
-// "light right" tags, a little in front of the glass, aimed as its fake beam
-// (the opellights surface, drawn until the script's idlenolights) dips; the
-// flares global/spotlight.scr's corona/deadcorona hang on those tags go too
+// the Opel truck's (m1l1's truck following the player): blackout lamps, a
+// covered lens with a narrow slit, which lit the road a little way ahead and
+// little else; from the lenses' middles (its "light left" and "light right"
+// tags), on while the fake beam (opellights, until the script's idlenolights)
+// is drawn, the slits glowing (opel1's second skin, opm_glow_opel); the flares
+// global/spotlight.scr's corona/deadcorona hang on those tags go too
 models/vehicles/opeltruck.tik
 {
 	kind headlight
-	color 1 0.9 0.72
-	intensity 9000
-	bulb 160 35 59.4
-	bulb 160 -36.8 59.4
-	spot 1 0 -0.1 55
+	color 1 0.88 0.68
+	intensity 2500
+	bulb 160 34.6 59.2
+	bulb 160 -36.8 59.2
+	spot 1 0 -0.3 70
 	lightsurface opellights
+	glowsurface opel1
 	flare models/fx/searchlight.tik
 }
 

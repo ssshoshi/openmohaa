@@ -523,6 +523,8 @@ typedef struct {
 	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
 	char     lightSurface[MAX_QPATH]; // a headlight's: the model's surface drawn while its lights are on (the fake beam)
 	char     flare[MAX_QPATH];        // a headlight's: the model of the fake flares at its lenses, as keyed
+	char     glowSurface[MAX_QPATH];  // a headlight's: the model's surface drawn with its second skin while
+	                                  // its lights are on (the lenses' glow)
 } rtLampDef_t;
 
 static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
@@ -611,6 +613,8 @@ static void R_RtLoadLampDefs(void)
 			def->intensity = atof(COM_ParseOnLine(&text));
 		} else if (!Q_stricmp(token, "lightsurface")) {
 			Q_strncpyz(def->lightSurface, COM_ParseOnLine(&text), sizeof(def->lightSurface));
+		} else if (!Q_stricmp(token, "glowsurface")) {
+			Q_strncpyz(def->glowSurface, COM_ParseOnLine(&text), sizeof(def->glowSurface));
 		} else if (!Q_stricmp(token, "flare")) {
 			R_RtLampKey(COM_ParseOnLine(&text), def->flare, sizeof(def->flare));
 		} else if (!Q_stricmp(token, "bulb")) {
@@ -751,29 +755,39 @@ static rtLight_t *R_RtEntityLight(int entityNum, int bulb)
 	return NULL;
 }
 
-// Whether a vehicle's headlights are on: the surface of its fake beams is
-// drawn (the level's script hides it with its "idlenolights" animation).
-// Under the live light the beam goes: the light is in the world itself.
-static qboolean R_RtHeadlightsOn(refEntity_t *e, const rtLampDef_t *def)
+// A model's surface by its name, -1 none
+static int R_RtTikiSurface(const refEntity_t *e, const char *name)
 {
 	int k;
 
-	if (!def->lightSurface[0]) {
-		return qtrue;
-	}
-	if (!e->tiki) {
-		return qfalse;
-	}
-	for (k = 0; k < e->tiki->num_surfaces && k < MAX_MODEL_SURFACES; k++) {
-		if (!Q_stricmp(e->tiki->surfaces[k].name, def->lightSurface)) {
-			if (e->surfaces[k] & MDL_SURFACE_NODRAW) {
-				return qfalse;
-			}
-			e->surfaces[k] |= MDL_SURFACE_NODRAW;
-			return qtrue;
+	for (k = 0; e->tiki && name[0] && k < e->tiki->num_surfaces && k < MAX_MODEL_SURFACES; k++) {
+		if (!Q_stricmp(e->tiki->surfaces[k].name, name)) {
+			return k;
 		}
 	}
-	return qfalse;
+	return -1;
+}
+
+// Whether a vehicle's headlights are on: the surface of its fake beams is
+// drawn (the level's script hides it with its "idlenolights" animation).
+// Under the live light the beam goes: the light is in the world itself; and
+// the lenses glow (the glow surface's second skin: the Opel's blackout slits).
+static qboolean R_RtHeadlightsOn(refEntity_t *e, const rtLampDef_t *def)
+{
+	int k, g;
+
+	if (def->lightSurface[0]) {
+		k = R_RtTikiSurface(e, def->lightSurface);
+		if (k < 0 || (e->surfaces[k] & MDL_SURFACE_NODRAW)) {
+			return qfalse;
+		}
+		e->surfaces[k] |= MDL_SURFACE_NODRAW;
+	}
+	g = R_RtTikiSurface(e, def->glowSurface);
+	if (g >= 0 && e->tiki->surfaces[g].numskins > 1) {
+		e->surfaces[g] = (e->surfaces[g] & ~(MDL_SURFACE_SKINOFFSET_BIT0 | MDL_SURFACE_SKINOFFSET_BIT1)) | MDL_SURFACE_SKINOFFSET_BIT0;
+	}
+	return qtrue;
 }
 
 #define RT_FLARE_REACH 32.0f // a fake flare this near a live headlight's lens is its own
@@ -806,14 +820,25 @@ static void R_RtEntityLamps(void)
 		if (e->entityNumber < 0 || e->entityNumber >= ENTITYNUM_WORLD) {
 			continue;
 		}
-		if (def->kind == RT_LAMP_HEADLIGHT && !R_RtHeadlightsOn(e, def)) {
-			continue;
-		}
-
 		scale = e->scale > 0 ? e->scale : 1.0f;
 		for (k = 0; k < 3; k++) {
 			VectorCopy(e->axis[k], axis[k]);
 			VectorNormalize(axis[k]);
+		}
+
+		if (def->kind == RT_LAMP_HEADLIGHT) {
+			// its fake flares go whether its lights are on or not: the
+			// script takes them away a moment after it puts the lights out
+			for (b = 0; b < def->numBulbs && numLenses < RT_ENTITY_LAMPS; b++, numLenses++) {
+				VectorCopy(e->origin, lenses[numLenses]);
+				for (k = 0; k < 3; k++) {
+					VectorMA(lenses[numLenses], def->bulbs[b][k] * scale, axis[k], lenses[numLenses]);
+				}
+				Q_strncpyz(flares[numLenses], def->flare, sizeof(flares[numLenses]));
+			}
+			if (!R_RtHeadlightsOn(e, def)) {
+				continue;
+			}
 		}
 
 		// a searchlight: one light, from its lens; headlights: one from each
@@ -859,10 +884,6 @@ static void R_RtEntityLamps(void)
 						VectorNormalize2(v, dir);
 					}
 				}
-			} else if (numLenses < RT_ENTITY_LAMPS) {
-				VectorCopy(lens, lenses[numLenses]);
-				Q_strncpyz(flares[numLenses], def->flare, sizeof(flares[numLenses]));
-				numLenses++;
 			}
 
 			if (l->entity != e->entityNumber || l->entityBulb != b) {
@@ -1412,14 +1433,15 @@ A lamp the level designer built of brushes (m1l1's lit grilles on the ground,
 textures/light/warewindowlit_nolight) has no light of its own: a spot light
 beside it, a foot or so off, lights the wall above it, so the light seemed to
 come from the air in front of the lamp. lamps.txt's "kind surface" names such
-a shader: the map's light nearest each face of it, and near enough, comes
-from the middle of the face, just off it, the way it pointed; and the face
-glows (bloom), as a lamp's bulb does.
+a shader: the map's light nearest each face of it, and near enough, becomes
+the face's own light, of its size and out of it as a lit window's is
+(brightest on the wall straight over a grille, fading as it goes up); and the
+face glows (bloom), as a lamp's bulb does.
 =============================================================================
 */
 
 #define RT_SURFACE_LAMP_REACH 64.0f // a map's light this near a lamp's face is the lamp's
-#define RT_SURFACE_LAMP_OUT   2.0f  // and comes from this far in front of it
+#define RT_SURFACE_LAMP_SCALE 3.0f  // of its light: its cone spread out of the face takes more
 
 static void R_RtLightsAtSurfaces(void)
 {
@@ -1479,14 +1501,21 @@ static void R_RtLightsAtSurfaces(void)
 			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f): from the lamp %s at (%.0f %.0f %.0f)\n", best->source, best->origin[0],
 				best->origin[1], best->origin[2], surf->shader->name, centre[0], centre[1], centre[2]);
 		}
-		VectorMA(centre, RT_SURFACE_LAMP_OUT, normal, best->origin);
-		// a spot's cone from the face can point no further back than along it
-		if (best->spot && DotProduct(best->spotDir, normal) < 0) {
-			VectorMA(best->spotDir, -DotProduct(best->spotDir, normal), normal, best->spotDir);
-			if (VectorNormalize(best->spotDir) <= 0) {
-				VectorCopy(normal, best->spotDir);
-			}
+		// a light of the face's size, out of it: brightest straight out,
+		// none along it (as a lit window's, R_RtMergeAreaLights puts it
+		// just in front), not the designer's cone from beside it
+		VectorCopy(centre, best->origin);
+		VectorCopy(normal, best->spotDir);
+		best->spot         = qfalse;
+		best->radiusByDist = 0;
+		{
+			vec3_t size;
+
+			VectorSubtract(surf->cullinfo.bounds[1], surf->cullinfo.bounds[0], size);
+			best->area = Q_max(8.0f, VectorLength(size) * 0.5f);
 		}
+		VectorScale(best->color, RT_SURFACE_LAMP_SCALE, best->color);
+		best->range       = R_RtRangeOf(best->color);
 		best->surfaceLamp = qtrue;
 		moved++;
 	}
