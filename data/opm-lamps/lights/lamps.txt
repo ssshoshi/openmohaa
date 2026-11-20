@@ -459,4 +459,5 @@ textures/light/warewindowlit_nolight
 	kind surface
 	color 1 0.9 0.8     // where the map's light by it is in the lightmaps alone
 	intensity 724       // (the banner grilles' spots, spawnflags 2): its others'
+	spot 0 0 1 102      // and their cone (the way is straight out of the face)
 }

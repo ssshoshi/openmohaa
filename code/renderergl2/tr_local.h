@@ -746,6 +746,7 @@ typedef struct shader_s {
     // Added in OPM: gives light of its own (q3map_surfacelight: a lit window),
     // which the compiler put in its lightmap: kept there by the realtime lights
     qboolean rtEmissive;
+    float    emissiveScale; // Added in OPM: how much brighter than a lamp's bulb (r_bloomEmissive) it blooms
     // Set when any stage uses rgbGen lightinggrid or lightingspherical, so the
     // backend knows which of MOH:AA's two entity lighting models to set up.
     int needsLGrid;

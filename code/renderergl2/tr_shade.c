@@ -1912,8 +1912,10 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 				&& pStage->rgbGen != CGEN_LIGHTING_SPHERICAL && pStage->rgbGen != CGEN_LIGHTING_DIFFUSE
 				&& pStage->rgbGen != CGEN_LIGHTING_GRID)
 			{
-				VectorScale(baseColor, r_bloomEmissive->value, baseColor);
-				VectorScale(vertColor, r_bloomEmissive->value, vertColor);
+				const float glow = r_bloomEmissive->value * Q_max(1.0f, input->shader->emissiveScale);
+
+				VectorScale(baseColor, glow, baseColor);
+				VectorScale(vertColor, glow, vertColor);
 			}
 
 			RB_SetGlobalFogUniforms(sp, pStage);

@@ -1441,19 +1441,19 @@ textures/light/warewindowlit_nolight) has no light of its own: a spot light
 beside it, a foot or so off, lights the wall above it, so the light seemed to
 come from the air in front of the lamp. lamps.txt's "kind surface" names such
 a shader: the map's light nearest each face of it, and near enough, becomes
-the face's own light, of its size and out of it as a lit window's is
-(brightest on the wall straight over a grille, fading as it goes up); and the
-face glows (bloom), as a lamp's bulb does.
+the face's: from its middle, just off it, the designer's cone (the V it
+throws up the wall), or, where the designer's light is in the lightmaps alone,
+the table's light straight out of it; the weak fills hung up the wall over it
+go; and the face glows (bloom), as a lamp's bulb does.
 =============================================================================
 */
 
 #define RT_SURFACE_LAMP_REACH 64.0f // a map's light this near a lamp's face is the lamp's
-#define RT_SURFACE_LAMP_NEAR  48.0f // its light stops growing this near it
+#define RT_SURFACE_LAMP_OUT   2.0f  // its light this far in front of the face
 #define RT_SURFACE_LAMP_FILL  0.05f // a map light this weak beside it, in the column over it, was the
                                     // designer's fake of its glow up a wall: the lamp lights it now
 #define RT_SURFACE_LAMP_SIDE  48.0f // that column's half width
 #define RT_SURFACE_LAMP_UP    256.0f // and height
-#define RT_SURFACE_LAMP_SCALE 3.0f  // of its light: its cone spread out of the face takes more
 
 static void R_RtLightsAtSurfaces(void)
 {
@@ -1513,24 +1513,10 @@ static void R_RtLightsAtSurfaces(void)
 			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f): from the lamp %s at (%.0f %.0f %.0f)\n", best->source, best->origin[0],
 				best->origin[1], best->origin[2], surf->shader->name, centre[0], centre[1], centre[2]);
 		}
-		// a light of the face's size, out of it: brightest straight out,
-		// none along it (as a lit window's, R_RtMergeAreaLights puts it
-		// just in front), not the designer's cone from beside it
-		VectorCopy(centre, best->origin);
-		VectorCopy(normal, best->spotDir);
-		best->spot         = qfalse;
-		best->radiusByDist = 0;
-		{
-			vec3_t size;
-
-			VectorSubtract(surf->cullinfo.bounds[1], surf->cullinfo.bounds[0], size);
-			// its light stops growing this near it: a wall a hand from a
-			// grille is lit up from it, not burnt white over it
-			best->area = Q_max(RT_SURFACE_LAMP_NEAR, VectorLength(size) * 0.5f);
-		}
 		// the light the designer gave it can be in the lightmaps alone (m1l1's
 		// banner grilles: spawnflags 2), and the nearest one left a weak fill:
-		// then its light is the table's
+		// then its light is the table's, a cone straight out of the face as
+		// wide as the table's spot
 		{
 			vec3_t own;
 
@@ -1538,9 +1524,24 @@ static void R_RtLightsAtSurfaces(void)
 			if (Q_max(best->color[0], Q_max(best->color[1], best->color[2]))
 				< Q_max(own[0], Q_max(own[1], own[2])) * RT_SURFACE_LAMP_FILL) {
 				VectorCopy(own, best->color);
+				best->spot         = qtrue;
+				best->radiusByDist = tan(DEG2RAD((def->spot ? def->spotAngle : 60.0f) * 0.5f));
+				VectorCopy(normal, best->spotDir);
 			}
 		}
-		VectorScale(best->color, RT_SURFACE_LAMP_SCALE, best->color);
+		// the designer's cone (the V up the wall), from the middle of the face,
+		// just off it, not from a foot beside it
+		VectorMA(centre, RT_SURFACE_LAMP_OUT, normal, best->origin);
+		if (best->spot && DotProduct(best->spotDir, normal) < 0) {
+			// no further back than along it
+			VectorMA(best->spotDir, -DotProduct(best->spotDir, normal), normal, best->spotDir);
+			if (VectorNormalize(best->spotDir) <= 0) {
+				VectorCopy(normal, best->spotDir);
+			}
+		}
+		if (r_rtDebug->integer) {
+			ri.Printf(PRINT_ALL, "    %s, cone %.2f by distance\n", best->spot ? "a spot" : "a point", best->radiusByDist);
+		}
 		best->range       = R_RtRangeOf(best->color);
 		best->surfaceLamp = qtrue;
 

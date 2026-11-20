@@ -58,7 +58,8 @@ opm_swinging_lantern_glass_off
 // The Opel truck with its blackout headlights on (models/vehicles/opeltruck.tik's
 // opel1 second skin, chosen by the renderer while its live headlights are on,
 // lamps.txt glowsurface): the paint as ever, and the slit in each lens cover
-// glowing, brighter than white so that it blooms (opm_glow: only the unlit stage)
+// glowing, brighter than white so that it blooms (opm_glow: only the unlit stage,
+// three times a lamp's bulb: a slit is small)
 opm_glow_opel
 {
 	{
