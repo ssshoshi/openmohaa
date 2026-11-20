@@ -578,6 +578,148 @@ CMod_LoadVisibility
 =================
 */
 #define	VIS_HEADER	8
+
+// Added in OPM
+//  Seeing is mutual, but the maps' compiled vis is not: on m1l1 the far
+//  house's clusters saw the hilltop cluster one step back from the town wall,
+//  but it did not see them, so the house came and went as the player stepped
+//  across. Where one side of a pair has the other, both get it. This only
+//  ever adds (12% more clusters on m1l1). The renderer shares this copy
+//  (SetWorldVisData) and the server culls entities with it, so both follow.
+static void CMod_SymmetrizeVisibility( void ) {
+	int		i, j;
+	int		ij, ji;
+	int		added;
+	byte	*vi, *vj;
+
+	if ( cm.numClusters <= 0 || cm.clusterBytes < ( ( cm.numClusters + 7 ) >> 3 ) ) {
+		return;
+	}
+
+	added = 0;
+	for ( i = 0; i < cm.numClusters; i++ ) {
+		vi = cm.visibility + i * cm.clusterBytes;
+		for ( j = i + 1; j < cm.numClusters; j++ ) {
+			vj = cm.visibility + j * cm.clusterBytes;
+			ij = vi[ j >> 3 ] & ( 1 << ( j & 7 ) );
+			ji = vj[ i >> 3 ] & ( 1 << ( i & 7 ) );
+			if ( !ij == !ji ) {
+				continue;
+			}
+			vi[ j >> 3 ] |= 1 << ( j & 7 );
+			vj[ i >> 3 ] |= 1 << ( i & 7 );
+			added++;
+		}
+	}
+
+	if ( added ) {
+		Com_DPrintf( "CMod_LoadVisibility: %i one-sided cluster pairs made mutual\n", added );
+	}
+}
+
+/*
+=================
+CMod_LoadVisPatch
+
+Added in OPM
+  What a map's compiled vis leaves out, put back by hand (vis/<map>.txt).
+  Points and not cluster numbers, so a line can be written from viewpos:
+
+      see <x y z> <x y z> [<x y z> ...]
+
+  The first point's cluster and each later point's see each other. m1l1 has
+  invisible vis blockers (common/vis) standing on its town wall up to well
+  over its top, so what shows over the wall was cut: the telegraph poles from
+  the alley east of the market a step back from where they showed, and the
+  dome from the hill west of the gate (seen only with the eye in the rock,
+  where the renderer draws everything).
+=================
+*/
+#define MAX_VISPATCH_POINTS	16
+
+static int CMod_PointCluster( const vec3_t p ) {
+	return cm.leafs[ CM_PointLeafnum( p ) ].cluster;
+}
+
+static void CMod_LoadVisPatch( const char *mapname ) {
+	char		path[ MAX_QPATH ];
+	char		base[ MAX_QPATH ];
+	char		*text, *p, *tok;
+	vec3_t		pt;
+	int			clusters[ MAX_VISPATCH_POINTS ];
+	int			numPoints, bad, i, j, changed;
+	byte		*va, *vb;
+
+	if ( !cm.vised || cm.numClusters <= 0 ) {
+		return;
+	}
+
+	COM_StripExtension( COM_SkipPath( mapname ), base, sizeof( base ) );
+	Com_sprintf( path, sizeof( path ), "vis/%s.txt", base );
+	if ( FS_ReadFile( path, ( void ** )&text ) <= 0 || !text ) {
+		return;
+	}
+
+	changed = 0;
+	p = text;
+	for ( ;; ) {
+		tok = COM_ParseExt( &p, qtrue );
+		if ( !tok[ 0 ] ) {
+			break;
+		}
+		if ( Q_stricmp( tok, "see" ) ) {
+			Com_Printf( "%s: unknown '%s', skipping the line\n", path, tok );
+			SkipRestOfLine( &p );
+			continue;
+		}
+
+		// the line's points, as clusters
+		numPoints = 0;
+		bad = 0;
+		for ( ;; ) {
+			for ( i = 0; i < 3; i++ ) {
+				tok = COM_ParseExt( &p, qfalse );
+				if ( !tok[ 0 ] ) {
+					break;
+				}
+				pt[ i ] = atof( tok );
+			}
+			if ( i < 3 ) {
+				if ( i ) {
+					Com_Printf( "%s: a point with %i of its 3 coordinates\n", path, i );
+					bad = 1;
+				}
+				break;
+			}
+			if ( numPoints == MAX_VISPATCH_POINTS ) {
+				Com_Printf( "%s: more than %i points on a line\n", path, MAX_VISPATCH_POINTS );
+				SkipRestOfLine( &p );
+				break;
+			}
+			clusters[ numPoints ] = CMod_PointCluster( pt );
+			if ( clusters[ numPoints ] < 0 || clusters[ numPoints ] >= cm.numClusters ) {
+				Com_Printf( "%s: ( %g %g %g ) is in no cluster (solid?)\n", path, pt[ 0 ], pt[ 1 ], pt[ 2 ] );
+				bad = 1;
+			}
+			numPoints++;
+		}
+		if ( bad || numPoints < 2 ) {
+			continue;
+		}
+
+		va = cm.visibility + clusters[ 0 ] * cm.clusterBytes;
+		for ( j = 1; j < numPoints; j++ ) {
+			vb = cm.visibility + clusters[ j ] * cm.clusterBytes;
+			va[ clusters[ j ] >> 3 ] |= 1 << ( clusters[ j ] & 7 );
+			vb[ clusters[ 0 ] >> 3 ] |= 1 << ( clusters[ 0 ] & 7 );
+			changed++;
+		}
+	}
+
+	FS_FreeFile( text );
+	Com_DPrintf( "%s: %i fixes\n", path, changed );
+}
+
 void CMod_LoadVisibility( gamelump_t *l ) {
 	int		len;
 	byte	*buf;
@@ -596,6 +738,8 @@ void CMod_LoadVisibility( gamelump_t *l ) {
 	cm.numClusters = LittleLong( ( ( int * )buf )[ 0 ] );
 	cm.clusterBytes = LittleLong( ( ( int * )buf )[ 1 ] );
 	Com_Memcpy( cm.visibility, buf + VIS_HEADER, len - VIS_HEADER );
+
+	CMod_SymmetrizeVisibility();
 }
 
 //==================================================================
@@ -1004,6 +1148,7 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 	_R( 49 );
 	CM_FloodAreaConnections();
 	_R( 50 );
+	CMod_LoadVisPatch( name );
 
 	// allow this to be cached if it is loaded by the server
 	if ( !clientload ) {
