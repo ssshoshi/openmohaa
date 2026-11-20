@@ -99,6 +99,9 @@ float LampShadow(vec4 info, vec3 v)
 	return vis;
 }
 
+// how near a bare point light its light in the air stops growing
+#define FILL_NEAR 160.0
+
 // what light i gives the air at P, as RtLightParticle has it, less the
 // distance squared (the steps are spread for it) and before its shadow
 float LampShape(int i, vec3 P, out vec3 toLight)
@@ -121,6 +124,13 @@ float LampShape(int i, vec3 P, out vec3 toLight)
 		if (l2.w < 0.0) att *= max(0.0, dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut;
 		else if (shut > 1.0) att *= 1.0 - (shut - 1.0) * smoothstep(0.55, 0.2, abs(dot(toLight, l2.xyz)) * inversesqrt(max(d2, 1.0)) / shut);
 		else if (shut > 0.0) att *= 1.0 - shut * smoothstep(-0.05, 0.3, dot(toLight, -l2.xyz) * inversesqrt(max(d2, 1.0)) / shut);
+	}
+	else if (kind < 0.5)
+	{
+		// a bare point light: no lamp to be seen, the map's fill lights
+		// hang in the air, and their 1 / distance squared right by them
+		// drew a ball of light in the haze where nothing shines
+		att *= d2 / max(d2, FILL_NEAR * FILL_NEAR);
 	}
 	else if (kind > 0.5 && kind < 1.5)
 	{
