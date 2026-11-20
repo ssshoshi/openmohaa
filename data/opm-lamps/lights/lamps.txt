@@ -442,7 +442,7 @@ models/vehicles/opeltruck.tik
 	intensity 2500
 	bulb 160 34.6 59.2
 	bulb 160 -36.8 59.2
-	spot 1 0 -0.3 70
+	spot 1 0 -0.4 55
 	lightsurface opellights
 	glowsurface opel1
 	flare models/fx/searchlight.tik

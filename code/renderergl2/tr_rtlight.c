@@ -837,6 +837,13 @@ static void R_RtEntityLamps(void)
 				Q_strncpyz(flares[numLenses], def->flare, sizeof(flares[numLenses]));
 			}
 			if (!R_RtHeadlightsOn(e, def)) {
+				// out with the lenses' glow, the same frame: not eased out
+				for (j = rt.numMapLights; j < rt.numLights; j++) {
+					if (rt.lights[j].entity == e->entityNumber) {
+						rt.lights[j].weight = 0;
+						rt.lights[j].range  = 0;
+					}
+				}
 				continue;
 			}
 		}
@@ -1441,7 +1448,8 @@ face glows (bloom), as a lamp's bulb does.
 */
 
 #define RT_SURFACE_LAMP_REACH 64.0f // a map's light this near a lamp's face is the lamp's
-#define RT_SURFACE_LAMP_SCALE 3.0f  // of its light: its cone spread out of the face takes more
+#define RT_SURFACE_LAMP_NEAR  32.0f // its light stops growing this near it
+#define RT_SURFACE_LAMP_SCALE 1.5f  // of its light: its cone spread out of the face takes more
 
 static void R_RtLightsAtSurfaces(void)
 {
@@ -1512,7 +1520,9 @@ static void R_RtLightsAtSurfaces(void)
 			vec3_t size;
 
 			VectorSubtract(surf->cullinfo.bounds[1], surf->cullinfo.bounds[0], size);
-			best->area = Q_max(8.0f, VectorLength(size) * 0.5f);
+			// its light stops growing this near it: a wall a hand from a
+			// grille is lit evenly up from it, not burnt white over it
+			best->area = Q_max(RT_SURFACE_LAMP_NEAR, VectorLength(size) * 0.5f);
 		}
 		VectorScale(best->color, RT_SURFACE_LAMP_SCALE, best->color);
 		best->range       = R_RtRangeOf(best->color);
