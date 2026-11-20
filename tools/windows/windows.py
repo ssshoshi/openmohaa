@@ -166,7 +166,7 @@ def sheen(size=256):
     rng = np.random.default_rng(99)
     vary = blur(rng.standard_normal((size, size)).astype(np.float32), 10.0)
     vary = 0.8 + 0.4 * (vary - vary.min()) / max(1e-6, vary.max() - vary.min())
-    s = (sky + 0.55 * wide + 0.8 * thin) * vary
+    s = (sky + 0.3 * wide + 0.35 * thin) * vary
     return np.clip(np.stack([s * 0.86, s * 0.92, s * 1.0], axis=2), 0, 1)
 
 
