@@ -160,6 +160,9 @@ typedef struct {
     //  Moving, the lights it can shadow anything for: a bit each of this
     //  frame's candidates (R_RtRenderShadows), the rest pass it over.
     uint64_t	rtLights;
+    //  Not drawn this frame: a vehicle's fake headlight flare where its live
+    //  headlight shines (R_RtEntityLamps).
+    qboolean	rtHidden;
 
     // Added in OPM
     //  The scene a skeletal model was posed for (tr.sceneCount) and which pose

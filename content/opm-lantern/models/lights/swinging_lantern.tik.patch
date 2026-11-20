@@ -1,0 +1,22 @@
+--- a/models/lights/swinging_lantern.tik
++++ b/models/lights/swinging_lantern.tik
+@@ -7,6 +7,10 @@
+ 	surface glantern shader glantern
+ 	surface glanternglass shader glanternglass
+ 	surface glanterncull shader glanterncull
++	// the remodelled glass (opm-lampmodels): lit from inside, and its second skin
++	// not, once light_off has put the lantern out
++	surface opm_swinging_lantern_glass shader opm_swinging_lantern_glass
++	surface opm_swinging_lantern_glass shader opm_swinging_lantern_glass_off
+ }
+ init 
+ {
+@@ -25,6 +29,8 @@
+ 		server 
+ 		{
+ 			enter removeattachedmodel tag_barrel
++			enter surface opm_swinging_lantern_glass +skin1
++			enter surface opm_flame +nodraw
+ 		}
+ 	}
+ }

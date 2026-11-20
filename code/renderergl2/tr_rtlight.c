@@ -170,6 +170,7 @@ typedef struct {
 	qboolean seenByView;   // the view sees its bulbs or its pool, as last looked (R_RtViewSees)
 	int      seenTested;   // the frame that was looked at, 0 never
 	int      entity;       // an entity lamp's (R_RtEntityLamps): its entity, -1 none
+	int      entityBulb;   // and which of its bulbs (a vehicle's two headlights)
 	int      entityFrame;  // the frame it was last in the scene
 	int      inViewFrame;  // the frame its light was last in the view (R_RtInView)
 	int      enteredView;  // the frame it came into the view after being out of it
@@ -184,6 +185,7 @@ typedef struct {
 	int      dynamicSlot;  // its slot in the atlas of what moves, plus one (0 none)
 	int      dynamicDrawn; // the faces drawn into it when last drawn, a bit each
 	int      dynamicFrame; // the frame they were drawn
+	qboolean surfaceLamp;  // moved onto a lamp in the brushwork (R_RtLightsAtSurfaces)
 	float    flicker;      // a flame's: how much it dips
 	float    seed;
 } rtLight_t;
@@ -503,7 +505,9 @@ enum {
 	RT_LAMP_CANDLE,
 	RT_LAMP_LANTERN,
 	RT_LAMP_OFF,
-	RT_LAMP_SEARCHLIGHT // an entity's, aimed by the game (R_RtEntityLamps)
+	RT_LAMP_SEARCHLIGHT, // an entity's, aimed by the game (R_RtEntityLamps)
+	RT_LAMP_HEADLIGHT,   // a vehicle's, while its lights are on (R_RtEntityLamps)
+	RT_LAMP_SURFACE      // a shader: a lamp in the brushwork (R_RtLightsAtSurfaces)
 };
 
 typedef struct {
@@ -517,6 +521,8 @@ typedef struct {
 	vec3_t   spotDir;
 	float    spotAngle;
 	vec3_t   shade; // the way its shade closes it off, as long as the part of its light it stops there
+	char     lightSurface[MAX_QPATH]; // a headlight's: the model's surface drawn while its lights are on (the fake beam)
+	char     flare[MAX_QPATH];        // a headlight's: the model of the fake flares at its lenses, as keyed
 } rtLampDef_t;
 
 static rtLampDef_t rt_lampDefs[RT_LAMP_DEFS];
@@ -589,6 +595,8 @@ static void R_RtLoadLampDefs(void)
 					  : !Q_stricmp(token, "lantern") ? RT_LAMP_LANTERN
 					  : !Q_stricmp(token, "off")     ? RT_LAMP_OFF
 					  : !Q_stricmp(token, "searchlight") ? RT_LAMP_SEARCHLIGHT
+					  : !Q_stricmp(token, "headlight") ? RT_LAMP_HEADLIGHT
+					  : !Q_stricmp(token, "surface") ? RT_LAMP_SURFACE
 													 : RT_LAMP_SHADED;
 			if (def->kind == RT_LAMP_CANDLE || def->kind == RT_LAMP_LANTERN) {
 				VectorSet(def->color, 1.0f, 0.68f, 0.38f);
@@ -601,6 +609,10 @@ static void R_RtLoadLampDefs(void)
 			}
 		} else if (!Q_stricmp(token, "intensity")) {
 			def->intensity = atof(COM_ParseOnLine(&text));
+		} else if (!Q_stricmp(token, "lightsurface")) {
+			Q_strncpyz(def->lightSurface, COM_ParseOnLine(&text), sizeof(def->lightSurface));
+		} else if (!Q_stricmp(token, "flare")) {
+			R_RtLampKey(COM_ParseOnLine(&text), def->flare, sizeof(def->flare));
 		} else if (!Q_stricmp(token, "bulb")) {
 			int k;
 
@@ -689,6 +701,13 @@ ground and not out of the lamp. With r_realtimeLighting 2 a model lamps.txt
 gives "kind searchlight" lights from its lens, the way its beam points, a
 spot light with its shadows; the game's lights in its beam are its own, and
 go. The lamp's models cast no shadow of anything (it is in its light).
+
+A vehicle's headlights (m1l1's Opel truck) were a cone drawn on the model (a
+surface the level's script hides with "idlenolights") and a flare hung on
+each light's tag (global/spotlight.scr's corona). A "kind headlight" model
+gives a spot light from each of its bulbs while that surface is drawn, and
+neither the cone nor the flares are drawn: the light is in the world. The
+truck still shadows the other lights; its own are in front of it.
 =============================================================================
 */
 
@@ -714,9 +733,57 @@ static const rtLampDef_t *R_RtModelLampDef(qhandle_t hModel)
 	return rt_modelDefs[hModel];
 }
 
+// The light an entity's bulb had, else one no entity has had for a while
+static rtLight_t *R_RtEntityLight(int entityNum, int bulb)
+{
+	int j;
+
+	for (j = rt.numMapLights; j < rt.numLights; j++) {
+		if (rt.lights[j].entity == entityNum && rt.lights[j].entityBulb == bulb) {
+			return &rt.lights[j];
+		}
+	}
+	for (j = rt.numMapLights; j < rt.numLights; j++) {
+		if (rt.lights[j].entity < 0 || (rt.frame - rt.lights[j].entityFrame > 30 && rt.lights[j].weight <= 0)) {
+			return &rt.lights[j];
+		}
+	}
+	return NULL;
+}
+
+// Whether a vehicle's headlights are on: the surface of its fake beams is
+// drawn (the level's script hides it with its "idlenolights" animation).
+// Under the live light the beam goes: the light is in the world itself.
+static qboolean R_RtHeadlightsOn(refEntity_t *e, const rtLampDef_t *def)
+{
+	int k;
+
+	if (!def->lightSurface[0]) {
+		return qtrue;
+	}
+	if (!e->tiki) {
+		return qfalse;
+	}
+	for (k = 0; k < e->tiki->num_surfaces && k < MAX_MODEL_SURFACES; k++) {
+		if (!Q_stricmp(e->tiki->surfaces[k].name, def->lightSurface)) {
+			if (e->surfaces[k] & MDL_SURFACE_NODRAW) {
+				return qfalse;
+			}
+			e->surfaces[k] |= MDL_SURFACE_NODRAW;
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+#define RT_FLARE_REACH 32.0f // a fake flare this near a live headlight's lens is its own
+
 static void R_RtEntityLamps(void)
 {
-	int i, j, k;
+	vec3_t lenses[RT_ENTITY_LAMPS];
+	char   flares[RT_ENTITY_LAMPS][MAX_QPATH];
+	int    numLenses = 0;
+	int    i, j, k, b;
 
 	Com_Memset(rt.dlightTaken, 0, sizeof(rt.dlightTaken));
 	if (!rt_numLampDefs || r_realtimeLighting->integer != 2 || !r_rtLamps->integer) {
@@ -724,32 +791,22 @@ static void R_RtEntityLamps(void)
 	}
 
 	for (i = 0; i < tr.refdef.num_entities; i++) {
-		const refEntity_t *e = &tr.refdef.entities[i].e;
+		refEntity_t       *e = &tr.refdef.entities[i].e;
 		const rtLampDef_t *def;
-		rtLight_t         *l = NULL;
-		vec3_t             lens, dir, axis[3];
-		float              cone, scale, nearest = 0;
+		vec3_t             axis[3];
+		float              scale;
+		int                numBulbs;
 
-		if (e->reType != RT_MODEL || !(def = R_RtModelLampDef(e->hModel)) || def->kind != RT_LAMP_SEARCHLIGHT || !def->spot) {
+		if (e->reType != RT_MODEL || !(def = R_RtModelLampDef(e->hModel)) || !def->spot) {
+			continue;
+		}
+		if (def->kind != RT_LAMP_SEARCHLIGHT && def->kind != RT_LAMP_HEADLIGHT) {
 			continue;
 		}
 		if (e->entityNumber < 0 || e->entityNumber >= ENTITYNUM_WORLD) {
 			continue;
 		}
-
-		// its light: the one it had, else one no entity has had for a while
-		for (j = rt.numMapLights; j < rt.numLights; j++) {
-			if (rt.lights[j].entity == e->entityNumber) {
-				l = &rt.lights[j];
-				break;
-			}
-		}
-		for (j = rt.numMapLights; j < rt.numLights && !l; j++) {
-			if (rt.lights[j].entity < 0 || (rt.frame - rt.lights[j].entityFrame > 30 && rt.lights[j].weight <= 0)) {
-				l = &rt.lights[j];
-			}
-		}
-		if (!l) {
+		if (def->kind == RT_LAMP_HEADLIGHT && !R_RtHeadlightsOn(e, def)) {
 			continue;
 		}
 
@@ -758,70 +815,114 @@ static void R_RtEntityLamps(void)
 			VectorCopy(e->axis[k], axis[k]);
 			VectorNormalize(axis[k]);
 		}
-		VectorCopy(e->origin, lens);
-		VectorClear(dir);
-		for (k = 0; k < 3; k++) {
-			VectorMA(lens, def->bulbs[0][k] * scale, axis[k], lens);
-			VectorMA(dir, def->spotDir[k], axis[k], dir);
-		}
-		VectorNormalize(dir);
-		cone = tan(DEG2RAD(def->spotAngle * 0.5f));
 
-		// the game's lights in its beam: where it falls, its own
-		for (j = 0; j < tr.refdef.num_dlights && j < MAX_DLIGHTS; j++) {
-			const dlight_t *dl = &tr.refdef.dlights[j];
-			vec3_t          v;
-			float           along, off;
+		// a searchlight: one light, from its lens; headlights: one from each
+		numBulbs = def->kind == RT_LAMP_HEADLIGHT ? Q_max(1, def->numBulbs) : 1;
+		for (b = 0; b < numBulbs; b++) {
+			rtLight_t *l = R_RtEntityLight(e->entityNumber, b);
+			vec3_t     lens, dir;
+			float      cone, nearest = 0;
 
-			VectorSubtract(dl->origin, lens, v);
-			along = DotProduct(v, dir);
-			if (along <= 0) {
-				continue;
+			if (!l) {
+				break;
 			}
-			off = sqrt(Q_max(0.0f, DotProduct(v, v) - Square(along)));
-			if (off > Q_max(dl->radius * 0.5f, along * cone) + RT_SEARCHLIGHT_SLACK) {
-				continue;
-			}
-			rt.dlightTaken[j] = qtrue;
-			// aimed at the nearest of them, where the game puts it
-			if (!nearest || along < nearest) {
-				nearest = along;
-				VectorNormalize2(v, dir);
-			}
-		}
 
-		if (l->entity != e->entityNumber) {
-			// a new one: its shadows from where it is
-			if (l->staticSlot >= 0) {
-				rt.staticOwner[l->staticSlot] = -1;
+			VectorCopy(e->origin, lens);
+			VectorClear(dir);
+			for (k = 0; k < 3; k++) {
+				VectorMA(lens, def->bulbs[b][k] * scale, axis[k], lens);
+				VectorMA(dir, def->spotDir[k], axis[k], dir);
 			}
-			l->staticSlot  = -1;
-			l->staticFaces = 0;
-			l->staticReady = qfalse;
-			l->bakedFaces  = 0;
-			l->weight      = 0;
-			l->entity      = e->entityNumber;
-			l->cluster     = R_RtClusterAt(e->origin);
-			VectorCopy(e->origin, l->origin);
+			VectorNormalize(dir);
+			cone = tan(DEG2RAD(def->spotAngle * 0.5f));
+
+			if (def->kind == RT_LAMP_SEARCHLIGHT) {
+				// the game's lights in its beam: where it falls, its own
+				for (j = 0; j < tr.refdef.num_dlights && j < MAX_DLIGHTS; j++) {
+					const dlight_t *dl = &tr.refdef.dlights[j];
+					vec3_t          v;
+					float           along, off;
+
+					VectorSubtract(dl->origin, lens, v);
+					along = DotProduct(v, dir);
+					if (along <= 0) {
+						continue;
+					}
+					off = sqrt(Q_max(0.0f, DotProduct(v, v) - Square(along)));
+					if (off > Q_max(dl->radius * 0.5f, along * cone) + RT_SEARCHLIGHT_SLACK) {
+						continue;
+					}
+					rt.dlightTaken[j] = qtrue;
+					// aimed at the nearest of them, where the game puts it
+					if (!nearest || along < nearest) {
+						nearest = along;
+						VectorNormalize2(v, dir);
+					}
+				}
+			} else if (numLenses < RT_ENTITY_LAMPS) {
+				VectorCopy(lens, lenses[numLenses]);
+				Q_strncpyz(flares[numLenses], def->flare, sizeof(flares[numLenses]));
+				numLenses++;
+			}
+
+			if (l->entity != e->entityNumber || l->entityBulb != b) {
+				// a new one: its shadows from where it is
+				if (l->staticSlot >= 0) {
+					rt.staticOwner[l->staticSlot] = -1;
+				}
+				l->staticSlot  = -1;
+				l->staticFaces = 0;
+				l->staticReady = qfalse;
+				l->bakedFaces  = 0;
+				l->weight      = 0;
+				l->entity      = e->entityNumber;
+				l->entityBulb  = b;
+				// a searchlight's from its pivot, which stands still while its
+				// lens turns; a headlight's from its lens
+				VectorCopy(def->kind == RT_LAMP_HEADLIGHT ? lens : e->origin, l->origin);
+				l->cluster = R_RtClusterAt(l->origin);
+			}
+			// its shadows are drawn again only when it has gone a few units
+			{
+				const float *at = def->kind == RT_LAMP_HEADLIGHT ? lens : e->origin;
+
+				if (DistanceSquared(at, l->origin) > Square(RT_LIGHT_MOVE_EPSILON)) {
+					VectorCopy(at, l->origin);
+					l->movedFrame  = rt.frame;
+					l->staticFaces = 0;
+					l->cluster     = R_RtClusterAt(l->origin);
+				}
+			}
+			l->entityFrame  = rt.frame;
+			l->spot         = qtrue;
+			l->radiusByDist = cone;
+			VectorCopy(dir, l->spotDir);
+			VectorScale(def->color, def->intensity * 7500.0f, l->color);
+			l->range = R_RtRangeOf(l->color);
+			if (rt.linear) {
+				R_RtLinearColor(l->color, rt.linearUnit, r_linearLightRef->value);
+			}
+			VectorMA(l->origin, Q_min(l->range, nearest > 0 ? nearest : 512.0f), dir, l->pool);
 		}
-		// the lens turns round its pivot: its shadows are drawn again only
-		// when it has gone a few units, from the pivot, which stands still
-		if (DistanceSquared(e->origin, l->origin) > Square(RT_LIGHT_MOVE_EPSILON)) {
-			VectorCopy(e->origin, l->origin);
-			l->movedFrame  = rt.frame;
-			l->staticFaces = 0;
-			l->cluster     = R_RtClusterAt(l->origin);
+	}
+
+	// the fake flares at the live headlights' lenses go (global/spotlight.scr's
+	// coronas, attached to the vehicle's light tags)
+	for (i = 0; i < tr.refdef.num_entities && numLenses; i++) {
+		trRefEntity_t *ent = &tr.refdef.entities[i];
+		const model_t *model;
+		char           key[MAX_QPATH];
+
+		if (ent->e.reType != RT_MODEL || !(model = R_GetModelByHandle(ent->e.hModel)) || model->type != MOD_TIKI) {
+			continue;
 		}
-		l->entityFrame  = rt.frame;
-		l->spot         = qtrue;
-		l->radiusByDist = cone;
-		VectorCopy(dir, l->spotDir);
-		VectorScale(def->color, def->intensity * 7500.0f, l->color);
-		l->range = R_RtRangeOf(l->color);
-		if (rt.linear) {
-			R_RtLinearColor(l->color, rt.linearUnit, r_linearLightRef->value);
+		R_RtLampKey(model->name, key, sizeof(key));
+		for (j = 0; j < numLenses; j++) {
+			if (flares[j][0] && !strcmp(key, flares[j]) && DistanceSquared(ent->e.origin, lenses[j]) < Square(RT_FLARE_REACH)) {
+				ent->rtHidden = qtrue;
+				break;
+			}
 		}
-		VectorMA(l->origin, Q_min(l->range, nearest > 0 ? nearest : 512.0f), dir, l->pool);
 	}
 
 	// those gone from the scene go dark (eased out as lights not chosen)
@@ -884,7 +985,9 @@ static void R_RtLightsAtLamps(byte *isLamp)
 		const rtLampDef_t      *def;
 		lamp_t                 *lamp;
 
-		if (!sm->tiki || !(def = R_RtLampDef(sm->model)) || !def->numBulbs || def->kind == RT_LAMP_SEARCHLIGHT) {
+		// an entity's lamps are not a static model's (a parked truck's headlights are off)
+		if (!sm->tiki || !(def = R_RtLampDef(sm->model)) || !def->numBulbs || def->kind == RT_LAMP_SEARCHLIGHT
+			|| def->kind == RT_LAMP_HEADLIGHT || def->kind == RT_LAMP_SURFACE) {
 			continue;
 		}
 		isLamp[i]       = 1;
@@ -1224,7 +1327,7 @@ static qboolean R_RtIsWindowLight(const rtLight_t *l)
 	float   back;
 	int     o;
 
-	if (!l->spot || l->lamp || l->fixture >= 0 || l->spotDir[2] < -0.7f) {
+	if (!l->spot || l->lamp || l->surfaceLamp || l->fixture >= 0 || l->spotDir[2] < -0.7f) {
 		return qfalse;
 	}
 	if (R_RtSkyOverhead(l->origin)) {
@@ -1300,6 +1403,99 @@ static void R_RtDropWindowLights(void)
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d of the map's lights were daylight through its windows\n", dropped);
 }
 
+/*
+=============================================================================
+
+LAMPS IN THE BRUSHWORK
+
+A lamp the level designer built of brushes (m1l1's lit grilles on the ground,
+textures/light/warewindowlit_nolight) has no light of its own: a spot light
+beside it, a foot or so off, lights the wall above it, so the light seemed to
+come from the air in front of the lamp. lamps.txt's "kind surface" names such
+a shader: the map's light nearest each face of it, and near enough, comes
+from the middle of the face, just off it, the way it pointed; and the face
+glows (bloom), as a lamp's bulb does.
+=============================================================================
+*/
+
+#define RT_SURFACE_LAMP_REACH 64.0f // a map's light this near a lamp's face is the lamp's
+#define RT_SURFACE_LAMP_OUT   2.0f  // and comes from this far in front of it
+
+static void R_RtLightsAtSurfaces(void)
+{
+	int i, j, faces = 0, moved = 0;
+
+	for (i = 0; i < tr.world->numsurfaces; i++) {
+		msurface_t        *surf = &tr.world->surfaces[i];
+		const rtLampDef_t *def;
+		rtLight_t         *best = NULL;
+		vec3_t             centre, normal;
+		float              bestDist = RT_SURFACE_LAMP_REACH;
+		char               key[MAX_QPATH];
+
+		if (!surf->shader || !(surf->cullinfo.type & CULLINFO_PLANE)) {
+			continue;
+		}
+		R_RtLampKey(surf->shader->name, key, sizeof(key));
+		for (def = NULL, j = 0; j < rt_numLampDefs; j++) {
+			if (rt_lampDefs[j].kind == RT_LAMP_SURFACE && !strcmp(rt_lampDefs[j].model, key)) {
+				def = &rt_lampDefs[j];
+				break;
+			}
+		}
+		if (!def) {
+			continue;
+		}
+		faces++;
+		// lit as compiled, from inside, and brighter than white
+		surf->shader->emissive   = qtrue;
+		surf->shader->rtEmissive = qtrue;
+
+		VectorAdd(surf->cullinfo.bounds[0], surf->cullinfo.bounds[1], centre);
+		VectorScale(centre, 0.5f, centre);
+		VectorCopy(surf->cullinfo.plane.normal, normal);
+
+		for (j = 0; j < rt.numLights; j++) {
+			rtLight_t *l = &rt.lights[j];
+			float      d;
+
+			if (l->range <= 0 || l->area > 0 || l->lamp || l->surfaceLamp || l->fixture >= 0) {
+				continue;
+			}
+			// in front of the face, or about level with it
+			if (DotProduct(l->origin, normal) - DotProduct(centre, normal) < -8.0f) {
+				continue;
+			}
+			d = Distance(l->origin, centre);
+			if (d < bestDist) {
+				bestDist = d;
+				best     = l;
+			}
+		}
+		if (!best) {
+			continue;
+		}
+		if (r_rtDebug->integer) {
+			ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f): from the lamp %s at (%.0f %.0f %.0f)\n", best->source, best->origin[0],
+				best->origin[1], best->origin[2], surf->shader->name, centre[0], centre[1], centre[2]);
+		}
+		VectorMA(centre, RT_SURFACE_LAMP_OUT, normal, best->origin);
+		// a spot's cone from the face can point no further back than along it
+		if (best->spot && DotProduct(best->spotDir, normal) < 0) {
+			VectorMA(best->spotDir, -DotProduct(best->spotDir, normal), normal, best->spotDir);
+			if (VectorNormalize(best->spotDir) <= 0) {
+				VectorCopy(normal, best->spotDir);
+			}
+		}
+		best->surfaceLamp = qtrue;
+		moved++;
+	}
+	if (faces) {
+		ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamp faces in the brushwork, %d of the map's lights moved onto them\n", faces,
+			moved);
+	}
+}
+
 static void R_RtLightsAtFixtures(void)
 {
 	int   i, j, merged = 0, fixtures = 0;
@@ -1311,6 +1507,7 @@ static void R_RtLightsAtFixtures(void)
 	}
 	if (r_realtimeLighting->integer == 2 && r_rtLamps->integer) {
 		R_RtLightsAtLamps(isLamp);
+		R_RtLightsAtSurfaces();
 	}
 	R_RtDropWindowLights();
 	R_RtMergeAreaLights();
@@ -4977,6 +5174,7 @@ void R_RtLoadWorld(void)
 		l->fixture    = -1;
 		l->staticSlot = -1;
 		l->entity     = -1;
+		l->entityBulb = 0;
 		l->cluster    = -1;
 	}
 	Com_Memset(rt_modelDefLooked, 0, sizeof(rt_modelDefLooked));
@@ -5351,9 +5549,14 @@ static int R_RtTrackCasters(rtMover_t *movers)
 		if (!model) {
 			continue;
 		}
-		// a lamp (lamps.txt): its light is in it
-		if (R_RtModelLampDef(ent->e.hModel)) {
-			continue;
+		// a lamp (lamps.txt): its light is in it; a vehicle's headlights are
+		// in front of it, and it shadows the other lights as before
+		{
+			const rtLampDef_t *def = R_RtModelLampDef(ent->e.hModel);
+
+			if (def && def->kind != RT_LAMP_HEADLIGHT) {
+				continue;
+			}
 		}
 
 		// people and bodies keep the sun's shadows alone, unless asked, and

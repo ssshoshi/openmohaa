@@ -1684,6 +1684,11 @@ static void R_AddEntitySurface (int entityNum)
 
 	ent->needDlights = qfalse;
 
+	// Added in OPM: a fake flare where a live headlight shines (R_RtEntityLamps)
+	if (ent->rtHidden) {
+		return;
+	}
+
 	// Added in OPM: all the realtime lights, unless the model's own code
 	// finds which reach it (R_AddSkelSurfaces, R_AddBrushModelSurfaces)
 	tr.rtDrawCulled = 0;

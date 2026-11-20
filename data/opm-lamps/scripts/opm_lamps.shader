@@ -41,3 +41,16 @@ opm_flame
 		alphaGen wave noise 0.8 0.2 0 7
 	}
 }
+
+// A remodelled swinging lantern put out (models/lights/swinging_lantern.tik's
+// light_off, content/opm-lantern): its glass as lit by what is round it,
+// no longer from inside
+opm_swinging_lantern_glass_off
+{
+	cull none
+	surfaceparm nolightmap
+	{
+		map textures/opm/lamps/swinging_lantern_glass.tga
+		rgbGen lightingSpherical
+	}
+}
