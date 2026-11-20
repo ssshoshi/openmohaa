@@ -2684,6 +2684,13 @@ static qboolean ParseShader( char **text )
 			if (!Q_stricmp(token, "q3map_surfacelight")) {
 				shader.rtEmissive = qtrue;
 			}
+			// Added in OPM: what it adds over itself (a lit window's glass) is
+			// a light, brighter than white so that it blooms; GL1 and the
+			// compiler pass over it as a q3map keyword they do not know
+			else if (!Q_stricmp(token, "q3map_opmglow")) {
+				shader.emissive    = qtrue;
+				shader.emissiveAdd = qtrue;
+			}
 			SkipRestOfLine( text );
 			continue;
 		}
@@ -4074,7 +4081,7 @@ static shader_t *FinishShader( void ) {
 	{
 		const int len = strlen(shader.name);
 
-		shader.emissive = (!Q_stricmpn(shader.name, "opm_bulb", 8) || !Q_stricmpn(shader.name, "opm_flame", 9)
+		shader.emissive = (shader.emissive || !Q_stricmpn(shader.name, "opm_bulb", 8) || !Q_stricmpn(shader.name, "opm_flame", 9)
 			|| !Q_stricmpn(shader.name, "opm_glow", 8)
 			|| (!Q_stricmpn(shader.name, "opm_", 4) && len > 6 && !Q_stricmp(shader.name + len - 6, "_glass"))) ? qtrue : qfalse;
 		// a vehicle's lens slit: small, so brighter than a bulb to show
