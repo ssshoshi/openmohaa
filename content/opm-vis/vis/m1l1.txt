@@ -1,0 +1,12 @@
+// m1l1: what the map's compiled vis leaves out, put back (cm_load.c, CMod_LoadVisPatch)
+// see <x y z> <x y z> ...: the first point's cluster and each later point's see each other
+// The town wall has invisible vis blockers (common/vis) on it up to z 896, so
+// what shows over the wall's real top was cut.
+
+// the alley east of the market (x -6336..-5312) and the telegraph poles over the
+// roofs by the gate: they showed only from its last step
+see -5600 89 461   -3800 0 900   -4512 0 900
+
+// the hill west of the gate (x -6016..-4608, y -1472..-448) and the dome on the
+// roof over that alley (its patches are in the alley's two clusters)
+see -4622 -1139 495   -5800 100 850   -5800 -150 800
