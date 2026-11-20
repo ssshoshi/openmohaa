@@ -9,3 +9,22 @@
  	surface opel2 shader opel_cull
  	surface opel3 shader opel
  	surface opel4 shader opel
+@@ -13,7 +15,17 @@
+ 	surface opeltread shader opeltread
+ 	surface opelhubstill shader opelhub_norotate
+ 	surface opeltreadstill shader opeltread_norotate
+-	surface opelwindows shader opelwindows
++	// its glass a surface a pane (opm-lamp-states' opel.skd, tools/vehicles/opel_glass.py):
++	// whole, cracked (skin1), crazed (skin2); brought down it is not drawn (g_glass.cpp)
++	surface opm_opelglass_front shader opm_opelglass_front
++	surface opm_opelglass_front shader opm_opelglass_cracked
++	surface opm_opelglass_front shader opm_opelglass_heavy
++	surface opm_opelglass_left shader opm_opelglass_left
++	surface opm_opelglass_left shader opm_opelglass_cracked
++	surface opm_opelglass_left shader opm_opelglass_heavy
++	surface opm_opelglass_right shader opm_opelglass_right
++	surface opm_opelglass_right shader opm_opelglass_cracked
++	surface opm_opelglass_right shader opm_opelglass_heavy
+ 	surface opellights shader opellights
+ 
+ 

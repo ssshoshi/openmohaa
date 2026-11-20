@@ -1,0 +1,51 @@
+TIKI
+// Its emitters are the idle animation's enter commands: a model's client init
+// commands run once, when the model is first loaded, not for each entity.
+// The bits of glass a round knocks out of a pane as it goes through: thrown on
+// the way it was going, into the cab, away from who fired (fgame g_glass.cpp
+// turns it to the bullet's way); they fall and bounce
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy2.skd
+}
+
+init
+{
+	client
+	{
+		cache opm_glassshard.spr
+	}
+}
+
+animations
+{
+	aaaa dummy2.skc // the game's way to let idle's enter commands run (barrel_empty_destroyed.tik)
+	idle dummy2.skc
+	{
+		client
+		{
+			enter originspawn
+			(
+				model opm_glassshard.spr
+				count 14
+				color 1.00 1.00 1.00
+				alpha 0.85
+				collision
+				bouncefactor 0.30
+				scale 0.06
+				scalemin 0.03
+				scalemax 0.12
+				life 2.60
+				velocity 190.00
+				randvel crandom 70 crandom 70 crandom 50
+				accel 0.00 0.00 -520.00
+				avelocity crandom 400 crandom 400 crandom 400
+				angles crandom 180 crandom 180 crandom 180
+				fadedelay 1.80
+				fade
+			)
+		}
+	}
+}

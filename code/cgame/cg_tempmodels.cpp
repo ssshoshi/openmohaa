@@ -622,7 +622,7 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
         p->cgd.origin += p->cgd.velocity * ftime * scale;
     }
     // Update the orign and the angles based on velocities first
-    else if (p->cgd.flags2 & (T2_MOVE | T2_ACCEL)) {
+    else if ((p->cgd.flags2 & (T2_MOVE | T2_ACCEL)) && !(p->cgd.flags2 & T2_RESTING)) {
         p->cgd.origin += p->cgd.velocity * ftime * scale;
     }
 
@@ -659,7 +659,7 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
         parentAngles  = vec_zero;
     }
 
-    if (p->cgd.flags & T_RANDOMROLL) {
+    if ((p->cgd.flags & T_RANDOMROLL) && !(p->cgd.flags2 & T2_RESTING)) {
         p->cgd.angles[ROLL] = random() * 360;
     }
 
@@ -683,7 +683,11 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
     }
 
     // Only do real collision if necessary
-    if (p->cgd.flags & T_COLLISION) {
+    if (p->cgd.flags2 & T2_RESTING) {
+        // Added in OPM: lying still: nothing moves it now
+        p->cgd.origin = p->cgd.oldorigin;
+        trace.fraction = 1.0;
+    } else if (p->cgd.flags & T_COLLISION) {
         // trace a line from previous position to new position
         CG_Trace(
             &trace,
@@ -703,6 +707,10 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
         CG_ClipMoveToBrushEntities(
             p->cgd.oldorigin, vec3_origin, vec3_origin, p->cgd.origin, p->cgd.collisionmask, &trace
         );
+        // Added in OPM
+        //  And models with a shape of their own (opm/collide): a truck's glass
+        //  landed on its bonnet and seats, not through them to the ground.
+        CG_ClipMoveToModelMeshes(p->cgd.oldorigin, p->cgd.origin, &trace);
     } else {
         // Fake it out so it never collides
         trace.fraction = 1.0;
@@ -711,7 +719,7 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
     // Check for collision
     if (trace.fraction == 1.0) {
         // Acceleration of velocity
-        if (p->cgd.flags2 & T2_ACCEL) {
+        if ((p->cgd.flags2 & T2_ACCEL) && !(p->cgd.flags2 & T2_RESTING)) {
             p->cgd.velocity = p->cgd.velocity + ftime * p->cgd.accel;
         }
 
@@ -837,6 +845,10 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
             p->cgd.velocity  = Vector(0, 0, 0);
             p->cgd.avelocity = Vector(0, 0, 0);
             p->cgd.flags &= ~T_WAVE;
+            // Added in OPM: and stays there, on anything flat enough to lie on
+            if (trace.plane.normal[2] > 0.5f) {
+                p->cgd.flags2 |= T2_RESTING;
+            }
         } else {
             if (p->cgd.flags & T_BOUNCESOUNDONCE) {
                 vec3_t org;

@@ -1,0 +1,73 @@
+TIKI
+// Its emitters are the idle animation's enter commands: a model's client init
+// commands run once, when the model is first loaded, not for each entity.
+// A pane of a truck's glass giving way (fgame g_glass.cpp turns it to face out
+// of the pane, so its x is the pane's normal and y, z lie across it): shards
+// (opm_glassshard) dropping out of the whole frame, tumbling, bouncing on the
+// ground, and a scatter of smaller bits with them
+setup
+{
+	scale 1.0
+	path models/fx/dummy
+	skelmodel dummy2.skd
+}
+
+init
+{
+	client
+	{
+		cache opm_glassshard.spr
+	}
+}
+
+animations
+{
+	aaaa dummy2.skc // the game's way to let idle's enter commands run (barrel_empty_destroyed.tik)
+	idle dummy2.skc
+	{
+		client
+		{
+			enter originspawn
+			(
+				model opm_glassshard.spr
+				count 40
+				color 1.00 1.00 1.00
+				alpha 1.00
+				collision
+				bouncefactor 0.18
+				scale 0.18
+				scalemin 0.10
+				scalemax 0.28
+				life 4.00
+				velocity 30.00
+				randvel crandom 30 crandom 20 random 25
+				offsetalongaxis crandom 2 crandom 30 crandom 12
+				accel 0.00 0.00 -800.00
+				avelocity crandom 360 crandom 360 crandom 360
+				angles crandom 180 crandom 180 crandom 180
+				fadedelay 3.20
+				fade
+			)
+			enter originspawn
+			(
+				model opm_glassshard.spr
+				count 30
+				color 1.00 1.00 1.00
+				alpha 0.90
+				collision
+				bouncefactor 0.25
+				scale 0.08
+				scalemin 0.04
+				scalemax 0.14
+				life 2.40
+				velocity 60.00
+				randvel crandom 50 crandom 40 random 40
+				offsetalongaxis crandom 2 crandom 30 crandom 12
+				accel 0.00 0.00 -800.00
+				angles crandom 180 crandom 180 crandom 180
+				fadedelay 1.60
+				fade
+			)
+		}
+	}
+}
