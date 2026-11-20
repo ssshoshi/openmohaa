@@ -1,0 +1,192 @@
+--- a/scripts/light.shader
++++ b/scripts/light.shader
+@@ -25,20 +25,33 @@
+ 	surfaceparm nomarks
+ 	surfaceparm glass
+ 	q3map_surfacelight 2000
+-	// light 1
+-	// test light
+-	{
+-		map $lightmap
+-		rgbGen identity
+-	}
+-	{
+-		map textures/Algiers/jh_rustwin1.tga
+-		blendFunc GL_DST_COLOR GL_ZERO
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/jh_rustwin1_blend.tga
+-		blendfunc GL_ONE GL_ONE
++	// Added in OPM (content/opm-windows, tools/windows/windows.py): the frame
++	// sharper, the glass lit from the room behind it and brighter than white
++	// (it blooms, q3map_opmglow: GL2's, the others pass over it), and a faint
++	// night sky's reflection on the glass alone (screened over it,
++	// not blooming)
++	q3map_opmglow
++	{
++		map $lightmap
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/jh_rustwin1lit_frame.tga
++		blendFunc GL_DST_COLOR GL_ZERO
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/jh_rustwin1lit_glow.tga
++		blendfunc GL_ONE GL_ONE
++	}
++	{
++		map textures/opm/windows/sheen.tga
++		tcGen environment
++		tcMod scale 3 3
++		blendfunc GL_ONE GL_ONE_MINUS_SRC_COLOR
++		rgbGen const 0.55 0.58 0.62
++	nextbundle
++		map textures/opm/windows/jh_rustwin1lit_mask.tga
+ 	}
+ } 
+ 
+@@ -48,20 +61,33 @@
+ 	surfaceparm nomarks
+ 	surfaceparm glass
+ 	q3map_surfacelight 2000
+-	// light 1
+-	// test light
+-	{
+-		map $lightmap
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/ihwin1a_framelit.tga
+-		blendFunc GL_DST_COLOR GL_ZERO
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/ihwin1a_framelit_blend.tga
+-		blendfunc GL_ONE GL_ONE
++	// Added in OPM (content/opm-windows, tools/windows/windows.py): the frame
++	// sharper, the glass lit from the room behind it and brighter than white
++	// (it blooms, q3map_opmglow: GL2's, the others pass over it), and a faint
++	// night sky's reflection on the glass alone (screened over it,
++	// not blooming)
++	q3map_opmglow
++	{
++		map $lightmap
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/ihwin1a_framelit_frame.tga
++		blendFunc GL_DST_COLOR GL_ZERO
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/ihwin1a_framelit_glow.tga
++		blendfunc GL_ONE GL_ONE
++	}
++	{
++		map textures/opm/windows/sheen.tga
++		tcGen environment
++		tcMod scale 3 3
++		blendfunc GL_ONE GL_ONE_MINUS_SRC_COLOR
++		rgbGen const 0.55 0.58 0.62
++	nextbundle
++		map textures/opm/windows/ihwin1a_framelit_mask.tga
+ 	}
+ }
+ 
+@@ -152,18 +178,33 @@
+ 	qer_keyword utility
+ 	surfaceparm nomarks
+ 	q3map_surfacelight 1500
+-	{
+-		map $lightmap
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/window4_exteriorlit.tga
+-		blendFunc GL_DST_COLOR GL_ZERO
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/window4_exteriorlit_blend.tga
+-		blendfunc GL_ONE GL_ONE
++	// Added in OPM (content/opm-windows, tools/windows/windows.py): the frame
++	// sharper, the glass lit from the room behind it and brighter than white
++	// (it blooms, q3map_opmglow: GL2's, the others pass over it), and a faint
++	// night sky's reflection on the glass alone (screened over it,
++	// not blooming)
++	q3map_opmglow
++	{
++		map $lightmap
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/window4_exteriorlit_frame.tga
++		blendFunc GL_DST_COLOR GL_ZERO
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/window4_exteriorlit_glow.tga
++		blendfunc GL_ONE GL_ONE
++	}
++	{
++		map textures/opm/windows/sheen.tga
++		tcGen environment
++		tcMod scale 3 3
++		blendfunc GL_ONE GL_ONE_MINUS_SRC_COLOR
++		rgbGen const 0.55 0.58 0.62
++	nextbundle
++		map textures/opm/windows/window4_exteriorlit_mask.tga
+ 	}
+ } 
+ 
+@@ -260,20 +301,33 @@
+ 	qer_editorimage textures/light/jh_window1pj_lit.tga
+ 	surfaceparm nomarks
+ 	q3map_surfacelight 3000
+-	// light 1
+-	// test light
+-	{
+-		map $lightmap
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/jh_window1pj_lit.tga
+-		blendFunc GL_DST_COLOR GL_ZERO
+-		rgbGen identity
+-	}
+-	{
+-		map textures/light/jh_window1pj_lit_blend.tga
+-		blendfunc GL_ONE GL_ONE
++	// Added in OPM (content/opm-windows, tools/windows/windows.py): the frame
++	// sharper, the glass lit from the room behind it and brighter than white
++	// (it blooms, q3map_opmglow: GL2's, the others pass over it), and a faint
++	// night sky's reflection on the glass alone (screened over it,
++	// not blooming)
++	q3map_opmglow
++	{
++		map $lightmap
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/jh_window1pj_lit_frame.tga
++		blendFunc GL_DST_COLOR GL_ZERO
++		rgbGen identity
++	}
++	{
++		map textures/opm/windows/jh_window1pj_lit_glow.tga
++		blendfunc GL_ONE GL_ONE
++	}
++	{
++		map textures/opm/windows/sheen.tga
++		tcGen environment
++		tcMod scale 3 3
++		blendfunc GL_ONE GL_ONE_MINUS_SRC_COLOR
++		rgbGen const 0.55 0.58 0.62
++	nextbundle
++		map textures/opm/windows/jh_window1pj_lit_mask.tga
+ 	}
+ } 
+ 

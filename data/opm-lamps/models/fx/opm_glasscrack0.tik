@@ -1,0 +1,16 @@
+TIKI
+// A bullet's hole in a pane of a truck's glass, its cracks in a star round it
+// (fgame g_glass.cpp puts one where each round goes through, bound to the
+// truck): the game's unit square (it faces along x), opm_glasscrack0
+setup
+{
+	scale 18
+	path models/fx/unitsquare
+	skelmodel unitsquare.skd
+	surface all shader opm_glasscrack0
+}
+
+animations
+{
+	idle	unitsquare.skc
+}

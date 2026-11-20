@@ -160,6 +160,9 @@ typedef struct {
     //  Moving, the lights it can shadow anything for: a bit each of this
     //  frame's candidates (R_RtRenderShadows), the rest pass it over.
     uint64_t	rtLights;
+    //  Not drawn this frame: a vehicle's fake headlight flare where its live
+    //  headlight shines (R_RtEntityLamps).
+    qboolean	rtHidden;
 
     // Added in OPM
     //  The scene a skeletal model was posed for (tr.sceneCount) and which pose
@@ -743,6 +746,8 @@ typedef struct shader_s {
     // Added in OPM: gives light of its own (q3map_surfacelight: a lit window),
     // which the compiler put in its lightmap: kept there by the realtime lights
     qboolean rtEmissive;
+    float    emissiveScale; // Added in OPM: how much brighter than a lamp's bulb (r_bloomEmissive) it blooms
+    qboolean emissiveAdd;   // Added in OPM: only its added stages bloom (q3map_opmglow: a lit window's glass)
     // Set when any stage uses rgbGen lightinggrid or lightingspherical, so the
     // backend knows which of MOH:AA's two entity lighting models to set up.
     int needsLGrid;

@@ -890,6 +890,12 @@ extern double cgmOpen[CGM_COUNT];
              markFragment_t *fragmentBuffer
          );
     int      CG_GetSolidEntities(centity_t ***list);
+
+    //
+    // cg_meshclip.c (Added in OPM)
+    //
+    void CG_ClipMoveToModelMeshes(const vec3_t start, const vec3_t end, trace_t *tr);
+    void CG_ClearModelMeshCache(void);
     int      CG_ModelSurfaceType(int entnum);
 
     // Added in OPM

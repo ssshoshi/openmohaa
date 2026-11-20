@@ -119,6 +119,9 @@ TIKI file, similar to ScriptMaster in the server game dll.
 // Added in OPM: puffs of smoke with a volume: with r_volumetric 2 the renderer
 // puts them in the air's grid, lit and shadowed, in place of their sprites
 #define T2_SMOKEVOLUME        (1 << 25)
+// Added in OPM: come to rest on a floor: it stays where it lies, still, until it
+// fades (it went on falling into the floor and out again, a step at a time)
+#define T2_RESTING            (1 << 26)
 
 class spawnthing_t;
 class specialeffect_t;

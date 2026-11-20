@@ -1906,10 +1906,18 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			ComputeShaderColors(pStage, baseColor, vertColor, pStage->stateBits);
 
 			// Added in OPM: a lamp's light source, brighter than white (bloom)
-			if (input->shader->emissive && r_hdr->integer && r_bloom->value > 0 && r_bloomEmissive->value > 1.0f)
+			// (its stages lit by the world, a truck's paint round a glowing
+			// headlight slit, stay as lit)
+			if (input->shader->emissive && r_hdr->integer && r_bloom->value > 0 && r_bloomEmissive->value > 1.0f
+				&& pStage->rgbGen != CGEN_LIGHTING_SPHERICAL && pStage->rgbGen != CGEN_LIGHTING_DIFFUSE
+				&& pStage->rgbGen != CGEN_LIGHTING_GRID
+				&& (!input->shader->emissiveAdd
+					|| (pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) == (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE)))
 			{
-				VectorScale(baseColor, r_bloomEmissive->value, baseColor);
-				VectorScale(vertColor, r_bloomEmissive->value, vertColor);
+				const float glow = r_bloomEmissive->value * Q_max(1.0f, input->shader->emissiveScale);
+
+				VectorScale(baseColor, glow, baseColor);
+				VectorScale(vertColor, glow, vertColor);
 			}
 
 			RB_SetGlobalFogUniforms(sp, pStage);

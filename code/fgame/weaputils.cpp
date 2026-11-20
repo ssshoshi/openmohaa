@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "g_spawn.h"
 #include "weaputils.h"
 #include "g_physics.h"
+#include "g_glass.h"
 #include "specialfx.h"
 #include "sentient.h"
 #include "actor.h"
@@ -2347,6 +2348,29 @@ float BulletAttack(
                 //  Weapons and items lying in its way, which it passes through.
                 G_PhysicsBulletPath(vTraceStart, trace.endpos, newdamage, vDir, ent);
 
+                // Added in OPM
+                //  A pane of glass on its way (a truck's windscreen), cracked or shattered.
+                //  Past an unseen surface it struck too (a parked truck's clip box
+                //  stands out past its doors): the glass behind it was never reached.
+                {
+                    Vector vGlassEnd = trace.endpos;
+
+                    if (trace.fraction < 1.0f && (trace.surfaceFlags & SURF_NODRAW)) {
+                        vGlassEnd += vDir * 64.0f;
+                    }
+                    if (developer->integer > 1) {
+                        gi.DPrintf(
+                            "glass: round ends on %s %s '%s' (surface flags %x, contents %x)\n",
+                            trace.ent ? "entity" : "the world",
+                            trace.ent && trace.ent->entity ? trace.ent->entity->getClassname() : "",
+                            trace.ent && trace.ent->entity ? trace.ent->entity->TargetName().c_str() : "",
+                            trace.surfaceFlags,
+                            trace.contents
+                        );
+                    }
+                    G_GlassBulletPath(vTraceStart, vGlassEnd);
+                }
+
                 if (ent && ent != world && ent != owner) {
                     if (ent->takedamage) {
                         if (g_gametype->integer == GT_SINGLE_PLAYER && !iNumHit) {
@@ -3280,6 +3304,10 @@ void RadiusDamage(
         if (ent == ignore || (hurtOwnerOnly && ent != attacker)) {
             continue;
         }
+
+        // Added in OPM
+        //  Its glass shattered, whether or not it can be hurt.
+        G_GlassBlast(ent, origin, radius);
 
         // Added in OPM
         //  A physics prop that can't be hurt is still thrown.

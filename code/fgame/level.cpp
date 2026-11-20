@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "g_spawn.h"
 #include "g_bot.h"
 #include "level.h"
+#include "g_glass.h"
 #include "parm.h"
 #include "navigate.h"
 #include "gravpath.h"
@@ -1507,6 +1508,10 @@ void Level::PreSpawnSentient(Event *ev)
     }
 
     SpawnPlacedDead();
+    if (!LoadingSavegame) {
+        // Added in OPM: the static vehicles' glass, to break (a save keeps them)
+        G_GlassStaticModels(m_mapfile.c_str());
+    }
     StartMapAddon();
 
     PathManager.CreatePaths();

@@ -11,7 +11,16 @@
 //                            // (a flame: it flickers), off (a lamp that is not lit), or
 //                            // searchlight (an entity the level's script aims: its
 //                            // light from its first bulb, the lens, the way spot points,
-//                            // standing in for the game's lights where its beam falls)
+//                            // standing in for the game's lights where its beam falls),
+//                            // headlight (a vehicle's: a light from each bulb, the way
+//                            // spot points, while the surface lightsurface names is
+//                            // drawn; that fake beam and the fake flares at its lenses,
+//                            // the model flare names, are not drawn; the surface
+//                            // glowsurface names takes its second skin, a glowing
+//                            // lens), or surface (the
+//                            // block names a shader, not a model: a lamp built of
+//                            // brushes; its faces glow and the map's light by each
+//                            // comes from it)
 //         color 1 0.86 0.68  // its light's colour, where the map gave it none
 //         intensity 120      // as a map light's "light" key, where the map gave it none
 //         bulb x y z         // one a bulb, in the model's frame as drawn
@@ -416,4 +425,39 @@ models/miscobj/searchlightbase.tik
 {
 	kind off
 	bulb 0 0 20
+}
+
+// ---------------------------------------------------------------- headlights
+
+// the Opel truck's (m1l1's truck following the player): blackout lamps, a
+// covered lens with a narrow slit, which lit the road a little way ahead and
+// little else; from the lenses' middles (its "light left" and "light right"
+// tags), on while the fake beam (opellights, until the script's idlenolights)
+// is drawn, the slits glowing (opel1's second skin, opm_glow_opel); the flares
+// global/spotlight.scr's corona/deadcorona hang on those tags go too
+models/vehicles/opeltruck.tik
+{
+	kind headlight
+	color 1 0.88 0.68
+	intensity 2500
+	bulb 160 34.6 59.2
+	bulb 160 -36.8 59.2
+	spot 1 0 -0.4 55
+	lightsurface opellights
+	glowsurface opel1
+	flare models/fx/searchlight.tik
+}
+
+// ---------------------------------------------------------------- lamps in the brushwork
+
+// a shader the level designer built a lamp of (kind surface): the map's light
+// beside each face of it comes from the face, and the face glows
+// (R_RtLightsAtSurfaces); m1l1's lit grilles on the ground, which light the
+// walls above them
+textures/light/warewindowlit_nolight
+{
+	kind surface
+	color 1 0.9 0.8     // where the map's light by it is in the lightmaps alone
+	intensity 724       // (the banner grilles' spots, spawnflags 2): its others'
+	spot 0 0 1 102      // and their cone (the way is straight out of the face)
 }

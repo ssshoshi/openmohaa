@@ -250,6 +250,7 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 
 	backEndData->entities[r_numentities].e = *ent;
 	backEndData->entities[r_numentities].rtCaster = 0;
+	backEndData->entities[r_numentities].rtHidden = qfalse;
 	backEndData->entities[r_numentities].posedScene = 0;
 	backEndData->entities[r_numentities].poseId = 0;
 	// Added in OPM: set for skeletal models alone (R_AddSkelSurfaces); a

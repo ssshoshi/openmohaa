@@ -1,0 +1,30 @@
+--- a/models/vehicles/opeltruck.tik
++++ b/models/vehicles/opeltruck.tik
+@@ -5,6 +5,8 @@
+ 	path models/vehicles/opeltruck
+ 	skelmodel opel.skd
+ 	surface opel1 shader opel
++	// its second skin: the blackout slits glowing, while the live headlights are on
++	surface opel1 shader opm_glow_opel
+ 	surface opel2 shader opel_cull
+ 	surface opel3 shader opel
+ 	surface opel4 shader opel
+@@ -13,7 +15,17 @@
+ 	surface opeltread shader opeltread
+ 	surface opelhubstill shader opelhub_norotate
+ 	surface opeltreadstill shader opeltread_norotate
+-	surface opelwindows shader opelwindows
++	// its glass a surface a pane (opm-lamp-states' opel.skd, tools/vehicles/opel_glass.py):
++	// whole, cracked (skin1), crazed (skin2); brought down it is not drawn (g_glass.cpp)
++	surface opm_opelglass_front shader opm_opelglass_front
++	surface opm_opelglass_front shader opm_glass_cracked
++	surface opm_opelglass_front shader opm_glass_heavy
++	surface opm_opelglass_left shader opm_opelglass_left
++	surface opm_opelglass_left shader opm_glass_cracked
++	surface opm_opelglass_left shader opm_glass_heavy
++	surface opm_opelglass_right shader opm_opelglass_right
++	surface opm_opelglass_right shader opm_glass_cracked
++	surface opm_opelglass_right shader opm_glass_heavy
+ 	surface opellights shader opellights
+ 
+ 
