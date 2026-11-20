@@ -45,6 +45,10 @@ SHADERS = os.path.join(HERE, "..", "..", "data", "opm-lamps", "scripts", "opm_la
 # the glow over the glass of its own texture (glass.py), which is drawn whole
 GLASS_EXTRA = (0.35, 0.33, 0.30)
 
+# a lantern's clear glass: its tint, warmed by the flame, and the flame's light caught on it
+LANTERN_GLASS = (0.85, 0.72, 0.52)
+LANTERN_CATCH = (0.07, 0.05, 0.03)
+
 # how each kind's glass glows, lit from inside: added over the lit glass
 GLOW = {
     "shaded": (0.95, 0.78, 0.55),
@@ -99,6 +103,17 @@ def glass_shader(model, entry):
         # drawn whole the glass is as bright as the screen shows: a fabric shade less
         bright = float(entry["glassbright"][0]) if "glassbright" in entry else None
         base = "\t\trgbGen const %.2f %.2f %.2f" % ((bright,) * 3) if bright is not None else "\t\trgbGen identity"
+        if "glass" in entry and kind == "lantern":
+            # a lantern's clear glass round a flame: seen through, the flame in
+            # it; warmed by it, and thicker to the eye where it turns away
+            # (alphaGen oneMinusDot, as the game's own lantern glass); a faint
+            # catch of the flame's light over it, which alone blooms
+            # (q3map_opmglow): drawn whole and glowing it was a bulb
+            return "\n".join([name, "{", "\tcull none", "\tsurfaceparm nolightmap", "\tq3map_opmglow",
+                              "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA",
+                              "\t\trgbGen const %.2f %.2f %.2f" % LANTERN_GLASS, "\t\talphaGen oneMinusDot 0.12 0.6", "\t}",
+                              "\t{", "\t\tmap %s" % image, "\t\tblendFunc GL_ONE GL_ONE",
+                              "\t\trgbGen const %.2f %.2f %.2f" % LANTERN_CATCH, "\t}", "}", ""])
         if "glass" in entry:
             # its own glass, lit from inside alike whichever way a face of it
             # turns: the texture whole (its shading is in it), and more over it.
@@ -121,7 +136,7 @@ def cmd_shaders(args):
            "// from lights/lamps.txt. The remodelled lamps (remodel.py) name a surface",
            "// opm_<lamp>_glass, which takes the shader of its name.", ""]
     for model, entry in table.items():
-        if (entry.get("kind") or [""])[0] in ("off", "searchlight"):
+        if (entry.get("kind") or [""])[0] in ("off", "searchlight", "headlight", "surface"):
             continue
         s = glass_shader(model, entry)
         if s:

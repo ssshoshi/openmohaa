@@ -43,15 +43,20 @@ opm_flame
 }
 
 // A remodelled swinging lantern put out (models/lights/swinging_lantern.tik's
-// light_off, content/opm-lantern): its glass as lit by what is round it,
-// no longer from inside
+// light_off, content/opm-lamp-states): its clear glass as lit by what is round
+// it (dim), no longer from inside
 opm_swinging_lantern_glass_off
 {
 	cull none
 	surfaceparm nolightmap
 	{
 		map textures/opm/lamps/swinging_lantern_glass.tga
-		rgbGen lightingSpherical
+		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+		// dim, as the night round it lights it: lit by the world (rgbGen
+		// lightingSpherical) it went through the lit program, which has no
+		// alphaGen oneMinusDot, and drew solid white
+		rgbGen const 0.22 0.21 0.2
+		alphaGen oneMinusDot 0.12 0.6
 	}
 }
 
