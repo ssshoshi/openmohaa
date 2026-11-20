@@ -71,8 +71,11 @@ static qboolean	R_CullSurface( msurface_t *surf ) {
 		// it, and the ground at its foot and the corner where it met another
 		// wall were within a texel or two of that: the lamp lit a line along
 		// them from the far side of the wall. The shaders' offset off the
-		// surface keeps the near side from shadowing what it is.
-		if ( (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED)) )
+		// surface keeps the near side from shadowing what it is. The sky's
+		// views too: with the far sides alone, what is inside a wall (a
+		// floor's lightmap running on under it) saw the sky through the
+		// wall's top, and its texels lit the floor along the wall.
+		if ( (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY)) )
 		{
 			return qfalse;
 		}
@@ -793,6 +796,9 @@ static void R_MarkLeaves (void) {
 	//  apart from the views' marks, which do follow the doors.
 	rtShadow = (tr.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY)) ? qtrue : qfalse;
 	key      = rtShadow ? RT_VISKEY(cluster) : cluster;
+	if (tr.viewParms.flags & VPF_RTSKY) {
+		key = RT_VISKEY(-1);
+	}
 
 	// if the cluster is the same and the area visibility matrix
 	// hasn't changed, we don't need to mark everything again
@@ -827,7 +833,10 @@ static void R_MarkLeaves (void) {
 		}
 	}
 
-	vis = R_ClusterPVS(cluster);
+	// Added in OPM: the sky's views have all of the world, whatever the
+	// cluster their middle falls in sees (R_RtRenderSkyDir): from m2l2a's
+	// middle a roof the cluster there could not see let the sky in under it
+	vis = (tr.viewParms.flags & VPF_RTSKY) ? NULL : R_ClusterPVS(cluster);
 	
 	for (i=0,leaf=tr.world->nodes ; i<tr.world->numnodes ; i++, leaf++) {
 		cluster = leaf->cluster;

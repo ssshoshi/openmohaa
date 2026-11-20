@@ -498,7 +498,7 @@ void main()
 			float through = 1.0;
 			if (smoky)
 				through = 0.5 * (SmokeMulti(SmokeThrough(P, vec3(0.0, 0.0, 1.0))) + SmokeMulti(sideTau));
-			Lm += RtSky(P, vec3(0.0, 0.0, 1.0)) * through;
+			Lm += RtSkyAir(P) * through;
 		}
 		Lm += u_FogAmbient.rgb;
 	}

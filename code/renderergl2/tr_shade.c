@@ -2657,7 +2657,7 @@ void RB_StageIteratorGeneric( void )
 	// from further off had it coarser, standing over the ground drawn now,
 	// and its side towards the lamp shadowed that in blocks that came and
 	// went as the view walked up to them.
-	rtWorld = (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED))
+	rtWorld = (backEnd.viewParms.flags & (VPF_RTSTATIC | VPF_RTDYNAMIC | VPF_RTBAKED | VPF_RTSKY))
 		&& backEnd.currentEntity == &tr.worldEntity && !backEnd.currentStaticModel && !input->terrain;
 	if (input->shader->cullType == CT_TWO_SIDED || rtWorld)
 	{

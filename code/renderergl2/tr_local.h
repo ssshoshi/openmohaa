@@ -571,6 +571,7 @@ enum
 #define TMU_RTSKY       14 // Added in OPM: the sky's depth from each of its directions (tr_rtlight.c)
 #define RT_SKY_DIRS     16 // Added in OPM: the directions the sky lights from, RT_SKY_TILES squared
 #define RT_SKY_TILES    4
+#define RT_SKY_REGION_TILE 1024 // Added in OPM: a tile of the sky's depth over one part of the world (tr.rtSkyRegionImage)
 #define TMU_RTSKYLM     15 // Added in OPM: the sky each lightmap texel sees (tr_rtlight.c)
 #define TMU_SKELMORPHS  16 // Added in OPM: the models' morphs, for the same
 #define TMU_RTSUNCASCADE 17 // Added in OPM: the sun's widest shadow cascade, which particles take their shadow from (tr_rtlight.c)
@@ -1064,6 +1065,7 @@ typedef enum
 	UNIFORM_RTLIST,
 	UNIFORM_RTSKY,
 	UNIFORM_RTSKYCOLOR,
+	UNIFORM_RTSKYREGION,  // Added in OPM: the part of the world a bake of the sky draws, x y the least, z w past the most
 	UNIFORM_RTSKYMAP,
 	UNIFORM_RTSURFACE,
 	UNIFORM_RTSKYLIGHTMAP,
@@ -2967,6 +2969,8 @@ typedef struct {
     image_t *rtSkyImage;       // the sky's depth from each of its directions, a tile each
     FBO_t   *rtSkyFbo;
     FBO_t   *rtSkyBakeFbo;     // the sky's lightmaps are drawn through it, a page at a time
+    image_t *rtSkyRegionImage; // Added in OPM: the sky's depth over one part of the world, sharper, for its lightmaps (R_RtSkyRegionStep)
+    FBO_t   *rtSkyRegionFbo;
     image_t **rtSkyLightmaps;  // a page each of tr.lightmaps: the sky each texel sees, NULL until drawn
     int      rtNumSkyLightmaps;
     vec4_t   rtSkyRows[RT_SKY_DIRS * 4]; // each direction's projection, the rows giving x, y and depth, then the direction

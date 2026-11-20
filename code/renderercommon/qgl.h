@@ -190,6 +190,7 @@ extern void (APIENTRYP qglUnlockArraysEXT) (void);
 // OpenGL 2.0, was GL_ARB_shading_language_100, GL_ARB_vertex_program, GL_ARB_shader_objects, and GL_ARB_vertex_shader
 #define QGL_2_0_PROCS \
 	GLE(void, AttachShader, GLuint program, GLuint shader) \
+	GLE(void, BlendEquationSeparate, GLenum modeRGB, GLenum modeAlpha) \
 	GLE(void, BindAttribLocation, GLuint program, GLuint index, const GLchar *name) \
 	GLE(void, CompileShader, GLuint shader) \
 	GLE(GLuint, CreateProgram, void) \

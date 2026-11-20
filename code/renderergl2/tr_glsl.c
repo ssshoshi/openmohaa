@@ -221,6 +221,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtList",          GLSL_VEC4_RTLIST },
 	{ "u_RtSky",           GLSL_VEC4_RTSKY },
 	{ "u_RtSkyColor",      GLSL_VEC4 },
+	{ "u_RtSkyRegion",     GLSL_VEC4 },
 	{ "u_RtSkyMap",        GLSL_INT },
 	{ "u_RtSurface",       GLSL_VEC4 },
 	{ "u_RtSkyLightmap",   GLSL_INT },
@@ -644,10 +645,10 @@ static const char *rt_glsl =
 	// How much of the sky a surface at P facing N sees, as an open floor does
 	// all of it: each direction it faces, as much as it faces it, if nothing
 	// is between them in that direction's depth.
-	"vec3 RtSky(vec3 P, vec3 N)\n"
+	"vec3 RtSkyOff(vec3 P, vec3 N, float off)\n"
 	"{\n"
 	"	float sum  = 0.0;\n"
-	"	float bias = 1.5 * u_RtSkyColor.w + 2.0;\n"
+	"	float bias = (1.5 * u_RtSkyColor.w + 2.0) * off;\n"
 	"	for (int k = 0; k < RT_SKY_DIRS; k++)\n"
 	"	{\n"
 	"		vec4  d = u_RtSky[k * 4 + 3];\n"
@@ -655,7 +656,13 @@ static const char *rt_glsl =
 	// a leaf takes what comes through it from behind
 	"		if (w < 0.0) w *= -u_RtSurface.x;\n"
 	"		if (w <= 0.0) continue;\n"
-	"		vec3  Q = P + (N * sign(dot(N, d.xyz)) + d.xyz) * bias;\n"
+	// off the surface along its normal alone: pushed toward the sky as
+	// well, a point at the foot of a wall or in an inside corner went
+	// through the wall beside it, and a wall on the void has nothing drawn
+	// behind it to stop the sky (m2l2a's corners lit). Along the normal the
+	// texels of its own surface are still behind it: a texel and a half
+	// is more than half a texel's depth at any slope, in an orthographic view
+	"		vec3  Q = P + N * sign(dot(N, d.xyz)) * bias;\n"
 	"		vec4  r0 = u_RtSky[k * 4], r1 = u_RtSky[k * 4 + 1], r2 = u_RtSky[k * 4 + 2];\n"
 	"		vec3  c = vec3(dot(r0.xyz, Q) + r0.w, dot(r1.xyz, Q) + r1.w, dot(r2.xyz, Q) + r2.w) * 0.5 + 0.5;\n"
 	"		float t = float(k);\n"
@@ -664,6 +671,18 @@ static const char *rt_glsl =
 	"		sum += w * shadow2D(u_RtSkyMap, vec3((tile + st) / RT_SKY_TILES, c.z));\n"
 	"	}\n"
 	"	return u_RtSkyColor.rgb * sum;\n"
+	"}\n"
+	"vec3 RtSky(vec3 P, vec3 N)\n"
+	"{\n"
+	"	return RtSkyOff(P, N, 1.0);\n"
+	"}\n"
+	// the air (the volumetrics, r_volumetric): lit as a floor is, but tested
+	// where it is, with no surface to keep off; off the floor's offset a cell
+	// under a thin slab was tested above it, lit, and flickered as its jitter
+	// took it across
+	"vec3 RtSkyAir(vec3 P)\n"
+	"{\n"
+	"	return RtSkyOff(P, vec3(0.0, 0.0, 1.0), 0.0);\n"
 	"}\n"
 	// the map's lighting and what the lights change of it, never darker than
 	// a part of what it was: the lights' model is too bright near a lamp
@@ -963,7 +982,7 @@ static const char *rt_glsl =
 	"	}\n"
 	// hanging in the air, it is lit as a floor is
 	"	if (u_RtSkyColor.w > 0.0 && !delta)\n"
-	"		sum += RtSky(P, vec3(0.0, 0.0, 1.0));\n"
+	"		sum += RtSkyAir(P);\n"
 	"	return sum;\n"
 	"}\n"
 	"#endif\n";
@@ -1036,12 +1055,63 @@ static const char *rt_skyBake_vp =
 	"	var_P = attr_Position;\n"
 	"	var_N = attr_Normal;\n"
 	"}\n";
+// the sky's alone: its triangle's middle too (R_RtBakeGather)
+static const char *rt_skyBakeSky_vp =
+	"attribute vec3 attr_Position;\n"
+	"attribute vec3 attr_Normal;\n"
+	"attribute vec4 attr_TexCoord0;\n"
+	"attribute vec4 attr_Tangent;\n"
+	"attribute vec3 attr_Position2;\n"
+	"attribute vec3 attr_Normal2;\n"
+	"varying vec3 var_P;\n"
+	"varying vec3 var_N;\n"
+	"varying vec3 var_Mid;\n"
+	"varying vec3 var_Ds;\n"
+	"varying vec3 var_Dt;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_Position = vec4(attr_TexCoord0.xy * 2.0 - 1.0, 0.0, 1.0);\n"
+	"	var_P = attr_Position;\n"
+	"	var_N = attr_Normal;\n"
+	"	var_Mid = attr_Tangent.xyz;\n"
+	"	var_Ds = attr_Position2;\n"
+	"	var_Dt = attr_Normal2;\n"
+	"}\n";
 static const char *rt_skyBake_fp =
 	"varying vec3 var_P;\n"
 	"varying vec3 var_N;\n"
+	"varying vec3 var_Mid;\n"
+	"varying vec3 var_Ds;\n"
+	"varying vec3 var_Dt;\n"
+	// the texels whose middles are in this part of the world alone, the
+	// rest baked with another part's depth (R_RtSkyRegionStep)
+	"uniform vec4 u_RtSkyRegion;\n"
 	"void main()\n"
 	"{\n"
-	"	gl_FragColor = vec4(RtSky(var_P, normalize(var_N)).r, 0.0, 0.0, 1.0);\n"
+	"	if (any(lessThan(var_P.xy, u_RtSkyRegion.xy)) || any(greaterThanEqual(var_P.xy, u_RtSkyRegion.zw)))\n"
+	"		discard;\n"
+	// a texel's middle can be on its surface's edge (the edges are drawn for
+	// the texels the triangles miss) or past it, a lightmap texel being 16
+	// or 32 units: at the foot of a wall that is in the wall, half the sky
+	// past it seen, and the lightmap's filtering spread that up to the
+	// corner. Moved into its triangle, as a compiler moves its samples
+	"	vec3  toMid = var_Mid - var_P;\n"
+	"	float away = length(toMid);\n"
+	"	vec3  P = away > 0.01 ? var_P + toMid * (min(away, 4.0) / away) : var_P;\n"
+	// and the darkest of it and its texel's corners: a texel across the
+	// edge of what shades it (a wall's lightmap running on past the
+	// ceiling, a floor's under a wall) had the sky of the side it is not
+	// seen from, and the lightmap's filtering drew a lit line along the
+	// edge. A texel's span is its triangle's (R_RtBakeGather): the edges'
+	// pass draws lines, which have no span of their own in the raster.
+	"	vec3  N = normalize(var_N);\n"
+	"	vec3  du = var_Ds * 0.5, dv = var_Dt * 0.5;\n"
+	"	float sky = RtSky(P, N).r;\n"
+	"	sky = min(sky, RtSky(P + du + dv, N).r);\n"
+	"	sky = min(sky, RtSky(P + du - dv, N).r);\n"
+	"	sky = min(sky, RtSky(P - du + dv, N).r);\n"
+	"	sky = min(sky, RtSky(P - du - dv, N).r);\n"
+	"	gl_FragColor = vec4(sky, 0.0, 0.0, 1.0);\n"
 	"}\n";
 
 /*
@@ -2677,8 +2747,8 @@ void GLSL_InitGPUShaders(void)
 	// Added in OPM: the sky a lightmap texel sees, once a map (R_RtBakeSkyLightmaps)
 	if (r_realtimeLighting->integer == 2)
 	{
-		if (!GLSL_InitGPUShader(&tr.rtSkyBakeShader, "rtskybake", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD,
-			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBake_vp, rt_skyBake_fp))
+		if (!GLSL_InitGPUShader(&tr.rtSkyBakeShader, "rtskybake", ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD | ATTR_TANGENT | ATTR_POSITION2 | ATTR_NORMAL2,
+			qtrue, "#define USE_RTLIGHT\n", qtrue, rt_skyBakeSky_vp, rt_skyBake_fp))
 		{
 			ri.Printf(PRINT_WARNING, "realtime lighting: no program for the sky's lightmaps\n");
 		}
