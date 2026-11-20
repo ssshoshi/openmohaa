@@ -41,7 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # shader name: (frame texture, lit glass texture, how bright its glass: it blooms,
 # brighter than white, so a glass that was near white already is let down)
 WINDOWS = {
-    "jh_rustwin1lit": ("textures/algiers/jh_rustwin1.tga", "textures/light/jh_rustwin1_blend.tga", 0.5),
+    "jh_rustwin1lit": ("textures/algiers/jh_rustwin1.tga", "textures/light/jh_rustwin1_blend.tga", 0.85),
     "window4_exteriorlit": ("textures/light/window4_exteriorlit.tga", "textures/light/window4_exteriorlit_blend.tga", 0.85),
     "jh_window1pj_lit": ("textures/light/jh_window1pj_lit.tga", "textures/light/jh_window1pj_lit_blend.tga", 0.75),
     "ihwin1a_framelit": ("textures/light/ihwin1a_framelit.tga", "textures/light/ihwin1a_framelit_blend.tga", 0.55),
@@ -155,14 +155,19 @@ def glass(lit, gain):
 
 
 def sheen(size=256):
-    """A night sky's soft reflection: dark, a paler band at the horizon, faint streaks."""
-    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) / (size - 1)
-    sky = 0.15 + 0.85 * np.exp(-((yy - 0.55) / 0.22) ** 2)
+    """What glass shows of the night outside, tiling: a faint sky, and the soft
+    diagonal streaks of light a pane catches, sliding over it as one moves."""
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) / size
+    sky = 0.10 + 0.10 * (0.5 + 0.5 * np.sin(2 * np.pi * yy))
+    # streaks along a 35 degree diagonal, two widths, wrapping so it tiles
+    d = (xx * 1.0 + yy * 0.7) % 1.0
+    wide = np.exp(-((d - 0.30) / 0.07) ** 2)
+    thin = np.exp(-((d - 0.47) / 0.018) ** 2)
     rng = np.random.default_rng(99)
-    streak = blur(rng.standard_normal((size, size)).astype(np.float32), 6.0)
-    streak = 0.75 + 0.5 * (streak - streak.min()) / max(1e-6, streak.max() - streak.min())
-    s = sky * streak
-    return np.stack([s * 0.80, s * 0.88, s * 1.0], axis=2)
+    vary = blur(rng.standard_normal((size, size)).astype(np.float32), 10.0)
+    vary = 0.8 + 0.4 * (vary - vary.min()) / max(1e-6, vary.max() - vary.min())
+    s = (sky + 0.55 * wide + 0.8 * thin) * vary
+    return np.clip(np.stack([s * 0.86, s * 0.92, s * 1.0], axis=2), 0, 1)
 
 
 def main():
