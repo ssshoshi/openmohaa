@@ -2350,7 +2350,26 @@ float BulletAttack(
 
                 // Added in OPM
                 //  A pane of glass on its way (a truck's windscreen), cracked or shattered.
-                G_GlassBulletPath(vTraceStart, trace.endpos);
+                //  Past an unseen surface it struck too (a parked truck's clip box
+                //  stands out past its doors): the glass behind it was never reached.
+                {
+                    Vector vGlassEnd = trace.endpos;
+
+                    if (trace.fraction < 1.0f && (trace.surfaceFlags & SURF_NODRAW)) {
+                        vGlassEnd += vDir * 64.0f;
+                    }
+                    if (developer->integer > 1) {
+                        gi.DPrintf(
+                            "glass: round ends on %s %s '%s' (surface flags %x, contents %x)\n",
+                            trace.ent ? "entity" : "the world",
+                            trace.ent && trace.ent->entity ? trace.ent->entity->getClassname() : "",
+                            trace.ent && trace.ent->entity ? trace.ent->entity->TargetName().c_str() : "",
+                            trace.surfaceFlags,
+                            trace.contents
+                        );
+                    }
+                    G_GlassBulletPath(vTraceStart, vGlassEnd);
+                }
 
                 if (ent && ent != world && ent != owner) {
                     if (ent->takedamage) {

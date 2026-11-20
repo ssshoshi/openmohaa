@@ -1,0 +1,24 @@
+//=============================================================================
+// maps/m1l2b_opm.scr - OpenMoHAA add-on for m1l2b
+//
+// The Opel that drives off at the start has its headlights on: the level puts
+// coronas on its lenses (global/spotlight.scr) but leaves its lights' surface
+// hidden, and the renderer's live headlights (lamps.txt, kind headlight)
+// follow that surface. Its "idle" animation hides it again whenever it
+// starts, and a vehicle starts it over as it drives (Vehicle::
+// EventContinueSkidding and others), so it is shown again while the truck is.
+//
+// An add-on (Level::StartMapAddon), not a change to maps/m1l2b.scr, which
+// would break old saves. Runs at level start and on loading a save: the truck
+// is gone by then, or is the one driving with its lights on.
+//=============================================================================
+
+	if ($truck01 == NULL)
+		end
+
+	while ($truck01 != NULL)
+	{
+		$truck01 surface opellights "-nodraw"
+		waitframe
+	}
+end

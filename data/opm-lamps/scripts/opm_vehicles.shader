@@ -1,7 +1,11 @@
-// The Opel truck's glass, a surface a pane (tools/vehicles/opel_glass.py cuts
-// opel.skd's opelwindows in three; models/vehicles/opeltruck.tik gives each
-// these three skins, content/opm-lamp-states), which bullets crack, craze and
-// bring down, and blasts bring down (fgame g_glass.cpp). The game's glass was its smudge
+// The vehicles' glass, a surface a pane (tools/vehicles/vehicle_glass.py cuts
+// each model's glass up and gives each pane three skins in its .tik files,
+// content/opm-lamp-states: whole, opm_glass_cracked, opm_glass_heavy), which
+// bullets crack, craze and bring down, and blasts bring down (fgame g_glass.cpp).
+// Each darkens what is seen through it by blending over it (not a multiply:
+// the light in the air before it, a headlight's beam in the haze, was darkened
+// with it, and the pane showed as a dark slab in the beam).
+// The Opel's three panes are drawn whole with these: The game's glass was its smudge
 // texture lit grey and half opaque: a pale sheet, brightest at night.
 
 // Whole: tinted, darkening what is seen through it, the smudges and the wipers'
@@ -13,8 +17,9 @@ opm_opelglass_front
 	surfaceparm nolightmap
 	{
 		map $whiteimage
-		blendFunc GL_DST_COLOR GL_ZERO
-		rgbGen const 0.42 0.46 0.5
+		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+		rgbGen const 0.050 0.055 0.060
+		alphaGen const 0.54
 	}
 	{
 		map textures/models/vehicles/OpelTruck/opelwindows.tga
@@ -29,8 +34,9 @@ opm_opelglass_left
 	surfaceparm nolightmap
 	{
 		map $whiteimage
-		blendFunc GL_DST_COLOR GL_ZERO
-		rgbGen const 0.42 0.46 0.5
+		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+		rgbGen const 0.050 0.055 0.060
+		alphaGen const 0.54
 	}
 	{
 		map textures/models/vehicles/OpelTruck/opelwindows.tga
@@ -45,8 +51,9 @@ opm_opelglass_right
 	surfaceparm nolightmap
 	{
 		map $whiteimage
-		blendFunc GL_DST_COLOR GL_ZERO
-		rgbGen const 0.42 0.46 0.5
+		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+		rgbGen const 0.050 0.055 0.060
+		alphaGen const 0.54
 	}
 	{
 		map textures/models/vehicles/OpelTruck/opelwindows.tga
@@ -55,15 +62,30 @@ opm_opelglass_right
 	}
 }
 
-// Hit twice: cracked across, the cracks (the game's opelwindows_d2) white in the light
-opm_opelglass_cracked
+// A static model's own glass (models/static/, placed in a map and drawn by the
+// renderer alone, which nothing can change): not drawn. The copy of it the game
+// puts there draws its glass (its skin1 and on)
+opm_glass_none
+{
+	cull none
+	surfaceparm nolightmap
+	surfaceparm nomarks
+	{
+		map $whiteimage
+		blendFunc GL_ZERO GL_ONE
+	}
+}
+// Any vehicle's pane hit twice: cracked across, the cracks (the game's
+// opelwindows_d2) white in the light
+opm_glass_cracked
 {
 	cull none
 	surfaceparm nolightmap
 	{
 		map $whiteimage
-		blendFunc GL_DST_COLOR GL_ZERO
-		rgbGen const 0.42 0.46 0.5
+		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+		rgbGen const 0.050 0.055 0.060
+		alphaGen const 0.54
 	}
 	{
 		map textures/models/vehicles/OpelTruck/opelwindows_d2.tga
@@ -74,14 +96,15 @@ opm_opelglass_cracked
 
 // Hit three times and more: crazed through, the cracks bright and the glass
 // gone milky and dark, more and more of it not seen through
-opm_opelglass_heavy
+opm_glass_heavy
 {
 	cull none
 	surfaceparm nolightmap
 	{
 		map $whiteimage
-		blendFunc GL_DST_COLOR GL_ZERO
-		rgbGen const 0.22 0.24 0.26
+		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+		rgbGen const 0.026 0.029 0.031
+		alphaGen const 0.76
 	}
 	{
 		map textures/models/vehicles/OpelTruck/opelwindows_d2.tga

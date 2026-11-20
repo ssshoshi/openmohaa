@@ -716,6 +716,7 @@ truck still shadows the other lights; its own are in front of it.
 */
 
 #define RT_ENTITY_LAMPS      8
+#define RT_ENTITY_PRIORITY   0.1f // how much nearer than it is an entity lamp is taken to be, choosing the lights lit
 #define RT_SEARCHLIGHT_SLACK 48.0f // a game's light this far off its beam is in it
 
 static const rtLampDef_t *rt_modelDefs[MAX_MOD_KNOWN];
@@ -6554,6 +6555,12 @@ void R_RtRenderShadows(const refdef_t *fd)
 		if (l->weight > 0) {
 			sorted[numSorted][1] *= 0.8f;
 		}
+		// an entity's lamp (a truck's headlights, a searchlight) before the
+		// map's: dimmer than the lamps round it (blackout slits), it was never
+		// among the few lit on a street of them (m1l2b), and it moves
+		if (l->entity >= 0) {
+			sorted[numSorted][1] *= RT_ENTITY_PRIORITY;
+		}
 		if (!R_RtInView(l, lightReach, fd->vieworg, frustum)) {
 			sorted[numSorted][1] += RT_OUT_OF_VIEW;
 		} else {
@@ -6670,6 +6677,18 @@ void R_RtRenderShadows(const refdef_t *fd)
 				l->bakedFaces  = R_RtWantsBakedFaces(l) ? 63 : 0;
 				l->bakedReady  = rt.frame;
 				l->staticReady = qtrue;
+			}
+			// a vehicle's lamp that has never stood still (m1l2b's truck drives
+			// off as the level starts): its shadow whole now, all at once, or
+			// it waited to come to rest to be drawn and was never lit
+			if (l->entity >= 0 && chosen && !l->staticReady && R_RtFaceRoom() && R_RtFaceTime()) {
+				for (f = 0; f < 6; f++) {
+					if (!(l->staticFaces & (1 << f))) {
+						R_RtRenderFace(l, 0, l->staticSlot, f);
+						rt.movingDrawn++;
+						l->staticFaces |= 1 << f;
+					}
+				}
 			}
 			// a lamp that moved this frame: the faces the view reads, now,
 			// for the nearest few (r_rtMovingLights); the rest of its faces

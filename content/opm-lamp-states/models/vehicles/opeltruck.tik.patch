@@ -17,14 +17,14 @@
 +	// its glass a surface a pane (opm-lamp-states' opel.skd, tools/vehicles/opel_glass.py):
 +	// whole, cracked (skin1), crazed (skin2); brought down it is not drawn (g_glass.cpp)
 +	surface opm_opelglass_front shader opm_opelglass_front
-+	surface opm_opelglass_front shader opm_opelglass_cracked
-+	surface opm_opelglass_front shader opm_opelglass_heavy
++	surface opm_opelglass_front shader opm_glass_cracked
++	surface opm_opelglass_front shader opm_glass_heavy
 +	surface opm_opelglass_left shader opm_opelglass_left
-+	surface opm_opelglass_left shader opm_opelglass_cracked
-+	surface opm_opelglass_left shader opm_opelglass_heavy
++	surface opm_opelglass_left shader opm_glass_cracked
++	surface opm_opelglass_left shader opm_glass_heavy
 +	surface opm_opelglass_right shader opm_opelglass_right
-+	surface opm_opelglass_right shader opm_opelglass_cracked
-+	surface opm_opelglass_right shader opm_opelglass_heavy
++	surface opm_opelglass_right shader opm_glass_cracked
++	surface opm_opelglass_right shader opm_glass_heavy
  	surface opellights shader opellights
  
  

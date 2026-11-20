@@ -29,7 +29,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //     tiki models/vehicles/opeltruck.tik     (a model that has this shape; any number)
 //     tri ax ay az bx by bz cx cy cz         (in the model's units, before its scale)
 //
-// Only the solid entities of the snapshot are tried, and only lines (no
+// The snapshot's entities are tried, solid or not (a static vehicle's glass is
+// a copy of it that is not solid, fgame g_glass.cpp), and only lines (no
 // boxes), for the effects' collision (CG_ClipMoveToModelMeshes).
 
 #include "cg_local.h"
@@ -178,6 +179,11 @@ static int CG_MeshForTiki(dtiki_t *tiki)
     return found;
 }
 
+static centity_t *CG_MeshEntity(int i)
+{
+    return cg.snap && i < cg.snap->numEntities ? &cg_entities[cg.snap->entities[i].number] : NULL;
+}
+
 // the line from s along d (0..1) through the box?
 static qboolean LineHitsBox(const vec3_t s, const vec3_t d, const vec3_t mins, const vec3_t maxs, float best)
 {
@@ -215,15 +221,14 @@ static qboolean LineHitsBox(const vec3_t s, const vec3_t d, const vec3_t mins, c
 CG_ClipMoveToModelMeshes
 
 Added in OPM
-  A line from start to end against the shapes of the snapshot's solid models
+  A line from start to end against the shapes of the snapshot's models
   that have one (opm/collide): tr takes the nearest hit, its plane facing back
   along the line.
 ====================
 */
 void CG_ClipMoveToModelMeshes(const vec3_t start, const vec3_t end, trace_t *tr)
 {
-    centity_t **solid;
-    int         numSolid, i, c, k;
+    int i, c, k;
 
     if (numMeshes < 0) {
         CG_LoadMeshes();
@@ -232,9 +237,8 @@ void CG_ClipMoveToModelMeshes(const vec3_t start, const vec3_t end, trace_t *tr)
         return;
     }
 
-    numSolid = CG_GetSolidEntities(&solid);
-    for (i = 0; i < numSolid; i++) {
-        centity_t     *cent = solid[i];
+    for (i = 0; cg.snap && i < cg.snap->numEntities; i++) {
+        centity_t     *cent = CG_MeshEntity(i);
         dtiki_t       *tiki;
         collideMesh_t *m;
         vec3_t         axis[3], rel, s, e, d, n;

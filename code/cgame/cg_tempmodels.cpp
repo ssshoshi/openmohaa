@@ -702,6 +702,17 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
             "Collision"
         );
         // Added in OPM
+        //  An unseen brush (a parked truck's clip box, standing out round it in
+        //  the air) is not what it falls on: glass knocked out of a door
+        //  window lay on nothing beside it. On through it to what is drawn
+        //  beyond; and wholly inside one (the shards of a pane brought down
+        //  start in the clip box round the truck), it moves on as if in the
+        //  open: stopped there, they hung in the empty frame. One thrown at a
+        //  wall still meets its face first.
+        if (trace.allsolid || (trace.fraction < 1.0f && !trace.startsolid && (trace.surfaceFlags & SURF_NODRAW))) {
+            trace.fraction = 1.0f;
+        }
+        // Added in OPM
         //  And doors and other brush entities: blood thrown at a door went
         //  through it, and its decal ended up on the wall behind or nowhere.
         CG_ClipMoveToBrushEntities(

@@ -22,8 +22,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 // Added in OPM
 // DESCRIPTION:
-// Panes of glass on models (a truck's windscreen and door windows) that
-// bullets crack and then shatter, and blasts shatter. See g_glass.cpp.
+// Panes of glass on models (every vehicle's windows) that bullets crack and
+// then shatter, and blasts shatter. See g_glass.cpp.
 
 #pragma once
 
@@ -34,3 +34,5 @@ class Vector;
 void G_GlassBulletPath(const Vector& start, const Vector& end);
 // A blast of radius at origin reached ent
 void G_GlassBlast(Entity *ent, const Vector& origin, float radius);
+// Level start: a glass-only copy of each of the map's static vehicles
+void G_GlassStaticModels(const char *mapfile);
