@@ -1448,12 +1448,16 @@ face glows (bloom), as a lamp's bulb does.
 */
 
 #define RT_SURFACE_LAMP_REACH 64.0f // a map's light this near a lamp's face is the lamp's
-#define RT_SURFACE_LAMP_NEAR  32.0f // its light stops growing this near it
-#define RT_SURFACE_LAMP_SCALE 1.5f  // of its light: its cone spread out of the face takes more
+#define RT_SURFACE_LAMP_NEAR  48.0f // its light stops growing this near it
+#define RT_SURFACE_LAMP_FILL  0.05f // a map light this weak beside it, in the column over it, was the
+                                    // designer's fake of its glow up a wall: the lamp lights it now
+#define RT_SURFACE_LAMP_SIDE  48.0f // that column's half width
+#define RT_SURFACE_LAMP_UP    256.0f // and height
+#define RT_SURFACE_LAMP_SCALE 3.0f  // of its light: its cone spread out of the face takes more
 
 static void R_RtLightsAtSurfaces(void)
 {
-	int i, j, faces = 0, moved = 0;
+	int i, j, faces = 0, moved = 0, fills = 0;
 
 	for (i = 0; i < tr.world->numsurfaces; i++) {
 		msurface_t        *surf = &tr.world->surfaces[i];
@@ -1521,17 +1525,60 @@ static void R_RtLightsAtSurfaces(void)
 
 			VectorSubtract(surf->cullinfo.bounds[1], surf->cullinfo.bounds[0], size);
 			// its light stops growing this near it: a wall a hand from a
-			// grille is lit evenly up from it, not burnt white over it
+			// grille is lit up from it, not burnt white over it
 			best->area = Q_max(RT_SURFACE_LAMP_NEAR, VectorLength(size) * 0.5f);
+		}
+		// the light the designer gave it can be in the lightmaps alone (m1l1's
+		// banner grilles: spawnflags 2), and the nearest one left a weak fill:
+		// then its light is the table's
+		{
+			vec3_t own;
+
+			VectorScale(def->color, def->intensity * 7500.0f, own);
+			if (Q_max(best->color[0], Q_max(best->color[1], best->color[2]))
+				< Q_max(own[0], Q_max(own[1], own[2])) * RT_SURFACE_LAMP_FILL) {
+				VectorCopy(own, best->color);
+			}
 		}
 		VectorScale(best->color, RT_SURFACE_LAMP_SCALE, best->color);
 		best->range       = R_RtRangeOf(best->color);
 		best->surfaceLamp = qtrue;
+
+		// the weak fills the designer hung up the wall over it (m1l1's
+		// banners: two columns of small lights by each), each a patch of its
+		// own under the live light: gone, the lamp's light is up that wall
+		{
+			const float bright = Q_max(best->color[0], Q_max(best->color[1], best->color[2]));
+
+			for (j = 0; j < rt.numLights; j++) {
+				rtLight_t *o = &rt.lights[j];
+				vec3_t     d;
+				float      up, side;
+
+				if (o == best || o->range <= 0 || o->spot || o->area > 0 || o->lamp || o->surfaceLamp || o->fixture >= 0
+					|| Q_max(o->color[0], Q_max(o->color[1], o->color[2])) > bright * RT_SURFACE_LAMP_FILL) {
+					continue;
+				}
+				VectorSubtract(o->origin, centre, d);
+				up   = DotProduct(d, normal);
+				side = sqrt(Q_max(0.0f, DotProduct(d, d) - up * up));
+				if (up < -8.0f || up > RT_SURFACE_LAMP_UP || side > RT_SURFACE_LAMP_SIDE) {
+					continue;
+				}
+				if (r_rtDebug->integer) {
+					ri.Printf(PRINT_ALL, "  light %d at (%.0f %.0f %.0f): a fill over the lamp %s, gone\n", o->source, o->origin[0],
+						o->origin[1], o->origin[2], surf->shader->name);
+				}
+				o->range      = 0;
+				o->mergedInto = -1;
+				fills++;
+			}
+		}
 		moved++;
 	}
 	if (faces) {
-		ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamp faces in the brushwork, %d of the map's lights moved onto them\n", faces,
-			moved);
+		ri.Printf(PRINT_DEVELOPER, "realtime lighting: %d lamp faces in the brushwork, %d of the map's lights moved onto them, %d fills over them gone\n",
+			faces, moved, fills);
 	}
 }
 
