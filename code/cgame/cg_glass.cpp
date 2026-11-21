@@ -87,6 +87,7 @@ typedef struct {
 
 typedef struct {
     glassFrame_t          f;
+    glassFrame_t          hit; // the game's, which the hits are given in (a window's box: else f)
     std::vector<gPoint_t> points;
     std::vector<gPiece_t> pieces;
     std::vector<gUnit_t>  units;
@@ -745,24 +746,48 @@ static gGeom_t *GlassWindowGeom(int inlineModel)
     std::vector<gTri_t>  outline;
     const char          *shader = NULL;
 
-    BG_GlassFrameFromBounds(bm->mins, bm->maxs, &g->f);
+    // the game gives the hits in the window's box (bg_glass.h); the pane is
+    // its biggest face (and those lying with it), which may be tilted
+    BG_GlassFrameFromBounds(bm->mins, bm->maxs, &g->hit);
+    {
+        const gFace_t *big     = NULL;
+        float          bigArea = 0;
 
-    // the faces on one side of it (along its normal; else against it)
-    for (int side = 1; side >= -1 && outline.empty(); side -= 2) {
         for (size_t f = 0; f < bm->faces.size(); f++) {
-            if (DotProduct(bm->faces[f].normal, g->f.n) * side < 0.9f) {
-                continue;
+            float area = 0;
+            for (size_t k = 0; k < bm->faces[f].tris.size(); k++) {
+                const gTri_t *tr = &bm->faces[f].tris[k];
+                vec3_t        e1, e2, c;
+                VectorSubtract(tr->xyz[1], tr->xyz[0], e1);
+                VectorSubtract(tr->xyz[2], tr->xyz[0], e2);
+                CrossProduct(e1, e2, c);
+                area += VectorLength(c) * 0.5f;
             }
-            if (!shader) {
-                shader = bm->faces[f].shader.c_str();
+            if (area > bigArea) {
+                bigArea = area;
+                big     = &bm->faces[f];
             }
-            if (Q_stricmp(shader, bm->faces[f].shader.c_str())) {
-                continue;
-            }
-            outline.insert(outline.end(), bm->faces[f].tris.begin(), bm->faces[f].tris.end());
         }
-        if (outline.empty()) {
-            shader = NULL;
+        if (!big) {
+            return NULL;
+        }
+        shader = big->shader.c_str();
+        // one side only: the other face of the brush is the same glass
+        for (size_t f = 0; f < bm->faces.size(); f++) {
+            if (DotProduct(bm->faces[f].normal, big->normal) > 0.99f && !Q_stricmp(shader, bm->faces[f].shader.c_str())) {
+                outline.insert(outline.end(), bm->faces[f].tris.begin(), bm->faces[f].tris.end());
+            }
+        }
+        {
+            std::vector<float> flat;
+            for (size_t k = 0; k < outline.size(); k++) {
+                for (int q = 0; q < 3; q++) {
+                    flat.push_back(outline[k].xyz[q][0]);
+                    flat.push_back(outline[k].xyz[q][1]);
+                    flat.push_back(outline[k].xyz[q][2]);
+                }
+            }
+            BG_GlassFrameFromTris(big->normal, flat.data(), outline.size(), &g->f);
         }
     }
     if (outline.empty()) {
@@ -881,6 +906,7 @@ static gGeom_t *GlassVehicleGeom(int vehicle, int pane)
     const int             numTris = p->tris.size() / 9;
 
     BG_GlassFrameFromTris(p->normal, p->tris.data(), numTris, &g->f);
+    g->hit = g->f;
     for (int t = 0; t < numTris; t++) {
         gTri_t tri;
         for (int q = 0; q < 3; q++) {
@@ -1077,6 +1103,24 @@ static void GlassKill(gLive_t *l, int unit, std::vector<int>& falling)
     }
 }
 
+// Where a hit lies across the pane: given across the game's frame, it is the
+// point of the pane's plane there, along the game's frame's normal
+static void GlassDecodeHit(const gGeom_t *g, byte bu, byte bv, float *pa, float *pb)
+{
+    const glassFrame_t *h = &g->hit;
+    float               fa, fb, denom, along;
+    vec3_t              p;
+
+    BG_GlassDecode(h, bu, bv, &fa, &fb);
+    VectorScale(h->u, fa, p);
+    VectorMA(p, fb, h->v, p);
+    denom = DotProduct(h->n, g->f.n);
+    along = fabs(denom) > 0.05f ? (g->f.d - DotProduct(p, g->f.n)) / denom : 0;
+    VectorMA(p, along, h->n, p);
+    *pa = DotProduct(p, g->f.u);
+    *pb = DotProduct(p, g->f.v);
+}
+
 // A round through the pane: the hole it knocks out, what it leaves hanging falls
 static void GlassApplyHit(gLive_t *l, int index, const byte *hit, const gPlace_t *place, bool silent)
 {
@@ -1090,7 +1134,7 @@ static void GlassApplyHit(gLive_t *l, int index, const byte *hit, const gPlace_t
     gCrack_t         crack;
     size_t           i;
 
-    BG_GlassDecode(&g->f, hit[0], hit[1], &pa, &pb);
+    GlassDecodeHit(g, hit[0], hit[1], &pa, &pb);
 
     // ragged round where it went
     for (i = 0; i < g->units.size(); i++) {
