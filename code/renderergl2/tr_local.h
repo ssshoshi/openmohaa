@@ -1065,6 +1065,7 @@ typedef enum
 	UNIFORM_RTLIST,
 	UNIFORM_RTSKY,
 	UNIFORM_RTSKYCOLOR,
+	UNIFORM_SUNPROXYPUSH, // Added in OPM: how far the world's solid brushes are pushed from the sun, xyz (RB_DrawSunProxy)
 	UNIFORM_RTSKYREGION,  // Added in OPM: the part of the world a bake of the sky draws, x y the least, z w past the most
 	UNIFORM_RTSKYMAP,
 	UNIFORM_RTSURFACE,
@@ -2090,6 +2091,12 @@ typedef struct {
 
     int numVisStaticModels;
     cStaticModelUnpacked_t** visStaticModels;
+
+    // Added in OPM: the world's solid brushes, every side, the sides against
+    // the void that the compiler left out among them, for the sun's cascades
+    // (R_LoadSunProxy, RB_DrawSunProxy)
+    unsigned int sunProxyVao, sunProxyVbo;
+    int          sunProxyVerts;
 } world_t;
 
 //
@@ -2822,6 +2829,7 @@ typedef struct {
 	shaderProgram_t genericSlimShader[GENERICDEF_COUNT]; // Added in OPM: without the realtime lights' per-pixel loop (GLSL_InitGenericShader)
 	shaderProgram_t textureColorShader;
 	shaderProgram_t rtSkyBakeShader; // Added in OPM: the sky a lightmap texel sees (tr_rtlight.c)
+	shaderProgram_t sunProxyShader;  // Added in OPM: the world's solid brushes into the sun's cascades (RB_DrawSunProxy)
 	shaderProgram_t rtLampBakeShader; // Added in OPM: a lamp's light on the lightmaps (R_RtBakeLamps)
 	shaderProgram_t rtBakeFillShader; // Added in OPM: and its texels no surface covers filled (R_RtLivePass)
 	shaderProgram_t fogShader[FOGDEF_COUNT];
@@ -3179,6 +3187,8 @@ extern  cvar_t  *r_rtLightsAtFixtures;
 extern  cvar_t  *r_rtCapsules;
 extern  cvar_t  *r_rtDebug;
 extern  cvar_t  *r_sunShadowScale;
+extern  cvar_t  *r_sunShadowBrushes;
+void RB_DrawSunProxy(void);
 extern  cvar_t  *r_shadowFilter;
 extern  cvar_t  *r_shadowBlur;
 extern  cvar_t  *r_contactShadows;

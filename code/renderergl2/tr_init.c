@@ -179,6 +179,7 @@ cvar_t  *r_sunlightMode;
 cvar_t  *r_drawSunRays;
 cvar_t  *r_sunShadows;
 cvar_t  *r_sunShadowScale;
+cvar_t  *r_sunShadowBrushes;
 cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
 cvar_t  *r_contactShadows;
@@ -1734,6 +1735,9 @@ void R_Register( void )
 	// ioq3 uses 0.5, which assumes the lightmap holds no direct sun. MOH:AA
 	// bakes the sun into its lightmaps, so at 0.5 every interior is simply halved.
 	r_sunShadowScale = ri.Cvar_Get( "r_sunShadowScale", "0.85", CVAR_ARCHIVE | CVAR_LATCH );
+	// Added in OPM: the world's solid brushes into the sun's cascades (RB_DrawSunProxy)
+	r_sunShadowBrushes = ri.Cvar_Get( "r_sunShadowBrushes", "3", CVAR_ARCHIVE );
+	ri.Cvar_SetDescription( r_sunShadowBrushes, "The world's solid brushes stand in the sun's way as solids, every side of them drawn into its shadow, pushed this many units from the sun so that what the sun lights does not shadow itself (0: only the faces the map draws). The compiler leaves out the sides against the void, so a ceiling with nothing drawn above it let the sun along every seam where a wall meets it" );
 	r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowBlur = ri.Cvar_Get("r_shadowBlur", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	// Added in OPM: contact shadows (shadowmask_fp.glsl)

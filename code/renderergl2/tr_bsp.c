@@ -563,6 +563,14 @@ static void R_FreeWorldImages( void )
 	R_RtFreeSkyLightmaps();
 	R_RtFreeBakedLamps();
 
+	// Added in OPM: the sun's brushes (R_LoadSunProxy)
+	if ( tr.world && tr.world->sunProxyVao ) {
+		qglDeleteBuffers( 1, &tr.world->sunProxyVbo );
+		qglDeleteVertexArrays( 1, &tr.world->sunProxyVao );
+		tr.world->sunProxyVao = tr.world->sunProxyVbo = 0;
+		tr.world->sunProxyVerts = 0;
+	}
+
 	if ( tr.lightmaps ) {
 		for ( i = 0; i < tr.numLightmaps; i++ ) {
 			R_FreeImage( tr.lightmaps[i] );
@@ -3833,6 +3841,202 @@ RE_LoadWorldMap
 Called directly from cgame
 =================
 */
+
+/*
+=================
+R_LoadSunProxy
+
+Added in OPM. The world's solid brushes, every side of them, for the sun's
+cascades (RB_DrawSunProxy). The compiler leaves out the sides against the
+void, and the top of a building with nothing drawn above it had in the sun's
+shadow only its ceiling's underside, a unit off a wall at the seam: the sun
+lit a line along every seam where a wall on the void meets a ceiling. Left
+out: brushes with a side of sky (the sky's own), see through or fence (the
+sun comes through), and those nothing of is drawn (invisible walls).
+=================
+*/
+#define SUNPROXY_MAX_POINTS 64
+
+static int R_SunProxyClip(vec3_t *in, int n, const vec3_t normal, float dist, vec3_t *out)
+{
+	float d[SUNPROXY_MAX_POINTS + 1];
+	int   i, o = 0;
+
+	for (i = 0; i < n; i++) {
+		d[i] = DotProduct(in[i], normal) - dist;
+	}
+	for (i = 0; i < n && o < SUNPROXY_MAX_POINTS - 1; i++) {
+		const int j = (i + 1) % n;
+
+		if (d[i] <= 0.01f) {
+			VectorCopy(in[i], out[o]);
+			o++;
+		}
+		if ((d[i] > 0.01f) != (d[j] > 0.01f)) {
+			const float t = d[i] / (d[i] - d[j]);
+
+			out[o][0] = in[i][0] + t * (in[j][0] - in[i][0]);
+			out[o][1] = in[i][1] + t * (in[j][1] - in[i][1]);
+			out[o][2] = in[i][2] + t * (in[j][2] - in[i][2]);
+			o++;
+		}
+	}
+	return o;
+}
+
+static void R_LoadSunProxy(lump_t *brushLump, lump_t *sideLump, lump_t *modelLump)
+{
+	const dbrush_t     *brushes = (const dbrush_t *)(fileBase + brushLump->fileofs);
+	const dbrushside_t *sides   = (const dbrushside_t *)(fileBase + sideLump->fileofs);
+	const dmodel_t     *models  = (const dmodel_t *)(fileBase + modelLump->fileofs);
+	const int           numBrushes = brushLump->filelen / sizeof(dbrush_t);
+	const int           numSides   = sideLump->filelen / sizeof(dbrushside_t);
+	int                 first, count, b, s, k, maxVerts, numVerts = 0, used = 0;
+	float              *verts;
+
+	s_worldData.sunProxyVao   = 0;
+	s_worldData.sunProxyVbo   = 0;
+	s_worldData.sunProxyVerts = 0;
+	if (!modelLump->filelen || !numBrushes || !numSides || !s_worldData.planes || !s_worldData.shaders) {
+		return;
+	}
+	first = LittleLong(models[0].firstBrush);
+	count = LittleLong(models[0].numBrushes);
+	if (first < 0 || first + count > numBrushes) {
+		return;
+	}
+
+	maxVerts = 0;
+	for (b = first; b < first + count; b++) {
+		const int n = LittleLong(brushes[b].numSides);
+		// (a side is seldom cut to more than eight corners)
+		maxVerts += Q_max(0, n) * 6 * 3;
+	}
+	maxVerts = Q_min(maxVerts, 2 * 1024 * 1024);
+	verts    = ri.Malloc(sizeof(float) * 3 * maxVerts);
+
+	for (b = first; b < first + count; b++) {
+		const int firstSide = LittleLong(brushes[b].firstSide);
+		const int n         = LittleLong(brushes[b].numSides);
+		const int shaderNum = LittleLong(brushes[b].shaderNum);
+		qboolean  keep, drawn = qfalse;
+
+		if (shaderNum < 0 || shaderNum >= s_worldData.numShaders || firstSide < 0 || firstSide + n > numSides || n < 4) {
+			continue;
+		}
+		keep = (s_worldData.shaders[shaderNum].contentFlags & CONTENTS_SOLID) ? qtrue : qfalse;
+		for (s = 0; s < n && keep; s++) {
+			const int sh = LittleLong(sides[firstSide + s].shaderNum);
+			const dshader_t *ds;
+
+			if (sh < 0 || sh >= s_worldData.numShaders) {
+				continue;
+			}
+			ds = &s_worldData.shaders[sh];
+			if ((ds->surfaceFlags & SURF_SKY) || (ds->contentFlags & (CONTENTS_TRANSLUCENT | CONTENTS_FENCE))) {
+				keep = qfalse;
+			}
+			if (!(ds->surfaceFlags & SURF_NODRAW)) {
+				drawn = qtrue;
+			}
+		}
+		if (!keep || !drawn) {
+			continue;
+		}
+
+		for (s = 0; s < n; s++) {
+			const cplane_t *plane = &s_worldData.planes[LittleLong(sides[firstSide + s].planeNum)];
+			vec3_t          a[SUNPROXY_MAX_POINTS], c[SUNPROXY_MAX_POINTS], up, right, org;
+			int             np = 4, j;
+
+			// a quad on the plane as large as the world, cut by the others
+			PerpendicularVector(up, plane->normal);
+			CrossProduct(plane->normal, up, right);
+			VectorScale(plane->normal, plane->dist, org);
+			VectorScale(up, 65536.0f, up);
+			VectorScale(right, 65536.0f, right);
+			VectorSubtract(org, right, a[0]);
+			VectorAdd(a[0], up, a[0]);
+			VectorAdd(org, right, a[1]);
+			VectorAdd(a[1], up, a[1]);
+			VectorAdd(org, right, a[2]);
+			VectorSubtract(a[2], up, a[2]);
+			VectorSubtract(org, right, a[3]);
+			VectorSubtract(a[3], up, a[3]);
+
+			for (j = 0; j < n && np >= 3; j++) {
+				const cplane_t *cut;
+
+				if (j == s) {
+					continue;
+				}
+				cut = &s_worldData.planes[LittleLong(sides[firstSide + j].planeNum)];
+				if (cut == plane) {
+					continue;
+				}
+				np = R_SunProxyClip(a, np, cut->normal, cut->dist, c);
+				Com_Memcpy(a, c, sizeof(vec3_t) * np);
+			}
+			for (k = 1; k + 1 < np && numVerts + 3 <= maxVerts; k++) {
+				VectorCopy(a[0], &verts[numVerts * 3]);
+				VectorCopy(a[k], &verts[(numVerts + 1) * 3]);
+				VectorCopy(a[k + 1], &verts[(numVerts + 2) * 3]);
+				numVerts += 3;
+			}
+		}
+		used++;
+	}
+
+	if (numVerts) {
+		R_BindNullVao();
+		qglGenVertexArrays(1, &s_worldData.sunProxyVao);
+		qglBindVertexArray(s_worldData.sunProxyVao);
+		qglGenBuffers(1, &s_worldData.sunProxyVbo);
+		qglBindBuffer(GL_ARRAY_BUFFER, s_worldData.sunProxyVbo);
+		qglBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * numVerts, verts, GL_STATIC_DRAW);
+		qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+		qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, 0);
+		qglBindVertexArray(0);
+		qglBindBuffer(GL_ARRAY_BUFFER, 0);
+		s_worldData.sunProxyVerts = numVerts;
+	}
+	ri.Free(verts);
+	ri.Printf(PRINT_DEVELOPER, "the sun's brushes: %d of %d, %d triangles\n", used, count, numVerts / 3);
+}
+
+/*
+=================
+RB_DrawSunProxy
+
+Added in OPM: the world's solid brushes into the sun cascade being drawn,
+both sides, pushed r_sunShadowBrushes units from the sun
+=================
+*/
+void RB_DrawSunProxy(void)
+{
+	mat4_t mvp;
+	vec4_t push;
+
+	if (!tr.world || !tr.world->sunProxyVerts || r_sunShadowBrushes->value <= 0 || !tr.sunProxyShader.program) {
+		return;
+	}
+	Mat4Multiply(backEnd.viewParms.projectionMatrix, backEnd.viewParms.world.modelMatrix, mvp);
+	VectorNormalize2(backEnd.refdef.sunDir, push);
+	VectorScale(push, r_sunShadowBrushes->value, push);
+	push[3] = 0;
+
+	GL_State(GLS_DEPTHMASK_TRUE);
+	GL_Cull(CT_TWO_SIDED);
+	GLSL_BindProgram(&tr.sunProxyShader);
+	GLSL_SetUniformMat4(&tr.sunProxyShader, UNIFORM_MODELVIEWPROJECTIONMATRIX, mvp);
+	GLSL_SetUniformVec4(&tr.sunProxyShader, UNIFORM_SUNPROXYPUSH, push);
+	R_BindNullVao();
+	qglBindVertexArray(tr.world->sunProxyVao);
+	qglDrawArrays(GL_TRIANGLES, 0, tr.world->sunProxyVerts);
+	qglBindVertexArray(0);
+	backEnd.pc.c_staticVaoDraws++;
+}
+
 void RE_LoadWorldMap( const char *name ) {
 	int			i;
 	dheader_t	*header;
@@ -4008,6 +4212,8 @@ void RE_LoadWorldMap( const char *name ) {
     _R(77);
     R_LoadSubmodels(Q_GetLumpByVersion(header, LUMP_MODELS));
     R_LoadStep( "R_LoadSubmodels" );
+    // Added in OPM: the world's solid brushes, for the sun's cascades
+    R_LoadSunProxy(Q_GetLumpByVersion(header, LUMP_BRUSHES), Q_GetLumpByVersion(header, LUMP_BRUSHSIDES), Q_GetLumpByVersion(header, LUMP_MODELS));
     _R(78);
     _R(79);
     _R(80);

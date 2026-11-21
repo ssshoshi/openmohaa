@@ -5609,6 +5609,55 @@ static void R_RtSkyProbe_f(void)
 	}
 }
 
+
+// r_sunShadowProbe x y z: where a point falls in each of the sun's cascades
+// (last frame's), its depth there and the depth they hold, as the shadow
+// mask reads them
+static void R_SunShadowProbe_f(void)
+{
+	vec3_t p;
+	int    c;
+
+	if (ri.Cmd_Argc() < 4) {
+		ri.Printf(PRINT_ALL, "r_sunShadowProbe x y z\n");
+		return;
+	}
+	VectorSet(p, atof(ri.Cmd_Argv(1)), atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)));
+	ri.Printf(PRINT_ALL, "sun towards %.2f %.2f %.2f; at %.1f %.1f %.1f:\n", tr.refdef.sunDir[0], tr.refdef.sunDir[1], tr.refdef.sunDir[2], p[0], p[1], p[2]);
+	for (c = 0; c < 4; c++) {
+		const float *m = tr.refdef.sunShadowMvp[c];
+		float        clip[4], depth[9];
+		int          j, x, y, size;
+
+		if (!tr.sunShadowFbo[c] || !tr.sunShadowDepthImage[c]) {
+			continue;
+		}
+		for (j = 0; j < 4; j++) {
+			clip[j] = m[j] * p[0] + m[4 + j] * p[1] + m[8 + j] * p[2] + m[12 + j];
+		}
+		if (fabsf(clip[3]) < 1e-6f) {
+			continue;
+		}
+		for (j = 0; j < 3; j++) {
+			clip[j] = clip[j] / clip[3] * 0.5f + 0.5f;
+		}
+		size = tr.sunShadowDepthImage[c]->width;
+		x    = (int)(clip[0] * size);
+		y    = (int)(clip[1] * size);
+		if (x < 1 || y < 1 || x >= size - 1 || y >= size - 1) {
+			ri.Printf(PRINT_ALL, "  cascade %d: outside\n", c);
+			continue;
+		}
+		FBO_Bind(tr.sunShadowFbo[c]);
+		qglReadPixels(x - 1, y - 1, 3, 3, GL_DEPTH_COMPONENT, GL_FLOAT, depth);
+		FBO_Bind(NULL);
+		ri.Printf(PRINT_ALL, "  cascade %d texel %d %d: point %.6f, held %.6f (3x3 min %.6f max %.6f) -> %s\n", c, x, y, clip[2], depth[4],
+			Q_min(Q_min(Q_min(depth[0], depth[1]), Q_min(depth[2], depth[3])), Q_min(Q_min(depth[5], depth[6]), Q_min(depth[7], depth[8]))),
+			Q_max(Q_max(Q_max(depth[0], depth[1]), Q_max(depth[2], depth[3])), Q_max(Q_max(depth[5], depth[6]), Q_max(depth[7], depth[8]))),
+			clip[2] <= depth[4] ? "LIT" : "shadowed");
+	}
+}
+
 static void R_RtBakeAt_f(void)
 {
 	const float x = atof(ri.Cmd_Argv(1)), y = atof(ri.Cmd_Argv(2));
@@ -8385,6 +8434,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
 		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
 		ri.Cmd_AddCommand("r_rtSkyProbe", R_RtSkyProbe_f);
+		ri.Cmd_AddCommand("r_sunShadowProbe", R_SunShadowProbe_f);
 		ri.Cmd_AddCommand("r_rtShadowProbe", R_RtShadowProbe_f);
 		ri.Cmd_AddCommand("r_rtShadowProbeAll", R_RtShadowProbeAll_f);
 	} else {
@@ -8394,6 +8444,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_RemoveCommand("r_rtProbeTest");
 		ri.Cmd_RemoveCommand("r_rtBakeAt");
 		ri.Cmd_RemoveCommand("r_rtSkyProbe");
+		ri.Cmd_RemoveCommand("r_sunShadowProbe");
 		ri.Cmd_RemoveCommand("r_rtShadowProbe");
 		ri.Cmd_RemoveCommand("r_rtShadowProbeAll");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));
