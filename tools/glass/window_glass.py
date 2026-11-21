@@ -46,8 +46,11 @@ OWN_PAK = "opm-glass"
 LUMP_SHADERS, LUMP_SURFACES, LUMP_MODELS, LUMP_ENTITIES = 0, 3, 13, 14
 SURF_NODRAW = 0x80
 SURFACE_SIZE = 108
-TINT = "0.42 0.46 0.48"
-TINT_ALPHA = "0.14"
+# The glass, whole or in pieces the same: a fixed tint (not lit: the pieces
+# have no lightmap, and lit by the grid they went near clear indoors while the
+# whole pane lit by its lightmap did not), between clear and a sheet
+TINT = "0.20 0.22 0.23"
+TINT_ALPHA = "0.28"
 SHEEN = "0.16 0.16 0.16"
 
 
@@ -142,7 +145,7 @@ def tiles_shader(texture, frame):
 	{{
 		map $whiteimage
 		blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-		rgbGen vertex
+		rgbGen const {TINT}
 		alphaGen const {TINT_ALPHA}
 	}}
 	{{
