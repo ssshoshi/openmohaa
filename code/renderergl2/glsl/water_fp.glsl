@@ -40,6 +40,16 @@ uniform vec4      u_WaterWaves; // the way the waves come in (xy), their length 
 uniform vec4      u_WaterShore; // wave height, the depth the surf starts at, whether there is a shore line, where
 uniform vec4      u_WaterSky;   // the sky it mirrors, and how choppy it is
 uniform vec4      u_WaterLook;  // foam, refraction, sun glints, how much the blood lies in clouds
+// the sun's shadow cascades (tr_water.c): its glints only where the sun gets
+// to the water. Zero matrices when there are none: no shadow anywhere.
+uniform sampler2DShadow u_ShadowMap;
+uniform sampler2DShadow u_ShadowMap2;
+uniform sampler2DShadow u_ShadowMap3;
+uniform sampler2DShadow u_ShadowMap4;
+uniform mat4      u_ShadowMvp;
+uniform mat4      u_ShadowMvp2;
+uniform mat4      u_ShadowMvp3;
+uniform mat4      u_ShadowMvp4;
 uniform vec4      u_WaterOcean; // the open sea's waves (OceanWaves): one over their scale, height, drag, octaves (0: the chop)
 uniform vec4      u_WaterBloodZone; // all the blood to, and none past: out from the shore line, else in depth; how many u_WaterSpots
 uniform vec4      u_WaterSpots[WATER_MAX_SPOTS]; // blood round bodies in the water: x, y, how far it has spread, how thick
@@ -49,6 +59,24 @@ uniform vec4      u_WaterRipples;        // where the ripples' grid starts, one 
 
 // Added in OPM: r_linearLighting, the colours as linear light (GLSL_BindProgram)
 uniform float     u_Linear;
+
+// the finest cascade that holds P (as froxel_fp.glsl)
+float SunShadow(vec3 P)
+{
+	vec4 p = u_ShadowMvp * vec4(P, 1.0);
+	if (all(lessThan(abs(p.xyz), vec3(abs(p.w)))))
+		return shadow2D(u_ShadowMap, vec3(p.xy * (0.5 / p.w) + 0.5, p.z * (0.5 / p.w) + 0.5));
+	p = u_ShadowMvp2 * vec4(P, 1.0);
+	if (all(lessThan(abs(p.xyz), vec3(abs(p.w)))))
+		return shadow2D(u_ShadowMap2, vec3(p.xy * (0.5 / p.w) + 0.5, p.z * (0.5 / p.w) + 0.5));
+	p = u_ShadowMvp3 * vec4(P, 1.0);
+	if (all(lessThan(abs(p.xyz), vec3(abs(p.w)))))
+		return shadow2D(u_ShadowMap3, vec3(p.xy * (0.5 / p.w) + 0.5, p.z * (0.5 / p.w) + 0.5));
+	p = u_ShadowMvp4 * vec4(P, 1.0);
+	if (all(lessThan(abs(p.xyz), vec3(abs(p.w)))))
+		return shadow2D(u_ShadowMap4, vec3(p.xy * (0.5 / p.w) + 0.5, p.z * (0.5 / p.w) + 0.5));
+	return 1.0;
+}
 
 vec3 Lin(vec3 c)
 {
@@ -383,6 +411,9 @@ void main()
 	vec3 L      = normalize(u_PrimaryLightOrigin.xyz);
 	float glint = max(dot(R, L), 0.0);
 	vec3 sun    = Lin(u_PrimaryLightColor) * (pow(glint, 900.0) * 2.5 + pow(glint, 70.0) * 0.2) * u_WaterLook.z;
+	// not under a roof: the sun's glints were on the water in a sub pen
+	if (dot(sun, vec3(1.0)) > 0.0)
+		sun *= SunShadow(var_Position + vec3(0.0, 0.0, 2.0));
 
 	vec3 color = mix(under, mirror, fresnel) + (below ? vec3(0.0) : sun);
 	alpha = mix(alpha, 1.0, fresnel);

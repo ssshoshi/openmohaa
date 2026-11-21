@@ -2089,6 +2089,26 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
     }
     GLSL_SetUniformVec4(sp, UNIFORM_WATERRIPPLES, v);
 
+    // the sun's shadow cascades, for its glints: none, the zero matrices
+    // hold nothing and the sun is everywhere (a depth image bound either way:
+    // a shadow sampler on a colour one reads nothing defined)
+    {
+        const qboolean cascades = r_sunlightMode->integer && (backEnd.viewParms.flags & VPF_USESUNLIGHT) && tr.sunShadowDepthImage[3];
+        static const mat4_t none = {0};
+        int             c;
+
+        for (c = 0; c < 4; c++) {
+            image_t *img = cascades ? tr.sunShadowDepthImage[c] : tr.rtShadowImage[0];
+            if (img) {
+                GL_BindToTMU(img, c == 0 ? TMU_RTSHADOW_STATIC : c == 1 ? TMU_RTSHADOW_DYNAMIC : c == 2 ? TMU_RTSUNSHADOW : TMU_RTSHADOW_BAKED);
+            }
+        }
+        GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP, cascades ? backEnd.refdef.sunShadowMvp[0] : none);
+        GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP2, cascades ? backEnd.refdef.sunShadowMvp[1] : none);
+        GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP3, cascades ? backEnd.refdef.sunShadowMvp[2] : none);
+        GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP4, cascades ? backEnd.refdef.sunShadowMvp[3] : none);
+    }
+
     // the view under its surface, if it was drawn (R_WaterReflectView)
     if (backEnd.viewParms.waterReflect && tr.waterReflectImage) {
         VectorSet4(v, 1.0f, 0.0f, backEnd.viewParms.waterReflectShare[0], backEnd.viewParms.waterReflectShare[1]);

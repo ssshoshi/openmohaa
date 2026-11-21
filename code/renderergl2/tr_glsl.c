@@ -3268,6 +3268,11 @@ void GLSL_InitGPUShaders(void)
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SPECULARMAP, TB_SPECULARMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_CUBEMAP, TB_CUBEMAP);
 			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_WATERREFLECTMAP, TB_SHADOWMAP);
+			// the sun's cascades, for its glints (units the water has free)
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SHADOWMAP, TMU_RTSHADOW_STATIC);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SHADOWMAP2, TMU_RTSHADOW_DYNAMIC);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SHADOWMAP3, TMU_RTSUNSHADOW);
+			GLSL_SetUniformInt(&tr.waterShader, UNIFORM_SHADOWMAP4, TMU_RTSHADOW_BAKED);
 
 			GLSL_FinishGPUShader(&tr.waterShader);
 
