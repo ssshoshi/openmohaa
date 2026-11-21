@@ -78,6 +78,7 @@ cvar_t *r_rtShadowGuard;
 // The guard the faces are drawn with (r_rtShadowGuard, R_RtRenderShadows)
 static int rt_guard = RT_FACE_GUARD;
 cvar_t *r_rtSkyLightmaps;
+cvar_t *r_rtSkyRegion;
 cvar_t *r_rtSkyTile;
 cvar_t *r_rtShadowCull;
 cvar_t *r_rtMovingLights;
@@ -364,6 +365,8 @@ void R_RtRegister(void)
 	ri.Cvar_CheckRange(r_rtShadowGuard, 0, 8, qtrue);
 	ri.Cvar_SetDescription(r_rtShadowGuard, "Texels a realtime light's shadow face is drawn past its edge, so its soft shadow reads on into the next face there (0: none, the taps held inside the face, which left seams along its edges). Changing it draws every face again. Not archived: an A/B switch");
 	r_rtSkyLightmaps = ri.Cvar_Get("r_rtSkyLightmaps", "1", 0);
+	r_rtSkyRegion = ri.Cvar_Get("r_rtSkyRegion", "1024", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_rtSkyRegion, "With r_realtimeLighting 2, the sky the lightmapped world sees is worked out again a part of the world this many units square at a time, from the sky's depth over that part alone: sharp enough that it no longer comes in through thin walls and slabs at their corners and feet (0: from the whole map's depth alone). Applies when a map is loaded");
 	ri.Cvar_SetDescription(r_rtSkyLightmaps, "Lightmapped surfaces read the sky they see from lightmaps of it, worked out once a map (0: worked out at each pixel). Not archived: an A/B switch");
 	r_rtLamps = ri.Cvar_Get("r_rtLamps", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_rtLamps, "With r_realtimeLighting 2, the light comes from the lamps' bulbs (lights/lamps.txt): the map's lights in a room go to a lamp there, a lamp with none gets its own, and those no lamp sees cast no shadow. Applies when a map is loaded");
@@ -1875,13 +1878,15 @@ static void R_RtSetupSky(void)
 	rt_skyTexel  = 0;
 }
 
-// The depth of what stands still, the whole map, looking down from the sky
-// along one of its directions, into its tile.
-static void R_RtRenderSkyDir(int k)
+// The depth of what stands still looking down from the sky along one of its
+// directions, into its tile of fbo: over all of the map (mins, maxs the
+// world's), or over a part of it (R_RtSkyRegionStep), where all that stands
+// between that part and the sky is drawn however far up it is. rows gets the
+// tile's projection, texel the most world a texel of it covers.
+static void R_RtRenderSkyView(int k, const vec3_t mins, const vec3_t maxs, FBO_t *fbo, int size, vec4_t *rows, float *texel)
 {
-	const int    size = r_rtSkyTile->integer;
-	const float *mins = tr.world->bmodels[0].bounds[0];
-	const float *maxs = tr.world->bmodels[0].bounds[1];
+	const float *worldMins = tr.world->bmodels[0].bounds[0];
+	const float *worldMaxs = tr.world->bmodels[0].bounds[1];
 	viewParms_t  parms;
 	vec3_t       axis[3], origin, bounds[2];
 	mat4_t       view, mvp;
@@ -1909,7 +1914,16 @@ static void R_RtRenderSkyDir(int k)
 		Mat4Transform(view, point, viewPoint);
 		AddPointToBounds(viewPoint, bounds[0], bounds[1]);
 	}
-	rt_skyTexel = Q_max(rt_skyTexel, Q_max(bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]) / size);
+	*texel = Q_max(*texel, Q_max(bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]) / size);
+	// toward the sky as far as the world goes (what is nearer still is
+	// clamped to the near plane, VPF_DEPTHCLAMP, and still in the way)
+	for (c = 0; c < 8; c++) {
+		vec4_t point, viewPoint;
+
+		VectorSet4(point, (c & 1) ? worldMaxs[0] : worldMins[0], (c & 2) ? worldMaxs[1] : worldMins[1], (c & 4) ? worldMaxs[2] : worldMins[2], 1.0f);
+		Mat4Transform(view, point, viewPoint);
+		bounds[0][0] = Q_min(bounds[0][0], viewPoint[0]);
+	}
 
 	Com_Memset(&parms, 0, sizeof(parms));
 	parms.viewportX      = (k % RT_SKY_TILES) * size;
@@ -1918,7 +1932,7 @@ static void R_RtRenderSkyDir(int k)
 	parms.viewportHeight = size;
 	parms.fovX           = 90;
 	parms.fovY           = 90;
-	parms.targetFbo      = tr.rtSkyFbo;
+	parms.targetFbo      = fbo;
 	parms.flags          = VPF_DEPTHSHADOW | VPF_DEPTHCLAMP | VPF_ORTHOGRAPHIC | VPF_NOVIEWMODEL | VPF_RTSKY;
 	parms.zFar           = bounds[1][0];
 	VectorCopy(origin, parms.ori.origin);
@@ -1947,11 +1961,18 @@ static void R_RtRenderSkyDir(int k)
 	// the shaders, and the direction
 	Mat4Multiply(tr.viewParms.projectionMatrix, tr.viewParms.world.modelMatrix, mvp);
 	for (c = 0; c < 3; c++) {
-		VectorSet4(tr.rtSkyRows[k * 4 + c], mvp[c], mvp[4 + c], mvp[8 + c], mvp[12 + c]);
+		VectorSet4(rows[k * 4 + c], mvp[c], mvp[4 + c], mvp[8 + c], mvp[12 + c]);
 	}
-	VectorCopy(rt.skyDirs[k], tr.rtSkyRows[k * 4 + 3]);
-	tr.rtSkyRows[k * 4 + 3][3] = 0;
+	VectorCopy(rt.skyDirs[k], rows[k * 4 + 3]);
+	rows[k * 4 + 3][3] = 0;
 	tr.rtSkyGeneration++;
+}
+
+// The whole map's, which all of the shaders read
+static void R_RtRenderSkyDir(int k)
+{
+	R_RtRenderSkyView(k, tr.world->bmodels[0].bounds[0], tr.world->bmodels[0].bounds[1], tr.rtSkyFbo, r_rtSkyTile->integer, tr.rtSkyRows,
+		&rt_skyTexel);
 }
 
 /*
@@ -1967,6 +1988,8 @@ typedef struct {
 	vec3_t          xyz;
 	vec3_t          normal;
 	vec2_t          lm;
+	vec3_t          mid;    // its triangle's middle, which the sky's bake moves its texels toward (R_RtBakeGather)
+	vec3_t          ds, dt; // the world a texel of its triangle's lightmap spans, along s and along t
 	const shader_t *shader; // what it is, for the colour it bounces (R_RtBounce)
 } rtBakeVert_t;
 
@@ -2038,7 +2061,8 @@ static void R_RtBakeAdd(rtBakeList_t *list, const vec3_t xyz, const vec3_t norma
 // The triangles of the surfaces lit by one page of the lightmaps
 static void R_RtBakeGather(int page, rtBakeList_t *list)
 {
-	int i, j, r, c, first;
+	const int start = list->num;
+	int       i, j, r, c, first;
 
 	for (i = 0; i < tr.world->numWorldSurfaces; i++) {
 		const msurface_t      *surf = &tr.world->surfaces[i];
@@ -2104,6 +2128,71 @@ static void R_RtBakeGather(int page, rtBakeList_t *list)
 			}
 		}
 		R_RtBakeChunk(list, first);
+	}
+
+	// each triangle's middle and the world a texel of it spans on its
+	// vertexes (the lists are triangles, three vertexes each)
+	for (i = start; i + 2 < list->num; i += 3) {
+		rtBakeVert_t *v = &list->verts[i];
+		const float   w = tr.lightmaps && tr.lightmaps[page] ? (float)tr.lightmaps[page]->width : 1.0f;
+		const float   h = tr.lightmaps && tr.lightmaps[page] ? (float)tr.lightmaps[page]->height : 1.0f;
+		const float   m00 = (v[1].lm[0] - v[0].lm[0]) * w, m01 = (v[2].lm[0] - v[0].lm[0]) * w;
+		const float   m10 = (v[1].lm[1] - v[0].lm[1]) * h, m11 = (v[2].lm[1] - v[0].lm[1]) * h;
+		const float   det = m00 * m11 - m01 * m10;
+		vec3_t        mid, e1, e2, ds, dt;
+
+		VectorAdd(v[0].xyz, v[1].xyz, mid);
+		VectorAdd(mid, v[2].xyz, mid);
+		VectorScale(mid, 1.0f / 3.0f, mid);
+		VectorClear(ds);
+		VectorClear(dt);
+		if (fabsf(det) > 1e-6f) {
+			VectorSubtract(v[1].xyz, v[0].xyz, e1);
+			VectorSubtract(v[2].xyz, v[0].xyz, e2);
+			for (j = 0; j < 3; j++) {
+				ds[j] = (m11 * e1[j] - m10 * e2[j]) / det;
+				dt[j] = (-m01 * e1[j] + m00 * e2[j]) / det;
+			}
+			// a sliver's own lightmap can be stretched past any use
+			if (VectorLength(ds) > 128.0f || VectorLength(dt) > 128.0f) {
+				VectorClear(ds);
+				VectorClear(dt);
+			}
+		}
+		for (j = 0; j < 3; j++) {
+			VectorCopy(mid, v[j].mid);
+			VectorCopy(ds, v[j].ds);
+			VectorCopy(dt, v[j].dt);
+		}
+	}
+}
+
+// The sky's bakes keep the darkest of what is drawn to a texel: one along the
+// line where two faces meet (a wall's below a ceiling and above it, both in
+// one chart) took the last drawn, the lit one above, and the lightmap's
+// filtering drew it down the wall below. Cleared to 1 (and alpha 0, which
+// the drawing raises to 1), so the first drawn is kept.
+static void R_RtSkyBakeBlendBegin(void)
+{
+	qglEnable(GL_BLEND);
+	qglBlendEquationSeparate(GL_MIN, GL_MAX);
+}
+
+static void R_RtSkyBakeBlendEnd(void)
+{
+	qglBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+	qglDisable(GL_BLEND);
+}
+
+// and the texels nothing was drawn to back to 0, for the dilation
+static void R_RtSkyBakeUncovered(byte *texels, int width, int height)
+{
+	int i;
+
+	for (i = 0; i < width * height; i++) {
+		if (!texels[i * 4 + 3]) {
+			texels[i * 4] = 0;
+		}
 	}
 }
 
@@ -3865,7 +3954,7 @@ static void R_RtBindVertexArray(GLuint vao)
 static void R_RtBakeSkyLightmaps(void)
 {
 	rtBakeList_t list;
-	vec4_t       color, off = { 0, 0, 0, 0 };
+	vec4_t       color, off = { 0, 0, 0, 0 }, everywhere = { -1e9f, -1e9f, 1e9f, 1e9f };
 	int          page, total = 0;
 
 	if (!tr.rtSkyBakeShader.program || !tr.rtSkyBakeFbo || !tr.lightmaps || tr.numLightmaps <= 0 || tr.rtSkyLightmaps) {
@@ -3909,14 +3998,17 @@ static void R_RtBakeSkyLightmaps(void)
 		}
 		qglViewport(0, 0, image->width, image->height);
 		qglScissor(0, 0, image->width, image->height);
-		qglClearColor(0, 0, 0, 0);
+		qglClearColor(1, 1, 1, 0);
 		qglClear(GL_COLOR_BUFFER_BIT);
+		qglClearColor(0, 0, 0, 0);
 
 		GL_State(GLS_DEPTHTEST_DISABLE);
 		GL_Cull(CT_TWO_SIDED);
+		R_RtSkyBakeBlendBegin();
 		GLSL_BindProgram(&tr.rtSkyBakeShader);
 		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSKYCOLOR, color);
 		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSURFACE, off);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSKYREGION, everywhere);
 		GLSL_SetUniformRtSky(&tr.rtSkyBakeShader, UNIFORM_RTSKY, tr.rtSkyRows, tr.rtSkyGeneration);
 		GL_BindToTMU(tr.rtSkyImage, TMU_RTSKY);
 
@@ -3932,6 +4024,12 @@ static void R_RtBakeSkyLightmaps(void)
 		qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
 		qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
 		qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
+		qglEnableVertexAttribArray(ATTR_INDEX_TANGENT);
+		qglVertexAttribPointer(ATTR_INDEX_TANGENT, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, mid));
+		qglEnableVertexAttribArray(ATTR_INDEX_POSITION2);
+		qglVertexAttribPointer(ATTR_INDEX_POSITION2, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, ds));
+		qglEnableVertexAttribArray(ATTR_INDEX_NORMAL2);
+		qglVertexAttribPointer(ATTR_INDEX_NORMAL2, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, dt));
 
 		// the triangles, then their edges, for the texels along them whose
 		// middles the triangles miss
@@ -3939,9 +4037,11 @@ static void R_RtBakeSkyLightmaps(void)
 		qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 		qglDrawArrays(GL_TRIANGLES, 0, list.num);
 		qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		R_RtSkyBakeBlendEnd();
 
 		texels = ri.Malloc(image->width * image->height * 4);
 		qglReadPixels(0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		R_RtSkyBakeUncovered(texels, image->width, image->height);
 		R_RtBakeDilate(texels, image->width, image->height, 3);
 		qglTextureSubImage2DEXT(image->texnum, GL_TEXTURE_2D, 0, 0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
 		if (page == 0) {
@@ -3954,6 +4054,9 @@ static void R_RtBakeSkyLightmaps(void)
 		qglDisableVertexAttribArray(ATTR_INDEX_POSITION);
 		qglDisableVertexAttribArray(ATTR_INDEX_NORMAL);
 		qglDisableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+		qglDisableVertexAttribArray(ATTR_INDEX_TANGENT);
+		qglDisableVertexAttribArray(ATTR_INDEX_POSITION2);
+		qglDisableVertexAttribArray(ATTR_INDEX_NORMAL2);
 		qglBindBuffer(GL_ARRAY_BUFFER, 0);
 		qglDeleteBuffers(1, &vbo);
 		R_RtBindVertexArray(0);
@@ -3969,10 +4072,13 @@ static void R_RtBakeSkyLightmaps(void)
 	ri.Printf(PRINT_DEVELOPER, "realtime lighting: the sky over %d triangles of %d lightmap pages\n", total, tr.numLightmaps);
 }
 
+static void R_RtSkyRegionFree(void);
+
 void R_RtFreeSkyLightmaps(void)
 {
 	int i;
 
+	R_RtSkyRegionFree();
 	if (!tr.rtSkyLightmaps) {
 		return;
 	}
@@ -3987,6 +4093,366 @@ void R_RtFreeSkyLightmaps(void)
 }
 
 #define RT_SKY_PER_FRAME 4
+
+/*
+The sky came in at the foot of walls, up a room's inside corners and along
+the line under a ceiling (m2l2a), several ways:
+- its test was pushed a texel and a half along the surface's normal and as
+  far again toward the sky (RtSky): toward the sky it went through the wall
+  beside it. It goes along the normal alone now.
+- the sky's depth had the far sides of faces alone, as the sun's has: what is
+  inside a wall (a floor's lightmap running on under it) saw the sky through
+  the wall's top, a wall on the void having nothing behind it. Both sides
+  are drawn now (R_CullSurface, RB_StageIteratorGeneric), as for the lamps.
+- a lightmap texel is 16 or 32 units, and one across the edge of what shades
+  it (a wall's lightmap running on past a ceiling) took the sky of the side
+  it is not seen from: its bake keeps the darkest of its middle, moved into
+  its triangle, and its corners, and of every face drawn to it (GL_MIN).
+- the whole map's depth, at the most r_rtSkyTile allows, is ten units a texel
+  on a map m2l2a's size, more than many of its walls are thick.
+
+So the sky's lightmaps, once worked out from the whole map's depth, are worked
+out again a part of the world at a time (r_rtSkyRegion units square), from
+the sky's depth over that part alone, a tile a direction of
+tr.rtSkyRegionImage: a texel to a unit or two. A part is drawn over four
+frames (its sixteen directions, as the whole map's are) and baked the next;
+when the last is, the pages take the place of the first ones. What moves, and
+what has no lightmap, still read the whole map's depth.
+*/
+typedef struct {
+	vec3_t mins, maxs; // its part of the world, and the height of what is in it
+} rtSkyRegion_t;
+
+static struct {
+	qboolean       started, done;
+	int            numPages;
+	rtBakeList_t  *lists;    // each page's triangles, a chunk a surface
+	GLuint        *vaos, *vbos;
+	image_t      **images;   // the pages being worked out
+	rtSkyRegion_t *regions;
+	int            numRegions;
+	int            region;   // the part being drawn
+	int            dir;      // its next direction to draw
+	float          texel;    // the most world a texel of its depth covers
+	float          minTexel, maxTexel;
+	vec4_t         rows[RT_SKY_DIRS * 4];
+	int            start;    // when it began, for the developer's message
+	int            frames;
+	const image_t *owner;    // tr.rtSkyImage when it began: another, and its images and buffers went with the renderer's (vid_restart)
+} rt_skyRegion;
+
+static void R_RtSkyRegionFree(void)
+{
+	const qboolean live = rt_skyRegion.owner && rt_skyRegion.owner == tr.rtSkyImage;
+	int            page;
+
+	if (rt_skyRegion.lists) {
+		for (page = 0; page < rt_skyRegion.numPages; page++) {
+			if (rt_skyRegion.lists[page].verts) {
+				ri.Free(rt_skyRegion.lists[page].verts);
+			}
+			if (rt_skyRegion.lists[page].chunks) {
+				ri.Free(rt_skyRegion.lists[page].chunks);
+			}
+			if (live && rt_skyRegion.vbos && rt_skyRegion.vbos[page]) {
+				qglDeleteBuffers(1, &rt_skyRegion.vbos[page]);
+			}
+			if (live && rt_skyRegion.vaos && rt_skyRegion.vaos[page]) {
+				qglDeleteVertexArrays(1, &rt_skyRegion.vaos[page]);
+			}
+			// pages not handed over (a map gone before they were done)
+			if (live && rt_skyRegion.images && rt_skyRegion.images[page]) {
+				R_FreeImage(rt_skyRegion.images[page]);
+			}
+		}
+		ri.Free(rt_skyRegion.lists);
+	}
+	if (rt_skyRegion.vaos) {
+		ri.Free(rt_skyRegion.vaos);
+	}
+	if (rt_skyRegion.vbos) {
+		ri.Free(rt_skyRegion.vbos);
+	}
+	if (rt_skyRegion.images) {
+		ri.Free(rt_skyRegion.images);
+	}
+	if (rt_skyRegion.regions) {
+		ri.Free(rt_skyRegion.regions);
+	}
+	Com_Memset(&rt_skyRegion, 0, sizeof(rt_skyRegion));
+}
+
+// Each page's triangles, their buffers, the pages to draw into, and the parts
+// of the world that have any of them
+static qboolean R_RtSkyRegionBegin(void)
+{
+	const float size = Q_max(256.0f, r_rtSkyRegion->value);
+	vec3_t      mins, maxs;
+	int         page, i, cols, rows, x, y, n;
+	float      *low, *high;
+
+	rt_skyRegion.started  = qtrue;
+	rt_skyRegion.owner    = tr.rtSkyImage;
+	rt_skyRegion.numPages = tr.numLightmaps;
+	rt_skyRegion.lists    = ri.Malloc(sizeof(rtBakeList_t) * tr.numLightmaps);
+	rt_skyRegion.vaos     = ri.Malloc(sizeof(GLuint) * tr.numLightmaps);
+	rt_skyRegion.vbos     = ri.Malloc(sizeof(GLuint) * tr.numLightmaps);
+	rt_skyRegion.images   = ri.Malloc(sizeof(image_t *) * tr.numLightmaps);
+	Com_Memset(rt_skyRegion.lists, 0, sizeof(rtBakeList_t) * tr.numLightmaps);
+	Com_Memset(rt_skyRegion.vaos, 0, sizeof(GLuint) * tr.numLightmaps);
+	Com_Memset(rt_skyRegion.vbos, 0, sizeof(GLuint) * tr.numLightmaps);
+	Com_Memset(rt_skyRegion.images, 0, sizeof(image_t *) * tr.numLightmaps);
+	rt_skyRegion.minTexel = 1e9f;
+	rt_skyRegion.start    = ri.Milliseconds();
+
+	ClearBounds(mins, maxs);
+	for (page = 0; page < tr.numLightmaps; page++) {
+		rtBakeList_t *list = &rt_skyRegion.lists[page];
+		image_t      *image;
+
+		if (!tr.lightmaps[page]) {
+			continue;
+		}
+		list->keepChunks = qtrue;
+		R_RtBakeGather(page, list);
+		if (!list->num) {
+			continue;
+		}
+		for (i = 0; i < list->numChunks; i++) {
+			AddPointToBounds(list->chunks[i].mins, mins, maxs);
+			AddPointToBounds(list->chunks[i].maxs, mins, maxs);
+		}
+
+		image = R_CreateImage(va("*rtskylmr%d", page), NULL, tr.lightmaps[page]->width, tr.lightmaps[page]->height, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
+		FBO_Bind(tr.rtSkyBakeFbo);
+		FBO_AttachImage(tr.rtSkyBakeFbo, image, GL_COLOR_ATTACHMENT0_EXT, 0);
+		qglDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+		if (!R_CheckFBO(tr.rtSkyBakeFbo)) {
+			FBO_Bind(NULL);
+			R_FreeImage(image);
+			return qfalse;
+		}
+		qglViewport(0, 0, image->width, image->height);
+		qglScissor(0, 0, image->width, image->height);
+		qglClearColor(1, 1, 1, 0);
+		qglClear(GL_COLOR_BUFFER_BIT);
+		qglClearColor(0, 0, 0, 0);
+		FBO_Bind(NULL);
+		rt_skyRegion.images[page] = image;
+
+		R_BindNullVao();
+		qglGenVertexArrays(1, &rt_skyRegion.vaos[page]);
+		R_RtBindVertexArray(rt_skyRegion.vaos[page]);
+		qglGenBuffers(1, &rt_skyRegion.vbos[page]);
+		qglBindBuffer(GL_ARRAY_BUFFER, rt_skyRegion.vbos[page]);
+		qglBufferData(GL_ARRAY_BUFFER, sizeof(rtBakeVert_t) * list->num, list->verts, GL_STATIC_DRAW);
+		qglEnableVertexAttribArray(ATTR_INDEX_POSITION);
+		qglEnableVertexAttribArray(ATTR_INDEX_NORMAL);
+		qglEnableVertexAttribArray(ATTR_INDEX_TEXCOORD);
+		qglVertexAttribPointer(ATTR_INDEX_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, xyz));
+		qglVertexAttribPointer(ATTR_INDEX_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, normal));
+		qglVertexAttribPointer(ATTR_INDEX_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, lm));
+		qglEnableVertexAttribArray(ATTR_INDEX_TANGENT);
+		qglVertexAttribPointer(ATTR_INDEX_TANGENT, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, mid));
+		qglEnableVertexAttribArray(ATTR_INDEX_POSITION2);
+		qglVertexAttribPointer(ATTR_INDEX_POSITION2, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, ds));
+		qglEnableVertexAttribArray(ATTR_INDEX_NORMAL2);
+		qglVertexAttribPointer(ATTR_INDEX_NORMAL2, 3, GL_FLOAT, GL_FALSE, sizeof(rtBakeVert_t), (void *)offsetof(rtBakeVert_t, dt));
+		qglBindBuffer(GL_ARRAY_BUFFER, 0);
+		R_RtBindVertexArray(0);
+	}
+	if (mins[0] > maxs[0]) {
+		return qfalse;
+	}
+
+	// a grid over them, a part a square of it with something in it, as
+	// high as what is in it goes
+	cols = Q_max(1, (int)ceilf((maxs[0] - mins[0]) / size));
+	rows = Q_max(1, (int)ceilf((maxs[1] - mins[1]) / size));
+	low  = ri.Malloc(sizeof(float) * cols * rows);
+	high = ri.Malloc(sizeof(float) * cols * rows);
+	for (i = 0; i < cols * rows; i++) {
+		low[i]  = 1e9f;
+		high[i] = -1e9f;
+	}
+	for (page = 0; page < tr.numLightmaps; page++) {
+		const rtBakeList_t *list = &rt_skyRegion.lists[page];
+
+		for (i = 0; i < list->numChunks; i++) {
+			const rtBakeChunk_t *c  = &list->chunks[i];
+			const int            x0 = Com_Clamp(0, cols - 1, (int)floorf((c->mins[0] - mins[0]) / size));
+			const int            x1 = Com_Clamp(0, cols - 1, (int)floorf((c->maxs[0] - mins[0]) / size));
+			const int            y0 = Com_Clamp(0, rows - 1, (int)floorf((c->mins[1] - mins[1]) / size));
+			const int            y1 = Com_Clamp(0, rows - 1, (int)floorf((c->maxs[1] - mins[1]) / size));
+
+			for (y = y0; y <= y1; y++) {
+				for (x = x0; x <= x1; x++) {
+					low[y * cols + x]  = Q_min(low[y * cols + x], c->mins[2]);
+					high[y * cols + x] = Q_max(high[y * cols + x], c->maxs[2]);
+				}
+			}
+		}
+	}
+	rt_skyRegion.regions = ri.Malloc(sizeof(rtSkyRegion_t) * cols * rows);
+	for (n = 0, y = 0; y < rows; y++) {
+		for (x = 0; x < cols; x++) {
+			rtSkyRegion_t *r = &rt_skyRegion.regions[n];
+
+			if (low[y * cols + x] > high[y * cols + x]) {
+				continue;
+			}
+			// the last row and column past the most, so that the texels on
+			// the world's edge are in one
+			VectorSet(r->mins, mins[0] + x * size, mins[1] + y * size, low[y * cols + x]);
+			VectorSet(r->maxs, x == cols - 1 ? maxs[0] + 1.0f : mins[0] + (x + 1) * size, y == rows - 1 ? maxs[1] + 1.0f : mins[1] + (y + 1) * size,
+				high[y * cols + x]);
+			n++;
+		}
+	}
+	rt_skyRegion.numRegions = n;
+	ri.Free(low);
+	ri.Free(high);
+	return qtrue;
+}
+
+// What one part of the world sees of the sky, from its own depth, into the
+// pages: the texels whose middles are in it
+static void R_RtSkyRegionBake(const rtSkyRegion_t *r)
+{
+	vec4_t color, off = { 0, 0, 0, 0 }, part;
+	int    page, i;
+
+	VectorSet4(color, 2.0f / RT_SKY_DIRS, 2.0f / RT_SKY_DIRS, 2.0f / RT_SKY_DIRS, rt_skyRegion.texel);
+	VectorSet4(part, r->mins[0], r->mins[1], r->maxs[0], r->maxs[1]);
+
+	for (page = 0; page < rt_skyRegion.numPages; page++) {
+		const rtBakeList_t *list  = &rt_skyRegion.lists[page];
+		image_t            *image = rt_skyRegion.images[page];
+
+		if (!image || !list->num) {
+			continue;
+		}
+		FBO_Bind(tr.rtSkyBakeFbo);
+		FBO_AttachImage(tr.rtSkyBakeFbo, image, GL_COLOR_ATTACHMENT0_EXT, 0);
+		qglDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+		qglViewport(0, 0, image->width, image->height);
+		qglScissor(0, 0, image->width, image->height);
+
+		GL_State(GLS_DEPTHTEST_DISABLE);
+		GL_Cull(CT_TWO_SIDED);
+		R_RtSkyBakeBlendBegin();
+		GLSL_BindProgram(&tr.rtSkyBakeShader);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSKYCOLOR, color);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSURFACE, off);
+		GLSL_SetUniformVec4(&tr.rtSkyBakeShader, UNIFORM_RTSKYREGION, part);
+		GLSL_SetUniformRtSky(&tr.rtSkyBakeShader, UNIFORM_RTSKY, rt_skyRegion.rows, tr.rtSkyGeneration);
+		GL_BindToTMU(tr.rtSkyRegionImage, TMU_RTSKY);
+
+		R_BindNullVao();
+		R_RtBindVertexArray(rt_skyRegion.vaos[page]);
+		// the surfaces that reach into it, then their edges (as R_RtBakeSkyLightmaps)
+		for (i = 0; i < list->numChunks; i++) {
+			const rtBakeChunk_t *c = &list->chunks[i];
+
+			if (c->maxs[0] < r->mins[0] || c->mins[0] >= r->maxs[0] || c->maxs[1] < r->mins[1] || c->mins[1] >= r->maxs[1]) {
+				continue;
+			}
+			qglDrawArrays(GL_TRIANGLES, c->first, c->count);
+			qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+			qglDrawArrays(GL_TRIANGLES, c->first, c->count);
+			qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		}
+		R_RtBindVertexArray(0);
+		R_RtSkyBakeBlendEnd();
+	}
+	FBO_Bind(NULL);
+	// the shaders read the whole map's depth there again
+	GL_BindToTMU(tr.rtSkyImage, TMU_RTSKY);
+}
+
+// The pages done: their gaps filled, and in the place of the first ones
+static void R_RtSkyRegionFinish(void)
+{
+	int page;
+
+	for (page = 0; page < rt_skyRegion.numPages; page++) {
+		image_t *image = rt_skyRegion.images[page];
+		byte    *texels;
+
+		if (!image || page >= tr.rtNumSkyLightmaps) {
+			continue;
+		}
+		FBO_Bind(tr.rtSkyBakeFbo);
+		FBO_AttachImage(tr.rtSkyBakeFbo, image, GL_COLOR_ATTACHMENT0_EXT, 0);
+		qglReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
+		texels = ri.Malloc(image->width * image->height * 4);
+		qglReadPixels(0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		R_RtSkyBakeUncovered(texels, image->width, image->height);
+		R_RtBakeDilate(texels, image->width, image->height, 3);
+		qglTextureSubImage2DEXT(image->texnum, GL_TEXTURE_2D, 0, 0, 0, image->width, image->height, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+		ri.Free(texels);
+
+		if (tr.rtSkyLightmaps[page]) {
+			R_FreeImage(tr.rtSkyLightmaps[page]);
+		}
+		tr.rtSkyLightmaps[page]       = image;
+		rt_skyRegion.images[page] = NULL;
+	}
+	FBO_Bind(NULL);
+	ri.Printf(PRINT_DEVELOPER, "realtime lighting: the sky again over %d parts of the world, %.1f to %.1f units a texel, %d frames, %d ms\n",
+		rt_skyRegion.numRegions, rt_skyRegion.minTexel, rt_skyRegion.maxTexel, rt_skyRegion.frames, ri.Milliseconds() - rt_skyRegion.start);
+}
+
+// A frame of it, once the first pages are there: the part drawn last frame
+// baked, then the next directions drawn
+static void R_RtSkyRegionStep(void)
+{
+	int drawn = 0;
+
+	if (rt_skyRegion.done || !tr.rtSkyLightmaps || !tr.rtSkyRegionFbo || !tr.rtSkyRegionImage || r_rtSkyRegion->value <= 0) {
+		return;
+	}
+	if (!rt_skyRegion.started) {
+		if (!R_RtSkyRegionBegin()) {
+			R_RtSkyRegionFree();
+			rt_skyRegion.started = rt_skyRegion.done = qtrue;
+			return;
+		}
+	}
+	rt_skyRegion.frames++;
+
+	// its directions all drawn by the backend last frame
+	if (rt_skyRegion.dir == RT_SKY_DIRS) {
+		R_RtSkyRegionBake(&rt_skyRegion.regions[rt_skyRegion.region]);
+		rt_skyRegion.minTexel = Q_min(rt_skyRegion.minTexel, rt_skyRegion.texel);
+		rt_skyRegion.maxTexel = Q_max(rt_skyRegion.maxTexel, rt_skyRegion.texel);
+		rt_skyRegion.region++;
+		rt_skyRegion.dir = 0;
+	}
+	if (rt_skyRegion.region >= rt_skyRegion.numRegions) {
+		R_RtSkyRegionFinish();
+		R_RtSkyRegionFree();
+		rt_skyRegion.started = rt_skyRegion.done = qtrue;
+		return;
+	}
+
+	while (rt_skyRegion.dir < RT_SKY_DIRS && drawn < RT_SKY_PER_FRAME) {
+		const rtSkyRegion_t *r = &rt_skyRegion.regions[rt_skyRegion.region];
+		vec3_t               mins, maxs;
+
+		if (!rt_skyRegion.dir) {
+			rt_skyRegion.texel = 0;
+		}
+		// as far round it as a test reaches from what is in it (RtSky's bias)
+		VectorSet(mins, r->mins[0] - 32.0f, r->mins[1] - 32.0f, r->mins[2] - 32.0f);
+		VectorSet(maxs, r->maxs[0] + 32.0f, r->maxs[1] + 32.0f, r->maxs[2] + 32.0f);
+		R_RtRenderSkyView(rt_skyRegion.dir, mins, maxs, tr.rtSkyRegionFbo, RT_SKY_REGION_TILE, rt_skyRegion.rows, &rt_skyRegion.texel);
+		rt_skyRegion.dir++;
+		drawn++;
+	}
+}
+
 #define RT_SKY_WAIT      8 // world frames after a map comes in: the terrain
                            // the main view picked is what the depth views draw
 
@@ -4025,6 +4491,9 @@ static void R_RtUpdateSky(float bake, float ease)
 	// a frame after the last of them, which the backend has drawn by now
 	if (!drawn && !tr.rtSkyLightmaps) {
 		R_RtBakeSkyLightmaps();
+	} else if (!drawn) {
+		// then again, sharper, a part of the world at a time
+		R_RtSkyRegionStep();
 	}
 
 	// an open floor sees all of it
@@ -4860,6 +5329,286 @@ static void R_RtShadowProbeStep(void)
 
 // r_rtBakeAt x y: the bake's surfaces over (x, y), top down, their normal, the
 // lightmap texel there and what is baked in it (a test command)
+
+
+// r_rtSkyProbe ... region: the sky's depth over the part of the world round
+// the point drawn as R_RtSkyRegionStep draws a part's, and read the next frame
+static struct {
+	int    state; // 2: to draw; 1: drawn last frame, to read; 0: none
+	vec3_t p, n, mins, maxs;
+	float  texel;
+	vec4_t rows[RT_SKY_DIRS * 4];
+} rt_skyProbe;
+
+static void R_RtSkyProbeRegionStep(void)
+{
+	const int   size = RT_SKY_REGION_TILE;
+	const float bias = 1.5f * rt_skyProbe.texel + 2.0f;
+	float       sum  = 0;
+	int         k, j;
+
+	if (rt_skyProbe.state == 2 && tr.rtSkyRegionFbo) {
+		rt_skyProbe.texel = 0;
+		for (k = 0; k < RT_SKY_DIRS; k++) {
+			R_RtRenderSkyView(k, rt_skyProbe.mins, rt_skyProbe.maxs, tr.rtSkyRegionFbo, RT_SKY_REGION_TILE, rt_skyProbe.rows, &rt_skyProbe.texel);
+		}
+		rt_skyProbe.state = 1;
+		return;
+	}
+	if (rt_skyProbe.state != 1 || !tr.rtSkyRegionFbo) {
+		return;
+	}
+	rt_skyProbe.state = 0;
+	ri.Printf(PRINT_ALL, "sky at %.1f %.1f %.1f, from its part's depth: %.2f units a texel, bias %.1f\n", rt_skyProbe.p[0], rt_skyProbe.p[1],
+		rt_skyProbe.p[2], rt_skyProbe.texel, bias);
+	FBO_Bind(tr.rtSkyRegionFbo);
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		const float *d = rt.skyDirs[k];
+		const float  w = DotProduct(rt_skyProbe.n, d);
+		vec3_t       q;
+		float        c[3], depth = 1.0f;
+
+		if (w <= 0) {
+			continue;
+		}
+		for (j = 0; j < 3; j++) {
+			q[j] = rt_skyProbe.p[j] + rt_skyProbe.n[j] * bias;
+		}
+		for (j = 0; j < 3; j++) {
+			c[j] = (DotProduct(rt_skyProbe.rows[k * 4 + j], q) + rt_skyProbe.rows[k * 4 + j][3]) * 0.5f + 0.5f;
+		}
+		qglReadPixels((k % RT_SKY_TILES) * size + Com_Clamp(0, size - 1, (int)(c[0] * size)),
+			(k / RT_SKY_TILES) * size + Com_Clamp(0, size - 1, (int)(c[1] * size)), 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+		ri.Printf(PRINT_ALL, "  %2d faces %.2f: %s (%.5f vs %.5f)\n", k, w, c[2] <= depth ? "LIT" : "dark", c[2], depth);
+		if (c[2] <= depth) {
+			sum += w;
+		}
+	}
+	FBO_Bind(NULL);
+	ri.Printf(PRINT_ALL, "  sees %.2f of the sky by its part's depth\n", sum);
+}
+
+// r_rtSkyProbe x y z nx ny nz: for a surface at x y z facing n, each of the
+// sky's directions as it faces it, whether a trace through the world gets to
+// the sky, and whether the whole map's depth (RtSky's test, its bias) says so
+// What RtSky works out at p facing n from the whole map's depth (0 to 8, an
+// open floor 8), read back from it: for r_rtSkyProbe
+static float R_RtSkyProbeDepth(const vec3_t p, const vec3_t n)
+{
+	const float bias = 1.5f * rt_skyTexel + 2.0f;
+	const int   size = r_rtSkyTile->integer;
+	float       sum  = 0;
+	int         k, j;
+
+	if (!tr.rtSkyFbo) {
+		return -1;
+	}
+	FBO_Bind(tr.rtSkyFbo);
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		const float *d = rt.skyDirs[k];
+		const float  w = DotProduct(n, d);
+		vec3_t       q;
+		float        c[3], depth = 1.0f;
+
+		if (w <= 0) {
+			continue;
+		}
+		for (j = 0; j < 3; j++) {
+			q[j] = p[j] + n[j] * bias;
+		}
+		for (j = 0; j < 3; j++) {
+			c[j] = (DotProduct(tr.rtSkyRows[k * 4 + j], q) + tr.rtSkyRows[k * 4 + j][3]) * 0.5f + 0.5f;
+		}
+		qglReadPixels((k % RT_SKY_TILES) * size + Com_Clamp(0, size - 1, (int)(c[0] * size)),
+			(k / RT_SKY_TILES) * size + Com_Clamp(0, size - 1, (int)(c[1] * size)), 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+		if (c[2] <= depth) {
+			sum += w;
+		}
+	}
+	FBO_Bind(NULL);
+	return sum;
+}
+
+static void R_RtSkyProbe_f(void)
+{
+	vec3_t  p, n, zero = { 0, 0, 0 };
+	float   bias, truth = 0, map = 0, norm = 0;
+	int     k;
+
+	if (ri.Cmd_Argc() < 7 || !tr.world) {
+		ri.Printf(PRINT_ALL, "r_rtSkyProbe x y z nx ny nz [old|region]\n");
+		return;
+	}
+	VectorSet(p, atof(ri.Cmd_Argv(1)), atof(ri.Cmd_Argv(2)), atof(ri.Cmd_Argv(3)));
+	VectorSet(n, atof(ri.Cmd_Argv(4)), atof(ri.Cmd_Argv(5)), atof(ri.Cmd_Argv(6)));
+	VectorNormalize(n);
+	if (!Q_stricmp(ri.Cmd_Argv(7), "region") && tr.rtSkyRegionFbo) {
+		const float half = Q_max(256.0f, r_rtSkyRegion->value) * 0.5f;
+		vec3_t      mins, maxs;
+
+		VectorSet(rt_skyProbe.mins, p[0] - half - 32.0f, p[1] - half - 32.0f, p[2] - 256.0f);
+		VectorSet(rt_skyProbe.maxs, p[0] + half + 32.0f, p[1] + half + 32.0f, p[2] + 256.0f);
+		VectorCopy(p, rt_skyProbe.p);
+		VectorCopy(n, rt_skyProbe.n);
+		rt_skyProbe.state = 2;
+		return;
+	}
+	bias = 1.5f * rt_skyTexel + 2.0f;
+	ri.Printf(PRINT_ALL, "sky at %.1f %.1f %.1f facing %.2f %.2f %.2f: %.1f units a texel, bias %.1f\n", p[0], p[1], p[2], n[0], n[1], n[2], rt_skyTexel, bias);
+
+	for (k = 0; k < RT_SKY_DIRS; k++) {
+		const float *d = rt.skyDirs[k];
+		const float  w = DotProduct(n, d);
+		const int    size = r_rtSkyTile->integer;
+		vec3_t       start, end, q;
+		trace_t      trace;
+		float        c[3], depth = 1.0f;
+		int          j, tx, ty;
+		qboolean     sky, lit;
+
+		norm += d[2];
+		if (w <= 0) {
+			continue;
+		}
+		VectorMA(p, 1.0f, n, start);
+		VectorMA(p, 65536.0f, d, end);
+		ri.CM_BoxTrace(&trace, start, end, zero, zero, 0, CONTENTS_SOLID, qfalse);
+		sky = trace.fraction >= 1.0f || (trace.surfaceFlags & SURF_SKY);
+
+		// r_rtSkyProbe ... old: the test pushed toward the sky too, as it was
+		for (j = 0; j < 3; j++) {
+			q[j] = p[j] + (n[j] + (!Q_stricmp(ri.Cmd_Argv(7), "old") ? d[j] : 0.0f)) * bias;
+		}
+		for (j = 0; j < 3; j++) {
+			c[j] = (DotProduct(tr.rtSkyRows[k * 4 + j], q) + tr.rtSkyRows[k * 4 + j][3]) * 0.5f + 0.5f;
+		}
+		tx = (k % RT_SKY_TILES) * size + Com_Clamp(0, size - 1, (int)(c[0] * size));
+		ty = (k / RT_SKY_TILES) * size + Com_Clamp(0, size - 1, (int)(c[1] * size));
+		if (tr.rtSkyFbo) {
+			FBO_Bind(tr.rtSkyFbo);
+			qglReadPixels(tx, ty, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+			FBO_Bind(NULL);
+		}
+		lit = c[2] <= depth;
+		truth += sky ? w : 0;
+		map += lit ? w : 0;
+		ri.Printf(PRINT_ALL, "  %2d dir %5.2f %5.2f %5.2f faces %.2f: trace %s (%.0f)  depth %s (%.5f vs %.5f)\n", k, d[0], d[1], d[2], w,
+			sky ? "SKY" : "blocked", trace.fraction * 65536.0f, lit ? "LIT" : "dark", c[2], depth);
+	}
+	ri.Printf(PRINT_ALL, "  sees %.2f of the sky by the traces, %.2f by the whole map's depth (an open floor %.2f)\n", truth, map, norm);
+
+	// and its texels in the sky's lightmaps, 7 by 7 round it (alpha: covered)
+	if (tr.rtSkyLightmaps) {
+		int page;
+
+		for (page = 0; page < tr.rtNumSkyLightmaps; page++) {
+			rtBakeList_t list;
+			int          i;
+
+			if (!tr.rtSkyLightmaps[page]) {
+				continue;
+			}
+			Com_Memset(&list, 0, sizeof(list));
+			R_RtBakeGather(page, &list);
+			for (i = 0; i + 2 < list.num; i += 3) {
+				const rtBakeVert_t *v[3] = { &list.verts[i], &list.verts[i + 1], &list.verts[i + 2] };
+				const image_t      *image = tr.rtSkyLightmaps[page];
+				vec3_t              e1, e2, w, nrm;
+				float               d00, d01, d11, d20, d21, den, b1, b2, st[2];
+				byte                texels[7 * 7 * 4];
+				int                 tx, ty, r, c;
+
+				VectorSubtract(v[1]->xyz, v[0]->xyz, e1);
+				VectorSubtract(v[2]->xyz, v[0]->xyz, e2);
+				VectorSubtract(p, v[0]->xyz, w);
+				CrossProduct(e1, e2, nrm);
+				if (VectorNormalize(nrm) < 1e-3f || fabs(DotProduct(w, nrm)) > 1.0f || fabs(DotProduct(nrm, n)) < 0.9f) {
+					continue;
+				}
+				d00 = DotProduct(e1, e1);
+				d01 = DotProduct(e1, e2);
+				d11 = DotProduct(e2, e2);
+				d20 = DotProduct(w, e1);
+				d21 = DotProduct(w, e2);
+				den = d00 * d11 - d01 * d01;
+				b1  = (d11 * d20 - d01 * d21) / den;
+				b2  = (d00 * d21 - d01 * d20) / den;
+				if (b1 < -0.001f || b2 < -0.001f || b1 + b2 > 1.001f) {
+					continue;
+				}
+				st[0] = (1 - b1 - b2) * v[0]->lm[0] + b1 * v[1]->lm[0] + b2 * v[2]->lm[0];
+				st[1] = (1 - b1 - b2) * v[0]->lm[1] + b1 * v[1]->lm[1] + b2 * v[2]->lm[1];
+				tx    = (int)(st[0] * image->width);
+				ty    = (int)(st[1] * image->height);
+				Com_Memset(texels, 0, sizeof(texels));
+				FBO_Bind(tr.rtSkyBakeFbo);
+				FBO_AttachImage(tr.rtSkyBakeFbo, (image_t *)image, GL_COLOR_ATTACHMENT0_EXT, 0);
+				qglReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
+				qglReadPixels(tx - 3, ty - 3, 7, 7, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+				FBO_Bind(NULL);
+				ri.Printf(PRINT_ALL, "  image %s (%d)\n", image->imgName, image->texnum);
+				ri.Printf(PRINT_ALL, "  page %d %s lm %.5f %.5f = texel %.2f %.2f (normal %.2f %.2f %.2f), sky texels (value/alpha) rows up:\n", page,
+					v[0]->shader ? v[0]->shader->name : "?", st[0], st[1], st[0] * image->width, st[1] * image->height, nrm[0], nrm[1], nrm[2]);
+				for (r = 6; r >= 0; r--) {
+					char line[256] = "   ";
+
+					for (c = 0; c < 7; c++) {
+						Q_strcat(line, sizeof(line), va(" %3d/%-3d", texels[(r * 7 + c) * 4], texels[(r * 7 + c) * 4 + 3]));
+					}
+					ri.Printf(PRINT_ALL, "%s\n", line);
+				}
+				// each texel's middle on the triangle's plane (its lightmap
+				// coordinates carried on past its edges), the vertex normals
+				// as the bake reads them, and what the whole map's depth says
+				// there, in the bake's units
+				{
+					float m[2][2], inv, det, a[2];
+					vec3_t vn, pt;
+					int    j;
+
+					ri.Printf(PRINT_ALL, "  vertex normals %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n", v[0]->normal[0], v[0]->normal[1], v[0]->normal[2],
+						v[1]->normal[0], v[1]->normal[1], v[1]->normal[2], v[2]->normal[0], v[2]->normal[1], v[2]->normal[2]);
+					m[0][0] = v[1]->lm[0] - v[0]->lm[0];
+					m[0][1] = v[2]->lm[0] - v[0]->lm[0];
+					m[1][0] = v[1]->lm[1] - v[0]->lm[1];
+					m[1][1] = v[2]->lm[1] - v[0]->lm[1];
+					det     = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+					inv     = fabs(det) > 1e-12f ? 1.0f / det : 0;
+					VectorAdd(v[0]->normal, v[1]->normal, vn);
+					VectorAdd(vn, v[2]->normal, vn);
+					VectorNormalize(vn);
+					for (r = 6; r >= 0; r--) {
+						char line[256] = "   ";
+
+						for (c = 0; c < 7; c++) {
+							const float ds = (tx - 3 + c + 0.5f) / image->width - v[0]->lm[0];
+							const float dt = (ty - 3 + r + 0.5f) / image->height - v[0]->lm[1];
+
+							a[0] = (m[1][1] * ds - m[0][1] * dt) * inv;
+							a[1] = (-m[1][0] * ds + m[0][0] * dt) * inv;
+							for (j = 0; j < 3; j++) {
+								pt[j] = v[0]->xyz[j] + a[0] * e1[j] + a[1] * e2[j];
+							}
+							Q_strcat(line, sizeof(line), va(" %3d", (int)(R_RtSkyProbeDepth(pt, vn) * 255.0f / 8.0f)));
+							if (r == 3 && c == 3) {
+								ri.Printf(PRINT_ALL, "  middle texel at %.1f %.1f %.1f\n", pt[0], pt[1], pt[2]);
+							}
+							if ((r == 0 || r == 6) && (c == 0 || c == 6)) {
+								ri.Printf(PRINT_ALL, "  corner texel %d %d at %.1f %.1f %.1f\n", c, r, pt[0], pt[1], pt[2]);
+							}
+						}
+						ri.Printf(PRINT_ALL, "%s\n", line);
+					}
+				}
+				break;
+			}
+			if (list.verts) {
+				ri.Free(list.verts);
+			}
+		}
+	}
+}
+
 static void R_RtBakeAt_f(void)
 {
 	const float x = atof(ri.Cmd_Argv(1)), y = atof(ri.Cmd_Argv(2));
@@ -6959,6 +7708,7 @@ void R_RtRenderShadows(const refdef_t *fd)
 	R_RtBounceStep(bake, ease);
 	rt_bake.scale = scale;
 	R_RtShadowProbeStep();
+	R_RtSkyProbeRegionStep();
 	R_RtShadowProbeAllStep();
 	// the lamps lit live last frame and no longer: their bake put back
 	R_RtLiveSweep();
@@ -7634,6 +8384,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_AddCommand("r_rtProbeInfo", R_RtProbeInfo_f);
 		ri.Cmd_AddCommand("r_rtProbeTest", R_RtProbeTest_f);
 		ri.Cmd_AddCommand("r_rtBakeAt", R_RtBakeAt_f);
+		ri.Cmd_AddCommand("r_rtSkyProbe", R_RtSkyProbe_f);
 		ri.Cmd_AddCommand("r_rtShadowProbe", R_RtShadowProbe_f);
 		ri.Cmd_AddCommand("r_rtShadowProbeAll", R_RtShadowProbeAll_f);
 	} else {
@@ -7642,6 +8393,7 @@ void R_RtTestCommands(qboolean add)
 		ri.Cmd_RemoveCommand("r_rtProbeInfo");
 		ri.Cmd_RemoveCommand("r_rtProbeTest");
 		ri.Cmd_RemoveCommand("r_rtBakeAt");
+		ri.Cmd_RemoveCommand("r_rtSkyProbe");
 		ri.Cmd_RemoveCommand("r_rtShadowProbe");
 		ri.Cmd_RemoveCommand("r_rtShadowProbeAll");
 		Com_Memset(&rt_test, 0, sizeof(rt_test));

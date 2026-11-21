@@ -3213,6 +3213,14 @@ void R_CreateBuiltinImages( void ) {
 				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
 				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				qglTextureParameterfEXT(tr.rtSkyImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+				// and over one part of the world at a time, for the lightmaps
+				tr.rtSkyRegionImage = R_CreateImage("*rtskyregion", NULL, RT_SKY_REGION_TILE * RT_SKY_TILES, RT_SKY_REGION_TILE * RT_SKY_TILES,
+					IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_DEPTH_COMPONENT16);
+				qglTextureParameterfEXT(tr.rtSkyRegionImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+				qglTextureParameterfEXT(tr.rtSkyRegionImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+				qglTextureParameterfEXT(tr.rtSkyRegionImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				qglTextureParameterfEXT(tr.rtSkyRegionImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			}
 		}
 

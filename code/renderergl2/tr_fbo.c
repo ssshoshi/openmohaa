@@ -382,6 +382,19 @@ void FBO_Init(void)
 		// the sky's lightmaps: a colour page at a time is attached (R_RtBakeSkyLightmaps)
 		if (tr.rtSkyFbo)
 			tr.rtSkyBakeFbo = FBO_Create("_rtskybake", glConfig.maxTextureSize, glConfig.maxTextureSize);
+
+		// the sky's depth over one part of the world (R_RtSkyRegionStep)
+		if (tr.rtSkyFbo && tr.rtSkyRegionImage)
+		{
+			tr.rtSkyRegionFbo = FBO_Create("_rtskyregion", tr.rtSkyRegionImage->width, tr.rtSkyRegionImage->height);
+			FBO_AttachImage(tr.rtSkyRegionFbo, tr.rtSkyRegionImage, GL_DEPTH_ATTACHMENT, 0);
+			FBO_Bind(tr.rtSkyRegionFbo);
+			qglDrawBuffer(GL_NONE);
+			qglReadBuffer(GL_NONE);
+			if (!R_CheckFBO(tr.rtSkyRegionFbo))
+				tr.rtSkyRegionFbo = NULL;
+			FBO_Bind(NULL);
+		}
 	}
 
 	if (tr.sunShadowDepthImage[0])
