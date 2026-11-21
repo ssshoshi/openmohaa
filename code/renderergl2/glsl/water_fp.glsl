@@ -371,6 +371,7 @@ void main()
 	fresnel = min(fresnel, 0.9);
 
 	vec3 mirror = sky;
+	float open  = 1.0; // how much of the sky the mirror shows there (the sun's glint only off sky)
 	if (u_WaterReflect.x > 0.5 && !below && abs(dot(var_Position, u_WaterReflectPlane.xyz) - u_WaterReflectPlane.w) < 4.0)
 	{
 		// the view from under the surface: the spot of it over this one,
@@ -378,6 +379,9 @@ void main()
 		vec4 clip = u_WaterReflectMvp * vec4(var_Position + vec3(-slope * 80.0, 0.0), 1.0);
 		vec2 at   = clamp(clip.xy / max(clip.w, 0.001) * 0.5 + 0.5, 0.001, 0.999);
 		mirror    = texture2D(u_WaterReflectMap, at * u_WaterReflect.zw).rgb;
+		// a roof mirrored is dark, the sky bright: the shadow maps alone left
+		// a sub pen's roof out in patches, square glints under it
+		open      = clamp(dot(mirror, vec3(0.333)) / max(dot(sky, vec3(0.333)), 0.001), 0.0, 1.0);
 	}
 	else if (hasDepth && hasView && fresnel > 0.05)
 	{
@@ -413,7 +417,7 @@ void main()
 	vec3 sun    = Lin(u_PrimaryLightColor) * (pow(glint, 900.0) * 2.5 + pow(glint, 70.0) * 0.2) * u_WaterLook.z;
 	// not under a roof: the sun's glints were on the water in a sub pen
 	if (dot(sun, vec3(1.0)) > 0.0)
-		sun *= SunShadow(var_Position + vec3(0.0, 0.0, 2.0));
+		sun *= SunShadow(var_Position + vec3(0.0, 0.0, 2.0)) * open * open;
 
 	vec3 color = mix(under, mirror, fresnel) + (below ? vec3(0.0) : sun);
 	alpha = mix(alpha, 1.0, fresnel);
