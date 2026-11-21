@@ -281,37 +281,57 @@ static void RB_SurfaceSprite( void ) {
 
 /*
 =============
+RB_BeginPolyBatch
+
+Added in OPM: the bounce lights a batch of polygons (marks, decals) from the
+probes at its middle, so one far from the batch's first starts its own.
+=============
+*/
+static void RB_BeginPolyBatch( const polyVert_t *verts, int numVerts ) {
+	if (tess.polys && tess.numVertexes && R_RtProbesLive() && Distance(verts[0].xyz, tess.xyz[0]) > RT_POLY_BATCH) {
+		RB_EndSurface();
+		RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
+	}
+
+	RB_CHECKOVERFLOW( numVerts, 3*(numVerts - 2) );
+	tess.polys = qtrue;
+}
+
+/*
+=============
+RB_PolyNormal
+
+Added in OPM: the polygon's plane is its normal, for the realtime lights (a
+mark on a wall faces as the wall does)
+=============
+*/
+static void RB_PolyNormal( const polyVert_t *verts, int numVerts, int16_t iNormal[4], vec3_t normal ) {
+	vec3_t	e1, e2;
+
+	VectorClear(normal);
+	if (numVerts >= 3) {
+		VectorSubtract(verts[1].xyz, verts[0].xyz, e1);
+		VectorSubtract(verts[2].xyz, verts[0].xyz, e2);
+		CrossProduct(e2, e1, normal);
+		VectorNormalize(normal);
+	}
+	R_VaoPackNormal(iNormal, normal);
+}
+
+/*
+=============
 RB_SurfacePolychain
 =============
 */
 static void RB_SurfacePolychain( srfPoly_t *p ) {
 	int		i;
 	int		numv;
-	vec3_t	normal, e1, e2;
 	int16_t	iNormal[4];
+	vec3_t	normal;
 
 	RB_CheckVao(tess.vao);
-
-	// Added in OPM: the bounce lights a batch of them from the probes at its
-	// middle, so one far from the batch's first starts its own
-	if (tess.polys && tess.numVertexes && R_RtProbesLive() && Distance(p->verts[0].xyz, tess.xyz[0]) > RT_POLY_BATCH) {
-		RB_EndSurface();
-		RB_BeginSurface(tess.shader, tess.fogNum, tess.cubemapIndex);
-	}
-
-	RB_CHECKOVERFLOW( p->numVerts, 3*(p->numVerts - 2) );
-	tess.polys = qtrue;
-
-	// Added in OPM: the polygon's plane is its normal, for the realtime
-	// lights (a mark on a wall faces as the wall does)
-	VectorClear(normal);
-	if (p->numVerts >= 3) {
-		VectorSubtract(p->verts[1].xyz, p->verts[0].xyz, e1);
-		VectorSubtract(p->verts[2].xyz, p->verts[0].xyz, e2);
-		CrossProduct(e2, e1, normal);
-		VectorNormalize(normal);
-	}
-	R_VaoPackNormal(iNormal, normal);
+	RB_BeginPolyBatch(p->verts, p->numVerts);
+	RB_PolyNormal(p->verts, p->numVerts, iNormal, normal);
 
 	// fan triangles into the tess array
 	numv = tess.numVertexes;
@@ -1373,16 +1393,34 @@ static void RB_SurfaceSkip( void *surf ) {
 RB_SurfaceMarkFragment
 =============
 */
+#define MARK_FRAGMENT_LIFT 0.25f // units off the surface, towards the view
+
 void RB_SurfaceMarkFragment(srfMarkFragment_t* p) {
 	int i;
 	int numv;
+	int16_t iNormal[4];
+	vec3_t normal, lift, toView;
 
 	// ends a batch the VAO cache started, see RB_SurfaceVaoCached
 	RB_CheckVao(tess.vao);
-	RB_CHECKOVERFLOW( p->numVerts, 3*(p->numVerts - 2) );
+	// Added in OPM: a level decal (the posters of a .dcl) is lit as the
+	// marks are; without its normal it took whatever the last surface left
+	// in tess.normal, and flickered as the view changed
+	RB_BeginPolyBatch(p->verts, p->numVerts);
 
 	if (p->iIndex <= 0 || R_TerrainHeightForPoly(&tr.world->terraPatches[p->iIndex - 1], p->verts, p->numVerts))
 	{
+		RB_PolyNormal(p->verts, p->numVerts, iNormal, normal);
+
+		// Added in OPM: lifted a little off the surface it lies on, towards
+		// the view. A .dcl's vertices sit a hair behind the wall's own plane,
+		// further than the shader's polygonOffset makes up for close by, and
+		// the wall's main pass (another program than the decal's) won the
+		// depth test across whole triangles of it: m2l3's posters lost
+		// pieces, which moved as the view bobbed
+		VectorSubtract(backEnd.ori.viewOrigin, p->verts[0].xyz, toView);
+		VectorScale(normal, DotProduct(toView, normal) < 0 ? -MARK_FRAGMENT_LIFT : MARK_FRAGMENT_LIFT, lift);
+
 		// FIXME: from here on out, it's mostly the same code as in RB_SurfacePolychain,
 		// common part could be extracted into an inline func
 
@@ -1390,7 +1428,8 @@ void RB_SurfaceMarkFragment(srfMarkFragment_t* p) {
 		numv = tess.numVertexes;
 		for ( i = 0; i < p->numVerts; i++ )
 		{
-			VectorCopy( p->verts[i].xyz, tess.xyz[numv] );
+			VectorAdd( p->verts[i].xyz, lift, tess.xyz[numv] );
+			VectorCopy4( iNormal, tess.normal[numv] );
             tess.texCoords[numv][0] = p->verts[i].st[0];
             tess.texCoords[numv][1] = p->verts[i].st[1];
 			tess.color[numv][0] = p->verts[i].modulate[0] * 65535 / 255;
