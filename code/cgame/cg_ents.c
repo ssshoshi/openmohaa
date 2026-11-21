@@ -613,7 +613,11 @@ void CG_AddCEntity(centity_t *cent)
         CG_ENT_TIMER_END(CGE_MODELANIM);
         break;
     case ET_GENERAL:
-        CG_General(cent);
+        // Added in OPM
+        //  A pane of glass once hit is drawn by cg_glass.cpp, a piece at a time.
+        if (!(cent->currentState.eFlags & EF_GLASS) || !CG_GlassEntity(cent)) {
+            CG_General(cent);
+        }
         break;
     case ET_MOVER:
         CG_Mover(cent);

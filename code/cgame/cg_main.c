@@ -963,6 +963,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
     memset(&cg, 0, sizeof(cg));
     memset(&cgs, 0, sizeof(cgs));
     CG_ClearModelMeshCache(); // Added in OPM: the map's models are loaded anew
+    CG_GlassClear();          // Added in OPM: and its glass
     // clear fog values
     cg.farclipOverride = 0;
     cg.farplaneColorOverride[0] = -1;

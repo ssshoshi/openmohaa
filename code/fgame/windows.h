@@ -50,4 +50,5 @@ public:
     void WindowDebrisType(Event *ev);
     void WindowDamaged(Event *ev);
     void WindowKilled(Event *ev);
+    void WindowGlassDamaged(Event *ev, int iDamage, int iMeansOfDeath); // Added in OPM
 };

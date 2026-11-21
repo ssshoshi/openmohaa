@@ -417,6 +417,13 @@ static void CG_MakeBulletHole(
         break;
     }
 
+    // Added in OPM
+    //  A pane of glass that breaks a piece at a time draws its own cracks
+    //  (cg_glass.cpp): a mark on it would hang in the air once it is gone.
+    if (trace.entityNum < ENTITYNUM_WORLD && (cg_entities[trace.entityNum].currentState.eFlags & EF_GLASS)) {
+        fRadius = 0;
+    }
+
     if (fRadius && CG_CheckMakeMarkOnEntity(trace.entityNum)) {
         fRadius *= 1.f + crandom() * 0.2f;
 

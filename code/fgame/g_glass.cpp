@@ -32,21 +32,22 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // A bullet's path is tested against the panes of the models near it, whatever
 // its trace struck (a truck's box is smaller than the truck, its windscreen
 // outside it), and passes on: the glass never stops it. The first pane it
-// goes through takes the hit, where it goes through:
-//   each hit: a hole with a star of cracks round it (a decal, bound to the
-//     model), small bits of glass thrown on the way the round went;
-//   the second: the pane cracked across; the third: crazed, milky;
-//   the fourth: it comes down, shards falling out of the frame, which is left
-//     empty (nodraw), its decals gone.
-// A blast brings down the panes whose middle is within most of its radius.
-// The skins and nodraw are the surface's, saved with the entity; the count of
-// hits and the decals are not (after a load a cracked pane counts two hits).
+// goes through takes the hit, where it goes through, and breaks the way
+// Half-Life 2's glass does (bg_glass.h, cgame cg_glass.cpp): a hole knocked
+// out there with cracks round it, the glass no longer held by the frame
+// falling out, until enough rounds bring the whole pane down. A pane's hits
+// are kept on an entity of its own (EF_GLASS, bound to the vehicle), made at
+// its first: from then the model's own pane is not drawn (nodraw) and cgame
+// draws what is left of it. A round through a hole already there goes through
+// nothing. A blast brings down the panes whose middle is within most of its
+// radius. A map's func_window breaks the same way (windows.cpp), its hits on
+// the window itself.
 //
 // A static model (models/static/, placed in the map's BSP) is the renderer's
 // alone: nothing here can change it. Its .tik draws no glass of its own (its
 // panes' skin0 is opm_glass_none); at level start a copy of it is put where it
 // stands showing only its glass (G_GlassStaticModels), and that copy is hit.
-// Its panes' skins are one on: whole is skin1, cracked skin2, crazed skin3.
+// Its panes' skin1 is the pane whole.
 
 #include "g_local.h"
 #include "entity.h"
@@ -56,16 +57,14 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../corepp/tiki.h"
 #include "../qcommon/qfiles.h"
 #include "g_spawn.h"
+#include "bg_glass.h"
 
 #define GLASS_MAX_MODELS    48
 #define GLASS_MAX_TIKIS     8   // .tik files on one model
 #define GLASS_MAX_PANES     16  // on one model
-#define GLASS_MAX_TRACKS    64  // models with hit glass followed at once
-#define GLASS_MAX_DECALS    6   // holes on a pane, at most
 #define GLASS_MAX_CACHE     128 // models' TIKIs looked up
-#define GLASS_FALL          4   // the hit that brings a pane down
 #define GLASS_NEAR          768.0f // a model this near a bullet's path may have glass on it
-#define GLASS_HOLE_SIZE     0.3f   // the crack decal's scale: about 4 units across (the game's unit square is not one unit)
+#define GLASS_HOLE_PASS     2.5f   // a round this near a hole already there goes through it
 
 typedef struct {
     char   surface[MAX_QPATH];
@@ -73,6 +72,7 @@ typedef struct {
     vec3_t mid;
     float *tris;   // 9 a triangle
     int    numTris;
+    glassFrame_t frame; // as cgame has it (bg_glass.h)
 } glassPane_t;
 
 typedef struct {
@@ -83,16 +83,9 @@ typedef struct {
     int         numPanes;
 } glassModel_t;
 
-typedef struct {
-    EntityPtr ent;
-    int       hits[GLASS_MAX_PANES];
-    EntityPtr decals[GLASS_MAX_PANES][GLASS_MAX_DECALS];
-} glassTrack_t;
-
 static glassModel_t glassModels[GLASS_MAX_MODELS];
 static int          glassNumModels;
 static qboolean     glassLoaded;
-static glassTrack_t glassTracks[GLASS_MAX_TRACKS];
 
 static struct {
     dtiki_t *tiki;
@@ -181,6 +174,7 @@ static void G_GlassLoadFile(const char *path)
         if (p->numTris) {
             VectorScale(p->mid, 1.0f / (p->numTris * 3), p->mid);
         }
+        BG_GlassFrameFromTris(p->normal, p->tris, p->numTris, &p->frame);
     }
     if (m->numPanes && m->numTikis) {
         glassNumModels++;
@@ -284,48 +278,11 @@ static Vector G_GlassDirToWorld(Entity *ent, const vec3_t local)
     return d;
 }
 
-static qboolean G_GlassDown(Entity *ent, int surface)
-{
-    return (ent->edict->s.surfaces[surface] & MDL_SURFACE_NODRAW) ? qtrue : qfalse;
-}
-
-// A pane's skin: 0 whole, 1 cracked, 2 crazed, one on for a static model's copy
+// A pane's skin: 0 whole, one on for a static model's copy
 static void G_GlassSkin(Entity *ent, const char *surface, int skin)
 {
     ent->SurfaceCommand(surface, (skin & 1) ? "+skin1" : "-skin1");
     ent->SurfaceCommand(surface, (skin & 2) ? "+skin2" : "-skin2");
-}
-
-// The model's record of its panes' hits, made when first hit
-static glassTrack_t *G_GlassTrack(Entity *ent, const glassModel_t *m, int skinBase)
-{
-    glassTrack_t *free = NULL;
-    int           i, p;
-
-    for (i = 0; i < GLASS_MAX_TRACKS; i++) {
-        if (glassTracks[i].ent == ent) {
-            return &glassTracks[i];
-        }
-        if (!free && !glassTracks[i].ent) {
-            free = &glassTracks[i];
-        }
-    }
-    if (!free) {
-        free = &glassTracks[rand() % GLASS_MAX_TRACKS];
-    }
-    free->ent = ent;
-    for (p = 0; p < GLASS_MAX_PANES; p++) {
-        const int surf = p < m->numPanes ? gi.Surface_NameToNum(ent->edict->tiki, m->panes[p].surface) : -1;
-        const int bits = surf >= 0 ? ent->edict->s.surfaces[surf] : 0;
-        const int skin = ((bits & MDL_SURFACE_SKINOFFSET_BIT0) ? 1 : 0) | ((bits & MDL_SURFACE_SKINOFFSET_BIT1) ? 2 : 0);
-
-        // as it was saved: crazed three hits, cracked two
-        free->hits[p] = skin - skinBase >= 2 ? 3 : skin - skinBase == 1 ? 2 : 0;
-        for (i = 0; i < GLASS_MAX_DECALS; i++) {
-            free->decals[p][i] = NULL;
-        }
-    }
-    return free;
 }
 
 static Animate *G_GlassEffect(const char *model, const Vector& at, const Vector& forward, float life)
@@ -353,82 +310,132 @@ static Animate *G_GlassEffect(const char *model, const Vector& at, const Vector&
     return fx;
 }
 
-static void G_GlassFall(Entity *ent, const glassModel_t *m, glassTrack_t *track, int p)
+// The entity keeping a vehicle's pane's hits, made at the pane's first when create
+static Entity *G_GlassPaneEntity(Entity *owner, int pane, qboolean create)
 {
-    const glassPane_t *pane = &m->panes[p];
-    const int          surf = gi.Surface_NameToNum(ent->edict->tiki, pane->surface);
-    int                i;
+    Entity *g;
+    byte   *s;
+    int     i;
 
-    if (surf < 0 || G_GlassDown(ent, surf)) {
-        return; // down already (a blast and a round together)
-    }
-    if (developer->integer) {
-        gi.DPrintf("glass: entity %d's %s comes down\n", ent->entnum, pane->surface);
-    }
-    ent->SurfaceCommand(pane->surface, "+nodraw");
-    if (track) {
-        for (i = 0; i < GLASS_MAX_DECALS; i++) {
-            if (track->decals[p][i]) {
-                track->decals[p][i]->PostEvent(EV_Remove, 0);
-                track->decals[p][i] = NULL;
-            }
+    for (i = 0; i < globals.num_entities; i++) {
+        gentity_t *ed = &g_entities[i];
+
+        if (!ed->inuse || !ed->entity || !(ed->s.eFlags & EF_GLASS)) {
+            continue;
         }
-        track->hits[p] = GLASS_FALL;
+        s = ed->s.surfaces;
+        if (s[GLASS_S_PANE] == pane && (s[GLASS_S_OWNER] | (s[GLASS_S_OWNER + 1] << 8)) == owner->entnum) {
+            return ed->entity;
+        }
+    }
+    if (!create) {
+        return NULL;
     }
 
-    Vector at = G_GlassToWorld(ent, pane->mid);
-    G_GlassEffect("models/fx/opm_glass_collapse.tik", at, G_GlassDirToWorld(ent, pane->normal), 5.0f);
-    ent->Sound(va("snd_glass_shatter%d", 1 + (rand() % 3)), CHAN_AUTO, -1, -1, &at);
+    g = new Entity;
+    g->setSolidType(SOLID_NOT);
+    g->setMoveType(MOVETYPE_NONE);
+    g->setOrigin(owner->origin);
+    g->setSize(owner->mins, owner->maxs); // seen wherever the vehicle is
+    g->edict->r.svFlags |= SVF_SENDPVS;   // sent with no model: cgame draws the pane
+    g->edict->s.eFlags |= EF_GLASS;
+    s = g->edict->s.surfaces;
+    memset(s, 0, sizeof(g->edict->s.surfaces));
+    s[GLASS_S_PANE]      = pane;
+    s[GLASS_S_OWNER]     = owner->entnum & 0xFF;
+    s[GLASS_S_OWNER + 1] = (owner->entnum >> 8) & 0xFF;
+    g->bind(owner);
+    g->showModel();
+    return g;
 }
 
-static void G_GlassHit(Entity *ent, const glassModel_t *m, int skinBase, int p, const vec3_t local, const vec3_t face, const Vector& dir)
+static qboolean G_GlassShattered(Entity *g)
 {
-    const glassPane_t *pane  = &m->panes[p];
-    glassTrack_t      *track = G_GlassTrack(ent, m, skinBase);
-    const int          hits  = ++track->hits[p];
-    Vector             at    = G_GlassToWorld(ent, local);
-    Vector             out   = G_GlassDirToWorld(ent, face);
-    int                i;
+    return g && (g->edict->s.surfaces[GLASS_S_FLAGS] & GLASS_FLAG_SHATTERED) ? qtrue : qfalse;
+}
 
-    if (hits >= GLASS_FALL) {
-        G_GlassFall(ent, m, track, p);
-        return;
+int G_GlassPaneShatter(Entity *g, int out, int blast, const Vector& at)
+{
+    byte *flags;
+
+    if (!g || G_GlassShattered(g)) {
+        return qfalse;
     }
+    flags = &g->edict->s.surfaces[GLASS_S_FLAGS];
+    *flags |= GLASS_FLAG_SHATTERED | (out ? GLASS_FLAG_OUT : 0) | (blast ? GLASS_FLAG_BLAST : 0);
     if (developer->integer) {
-        gi.DPrintf("glass: entity %d's %s hit %d\n", ent->entnum, pane->surface, hits);
+        gi.DPrintf("glass: entity %d's pane comes down%s\n", g->entnum, blast ? " (blast)" : "");
     }
+    g->Sound(va("snd_glass_shatter%d", 1 + (rand() % 3)), CHAN_AUTO, -1, -1, (Vector *)&at);
+    return qtrue;
+}
 
-    // the hole and its star of cracks, lying on the pane where it was struck,
-    // facing the shooter, bound to the model
-    if (out * dir > 0) {
-        out = out * -1;
+int G_GlassPaneHit(Entity *g, const glassFrame_t *frame, const float *local, float damage, int out, const Vector& at)
+{
+    byte *s = g->edict->s.surfaces;
+    int   count, i, size;
+    float pu, pv, hu, hv;
+    byte  bu, bv;
+
+    if (G_GlassShattered(g)) {
+        return 0;
     }
-    for (i = 0; i < GLASS_MAX_DECALS; i++) {
-        if (!track->decals[p][i]) {
-            Animate *hole = new Animate;
-            Vector   angles;
+    count = s[GLASS_S_FLAGS] & GLASS_FLAG_COUNT;
+    BG_GlassEncode(frame, local, &bu, &bv);
+    BG_GlassDecode(frame, bu, bv, &pu, &pv);
 
-            hole->setModel(va("models/fx/opm_glasscrack%d.tik", rand() % 3));
-            hole->setOrigin(at + out * 0.35f);
-            angles    = out.toAngles();
-            angles[2] = (float)(rand() % 360);
-            hole->setAngles(angles);
-            hole->setScale(GLASS_HOLE_SIZE * (0.8f + 0.4f * (rand() / (float)RAND_MAX)));
-            hole->setSolidType(SOLID_NOT);
-            hole->setMoveType(MOVETYPE_NONE);
-            hole->NewAnim("idle");
-            hole->bind(ent);
-            track->decals[p][i] = hole;
-            break;
+    // through a hole already there: nothing to hit
+    for (i = 0; i < count; i++) {
+        const byte *h = &s[GLASS_S_HITS + i * 3];
+
+        BG_GlassDecode(frame, h[0], h[1], &hu, &hv);
+        if ((hu - pu) * (hu - pu) + (hv - pv) * (hv - pv) < GLASS_HOLE_PASS * GLASS_HOLE_PASS) {
+            return 0;
         }
     }
 
-    // the bits it knocks out, thrown on the way it went
-    G_GlassEffect("models/fx/opm_glass_spray.tik", at, dir, 3.0f);
-    ent->Sound(va("snd_bh_glass%d", 1 + (rand() % 4)), CHAN_AUTO, -1, -1, &at);
+    size = (int)(damage / 20.0f);
+    size = size < 1 ? 1 : (size > 7 ? 7 : size);
+    s[GLASS_S_HITS + count * 3]     = bu;
+    s[GLASS_S_HITS + count * 3 + 1] = bv;
+    s[GLASS_S_HITS + count * 3 + 2] = (rand() & GLASS_HIT_SEED) | (out ? GLASS_HIT_OUT : 0) | (size << GLASS_HIT_SIZE_SHIFT);
+    count++;
+    s[GLASS_S_FLAGS] = (s[GLASS_S_FLAGS] & ~GLASS_FLAG_COUNT) | count;
 
-    if (hits == 2 || hits == 3) {
-        G_GlassSkin(ent, pane->surface, skinBase + hits - 1);
+    if (developer->integer) {
+        gi.DPrintf("glass: entity %d's pane hit %d (size %d)\n", g->entnum, count, size);
+    }
+    g->Sound(va("snd_bh_glass%d", 1 + (rand() % 4)), CHAN_AUTO, -1, -1, (Vector *)&at);
+    if (count >= GLASS_MAX_HITS) {
+        G_GlassPaneShatter(g, out, qfalse, at);
+        return 2;
+    }
+    return 1;
+}
+
+static void G_GlassFall(Entity *ent, const glassModel_t *m, int p, qboolean out, qboolean blast)
+{
+    const glassPane_t *pane = &m->panes[p];
+    Entity            *g    = G_GlassPaneEntity(ent, p, qtrue);
+
+    if (!G_GlassShattered(g)) {
+        ent->SurfaceCommand(pane->surface, "+nodraw");
+        G_GlassPaneShatter(g, out, blast, G_GlassToWorld(ent, pane->mid));
+    }
+}
+
+static void G_GlassHit(Entity *ent, const glassModel_t *m, int p, const vec3_t local, const vec3_t face, const Vector& dir, float damage)
+{
+    const glassPane_t *pane = &m->panes[p];
+    Entity            *g    = G_GlassPaneEntity(ent, p, qtrue);
+    Vector             at   = G_GlassToWorld(ent, local);
+    Vector             n    = G_GlassDirToWorld(ent, pane->normal);
+
+    // from now cgame draws the pane, as much of it as is left
+    ent->SurfaceCommand(pane->surface, "+nodraw");
+    if (G_GlassPaneHit(g, &pane->frame, local, damage, (n * dir) > 0 ? qtrue : qfalse, at)) {
+        // the bits it knocks out, thrown on the way it went
+        G_GlassEffect("models/fx/opm_glass_spray.tik", at, dir, 3.0f);
     }
 }
 
@@ -465,7 +472,7 @@ static float G_GlassSegmentTri(const vec3_t s, const vec3_t d, const float *t, v
     return f;
 }
 
-void G_GlassBulletPath(const Vector& start, const Vector& end)
+void G_GlassBulletPath(const Vector& start, const Vector& end, float damage)
 {
     Entity             *best     = NULL;
     const glassModel_t *bestM    = NULL;
@@ -517,7 +524,7 @@ void G_GlassBulletPath(const Vector& start, const Vector& end)
         for (p = 0; p < m->numPanes; p++) {
             const int surf = gi.Surface_NameToNum(ed->tiki, m->panes[p].surface);
 
-            if (surf < 0 || G_GlassDown(ent, surf)) {
+            if (surf < 0 || G_GlassShattered(G_GlassPaneEntity(ent, p, qfalse))) {
                 continue;
             }
             for (t = 0; t < m->panes[p].numTris; t++) {
@@ -544,7 +551,7 @@ void G_GlassBulletPath(const Vector& start, const Vector& end)
 
     Vector dir = seg;
     dir.normalize();
-    G_GlassHit(best, bestM, bestBase, bestPane, bestLocal, bestFace, dir);
+    G_GlassHit(best, bestM, bestPane, bestLocal, bestFace, dir, damage);
 }
 
 void G_GlassBlast(Entity *ent, const Vector& origin, float radius)
@@ -565,20 +572,14 @@ void G_GlassBlast(Entity *ent, const Vector& origin, float radius)
         const glassPane_t *pane = &m->panes[i];
         const int          surf = gi.Surface_NameToNum(ent->edict->tiki, pane->surface);
 
-        if (surf < 0 || G_GlassDown(ent, surf)) {
+        if (surf < 0) {
             continue;
         }
         const Vector at = G_GlassToWorld(ent, pane->mid);
         if ((at - origin).length() < radius * 0.75f) {
-            glassTrack_t *track = NULL;
-            int           t;
+            const Vector n = G_GlassDirToWorld(ent, pane->normal);
 
-            for (t = 0; t < GLASS_MAX_TRACKS; t++) {
-                if (glassTracks[t].ent == ent) {
-                    track = &glassTracks[t];
-                }
-            }
-            G_GlassFall(ent, m, track, i);
+            G_GlassFall(ent, m, i, ((at - origin) * n) > 0 ? qtrue : qfalse, qtrue);
         }
     }
 }

@@ -896,6 +896,13 @@ extern double cgmOpen[CGM_COUNT];
     //
     void CG_ClipMoveToModelMeshes(const vec3_t start, const vec3_t end, trace_t *tr);
     void CG_ClearModelMeshCache(void);
+
+    //
+    // cg_glass.cpp (Added in OPM)
+    //
+    void     CG_GlassClear(void);
+    qboolean CG_GlassEntity(centity_t *cent);
+    void     CG_GlassFrame(void);
     int      CG_ModelSurfaceType(int entnum);
 
     // Added in OPM

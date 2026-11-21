@@ -2368,7 +2368,7 @@ float BulletAttack(
                             trace.contents
                         );
                     }
-                    G_GlassBulletPath(vTraceStart, vGlassEnd);
+                    G_GlassBulletPath(vTraceStart, vGlassEnd, newdamage);
                 }
 
                 if (ent && ent != world && ent != owner) {

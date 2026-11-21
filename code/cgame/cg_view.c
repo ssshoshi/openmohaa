@@ -1349,6 +1349,7 @@ void CG_DrawActiveFrame(int serverTime, int frameTime, stereoFrame_t stereoView,
         CG_TIMER_END(CGT_ENTITIES);
         CG_TIMER_BEGIN(CGT_MARKS);
         CG_AddMarks();
+        CG_GlassFrame(); // Added in OPM: falling glass
         CG_TIMER_END(CGT_MARKS);
     }
 

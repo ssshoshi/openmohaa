@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "g_phys.h"
 #include "windows.h"
 #include "game.h"
+#include "g_glass.h"
 
 Event EV_Window_Setup
 (
@@ -85,6 +86,15 @@ void WindowObject::WindowSetup(Event *ev)
     setSolidType(SOLID_BSP);
     setContents(CONTENTS_TRIGGER);
 
+    // Added in OPM
+    //  Glass that breaks a piece at a time (bg_glass.h, cgame cg_glass.cpp):
+    //  its hits are kept in its surfaces[], which a brush model has no use for.
+    if (m_iDebrisType == WINDOW_GLASS) {
+        edict->s.eFlags |= EF_GLASS;
+        memset(edict->s.surfaces, 0, sizeof(edict->s.surfaces));
+        edict->s.surfaces[GLASS_S_PANE] = GLASS_PANE_SELF;
+    }
+
     if (Target().length()) {
         // If a target is defined,
         // find it and set the model from it
@@ -120,6 +130,14 @@ void WindowObject::WindowDamaged(Event *ev)
     iDamage       = ev->GetInteger(2);
     iMeansOfDeath = ev->GetInteger(9);
 
+    // Added in OPM
+    //  Glass that breaks a piece at a time: a round knocks a hole where it went
+    //  through, a blast or enough rounds bring it all down (g_glass.cpp).
+    if (edict->s.eFlags & EF_GLASS) {
+        WindowGlassDamaged(ev, iDamage, iMeansOfDeath);
+        return;
+    }
+
     if (iMeansOfDeath == MOD_BASH) {
         // double damage for bash
         iDamage *= 2;
@@ -138,6 +156,47 @@ void WindowObject::WindowDamaged(Event *ev)
         event->AddEntity(ev->GetEntity(3));
 
         ProcessEvent(event);
+    }
+}
+
+// Added in OPM
+void WindowObject::WindowGlassDamaged(Event *ev, int iDamage, int iMeansOfDeath)
+{
+    glassFrame_t frame;
+    Vector       pos = ev->GetVector(4);
+    Vector       dir = ev->GetVector(5);
+    vec3_t       local, d, ldir;
+    int          k, result;
+
+    BG_GlassFrameFromBounds(mins, maxs, &frame);
+    VectorSubtract(pos, origin, d);
+    for (k = 0; k < 3; k++) {
+        local[k] = DotProduct(d, orientation[k]);
+        ldir[k]  = DotProduct(dir, orientation[k]);
+    }
+    const qboolean out = DotProduct(ldir, frame.n) > 0;
+
+    switch (iMeansOfDeath) {
+    case MOD_EXPLOSION:
+    case MOD_GRENADE:
+    case MOD_ROCKET:
+    case MOD_AAGUN:
+    case MOD_LANDMINE:
+    case MOD_EXPLODEWALL:
+        result = G_GlassPaneShatter(this, out, qtrue, pos) ? 2 : 0;
+        break;
+    case MOD_BASH:
+        result = G_GlassPaneHit(this, &frame, local, 200, out, pos);
+        break;
+    default:
+        result = G_GlassPaneHit(this, &frame, local, iDamage, out, pos);
+        break;
+    }
+
+    if (result == 2) {
+        // all its glass down: the frame stays (cgame draws it), shot through
+        takedamage = DAMAGE_NO;
+        deadflag   = DEAD_DEAD;
     }
 }
 

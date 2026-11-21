@@ -408,6 +408,10 @@ movement on the server game.
 //  (weapon clip), so the client gets no solid for them; the grabber finds
 //  them by this (cg_physics_movers.cpp). In the 16 bits sent; unused in MoHAA.
 #define EF_PHYSICS_BODY 0x00004000
+// Added in OPM
+//  A pane of glass that breaks a piece at a time (bg_glass.h): its damage is in
+//  its surfaces[]. In the 16 bits sent; unused in MoHAA.
+#define EF_GLASS 0x00008000
 
 //
 // Team assault flags
