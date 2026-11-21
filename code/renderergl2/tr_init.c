@@ -179,6 +179,7 @@ cvar_t  *r_sunlightMode;
 cvar_t  *r_drawSunRays;
 cvar_t  *r_sunShadows;
 cvar_t  *r_sunShadowScale;
+cvar_t  *r_sunNormalOffset;
 cvar_t  *r_shadowFilter;
 cvar_t  *r_shadowBlur;
 cvar_t  *r_contactShadows;
@@ -1734,6 +1735,9 @@ void R_Register( void )
 	// ioq3 uses 0.5, which assumes the lightmap holds no direct sun. MOH:AA
 	// bakes the sun into its lightmaps, so at 0.5 every interior is simply halved.
 	r_sunShadowScale = ri.Cvar_Get( "r_sunShadowScale", "0.85", CVAR_ARCHIVE | CVAR_LATCH );
+	// Added in OPM: shadowmask_fp.glsl's OffSurface
+	r_sunNormalOffset = ri.Cvar_Get( "r_sunNormalOffset", "1", CVAR_LATCH );
+	ri.Cvar_SetDescription( r_sunNormalOffset, "The sun's shadow is read a texel and a half off the surface, along its normal: read at it, the seam where a wall meets a ceiling took the wall's edge into its filter and the sun lit a line along it. Not archived: an A/B switch (vid_restart)" );
 	r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_shadowBlur = ri.Cvar_Get("r_shadowBlur", "0", CVAR_ARCHIVE | CVAR_LATCH);
 	// Added in OPM: contact shadows (shadowmask_fp.glsl)

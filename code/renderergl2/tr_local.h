@@ -3179,6 +3179,7 @@ extern  cvar_t  *r_rtLightsAtFixtures;
 extern  cvar_t  *r_rtCapsules;
 extern  cvar_t  *r_rtDebug;
 extern  cvar_t  *r_sunShadowScale;
+extern  cvar_t  *r_sunNormalOffset;
 extern  cvar_t  *r_shadowFilter;
 extern  cvar_t  *r_shadowBlur;
 extern  cvar_t  *r_contactShadows;
