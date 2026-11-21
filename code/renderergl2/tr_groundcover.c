@@ -113,6 +113,7 @@ typedef struct {
     int      ground;   // gcGround_t
     qboolean solid;    // its brushes are solid (a patch need not be)
     qboolean split;    // groundcover/shaders.txt's `grow`: only the greener part of its texture
+    qboolean anyFace;  // groundcover/shaders.txt's `ground`: its brushes and patches grow, not its terrain only
     int      kept, dropMask, dropCovered; // samples on it so far (groundcoverinfo)
 } gcShader_t;
 
@@ -744,7 +745,10 @@ static float GC_WaterEdge(const vec3_t at, float above)
 //     bare <shader>   never grows anything (the top of a hedge flagged grass)
 //     grow <shader>   is grass ground whatever its flags; only the greener of
 //                     the two parts of its texture grows (a rock and grass blend)
-enum { GC_RULE_NONE, GC_RULE_BARE, GC_RULE_GROW };
+//     ground <shader> snow, gravel or sand whose brushes and curved patches
+//                     are ground too, not only its terrain (the desert's
+//                     ground set, laid as patches over clip brushes)
+enum { GC_RULE_NONE, GC_RULE_BARE, GC_RULE_GROW, GC_RULE_GROUND };
 #define GC_MAX_RULES 256
 
 static struct {
@@ -778,12 +782,14 @@ static void GC_LoadRules(void)
         if (!token[0] || gcNumRules >= GC_MAX_RULES) {
             continue;
         }
-        if (!Q_stricmp(kind, "bare") || !Q_stricmp(kind, "grow")) {
+        if (!Q_stricmp(kind, "bare") || !Q_stricmp(kind, "grow") || !Q_stricmp(kind, "ground")) {
             Q_strncpyz(gcRules[gcNumRules].name, token, MAX_QPATH);
-            gcRules[gcNumRules].rule = !Q_stricmp(kind, "bare") ? GC_RULE_BARE : GC_RULE_GROW;
+            gcRules[gcNumRules].rule = !Q_stricmp(kind, "bare")   ? GC_RULE_BARE
+                                     : !Q_stricmp(kind, "grow")   ? GC_RULE_GROW
+                                                                  : GC_RULE_GROUND;
             gcNumRules++;
         } else {
-            ri.Printf(PRINT_WARNING, "groundcover/shaders.txt: '%s' is not bare or grow\n", kind);
+            ri.Printf(PRINT_WARNING, "groundcover/shaders.txt: '%s' is not bare, grow or ground\n", kind);
         }
     }
     ri.FS_FreeFile(buffer.v);
@@ -991,7 +997,8 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             continue;
         }
         gc.shaderSlot[i] = gc.numGrassShaders;
-        grounds[gc.numGrassShaders] = ((contents & CONTENTS_SOLID) ? ground : ground | 0x100) | (rule == GC_RULE_GROW ? 0x200 : 0);
+        grounds[gc.numGrassShaders] = ((contents & CONTENTS_SOLID) ? ground : ground | 0x100) | (rule == GC_RULE_GROW ? 0x200 : 0)
+                                    | (rule == GC_RULE_GROUND ? 0x400 : 0);
         Q_strncpyz(gc.shaderNames[gc.numGrassShaders], dshaders[i].shader, MAX_QPATH);
         gc.numGrassShaders++;
     }
@@ -1008,6 +1015,7 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
         gc.shaders[i].ground = grounds[i] & 0xff;
         gc.shaders[i].solid  = !(grounds[i] & 0x100);
         gc.shaders[i].split  = (grounds[i] & 0x200) != 0;
+        gc.shaders[i].anyFace = (grounds[i] & 0x400) != 0;
     }
     ri.Free(grounds);
 
@@ -1043,8 +1051,10 @@ void R_GroundCoverLoadWorld(const byte *fileBase, dheader_t *header)
             }
             // snow, gravel and sand brushes are as often roofs, beams and
             // walls' tops as ground: of those, terrain only (mud grows only
-            // at water, so its brushes too)
-            if (gc.shaders[slot].ground != GC_GROUND_GRASS && gc.shaders[slot].ground != GC_GROUND_MUD) {
+            // at water, so its brushes too), unless groundcover/shaders.txt
+            // says the shader is ground on brushes too
+            if (gc.shaders[slot].ground != GC_GROUND_GRASS && gc.shaders[slot].ground != GC_GROUND_MUD
+                && !gc.shaders[slot].anyFace) {
                 continue;
             }
             if (firstVert < 0 || firstVert + nVerts > numVerts) {
@@ -1706,7 +1716,15 @@ static qboolean GC_ClearOver(const vec3_t xyz)
     VectorSet(start, xyz[0], xyz[1], xyz[2] + 64);
     VectorSet(end, xyz[0], xyz[1], xyz[2] + 2);
     ri.CM_BoxTrace(&trace, start, end, vec3_origin, vec3_origin, 0, CONTENTS_SOLID, qfalse);
-    return !trace.startsolid && !trace.allsolid && trace.fraction >= 1.0f;
+    if (trace.startsolid || trace.allsolid) {
+        return qfalse;
+    }
+    // an unseen clip brush hugging the ground is what the player walks on
+    // (the desert's sandclip over its patches), not a roof over it
+    if (trace.fraction < 1.0f && (trace.surfaceFlags & SURF_NODRAW) && trace.endpos[2] < xyz[2] + 16) {
+        return qtrue;
+    }
+    return trace.fraction >= 1.0f;
 }
 
 static qboolean GC_SampleTri(const gcTri_t *tri, float x, float y, gcSample_t *out, unsigned int *rnd)
