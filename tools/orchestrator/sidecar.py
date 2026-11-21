@@ -589,7 +589,10 @@ class Sidecar:
             tick += 1
             # The game forgets it on every load and vid_restart, and misses
             # what was sent before it was up: say it again now and then.
-            if tick % 60 == 0 and self.status and self.status != "off":
+            # Not while an earlier file is unanswered: with no game running a
+            # forgotten sidecar would fill the directory (one every 3 s).
+            if tick % 60 == 0 and self.status and self.status != "off" \
+                    and not glob.glob(os.path.join(self.cmd_dir, "sc_*.txt")):
                 self.game(f"orch_status {self.status}")
             if tick % 20 == 0:
                 for out in glob.glob(os.path.join(self.cmd_dir, "sc_*.out")):
