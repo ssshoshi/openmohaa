@@ -2097,16 +2097,17 @@ qboolean RB_WaterDraw(shaderCommands_t *input)
         static const mat4_t none = {0};
         int             c;
 
-        for (c = 0; c < 4; c++) {
+        // (on stage units: the realtime lights' units are bound once a view,
+        // and a cascade left on them lit everything drawn after the water,
+        // its mirror's view among it, with the sun's depth for shadows)
+        for (c = 0; c < 2; c++) {
             image_t *img = cascades ? tr.sunShadowDepthImage[c] : tr.rtShadowImage[0];
             if (img) {
-                GL_BindToTMU(img, c == 0 ? TMU_RTSHADOW_STATIC : c == 1 ? TMU_RTSHADOW_DYNAMIC : c == 2 ? TMU_RTSUNSHADOW : TMU_RTSHADOW_BAKED);
+                GL_BindToTMU(img, c == 0 ? TB_NORMALMAP : TB_DELUXEMAP);
             }
         }
         GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP, cascades ? backEnd.refdef.sunShadowMvp[0] : none);
         GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP2, cascades ? backEnd.refdef.sunShadowMvp[1] : none);
-        GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP3, cascades ? backEnd.refdef.sunShadowMvp[2] : none);
-        GLSL_SetUniformMat4(sp, UNIFORM_SHADOWMVP4, cascades ? backEnd.refdef.sunShadowMvp[3] : none);
     }
 
     // the view under its surface, if it was drawn (R_WaterReflectView)
