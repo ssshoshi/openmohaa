@@ -19,3 +19,7 @@ ground textures/algiers/grndset_1a
 ground textures/algiers/grndset_1b
 ground textures/algiers/grndset_1big
 ground textures/algiers/grndset_1long
+// m1l1's: the hills are its unshadowed patches (the ns one not solid)
+ground textures/algiers/grndset_2af
+ground textures/algiers/grndset_2af_noshd
+ground textures/algiers/grndset_2afns_noshd
