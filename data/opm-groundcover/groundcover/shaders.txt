@@ -10,3 +10,12 @@ bare textures/misc_outside/bocage_fencetop
 
 // the bocage's banks where grass gives onto bare rock (m4l1): flagged rock
 grow textures/wilderness/m3l3_rockgrasstrans
+
+// the desert's ground set (m1l1, m1l2a, m1l2b), flagged gravel: besides its
+// terrain it is laid as curved patches over sandclip brushes and as brush
+// ramps, all of it open ground
+ground textures/algiers/grndset_1
+ground textures/algiers/grndset_1a
+ground textures/algiers/grndset_1b
+ground textures/algiers/grndset_1big
+ground textures/algiers/grndset_1long
