@@ -292,18 +292,34 @@ static std::map<std::string, gAlpha_t> glassAlphas;
 // Its alpha, from a .tga (uncompressed or run-length, 32 bits): none from anything else
 static const gAlpha_t *GlassTextureAlpha(const char *shaderName)
 {
+    // its frame alone (content/opm-glass, tools/glass/window_glass.py): the
+    // game's own has shards painted into its glass, half opaque
+    std::string                               own  = std::string("textures/opm/glass/") + shaderName + ".tga";
     std::string                               name = std::string(shaderName) + ".tga";
     std::map<std::string, gAlpha_t>::iterator it   = glassAlphas.find(name);
     gAlpha_t                                  img;
     byte                                     *buf = NULL;
     long                                      len;
 
+    for (size_t c = sizeof("textures/opm/glass/") - 1; c < own.size(); c++) {
+        if (own[c] == '/') {
+            own[c] = '_';
+        }
+    }
+
     if (it != glassAlphas.end()) {
         return it->second.width ? &it->second : NULL;
     }
     img.width = img.height = 0;
 
-    len = cgi.FS_ReadFile(name.c_str(), (void **)&buf, qtrue);
+    len = cgi.FS_ReadFile(own.c_str(), (void **)&buf, qtrue);
+    if (len <= 18 || !buf) {
+        if (buf) {
+            cgi.FS_FreeFile(buf);
+            buf = NULL;
+        }
+        len = cgi.FS_ReadFile(name.c_str(), (void **)&buf, qtrue);
+    }
     if (len > 18 && buf) {
         const int type = buf[2], w = buf[12] | (buf[13] << 8), h = buf[14] | (buf[15] << 8), bpp = buf[16];
         const int topDown = buf[17] & 0x20;
