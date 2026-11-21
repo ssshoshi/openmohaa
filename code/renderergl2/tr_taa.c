@@ -410,6 +410,49 @@ void RB_TaaOpaqueDone(void)
 	FBO_Bind(fbo);
 	qglViewport(box[0], box[1], box[2], box[3]);
 	qglScissor(box[0], box[1], box[2], box[3]);
+
+	// What is drawn now is tested against this frame's depth, nudged, while
+	// the colour under it is the blend: along every edge they part by up to a
+	// pixel: water stopped short of a rifle's blended edge, and in the pixel
+	// left showed what is under the water, the void cleared to the fog, a thin
+	// bright line round it. The farthest depth round each pixel instead, so
+	// what is blended reaches in under the edge: read from the soft particles'
+	// copy of it (the depth itself is the target), taken again now so it has
+	// the view weapon and all else opaque.
+	if (tr.taaDepthShader.program && backEnd.softDepth && tr.hdrDepthImage && tr.hdrDepthFbo && tr.renderDepthImage) {
+		vec4_t quadVerts[4], metrics, whole;
+		vec2_t texCoords[4];
+		const float w = tr.hdrDepthImage->width, h = tr.hdrDepthImage->height;
+
+		VectorSet4(whole, 0.0f, 0.0f, 1.0f, 1.0f);
+		FBO_BlitFromTexture(tr.renderDepthImage, whole, NULL, tr.hdrDepthFbo, NULL, NULL, NULL, 0);
+		FBO_Bind(fbo);
+		qglViewport(box[0], box[1], box[2], box[3]);
+		qglScissor(box[0], box[1], box[2], box[3]);
+
+		VectorSet4(quadVerts[0], -1.0f, 1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[1], 1.0f, 1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[2], 1.0f, -1.0f, 0.0f, 1.0f);
+		VectorSet4(quadVerts[3], -1.0f, -1.0f, 0.0f, 1.0f);
+		VectorSet2(texCoords[0], box[0] / w, (box[1] + box[3]) / h);
+		VectorSet2(texCoords[1], (box[0] + box[2]) / w, (box[1] + box[3]) / h);
+		VectorSet2(texCoords[2], (box[0] + box[2]) / w, box[1] / h);
+		VectorSet2(texCoords[3], box[0] / w, box[1] / h);
+
+		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+		GL_State(GLS_DEPTHMASK_TRUE);
+		qglDepthFunc(GL_ALWAYS); // (GL_State sets LEQUAL: put back below)
+		GL_Cull(CT_TWO_SIDED);
+		GLSL_BindProgram(&tr.taaDepthShader);
+		GL_BindToTMU(tr.hdrDepthImage, TB_LIGHTMAP);
+		VectorSet4(metrics, 1.0f / w, 1.0f / h, w, h);
+		GLSL_SetUniformVec4(&tr.taaDepthShader, UNIFORM_BLOOMTEXEL, metrics);
+		RB_InstantQuad2(quadVerts, texCoords);
+		qglDepthFunc(GL_LEQUAL);
+		qglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+		GL_State(GLS_DEFAULT);
+	}
+
 	GL_SetProjectionMatrix(backEnd.viewParms.projectionMatrix);
 }
 

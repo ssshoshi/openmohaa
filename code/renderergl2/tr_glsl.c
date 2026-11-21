@@ -66,6 +66,8 @@ extern const char *fallbackShader_lens_fp;
 extern const char *fallbackShader_bloom_vp;
 extern const char *fallbackShader_bloom_fp;
 extern const char *fallbackShader_taa_vp;
+extern const char *fallbackShader_taadepth_vp;
+extern const char *fallbackShader_taadepth_fp;
 extern const char *fallbackShader_motionblur_vp;
 extern const char *fallbackShader_motionblur_fp;
 extern const char *fallbackShader_mbobject_vp;
@@ -3306,6 +3308,14 @@ void GLSL_InitGPUShaders(void)
 			{
 				ri.Printf(PRINT_WARNING, "WARNING: the TAA program did not compile, r_taa does nothing\n");
 			}
+			// the depth what is blended after it is tested against
+			if (GLSL_InitGPUShader(&tr.taaDepthShader, "taadepth", attribs, qtrue, extradefines, qtrue, fallbackShader_taadepth_vp, fallbackShader_taadepth_fp))
+			{
+				GLSL_InitUniforms(&tr.taaDepthShader);
+				GLSL_SetUniformInt(&tr.taaDepthShader, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+				GLSL_FinishGPUShader(&tr.taaDepthShader);
+				numEtcShaders++;
+			}
 		}
 
 		// the camera's movement smeared (r_motionBlur, tr_motionblur.c)
@@ -3552,6 +3562,7 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.rippleShader);
 	GLSL_DeleteGPUShader(&tr.lensShader);
 	GLSL_DeleteGPUShader(&tr.taaShader);
+	GLSL_DeleteGPUShader(&tr.taaDepthShader);
 	GLSL_DeleteGPUShader(&tr.motionBlurShader);
 	GLSL_DeleteGPUShader(&tr.mbVelocityShader);
 	for (i = 0; i < 3; i++)

@@ -2853,6 +2853,7 @@ typedef struct {
 	shaderProgram_t lensShader;   // Added in OPM: what is on the lens (tr_lens.c)
 	shaderProgram_t bloomShader;  // Added in OPM: the bloom (RB_Bloom)
 	shaderProgram_t taaShader;     // Added in OPM: r_taa (tr_taa.c)
+	shaderProgram_t taaDepthShader; // Added in OPM: the depth blended surfaces are tested against after it (tr_taa.c)
 	shaderProgram_t motionBlurShader; // Added in OPM: r_motionBlur (tr_motionblur.c)
 	shaderProgram_t mbObjectShader[2]; // its moving models: posed on the CPU, by the vertex program
 	shaderProgram_t mbVelocityShader;
