@@ -186,6 +186,8 @@ typedef struct {
 	int      dynamicSlot;  // its slot in the atlas of what moves, plus one (0 none)
 	int      dynamicDrawn; // the faces drawn into it when last drawn, a bit each
 	int      dynamicFrame; // the frame they were drawn
+	int      unlitFaces;   // faces left undrawn as out of its spot's cone (R_RtLitFaces): stale
+	                       // in the atlases, drawn once the cone turns into them
 	qboolean surfaceLamp;  // moved onto a lamp in the brushwork (R_RtLightsAtSurfaces)
 	float    flicker;      // a flame's: how much it dips
 	float    seed;
@@ -6231,11 +6233,76 @@ static qboolean R_RtFaceTime(void)
 		|| rt.faceUsec < r_rtFacesMsec->value * 1000.0 ? qtrue : qfalse;
 }
 
+/*
+Which of a light's six faces its light goes into, a bit each: all of them but
+for a spot light's, whose cone takes in a few (a headlight's, two or three).
+The faces it does not are never read (RtAtten gives nothing outside the cone
+before the shadow is looked up), so they are not drawn: on m1l1 the moving
+truck's two headlights drew all the faces the view saw every frame. Its cone,
+widened a little for the shadow's offset off a surface and its taps, sampled at
+its axis, and round its rim and half way out: a direction's face is the one its
+largest component points to, as RtShadow picks it.
+*/
+#define RT_SPOT_FACE_MARGIN 5.0f  // degrees past the cone
+#define RT_SPOT_FACE_RIM    32    // samples round each ring
+
+static int R_RtFaceOf(const vec3_t v)
+{
+	const float ax = fabs(v[0]), ay = fabs(v[1]), az = fabs(v[2]);
+
+	if (ax >= ay && ax >= az) {
+		return v[0] > 0 ? 0 : 1;
+	}
+	if (ay >= az) {
+		return v[1] > 0 ? 2 : 3;
+	}
+	return v[2] > 0 ? 4 : 5;
+}
+
+static int R_RtLitFaces(const rtLight_t *l)
+{
+	vec3_t right, up;
+	float  half;
+	int    faces, ring, k;
+
+	if (!l->spot || l->radiusByDist <= 0 || VectorLength(l->spotDir) < 0.5f) {
+		return 63;
+	}
+	half = RAD2DEG(atan(l->radiusByDist)) + RT_SPOT_FACE_MARGIN;
+	if (half >= 80.0f) {
+		return 63;
+	}
+	faces = 1 << R_RtFaceOf(l->spotDir);
+	PerpendicularVector(right, l->spotDir);
+	CrossProduct(l->spotDir, right, up);
+	for (ring = 1; ring <= 2; ring++) {
+		const float a = DEG2RAD(half * ring * 0.5f), c = cos(a), sn = sin(a);
+
+		for (k = 0; k < RT_SPOT_FACE_RIM; k++) {
+			const float t = 2.0f * M_PI * k / RT_SPOT_FACE_RIM;
+			vec3_t      d;
+
+			VectorScale(l->spotDir, c, d);
+			VectorMA(d, sn * cos(t), right, d);
+			VectorMA(d, sn * sin(t), up, d);
+			faces |= 1 << R_RtFaceOf(d);
+		}
+	}
+	return faces;
+}
+
 static void R_RtRenderFace(const rtLight_t *l, int atlas, int slot, int face)
 {
 	viewParms_t parms;
 	int         x, y, size;
 	float       fov;
+
+	// out of its spot's cone: never read, so not drawn
+	if (!(R_RtLitFaces(l) & (1 << face))) {
+		rt.lights[l - rt.lights].unlitFaces |= 1 << face;
+		return;
+	}
+	rt.lights[l - rt.lights].unlitFaces &= ~(1 << face);
 
 	R_RtFaceRect(atlas, slot, face, &x, &y, &size);
 	fov = 2.0f * RAD2DEG(atan(1.0f / R_RtFaceScale(size)));
@@ -7453,6 +7520,26 @@ void R_RtRenderShadows(const refdef_t *fd)
 
 		if (r_rtShadows->integer && !l->noShadow) {
 			int f;
+
+			// a spot turned into faces it left undrawn (a searchlight
+			// sweeping, a truck turning): those faces now, or as soon as
+			// there is room, as if they had never been drawn
+			if (l->unlitFaces && l->staticSlot >= 0) {
+				const int stale = l->unlitFaces & R_RtLitFaces(l);
+
+				for (f = 0; f < 6; f++) {
+					if (!(stale & (1 << f))) {
+						continue;
+					}
+					l->staticFaces &= ~(1 << f);
+					l->bakedFaces &= ~(1 << f);
+					if (chosen && R_RtFaceRoom() && R_RtFaceTime()) {
+						R_RtRenderFace(l, 0, l->staticSlot, f);
+						rt.staticDrawn++;
+						l->staticFaces |= 1 << f;
+					}
+				}
+			}
 
 			// what stands still: drawn once, a few faces a frame; whole
 			// tiles for the nearest, quarter tiles further off
