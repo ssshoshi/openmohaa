@@ -129,37 +129,6 @@ float Sample(const sampler2DShadow shadowmap, vec4 sp, const float size)
 }
 #endif
 
-// Added in OPM: the point off its surface by a texel and a half of the
-// cascade it is read from (normal offset). Read where it is, a wall's top
-// under a ceiling had the texels along the wall's edge in its filter, and
-// past a wall on the void nothing is drawn: the sun lit a line along the
-// seam. Off the wall the filter reads the room's side of it.
-vec4 OffSurface(const vec4 pos, const vec3 N, const mat4 mvp, const float size)
-{
-	float texel = 2.0 / (length(vec3(mvp[0][0], mvp[1][0], mvp[2][0])) * size);
-	return vec4(pos.xyz + N * (1.5 * texel), 1.0);
-}
-
-// the surface's normal from the depth beside the pixel, on each axis from the
-// side nearer in depth, so that a pixel at an edge takes its own surface's
-vec3 SurfaceNormal(const vec3 P, const float depth)
-{
-	vec2  dx = vec2(dFdx(var_DepthTex.x), 0.0), dy = vec2(0.0, dFdy(var_DepthTex.y));
-	vec3  vx = dFdx(var_ViewDir), vy = dFdy(var_ViewDir);
-	float r  = getLinearDepth(u_ScreenDepthMap, var_DepthTex + dx, u_ViewInfo.x);
-	float l  = getLinearDepth(u_ScreenDepthMap, var_DepthTex - dx, u_ViewInfo.x);
-	float u  = getLinearDepth(u_ScreenDepthMap, var_DepthTex + dy, u_ViewInfo.x);
-	float d  = getLinearDepth(u_ScreenDepthMap, var_DepthTex - dy, u_ViewInfo.x);
-	vec3  ex = abs(r - depth) < abs(l - depth) ? u_ViewOrigin + (var_ViewDir + vx) * r - P : P - (u_ViewOrigin + (var_ViewDir - vx) * l);
-	vec3  ey = abs(u - depth) < abs(d - depth) ? u_ViewOrigin + (var_ViewDir + vy) * u - P : P - (u_ViewOrigin + (var_ViewDir - vy) * d);
-	vec3  N  = cross(ex, ey);
-	float n  = length(N);
-	if (n < 1e-6)
-		return vec3(0.0);
-	N /= n;
-	return dot(N, u_ViewOrigin - P) < 0.0 ? -N : N;
-}
-
 // Added in OPM: contact shadows. The cascades' texels are an inch or more
 // across, and a shadow a foot or a crate's corner casts under that is lost.
 // A few steps from the point towards the sun through the view's own depth:
@@ -215,11 +184,9 @@ void main()
 	else
 	{
 #if defined(USE_SHADOW_CASCADE)
-		vec3 N  = r_sunNormalOffset > 0.5 ? SurfaceNormal(u_ViewOrigin + var_ViewDir * depth, depth) : vec3(0.0);
-		vec4 s0 = u_ShadowMvp  * OffSurface(biasPos, N, u_ShadowMvp, r_shadowMapSize);
-		vec4 s1 = u_ShadowMvp2 * OffSurface(biasPos, N, u_ShadowMvp2, r_shadowMapSize);
-		vec4 s2 = u_ShadowMvp3 * OffSurface(biasPos, N, u_ShadowMvp3, r_shadowMapSize);
-		vec4 s3 = u_ShadowMvp4 * OffSurface(biasPos, N, u_ShadowMvp4, r_sunShadowFarSize);
+		vec4 s0 = u_ShadowMvp  * biasPos;
+		vec4 s1 = u_ShadowMvp2 * biasPos;
+		vec4 s2 = u_ShadowMvp3 * biasPos;
 		float t;
 
 		if (Inside(s0))
@@ -241,11 +208,11 @@ void main()
 			result = Sample(u_ShadowMap3, s2, r_shadowMapSize);
 			t = Edge(s2);
 			if (t > 0.0)
-				result = mix(result, Sample(u_ShadowMap4, s3, r_sunShadowFarSize), t);
+				result = mix(result, Sample(u_ShadowMap4, u_ShadowMvp4 * biasPos, r_sunShadowFarSize), t);
 		}
 		else
 		{
-			result = Sample(u_ShadowMap4, s3, r_sunShadowFarSize);
+			result = Sample(u_ShadowMap4, u_ShadowMvp4 * biasPos, r_sunShadowFarSize);
 		}
 #else
 		vec4 shadowpos = u_ShadowMvp * biasPos;

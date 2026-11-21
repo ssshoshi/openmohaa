@@ -1542,6 +1542,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerBegin(GPUTIMER_SUN0 + sunLevel);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+		// Added in OPM: and the world's solid brushes (r_sunShadowBrushes)
+		if (sunLevel >= 0 && sunLevel <= 3)
+			RB_DrawSunProxy();
 		if (sunLevel >= 0 && sunLevel <= 3)
 			R_GpuTimerEnd(GPUTIMER_SUN0 + sunLevel);
 		R_CpuTimerEnd(cpuTimer);

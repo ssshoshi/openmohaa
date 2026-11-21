@@ -221,6 +221,7 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_RtList",          GLSL_VEC4_RTLIST },
 	{ "u_RtSky",           GLSL_VEC4_RTSKY },
 	{ "u_RtSkyColor",      GLSL_VEC4 },
+	{ "u_SunProxyPush",    GLSL_VEC4 },
 	{ "u_RtSkyRegion",     GLSL_VEC4 },
 	{ "u_RtSkyMap",        GLSL_INT },
 	{ "u_RtSurface",       GLSL_VEC4 },
@@ -1055,6 +1056,22 @@ static const char *rt_skyBake_vp =
 	"	var_P = attr_Position;\n"
 	"	var_N = attr_Normal;\n"
 	"}\n";
+// Added in OPM: the world's solid brushes into the sun's cascades, pushed from
+// the sun (RB_DrawSunProxy)
+static const char *sunProxy_vp =
+	"attribute vec3 attr_Position;\n"
+	"uniform mat4 u_ModelViewProjectionMatrix;\n"
+	"uniform vec4 u_SunProxyPush;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_Position = u_ModelViewProjectionMatrix * vec4(attr_Position - u_SunProxyPush.xyz, 1.0);\n"
+	"}\n";
+static const char *sunProxy_fp =
+	"void main()\n"
+	"{\n"
+	"	gl_FragColor = vec4(1.0);\n"
+	"}\n";
+
 // the sky's alone: its triangle's middle too (R_RtBakeGather)
 static const char *rt_skyBakeSky_vp =
 	"attribute vec3 attr_Position;\n"
@@ -2744,6 +2761,18 @@ void GLSL_InitGPUShaders(void)
 
 	GLSL_FinishGPUShader(&tr.textureColorShader);
 
+	// Added in OPM: the world's solid brushes into the sun's cascades
+	if (!GLSL_InitGPUShader(&tr.sunProxyShader, "sunproxy", ATTR_POSITION, qtrue, "", qtrue, sunProxy_vp, sunProxy_fp))
+	{
+		ri.Printf(PRINT_WARNING, "no program for the sun's brushes\n");
+	}
+	else
+	{
+		GLSL_InitUniforms(&tr.sunProxyShader);
+		GLSL_FinishGPUShader(&tr.sunProxyShader);
+		numEtcShaders++;
+	}
+
 	// Added in OPM: the sky a lightmap texel sees, once a map (R_RtBakeSkyLightmaps)
 	if (r_realtimeLighting->integer == 2)
 	{
@@ -3034,7 +3063,6 @@ void GLSL_InitGPUShaders(void)
 
 		Q_strcat(extradefines, 1024, va("#define r_shadowMapSize %f\n", r_shadowMapSize->value));
 		Q_strcat(extradefines, 1024, va("#define r_sunShadowFarSize %f\n", (float)R_SunShadowFarSize()));
-		Q_strcat(extradefines, 1024, va("#define r_sunNormalOffset %d.0\n", r_sunNormalOffset->integer ? 1 : 0));
 		Q_strcat(extradefines, 1024, va("#define r_shadowCascadeZFar %f\n", r_shadowCascadeZFar->value));
 
 		if (!GLSL_InitGPUShader(&tr.shadowmaskShader, "shadowmask", attribs, qtrue, extradefines, qtrue, fallbackShader_shadowmask_vp, fallbackShader_shadowmask_fp))
