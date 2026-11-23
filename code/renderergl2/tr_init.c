@@ -57,6 +57,7 @@ cvar_t  *r_displayRefresh;
 cvar_t	*r_detailTextures;
 
 cvar_t	*r_znear;
+cvar_t	*r_znearViewModel;
 cvar_t	*r_zproj;
 cvar_t	*r_stereoSeparation;
 
@@ -1819,6 +1820,10 @@ void R_Register( void )
 	// mods such as MOHAIM put the rear sight close enough to the eye that 4 cuts it off
 	r_znear = ri.Cvar_Get( "r_znear", "3", CVAR_CHEAT );
 	ri.Cvar_CheckRange( r_znear, 0.001f, 200, qfalse );
+	// Added in OPM: the view weapon's and arms' own near plane (0: r_znear's), nearer
+	// than the world's so that aiming down the sights does not cut into the gun
+	r_znearViewModel = ri.Cvar_Get( "r_znearViewModel", "1", CVAR_ARCHIVE );
+	ri.Cvar_CheckRange( r_znearViewModel, 0, 200, qfalse );
 	r_zproj = ri.Cvar_Get( "r_zproj", "64", CVAR_ARCHIVE );
 	r_stereoSeparation = ri.Cvar_Get( "r_stereoSeparation", "64", CVAR_ARCHIVE );
 	r_ignoreGLErrors = ri.Cvar_Get( "r_ignoreGLErrors", "1", CVAR_ARCHIVE );
