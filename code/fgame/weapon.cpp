@@ -2943,7 +2943,12 @@ void Weapon::StartReloading(void)
         return;
     }
 
-    if (SetWeaponAnim("reload", EV_Weapon_DoneReloading)) {
+    // Added in OPM
+    //  An emptied weapon reloads with its own animation when it has one
+    //  (an open-bolt gun's bolt is forward and has to be pulled back)
+    if ((ammo_clip_size[FIRE_PRIMARY] && !ammo_in_clip[FIRE_PRIMARY] && HasAnim("reload_empty")
+         && SetWeaponAnim("reload_empty", EV_Weapon_DoneReloading))
+        || SetWeaponAnim("reload", EV_Weapon_DoneReloading)) {
         weaponstate = WEAPON_RELOADING;
     } else {
         ProcessEvent(EV_Weapon_FillClip);
