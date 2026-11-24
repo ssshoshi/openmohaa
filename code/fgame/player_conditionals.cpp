@@ -780,6 +780,12 @@ qboolean Player::CondReload(Conditional& condition)
         return qfalse;
     }
 
+    // Added in OPM
+    //  Not before the last shot's animation is done (the Garand's clip thrown out)
+    if (weapon->IsFiringEmpty()) {
+        return qfalse;
+    }
+
     if (weapon->ShouldReload() && weapon->HasAmmo(FIRE_PRIMARY)) {
         return qtrue;
     }

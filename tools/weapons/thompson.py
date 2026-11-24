@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "blender", "io_scene_mohaa"))
 from mohaa import huffman, pose, skc, skd, vfs  # noqa: E402
 
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
+PAK = "zzzzzzzzzzzzzzzz-opm-thompson.pk3"  # what this builds: never read back from
 
 GUN_SKD = "models/weapons/thompsonsmg/ThompsonSMG.skd"
 GUN_TIK = "models/weapons/thompsonsmg.tik"
@@ -596,7 +597,7 @@ def main():
     obj = os.path.join(args.src, "model_0.obj")
     if not os.path.exists(obj):
         raise SystemExit("no source model at %s" % obj)
-    fs = vfs.GameFS([os.path.join(args.game, "main")])
+    fs = vfs.GameFS([os.path.join(args.game, "main")], skip_paks=[PAK])
     gun = skd.read(fs.read(GUN_SKD))
     clip = skd.read(fs.read(CLIP_SKD))
     rng = np.random.default_rng(1)

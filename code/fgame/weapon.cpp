@@ -725,6 +725,7 @@ Weapon::Weapon()
 
     // Obviously mustn't reload at first
     m_bShouldReload = false;
+    m_bFiringEmpty  = false;
 
     // Used to keep track of last angles and scale before holstering
     lastValid    = qfalse;
@@ -2207,6 +2208,7 @@ void Weapon::Fire(firemode_t mode)
         }
         if (ammo_clip_size[FIRE_PRIMARY] && !ammo_in_clip[FIRE_PRIMARY] && HasAnim("fire_empty")) {
             SetWeaponAnim("fire_empty", done_event);
+            m_bFiringEmpty = true;
         } else {
             SetWeaponAnim(GetFireAnim(), done_event);
         }
@@ -2672,6 +2674,7 @@ void Weapon::PickupWeapon(Event *ev)
 //======================
 void Weapon::ForceIdle(void)
 {
+    m_bFiringEmpty = false;
     SetWeaponIdleAnim();
 
     // Force the weapon to the idle animation
@@ -2999,6 +3002,18 @@ qboolean Weapon::CheckReload(firemode_t mode)
 void Weapon::SetShouldReload(qboolean should_reload)
 {
     m_bShouldReload = should_reload;
+}
+
+//======================
+//Weapon::IsFiringEmpty
+//
+// Added in OPM: whether the weapon is still in its last shot's animation
+// (fire_empty), which the player's reload waits for: the Garand throws its
+// empty clip out in it
+//======================
+bool Weapon::IsFiringEmpty(void) const
+{
+    return m_bFiringEmpty && weaponstate == WEAPON_FIRING;
 }
 
 //======================

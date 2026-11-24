@@ -13,10 +13,13 @@ LOOSE_DIRS = {"models", "textures", "scripts", "gfx", "env", "animations"}
 
 
 class GameFS:
-    def __init__(self, folders=()):
+    def __init__(self, folders=(), skip_paks=()):
+        """skip_paks: pak names (any case) to leave out, such as a pak a tool builds from
+        the game's own files, which must not read its own earlier output."""
         self._files = {}   # lower path -> (kind, source, real name)
         self._zips = {}
         self.folders = []
+        self.skip_paks = {n.lower() for n in skip_paks}
         for f in folders:
             self.add_folder(f)
 
@@ -27,7 +30,8 @@ class GameFS:
         if folder in self.folders:
             return
         self.folders.append(folder)
-        paks = sorted((n for n in os.listdir(folder) if n.lower().endswith(".pk3")), key=str.lower)
+        paks = sorted((n for n in os.listdir(folder)
+                       if n.lower().endswith(".pk3") and n.lower() not in self.skip_paks), key=str.lower)
         for pak in paks:
             path = os.path.join(folder, pak)
             try:

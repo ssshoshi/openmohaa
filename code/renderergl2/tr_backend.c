@@ -477,6 +477,23 @@ void RB_BeginDrawingView (void) {
 
 /*
 ==================
+RB_ViewModelNear
+
+Added in OPM: whether the view weapon is drawn with its own near plane
+(r_znearViewModel) in this view: a perspective view of the scene (not a shadow
+map's, not one with a near plane of its own, not a portal's oblique one), and a
+near plane nearer than the world's
+==================
+*/
+static qboolean RB_ViewModelNear(const viewParms_t *view)
+{
+	return r_znearViewModel->value > 0 && r_znearViewModel->value < r_znear->value
+		&& !(view->flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC))
+		&& view->zNear <= 0 && !view->isPortal;
+}
+
+/*
+==================
 RB_RenderDrawSurfList
 ==================
 */
@@ -709,24 +726,33 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			{
 				if (depthRange)
 				{
-					if(backEnd.viewParms.stereoFrame != STEREO_CENTER)
+					// Added in OPM
+					//  The view weapon and arms get a near plane of their own
+					//  (r_znearViewModel): aiming down the sights puts a rifle's receiver
+					//  nearer the eye than the world's r_znear, which cut it open
+					qboolean viewModelNear = !isCrosshair && RB_ViewModelNear(&backEnd.viewParms);
+
+					if(isCrosshair)
 					{
-						if(isCrosshair)
+						if(oldDepthRange)
 						{
-							if(oldDepthRange)
-							{
-								// was not a crosshair but now is, change back proj matrix
-								GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
-							}
+							// was not a crosshair but now is, change back proj matrix
+							GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
 						}
-						else
-						{
-							viewParms_t temp = backEnd.viewParms;
+					}
+					else if(backEnd.viewParms.stereoFrame != STEREO_CENTER || viewModelNear)
+					{
+						viewParms_t temp = backEnd.viewParms;
 
+						if(backEnd.viewParms.stereoFrame != STEREO_CENTER)
 							R_SetupProjection(&temp, r_znear->value, 0, qfalse);
-
-							GL_SetProjectionMatrix( temp.projectionMatrix );
+						if(viewModelNear)
+						{
+							temp.zNear = r_znearViewModel->value;
+							R_SetupProjectionZ(&temp);
 						}
+
+						GL_SetProjectionMatrix( temp.projectionMatrix );
 					}
 
 					if(!oldDepthRange)
@@ -734,7 +760,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				}
 				else
 				{
-					if(!wasCrosshair && backEnd.viewParms.stereoFrame != STEREO_CENTER)
+					if(!wasCrosshair && (backEnd.viewParms.stereoFrame != STEREO_CENTER || RB_ViewModelNear(&backEnd.viewParms)))
 					{
 						GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
 					}
@@ -859,6 +885,12 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// go back to the world modelview matrix
 
 	GL_SetModelviewMatrix( backEnd.viewParms.world.modelMatrix );
+
+	// Added in OPM: and to its projection, if the list ended on the view weapon's own
+	if (oldDepthRange && !wasCrosshair
+		&& (backEnd.viewParms.stereoFrame != STEREO_CENTER || RB_ViewModelNear(&backEnd.viewParms))) {
+		GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+	}
 
 	qglDepthRange (0, 1);
 }

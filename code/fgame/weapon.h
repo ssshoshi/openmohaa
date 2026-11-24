@@ -138,6 +138,10 @@ protected:
     float         next_maxmovement_time;
 
     qboolean m_bShouldReload;
+    // Added in OPM
+    //  Playing the last shot's animation (fire_empty), which the reload waits for
+    //  (not archived: a game loaded mid-shot just reloads at once)
+    bool m_bFiringEmpty;
 
     // Starting loadout
     Container<str> m_additionalStartAmmoTypes;
@@ -380,6 +384,7 @@ public:
 
     qboolean CheckReload(firemode_t mode);
     qboolean ShouldReload(void);
+    bool     IsFiringEmpty(void) const; // Added in OPM
     void     SetShouldReload(qboolean should_reload);
     void     StartReloading(void);
 

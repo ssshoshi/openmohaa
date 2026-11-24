@@ -688,6 +688,19 @@ void RB_BeginDrawingView (void) {
 
 /*
 ==================
+RB_ViewModelNear
+
+Added in OPM: whether the view weapon is drawn with its own near plane
+(r_znearViewModel) in this view: not a portal's, and nearer than the world's
+==================
+*/
+static qboolean RB_ViewModelNear( void ) {
+	return r_znearViewModel->value > 0 && r_znearViewModel->value < r_znear->value
+		&& !backEnd.viewParms.isPortal && backEnd.viewParms.zFar > r_znear->value;
+}
+
+/*
+==================
 RB_RenderDrawSurfList
 ==================
 */
@@ -804,6 +817,23 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				} else {
 					qglDepthRange (0, 1.0);
 				}
+				// Added in OPM
+				//  The view weapon and arms get a near plane of their own
+				//  (r_znearViewModel): aiming down the sights puts a rifle's receiver
+				//  nearer the eye than the world's r_znear, which cut it open
+				if ( RB_ViewModelNear() ) {
+					float projection[16];
+					float zNear = r_znearViewModel->value, zFar = backEnd.viewParms.zFar;
+
+					Com_Memcpy( projection, backEnd.viewParms.projectionMatrix, sizeof( projection ) );
+					if ( depthRange ) {
+						projection[10] = -( zFar + zNear ) / ( zFar - zNear );
+						projection[14] = -2 * zFar * zNear / ( zFar - zNear );
+					}
+					qglMatrixMode( GL_PROJECTION );
+					qglLoadMatrixf( projection );
+					qglMatrixMode( GL_MODELVIEW );
+				}
 				oldDepthRange = depthRange;
 			}
 
@@ -884,6 +914,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	qglLoadMatrixf( backEnd.viewParms.world.modelMatrix );
 	if ( depthRange ) {
 		qglDepthRange (0, 1.0);
+		// Added in OPM: and the world's projection, if the list ended on the view
+		// weapon's own
+		if ( RB_ViewModelNear() ) {
+			qglMatrixMode( GL_PROJECTION );
+			qglLoadMatrixf( backEnd.viewParms.projectionMatrix );
+			qglMatrixMode( GL_MODELVIEW );
+		}
 	}
 
 	RB_ShadowFinish();
