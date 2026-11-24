@@ -55,7 +55,8 @@ def main():
         pose.frame_channels(anim, args.frame)).items()}
     rng = np.random.default_rng(0)
     theirs = posed(stock.model, held)
-    mine = posed(ours, held)
+    mine = posed(ours, {k: np.array(v) for k, v in pose.Skeleton(ours.bones).evaluate(
+        pose.frame_channels(anim, args.frame)).items()})
     allp = np.concatenate([p for _, p, _ in theirs + mine])
     lo, hi = allp.min(0), allp.max(0)
     a, b, c = np.argsort(hi - lo)[::-1]

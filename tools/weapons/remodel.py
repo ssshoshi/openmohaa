@@ -435,7 +435,7 @@ def load_source(spec, folder):
     for p in out:
         m = spec.get("maps", {})
         for kind, rel in m.get(p.name, m.get(p.material, m.get("*", {}))).items():
-            p.maps[kind] = rel if kind == "base_tint" else Image.open(os.path.join(folder, rel))
+            p.maps[kind] = rel if kind in ("base_tint", "rough_value") else Image.open(os.path.join(folder, rel))
     return out
 
 
@@ -576,6 +576,39 @@ def sight_fix(spec, fs):
     m[:3, 3] = new_r - rot @ r
     print("  sights: turned %.2f deg, the rear sight moved %.2f cm" % (np.degrees(np.arcsin(min(sn, 1.0))),
                                                                        np.linalg.norm(new_r - r)))
+    drop = spec.get("sight_drop", 0.0)
+    if drop:    # the butt dropped: a turn about the front sight, the rear sight this far under the line
+        fp = m[:3, :3] @ f + m[:3, 3]
+        span = (f - r) @ fwd
+        ang = np.arctan2(drop, span)
+        for sign in (1.0, -1.0):
+            k = np.array([[0, -right[2], right[1]], [right[2], 0, -right[0]], [-right[1], right[0], 0]])
+            t = sign * ang
+            rot2 = np.eye(3) + np.sin(t) * k + (1 - np.cos(t)) * k @ k
+            d = np.eye(4)
+            d[:3, :3] = rot2
+            d[:3, 3] = fp - rot2 @ fp
+            rp = (d @ m @ np.append(r, 1.0))[:3]
+            if (rp - eye) @ up < 0:
+                m = d @ m
+                break
+        print("  the butt dropped: the rear sight %.2f cm under the line" % drop)
+    if spec.get("level"):    # no roll: the gun's up (its -Z) turned onto the view's up, about the line
+        g = m[:3, :3] @ np.array([0.0, 0.0, -1.0])
+        g = g - fwd * (g @ fwd)
+        t = -np.arctan2(g @ right, g @ up)
+        k = np.array([[0, -fwd[2], fwd[1]], [fwd[2], 0, -fwd[0]], [-fwd[1], fwd[0], 0]])
+        best = None
+        for sign in (1.0, -1.0):
+            rot2 = np.eye(3) + np.sin(sign * t) * k + (1 - np.cos(sign * t)) * k @ k
+            g2 = rot2 @ g
+            if best is None or abs(g2 @ right) < best[0]:
+                best = (abs(g2 @ right), rot2)
+        d = np.eye(4)
+        d[:3, :3] = best[1]
+        d[:3, 3] = eye - best[1] @ eye
+        m = d @ m
+        print("  levelled: rolled %.1f deg" % np.degrees(abs(t)))
     return m
 
 
@@ -630,6 +663,80 @@ def with_slide(src, bone, axis, curve):
         row[a.channels.index(bone + " rot")] = (0.0, 0.0, 0.0, 1.0)
         a.values.append(row)
     return a
+
+
+def mk_moved(p, m):
+    q = p.moved(m)
+    q.material_key = p.material_key
+    return q
+
+
+FPS_ANIM_LISTS = ["models/player/base/fps_anims_bazooka.txt", "models/player/base/fps_anims_rifle.txt",
+                  "models/player/base/fps_anims_smg.txt", "models/player/base/fps_anims_mg.txt",
+                  "models/player/base/fps_anims_pistol.txt", "models/player/base/fps_anims_shotgun.txt"]
+AIM_POSES = {}    # the arms' aim poses made over, {their file: ours}: fps_anims lists repointed
+
+
+def aim_pose_moved(fs, out, aim_skc, m):
+    """The arms' aim pose changed so that the camera sees the weapon as if the weapon had been
+    moved by m (its own space): the whole skeleton turned about the eye (the camera keeps
+    the view's axes, so the weapon turns in view), and the eye bone (where the camera is)
+    shifted. The weapon itself stays where the game's other poses have it."""
+    fps_model = skd.read(fs.read(FPS_SKD))
+    sk = pose.Skeleton(fps_model.bones)
+    a = read_anim(fs, AIM_DIR + aim_skc)
+    ch = {n.lower(): i for i, n in enumerate(a.channels)}
+    out_anim = skc.Animation()
+    out_anim.flags, out_anim.frame_time = a.flags, a.frame_time
+    out_anim.total_delta, out_anim.total_angle_delta = a.total_delta, a.total_angle_delta
+    out_anim.frames, out_anim.channels = list(a.frames), list(a.channels)
+    out_anim.values = []
+    root = next(b.name for b in fps_model.bones if not b.parent)
+    for f in range(a.num_frames):
+        row = [tuple(v) for v in a.values[f]]
+        body = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(a, f)).items()}
+        t, e = body[WEAPON_TAG], body[EYE_BONE][:3, 3]
+        rt = t[:3, :3]
+        rg = rt @ m[:3, :3] @ rt.T
+        g = np.eye(4)
+        g[:3, :3] = rg
+        g[:3, 3] = e - rg @ e
+        target_eye = rg @ (t[:3, 3] - e) + e - rt @ m[:3, 3] - t[:3, 3] + e
+        w = g @ body[root.lower()]
+        row[ch[root.lower() + " pos"]] = tuple(w[:3, 3]) + (0.0,)
+        row[ch[root.lower() + " rot"]] = tuple(pose.matrix_to_quat(w[:3, :3].tolist()))
+        tmp = {n: v for n, v in zip([c.lower() for c in a.channels], row)}
+        body2 = {k: np.array(v) for k, v in sk.evaluate(tmp).items()}
+        head = body2[next(b.parent for b in fps_model.bones if b.name.lower() == EYE_BONE).lower()]
+        local = head[:3, :3].T @ (target_eye - head[:3, 3])
+        row[ch[EYE_BONE + " pos"]] = tuple(local) + (0.0,)
+        out_anim.values.append(row)
+        # check: the weapon as the camera sees it, as if moved by m
+        tmp = {n: v for n, v in zip([c.lower() for c in a.channels], row)}
+        body3 = {k: np.array(v) for k, v in sk.evaluate(tmp).items()}
+        p = np.array([30.0, 5.0, -3.0, 1.0])
+        want = (t @ m @ p)[:3] - e
+        got = (body3[WEAPON_TAG] @ p)[:3] - body3[EYE_BONE][:3, 3]
+        if np.linalg.norm(want - got) > 0.05:
+            raise SystemExit("the aim pose could not be made over (%.2f cm off)" % np.linalg.norm(want - got))
+    name = "opm_" + aim_skc
+    write(out, AIM_DIR + name, skc.write(out_anim))
+    AIM_POSES["viewmodel/" + aim_skc] = "viewmodel/" + name
+    print("  the arms' aim pose %s made over (the weapon left where the game holds it)" % aim_skc)
+
+
+def write_aim_lists(fs, out):
+    """The arms' animation lists that name an aim pose we made over, pointed at ours."""
+    for path in FPS_ANIM_LISTS:
+        try:
+            text = fs.read_text(path).replace("\r\n", "\n")
+        except Exception:
+            continue
+        new = text
+        for old, ours in AIM_POSES.items():
+            new = re.sub(r"(?<![\w/])%s(?=\s)" % re.escape(old), ours, new)
+        if new != text:
+            put_tik(out, path, new)
 
 
 def touch_clusters(p, gap):
@@ -770,6 +877,8 @@ def write_textures(out, tex_dir, name, maps, size, spec_size):
         raise SystemExit("%s has no base colour map" % name)
     if "base_tint" in maps:   # a grey map shading one colour (a source with no colour map)
         grey = np.asarray(maps["base"].convert("L")).astype(np.float32)[..., None] / 255.0
+        lo, hi = np.percentile(grey, (2, 98))     # its detail stretched to the full range
+        grey = 0.55 + 0.45 * np.clip((grey - lo) / max(hi - lo, 1e-3), 0, 1)
         maps = dict(maps, base=Image.fromarray(np.clip(grey * np.array(maps["base_tint"]) * 255, 0, 255).astype(np.uint8)))
     os.makedirs(os.path.join(out, tex_dir), exist_ok=True)
     base = np.asarray(sized(maps["base"], size, "RGB")).astype(np.float32) / 255.0
@@ -786,7 +895,7 @@ def write_textures(out, tex_dir, name, maps, size, spec_size):
         normal.save(os.path.join(out, tex_dir, name + "_n.jpg"), quality=95, subsampling=0)
     sbase = np.asarray(sized(maps["base"], spec_size, "RGB")).astype(np.float32) / 255.0
     metal = chan(maps.get("metal"), spec_size, 0.0)[..., None]
-    rough = chan(maps.get("rough"), spec_size, 0.6)
+    rough = chan(maps.get("rough"), spec_size, maps.get("rough_value", 0.6))
     sao = chan(maps.get("ao"), spec_size, 1.0)[..., None]
     spec = np.empty((spec_size, spec_size, 4), np.float32)
     share = METAL_SHARE * metal
@@ -900,6 +1009,9 @@ def remodel(spec, fs, out, folder):
     key = spec["key"]
     print("%s (%s)" % (key, folder))
     stock = Stock(fs, spec["tik"])
+    for name, parent in spec.get("new_bones", ()):   # a moving part the game's model has no bone for
+        stock.model.bones.append(skd.Bone(name, parent=parent, type=skd.POSROT))
+        stock.held[name.lower()] = stock.held[parent.lower()].copy()
     pieces = load_source(spec, folder)
     print("  source: %s" % ", ".join("%s %d" % (p.name, len(p.tris)) for p in pieces))
     if "prep" in spec:
@@ -955,9 +1067,41 @@ def remodel(spec, fs, out, folder):
     if "after_fit" in spec:
         pieces = spec["after_fit"](pieces, stock)
     pieces = drop_strays(pieces, stock, spec.get("stray_cm", 2.0))
+    if os.environ.get("REMODEL_PARTS"):          # for writing a spec's boxes
+        for p in pieces:
+            lab = parts(p.pos, p.tris)
+            for k in np.unique(lab):
+                if (lab == k).sum() >= int(os.environ["REMODEL_PARTS"]):
+                    v = p.pos[np.unique(p.tris[lab == k])]
+                    print("  part %s/%d: %d tris, centre %s, %s..%s" % (p.name, k, (lab == k).sum(),
+                          np.round(v.mean(0), 1), np.round(v.min(0), 1), np.round(v.max(0), 1)))
     if "sight_at" in spec and not os.environ.get("REMODEL_NO_SIGHTS"):
         sm = sight_fix(spec, fs)
-        pieces = [p.moved(sm) for p in pieces]
+        if spec.get("aim_pose_fix"):     # the arms' aim pose moves instead of the weapon
+            aim_pose_moved(fs, out, spec["aim"], sm)
+            sm = None
+    else:
+        sm = None
+
+    # parts the source has somewhere else than they belong (a slide locked back): moved
+    # along the barrel, onto their bone
+    shifted = []
+    barrel = stock.held["tag_barrel"][:3, 0] / np.linalg.norm(stock.held["tag_barrel"][:3, 0])  # out of the muzzle
+    for sh in spec.get("shift", ()):
+        lo, hi = np.array(sh["box"], float).T
+        for i, p in enumerate(pieces):
+            lab = parts(p.pos, p.tris)
+            mask = np.zeros(len(p.tris), bool)
+            for k in np.unique(lab):
+                c = p.pos[np.unique(p.tris[lab == k])].mean(0)
+                if (c > lo).all() and (c < hi).all():
+                    mask |= lab == k
+            if mask.any():
+                v = np.unique(p.tris[mask])
+                p.pos = p.pos.copy()
+                p.pos[v] += barrel * sh["forward"]
+                shifted.append((i, mask, sh["assign"]))
+                print("  moved %d triangles of %s %.1f cm forward" % (mask.sum(), p.name, sh["forward"]))
 
     # 2. bones and surfaces from the game's model
     overrides = spec.get("overrides", ())
@@ -984,6 +1128,9 @@ def remodel(spec, fs, out, folder):
         if counts.sum():
             for sf, m in zip(surfs, sel):
                 sf[m] = counts.argmax()
+    for i, mask, (bone_name, surf_name) in shifted:
+        bones[i][mask] = stock.model.bone_index(bone_name)
+        surfs[i][mask] = lower.index(surf_name.lower())
     for bone_name, box in spec.get("confine", {}).items():
         bi = stock.model.bone_index(bone_name)
         lo, hi = np.array(box, float).T
@@ -1028,6 +1175,8 @@ def remodel(spec, fs, out, folder):
             if re.fullmatch(pattern, p.name):
                 bones[i][:] = stock.model.bone_index(bone_name)
                 surfs[i][:] = lower.index(surf_name.lower())
+    if sm is not None:    # the sights' move, once the parts have their bones (from the fit)
+        pieces = [mk_moved(p, sm) if hasattr(p, "material_key") else p.moved(sm) for p in pieces]
     summary = {}
     for bb, ss in zip(bones, surfs):
         for x, y in zip(bb, ss):
@@ -1050,8 +1199,9 @@ def remodel(spec, fs, out, folder):
         shader_of[mk] = shader
         size = spec.get("tex_size", 2048)
         write_textures(out, tex_dir, tex, maps, size, max(512, size // 2))
-        shader_text += ("%s\n{\n\tqer_editorimage %s/%s.tga\n\t{\n\t\tmap %s/%s.tga\n"
-                        "\t\trgbGen lightingSpherical\n\t}\n}\n" % (shader, tex_dir, tex, tex_dir, tex))
+        cull = "\tcull none\n" if spec.get("two_sided") else ""   # thin parts seen from behind
+        shader_text += ("%s\n{\n\tqer_editorimage %s/%s.tga\n%s\t{\n\t\tmap %s/%s.tga\n"
+                        "\t\trgbGen lightingSpherical\n\t}\n}\n" % (shader, tex_dir, tex, cull, tex_dir, tex))
     write(out, "scripts/opm_%s.shader" % key, shader_text.replace("\n", "\r\n").encode("latin-1"))
 
     gun_surfs, shaders, wild = build_surfaces(stock, pieces, bones, surfs, shader_of)
@@ -1134,6 +1284,11 @@ def remodel(spec, fs, out, folder):
         if not mag:
             print("  nothing of the new model is its magazine (%s): %s stays the game's" % (gun_surface, ammo_tik))
             continue
+        if spec.get("ammo_fit") == "hand":   # onto the hand's model itself (ours sits elsewhere in the gun)
+            mp = np.concatenate([sample(p.pos, p.tris, 3000, rng) for p in mag])
+            _, hr, ht, _ = fit(mp, sample(ammo.pos, ammo.tris, 6000, rng), scale=False,
+                               label="%s's magazine onto the hand's: " % key)
+            mag = [mk_moved(p, similarity_matrix(1.0, hr, ht)) for p in mag]
         abone = int(np.bincount(ammo.vbone).argmax())
         ab = [np.full(len(p.tris), abone) for p in mag]
         asf = [np.zeros(len(p.tris), int) for p in mag]
@@ -1177,6 +1332,7 @@ def main():
         except SystemExit as e:
             print("%s: %s" % (spec["key"], e))
             failed.append(spec["key"])
+    write_aim_lists(fs, args.out)
     print("made %s%s" % (", ".join(made) or "nothing", "; failed %s" % ", ".join(failed) if failed else ""))
     if failed and only:
         sys.exit(1)
