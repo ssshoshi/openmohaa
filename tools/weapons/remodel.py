@@ -66,8 +66,23 @@ from scipy.spatial import Delaunay, cKDTree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from thompson import (icp, model_like, parts, pose, read_anim, sample, skc, skd,  # noqa: E402
+from thompson import (icp, model_like, pose, read_anim, sample, skc, skd,  # noqa: E402
                       split, vertex_normals, vfs, write)
+from thompson import parts as welded_parts  # noqa: E402
+from scipy.sparse import coo_matrix  # noqa: E402
+from scipy.sparse.csgraph import connected_components  # noqa: E402
+
+# Whether connected parts join vertices that share a position (the default) or only those
+# the mesh joins (index_parts: a source whose moving parts touch the rest)
+WELD = [True]
+
+
+def parts(pos, tris):
+    if WELD[0]:
+        return welded_parts(pos, tris)
+    n = len(pos)
+    g = coo_matrix((np.ones(3 * len(tris)), (tris.ravel(), tris[:, [1, 2, 0]].ravel())), shape=(n, n))
+    return connected_components(g, directed=False)[1][tris[:, 0]]
 from garand import GLTF_TYPES, GLTF_WIDTH, normal_map_green_down, sized  # noqa: E402
 
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
@@ -219,7 +234,9 @@ def read_dae(path):
             continue
         sources = {s.get("id"): floats(s) for s in mesh.iterfind("c:source", ns)}
         vin = mesh.find("c:vertices", ns)
-        vmap = {i.get("semantic"): i.get("source")[1:] for i in vin.iterfind("c:input", ns)}
+        vmap = {}
+        for i in vin.iterfind("c:input", ns):   # the first of each (a second UV set is not ours)
+            vmap.setdefault(i.get("semantic"), i.get("source")[1:])
         out = []
         for prim in list(mesh.iterfind("c:triangles", ns)) + list(mesh.iterfind("c:polylist", ns)):
             inputs = [(i.get("semantic"), i.get("source")[1:], int(i.get("offset")), int(i.get("set", "0")))
@@ -237,6 +254,8 @@ def read_dae(path):
                     pos = sources[vmap["POSITION"]][idx[:, off]]
                     if "NORMAL" in vmap:
                         nrm = sources[vmap["NORMAL"]][idx[:, off]]
+                    if "TEXCOORD" in vmap and uv is None:
+                        uv = sources[vmap["TEXCOORD"]][idx[:, off]][:, :2]
                 elif sem == "NORMAL":
                     nrm = sources[src][idx[:, off]]
                 elif sem == "TEXCOORD" and uv is None:
@@ -377,11 +396,11 @@ def load_source(spec, folder):
             continue
         seen.add(sig)
         out.append(p)
-    if "piece_re" in spec:
+    if spec.get("piece_re"):
         out = [p for p in out if re.fullmatch(spec["piece_re"], p.name)]
-    if "material_re" in spec:
+    if spec.get("material_re"):
         out = [p for p in out if re.fullmatch(spec["material_re"], p.material)]
-    if "keep_box" in spec:   # connected parts whose centre is in the box (source space)
+    if spec.get("keep_box"):   # connected parts whose centre is in the box (source space)
         lo, hi = np.array(spec["keep_box"], float).T
         kept = []
         for p in out:
@@ -394,6 +413,18 @@ def load_source(spec, folder):
             if keep.any():
                 kept.append(p.subset(keep))
         out = kept
+    for box in spec.get("drop") or ():   # connected parts centred in a box (source space) go
+        lo, hi = np.array(box, float).T
+        kept = []
+        for p in out:
+            piece = parts(p.pos, p.tris)
+            keep = np.ones(len(p.tris), bool)
+            for k in np.unique(piece):
+                c = p.pos[np.unique(p.tris[piece == k])].mean(0)
+                if (c > lo).all() and (c < hi).all():
+                    keep &= piece != k
+            kept.append(p.subset(keep) if not keep.all() else p)
+        out = kept
     keep = spec.get("pieces")
     if keep is not None:
         names = [p.name for p in out]
@@ -404,7 +435,7 @@ def load_source(spec, folder):
     for p in out:
         m = spec.get("maps", {})
         for kind, rel in m.get(p.name, m.get(p.material, m.get("*", {}))).items():
-            p.maps[kind] = Image.open(os.path.join(folder, rel))
+            p.maps[kind] = rel if kind == "base_tint" else Image.open(os.path.join(folder, rel))
     return out
 
 
@@ -509,118 +540,155 @@ EYE_BONE, WEAPON_TAG = "eyes bone", "tag_weapon_right"
 
 
 def aim_eye(fs, aim_skc):
-    """Where the arms' aim pose (MOHAIM's aim down the sights) puts the eye, in the weapon
-    model's space (the weapon's origin is on the right hand's tag)."""
+    """The camera in the weapon model's space while aiming: where the arms' aim pose
+    (MOHAIM's aim down the sights) puts the eye (the game puts the camera at the eye bone),
+    and the view's forward, up and right. The view looks along the arms model's +X; its
+    pitch against the weapons is calibrated (AIM_PITCH) on the two whose sights the player
+    approved in game (the Garand, the Thompson)."""
     fps = pose.Skeleton(skd.read(fs.read(FPS_SKD)).bones)
     body = fps.evaluate(pose.frame_channels(read_anim(fs, AIM_DIR + aim_skc), 0))
-    return (np.linalg.inv(np.array(body[WEAPON_TAG])) @ np.array(body[EYE_BONE])[:, 3])[:3]
+    inv = np.linalg.inv(np.array(body[WEAPON_TAG]))
+    eye = (inv @ np.array(body[EYE_BONE])[:, 3])[:3]
+    fwd, left, up = inv[:3, 0], inv[:3, 1], inv[:3, 2]
+    c, s = np.cos(AIM_PITCH), np.sin(AIM_PITCH)
+    fwd, up = fwd * c + up * s, up * c - fwd * s
+    return eye, fwd, up, -left
 
 
-def sight_frame(eye, target):
-    """Unit vectors: along the line from the eye to target, up (the model's -Z, as near as
-    square to it) and across."""
-    d = (target - eye) / np.linalg.norm(target - eye)
-    up = np.array([0.0, 0.0, -1.0])
-    up = up - d * (up @ d)
-    up /= np.linalg.norm(up)
-    return d, up, np.cross(d, up)
+AIM_PITCH = np.radians(7.75)
 
 
-def upper_hull(t, u):
-    """The upper convex hull of the points (t, u), in t order: indices."""
-    order = np.lexsort((u, t))
-    hull = []
-    for i in order:
-        while len(hull) >= 2:
-            a, b = hull[-2], hull[-1]
-            if (t[b] - t[a]) * (u[i] - u[a]) - (u[b] - u[a]) * (t[i] - t[a]) >= 0:
-                hull.pop()
-            else:
-                break
-        hull.append(i)
-    return hull
-
-
-def sight_pair(q, spec):
-    """q: (t, u, v) points, v from the gun's middle. The rear and front sights' tops: the
-    edge of the centre column's upper hull that ends at the front sight (the highest hull
-    point near the muzzle); what is between them is under it, as sights are made."""
-    c = q[(np.abs(q[:, 2]) < spec.get("column", 0.3)) & (q[:, 0] > spec.get("rear_from", 4.0))]
-    step = 0.25
-    bins = np.floor(c[:, 0] / step).astype(int)
-    top = {}
-    for i, b in enumerate(bins):
-        if b not in top or c[i, 1] > c[top[b], 1]:
-            top[b] = i
-    prof = c[sorted(top.values(), key=lambda i: c[i, 0])]
-    hull = upper_hull(prof[:, 0], prof[:, 1])
-    length = prof[:, 0].max()
-    front_zone = [k for k, i in enumerate(hull) if prof[i, 0] > length * (1 - spec.get("front_zone", 0.15))]
-    if not front_zone:
-        return None, None
-    fk = max(front_zone, key=lambda k: prof[hull[k], 1])
-    f = prof[hull[fk]]
-    if "rear_t" in spec:     # where the rear sight is, from the eye (cm): its top there
-        lo, hi = spec["rear_t"]
-        zone = prof[(prof[:, 0] > lo) & (prof[:, 0] < hi)]
-        return (zone[np.argmax(zone[:, 1])] if len(zone) else None), f
-    # back along the hull to the rear sight: past the front sight's own top, then on while
-    # the hull stays as good as straight (a sight's leaf or base runs on from its notch)
-    rk = fk - 1
-    while rk > 0 and f[0] - prof[hull[rk], 0] < spec.get("min_span", 15.0):
-        rk -= 1
-    while rk > 0:
-        a, b = prof[hull[rk - 1]], prof[hull[rk]]
-        s1 = (f[1] - b[1]) / max(f[0] - b[0], 1e-6)
-        s2 = (b[1] - a[1]) / max(b[0] - a[0], 1e-6)
-        if abs(np.arctan(s2) - np.arctan(s1)) > np.radians(spec.get("straight_deg", 1.0)):
-            break
-        rk -= 1
-    if rk < 0 or f[0] - prof[hull[rk], 0] < spec.get("min_span", 15.0):
-        return None, f
-    return prof[hull[rk]], f
-
-
-def sight_fix(spec, fs, stock, pieces, rng):
-    """Our sights onto the line from the aim pose's eye toward the game gun's front sight:
-    the move (a turn and a shift) as a 4x4."""
-    eye = aim_eye(fs, spec["aim"])
-    sp = sample(stock.pos, stock.tris, 80000, rng)
-    ours = np.concatenate([sample(p.pos, p.tris, max(4000, len(p.tris) * 8), rng) for p in pieces])
-    muzzle = sp[np.argmax(sp[:, 0])]
-    d0, up0, ac0 = sight_frame(eye, muzzle)
-
-    def tuv(p, d, up, ac):
-        rel = p - eye
-        q = np.stack([rel @ d, rel @ up, rel @ ac], 1)
-        upper = q[q[:, 1] > np.percentile(q[:, 1], 80)]
-        mid = np.median(upper[:, 2])
-        q[:, 2] -= mid
-        return q, mid
-
-    q, smid = tuv(sp, d0, up0, ac0)
-    _, sf = sight_pair(q, spec)
-    if sf is None:
-        raise SystemExit("no front sight on the game's model")
-    target = eye + d0 * sf[0] + up0 * sf[1] + ac0 * smid
-    d, up, ac = sight_frame(eye, target)
-    q, mid = tuv(ours, d, up, ac)
-    r, f = sight_pair(q, spec)
-    if r is None:
-        raise SystemExit("no sights found along the aim line")
-    slope = np.arctan2(f[1] - r[1], f[0] - r[0])
-    k = np.array([[0, -ac[2], ac[1]], [ac[2], 0, -ac[0]], [-ac[1], ac[0], 0]])
-    rot = np.eye(3) + np.sin(-slope) * k + (1 - np.cos(-slope)) * k @ k   # r->f onto d
-    rp = eye + d * r[0] + up * r[1] + ac * mid
+def sight_fix(spec, fs):
+    """The move (a turn and a shift, 4x4) that puts our rear and front sights on the line
+    the camera looks down. spec["sight_at"]: the two as (depth, right, up) in cm in the
+    camera's frame, measured on the model as the fit leaves it (REMODEL_NO_SIGHTS=1): a
+    notch's bottom, a post's tip, an aperture's or an eyehole's middle."""
+    eye, fwd, up, right = aim_eye(fs, spec["aim"])
+    r, f = (eye + fwd * d + right * x + up * y for d, x, y in spec["sight_at"])
+    have = (f - r) / np.linalg.norm(f - r)
+    axis = np.cross(have, fwd)
+    sn, cs = np.linalg.norm(axis), have @ fwd
+    k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    rot = np.eye(3) + k + k @ k * ((1 - cs) / (sn * sn)) if sn > 1e-12 else np.eye(3)
+    new_r = eye + fwd * ((r - eye) @ fwd)
     m = np.eye(4)
     m[:3, :3] = rot
-    m[:3, 3] = (eye + d * (r[0] * np.cos(slope) + r[1] * np.sin(slope))) - rot @ rp
-    print("  sights: rear %.2f cm off the line at %.1f cm, front %.2f cm at %.1f cm, %.2f cm "
-          "across; turned %.2f deg" % (r[1], r[0], f[1], f[0], mid, np.degrees(slope)))
-    if abs(np.degrees(slope)) > spec.get("max_turn", 4.0) or abs(r[1]) > 4.0:
-        raise SystemExit("the sights would move too far (%.1f deg, %.1f cm): check the sight zones"
-                         % (np.degrees(slope), r[1]))
+    m[:3, 3] = new_r - rot @ r
+    print("  sights: turned %.2f deg, the rear sight moved %.2f cm" % (np.degrees(np.arcsin(min(sn, 1.0))),
+                                                                       np.linalg.norm(new_r - r)))
     return m
+
+
+def resampled(src, frame_time):
+    """src at another frame rate: positions linear, rotations normalised-linear between the
+    frames around each new one (the per-frame bounds from the nearest)."""
+    n = max(2, int(round((src.num_frames - 1) * src.frame_time / frame_time)) + 1)
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.channels = list(src.channels)
+    a.frames, a.values = [], []
+    for f in range(n):
+        t = min(f * frame_time / src.frame_time, src.num_frames - 1)
+        i = min(int(t), src.num_frames - 2) if src.num_frames > 1 else 0
+        w = t - i if src.num_frames > 1 else 0.0
+        j = min(i + 1, src.num_frames - 1)
+        a.frames.append(src.frames[i if w < 0.5 else j])
+        row = []
+        for c, name in enumerate(src.channels):
+            v0, v1 = np.array(src.values[i][c], float), np.array(src.values[j][c], float)
+            if name.endswith(" rot"):
+                if v0 @ v1 < 0:
+                    v1 = -v1
+                v = v0 * (1 - w) + v1 * w
+                v /= max(np.linalg.norm(v), 1e-9)
+            else:
+                v = v0 * (1 - w) + v1 * w
+            row.append(tuple(float(x) for x in v))
+        a.values.append(row)
+    return a
+
+
+def with_slide(src, bone, axis, curve):
+    """src with bone's position along axis (its parent's space) by curve[frame] (cm, held
+    and linear between keys), its rotation none."""
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, src.frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.frames = list(src.frames)
+    a.channels = list(src.channels)
+    for ch in (bone + " pos", bone + " rot"):
+        if ch not in a.channels:
+            a.channels.append(ch)
+    keys = sorted(curve)
+    d = np.interp(np.arange(src.num_frames), keys, [curve[k] for k in keys])
+    a.values = []
+    for f, row in enumerate(src.values):
+        row = list(row) + [None] * (len(a.channels) - len(row))
+        p = np.asarray(axis) * d[f]
+        row[a.channels.index(bone + " pos")] = (float(p[0]), float(p[1]), float(p[2]), 0.0)
+        row[a.channels.index(bone + " rot")] = (0.0, 0.0, 0.0, 1.0)
+        a.values.append(row)
+    return a
+
+
+def touch_clusters(p, gap):
+    """Each triangle's cluster: connected parts within gap of each other joined (one object
+    of a display: a bolt and its firing pin, a clip and its rounds)."""
+    lab = parts(p.pos, p.tris)
+    ks = np.unique(lab)
+    pts = {k: p.pos[np.unique(p.tris[lab == k])] for k in ks}
+    trees = {k: cKDTree(x) for k, x in pts.items()}
+    rows, cols = [], []
+    for i, a in enumerate(ks):
+        for j in range(i + 1, len(ks)):
+            b = ks[j]
+            if (pts[a].min(0) - gap > pts[b].max(0)).any() or (pts[b].min(0) - gap > pts[a].max(0)).any():
+                continue
+            if np.isfinite(trees[b].query(pts[a], distance_upper_bound=gap)[0]).any():
+                rows.append(i)
+                cols.append(j)
+    c = connected_components(coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(len(ks), len(ks))),
+                             directed=False)[1]
+    return c[np.searchsorted(ks, lab)]
+
+
+def pick(pieces, sel):
+    """sel: {mesh, box (the source's space; parts centred in it), material?}: those parts of
+    that mesh as a Piece."""
+    p = next(q for q in pieces if q.name == sel["mesh"]
+             and ("material" not in sel or q.material == sel["material"]))
+    lo, hi = np.array(sel["box"], float).T
+    lab = parts(p.pos, p.tris)
+    keep = np.zeros(len(p.tris), bool)
+    for k in np.unique(lab):
+        m = lab == k
+        c = p.pos[np.unique(p.tris[m])].mean(0)
+        if (c > lo).all() and (c < hi).all():
+            keep |= m
+    if not keep.any():
+        raise SystemExit("nothing of %s in %s" % (sel["mesh"], sel["box"]))
+    out = p.subset(keep)
+    out.name = sel.get("name", sel["mesh"] + "_pick")
+    out.material = p.material or p.name
+    print("  picked %s: %d triangles of %s" % (out.name, len(out.tris), sel["mesh"]))
+    return out
+
+
+def target_points(stock, target):
+    """The game's points a placed piece is fitted onto: a surface's, a bone's ("bone:<name>"),
+    or those in a box."""
+    if isinstance(target, str) and target.startswith("bone:"):
+        m = stock.vbone == stock.model.bone_index(target[5:])
+    elif isinstance(target, str):
+        m = stock.surface_mask(target)
+    else:
+        lo, hi = np.array(target, float).T
+        m = ((stock.pos > lo) & (stock.pos < hi)).all(1)
+    tt = stock.tris[m[stock.tris].all(1)]
+    if len(tt) >= 4:
+        return sample(stock.pos, tt, 8000, np.random.default_rng(4))
+    return stock.pos[m]
 
 
 def drop_strays(pieces, stock, limit):
@@ -700,6 +768,9 @@ def write_textures(out, tex_dir, name, maps, size, spec_size):
 
     if "base" not in maps:
         raise SystemExit("%s has no base colour map" % name)
+    if "base_tint" in maps:   # a grey map shading one colour (a source with no colour map)
+        grey = np.asarray(maps["base"].convert("L")).astype(np.float32)[..., None] / 255.0
+        maps = dict(maps, base=Image.fromarray(np.clip(grey * np.array(maps["base_tint"]) * 255, 0, 255).astype(np.uint8)))
     os.makedirs(os.path.join(out, tex_dir), exist_ok=True)
     base = np.asarray(sized(maps["base"], size, "RGB")).astype(np.float32) / 255.0
     ao = chan(maps.get("ao"), size, 1.0)[..., None]
@@ -834,8 +905,20 @@ def remodel(spec, fs, out, folder):
     if "prep" in spec:
         pieces = spec["prep"](pieces, stock)
 
+    WELD[0] = not spec.get("index_parts", False)
+    # pieces taken out of a mesh (a display's bolt, a loose magazine) and placed like a
+    # loose mesh; their mesh then goes unless the spec keeps it
+    if spec.get("picks"):
+        raw = load_source(dict(spec, pieces=None, keep_box=None, drop=None, piece_re=".*", material_re=".*"), folder)
+        pieces += [pick(raw, sel) for sel in spec["picks"]]
+    pick_scale = {sel.get("name", sel["mesh"] + "_pick"): sel.get("scale", 1.0) for sel in spec.get("picks", ())}
+    placed = dict(spec.get("place", {}))
+    placed.update({sel.get("name", sel["mesh"] + "_pick"): sel["target"] for sel in spec.get("picks", ())})
+    for sel in spec.get("picks", ()):
+        if "assign" in sel:
+            spec.setdefault("assign", {})[sel.get("name", sel["mesh"] + "_pick")] = sel["assign"]
+
     # 1. fit (the pieces the spec places onto a part of the game's first, the rest whole)
-    placed = spec.get("place", {})
     whole = [p for p in pieces if p.name not in placed]
     rng = np.random.default_rng(1)
     src_pts = np.concatenate([sample(p.pos, p.tris, max(200, int(40000 * len(p.tris) / sum(len(q.tris) for q in whole))), rng)
@@ -860,24 +943,20 @@ def remodel(spec, fs, out, folder):
     t = t + np.asarray(spec.get("nudge", (0.0, 0.0, 0.0)), float)
     m = similarity_matrix(s, r, t)
     pieces = [p.moved(m) if p.name not in placed else p for p in pieces]
-    for name, surf_name in placed.items():
+    for name, target in placed.items():
         p = next(q for q in pieces if q.name == name)
-        if isinstance(surf_name, str):
-            target = stock.surface_mask(surf_name)
-        else:                      # a box in the game's model space
-            lo, hi = np.array(surf_name, float).T
-            target = ((stock.pos > lo) & (stock.pos < hi)).all(1)
-            surf_name = "the box"
-        tt = stock.tris[target[stock.tris].all(1)]
-        p = p.moved(similarity_matrix(s, np.eye(3), np.zeros(3)))   # the gun's scale: same units
-        ps, pr, pt, _ = fit(sample(p.pos, p.tris, 8000, rng), sample(stock.pos, tt, 8000, rng),
-                            scale=spec.get("place_scale", False), label="%s onto %s: " % (name, surf_name))
-        pieces[[q.name for q in pieces].index(name)] = p.moved(similarity_matrix(ps, pr, pt))
+        p = p.moved(similarity_matrix(s * pick_scale.get(name, 1.0), np.eye(3), np.zeros(3)))  # the gun's units
+        ps, pr, pt, _ = fit(sample(p.pos, p.tris, 8000, rng), target_points(stock, target),
+                            scale=spec.get("place_scale", False),
+                            label="%s onto %s: " % (name, target if isinstance(target, str) else "the box"))
+        off = next((sel.get("offset", (0, 0, 0)) for sel in spec.get("picks", ())
+                    if sel.get("name", sel["mesh"] + "_pick") == name), (0, 0, 0))
+        pieces[[q.name for q in pieces].index(name)] = p.moved(similarity_matrix(ps, pr, pt + np.asarray(off, float)))
     if "after_fit" in spec:
         pieces = spec["after_fit"](pieces, stock)
     pieces = drop_strays(pieces, stock, spec.get("stray_cm", 2.0))
-    if "aim" in spec and not os.environ.get("REMODEL_NO_SIGHTS"):
-        sm = sight_fix(spec, fs, stock, pieces, rng)
+    if "sight_at" in spec and not os.environ.get("REMODEL_NO_SIGHTS"):
+        sm = sight_fix(spec, fs)
         pieces = [p.moved(sm) for p in pieces]
 
     # 2. bones and surfaces from the game's model
@@ -960,9 +1039,10 @@ def remodel(spec, fs, out, folder):
     tex_dir = "textures/models/weapons/opm_%s" % key
     shader_of, mats = {}, {}
     for p in pieces:
-        mk = spec.get("material_of", {}).get(p.name, p.material or p.name)
+        mk = spec.get("material_of", {}).get(p.name, spec.get("material_of", {}).get(p.material, p.material or p.name))
         p.material_key = mk
-        mats.setdefault(mk, p.maps)
+        if p.maps:
+            mats.setdefault(mk, p.maps)
     shader_text = "// %s remade (tools/weapons/remodel.py)\n" % key
     for i, (mk, maps) in enumerate(sorted(mats.items())):
         tex = "m%d" % i
@@ -983,13 +1063,57 @@ def remodel(spec, fs, out, folder):
     print("  %s: %d surfaces, %d vertices, %d triangles" % (
         skd_name, len(gun_surfs), sum(len(x.verts) for x in gun_surfs), sum(len(x.triangles) for x in gun_surfs)))
 
+    # a moving part the game's animations leave still (the Hi-Standard's slide): those
+    # animations copied with it added, back along the barrel and home again
+    renamed = {}
+    if "slide" in spec:
+        sl = spec["slide"]
+        bone = sl["bone"]
+        parent = next(b.parent for b in stock.model.bones if b.name == bone)
+        pm = stock.held[parent.lower()]
+        muzzle = stock.held["tag_barrel"][:3, 3] - stock.held[bone.lower()][:3, 3]
+        back = -(pm[:3, :3].T @ muzzle) / np.linalg.norm(muzzle)
+        text0 = tik_text(fs, spec["tik"])
+        for anim, curve in sl["anims"].items():
+            m = re.search(r"^\s*%s\s+(\S+\.skc)" % re.escape(anim), text0, re.M)
+            src = resampled(read_anim(fs, stock.dir + "/" + m.group(1)), sl.get("frame_time", 0.05))
+            name = "opm_%s_%s.skc" % (key, anim)
+            write(out, "%s/%s" % (stock.dir, name),
+                  skc.write(with_slide(src, bone, back, {k: v * sl["travel"] for k, v in curve.items()})))
+            renamed[anim] = name
+        print("  %s slides %.1f cm in %s" % (bone, sl["travel"], ", ".join(sl["anims"])))
+
     for tik in [spec["tik"]] + spec.get("more_tiks", []):
         text = retarget_tik(tik_text(fs, tik), skd_name, shaders, wild, [x.name for x in kept])
+        for anim, name in renamed.items():
+            text = re.sub(r"^(\s*%s\s+)\S+\.skc" % re.escape(anim), lambda mm: mm.group(1) + name, text, flags=re.M)
         if "tik_edit" in spec:
             text = spec["tik_edit"](text, tik)
         put_tik(out, tik, text)
 
-    # 3. the hand's magazines: the new magazine moved as the game's is onto the hand's model
+    # 3. the hand's ammunition taken from the source (a stripper clip, a round), fitted onto
+    # the game's model of it at the gun's scale
+    src_all = None
+    for ammo_tik, sel in spec.get("ammo_picks", {}).items():
+        if src_all is None:
+            src_all = load_source(dict(spec, pieces=None, piece_re=".*"), folder)
+        ammo = Stock(fs, ammo_tik)
+        p = pick(src_all, sel).moved(similarity_matrix(s * sel.get("scale", 1.0), np.eye(3), np.zeros(3)))
+        _, ar, at, _ = fit(sample(p.pos, p.tris, 6000, rng), sample(ammo.pos, ammo.tris, 6000, rng),
+                           scale=False, label="%s onto %s: " % (p.name, ammo_tik))
+        p = p.moved(similarity_matrix(1.0, ar, at))
+        mk = spec.get("material_of", {}).get(p.material, p.material)
+        p.material_key = mk
+        if mk not in shader_of:
+            raise SystemExit("%s: the ammunition's material %s has no shader" % (key, mk))
+        abone = int(np.bincount(ammo.vbone).argmax())
+        asurfs, ashaders, awild = build_surfaces(ammo, [p], [np.full(len(p.tris), abone)],
+                                                 [np.zeros(len(p.tris), int)], shader_of)
+        aname = "opm_%s_%s" % (key, os.path.splitext(os.path.basename(ammo.skd_path))[0].lower())
+        write(out, "%s/%s.skd" % (ammo.dir, aname), skd.write(model_like(ammo.model, aname + ".skd", asurfs)))
+        put_tik(out, ammo_tik, retarget_tik(tik_text(fs, ammo_tik), aname + ".skd", ashaders, awild))
+
+    # the hand's magazines: the new magazine moved as the game's is onto the hand's model
     for ammo_tik, gun_surface in spec.get("ammo", {}).items():
         ammo = Stock(fs, ammo_tik)
         gs = stock.surface_mask(gun_surface)
