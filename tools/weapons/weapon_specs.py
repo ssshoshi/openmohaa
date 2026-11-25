@@ -56,12 +56,13 @@
 """
 
 WEAPONS = [
-    dict(key="colt45", folder="M1911", source=["models/M1911.fbx"],
-         piece_re=r".*\.001",
-         assign={r"(magazine|follower)_low.*": ("clip", "clip"),
-                 r"(slide|sight.*|extractor|pin_firing|firing_pin_stop|plunger_recoil_sprin|barrel|bushing_barrel)_low.*":
-                     ("chamber", "colt45")},
-         maps=None,
+    dict(key="colt45", folder="M1911", source=["*.glb"],
+         # the glTF download: two meshes (its two texture sets), two pistols in them: the
+         # assembled one (its magazine in), parts by where they lie
+         keep_box=((-1, 1), (-1, 1), (-0.5, 0.1)), hulls=["clip"],
+         # polished blued steel in its renders: more of the metal's reflection, glossier, and
+         # less diffuse so that the highlights stand out
+         maps={"*": {"metal_share": 0.85, "max_gloss": 0.85, "metal_diffuse": 0.5}},
          tik="models/weapons/colt45.tik", ammo={"models/ammo/colt_clip.tik": "clip"}),
     dict(key="p38", folder="Walther P38", source=["source/*.fbx"],
          # the source: two pistols on a cloth, two loose magazines, rounds. The loaded one (its
@@ -81,7 +82,12 @@ WEAPONS = [
          # both of the source's pistols have their slides locked back: the slide (and the
          # safety and the small parts on its back) forward into battery, on a bone
          # of its own, back and home with each shot
-         new_bones=[("opm_slide", "Box01")],
+         new_bones=[("opm_slide", "Box01"), ("opm_hammer", "Box01")],
+         # its hammer cocked (with the slide back): turned down on its pin against the
+         # slide, back with each shot and down again
+         turn=[dict(box=((-2.6, 2.3), (-1.7, -0.7), (-4.2, -1.4)), pivot=(1.05, -1.2, -2.65),
+                    axis=(0.0, 1.0, 0.0), angle=-47.5, assign=("opm_hammer", "P381"),
+                    anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}})],
          shift=[dict(box=((-5.0, 3.0), (-4.0, 1.0), (-7.0, -4.4)), forward=4.0, assign=("opm_slide", "P381"))],
          slide=dict(bone="opm_slide", travel=4.0, anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}}),
          tik="models/weapons/p38.tik", ammo={"models/ammo/p38_clip.tik": "clip"}),
@@ -98,6 +104,13 @@ WEAPONS = [
          # the game's Hi-Standard never moves it: blowback, back with the shot and home
          slide=dict(bone="chamber", travel=2.5, anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}}),
          two_sided=True,   # its magazine is a thin plate: seen from behind in the reload
+         # its magazine is only the floor plate: the game's magazine kept with it, for the
+         # reload's end, when the gun's own slides back up into the grip
+         tik_edit=lambda text, tik: text.replace("surface clip shader hi_standard", "surface clip shader opm_hi_standard_2s"),
+         keep_stock=["clip"], overrides=[(((-3.6, 3.7), (-2.0, 0.3), (8.8, 9.3)), "clip", "clip")],   # our floor plate with it
+         # the hand's magazine (the game's) has edge faces wound inward: holes, both sides drawn
+         ammo_two_sided={"models/ammo/silencedpistol_clip.tik":
+                         ("hi_standard", "textures/models/weapons/hi_standard/hi_standard.tga")},
          tik="models/weapons/silencedpistol.tik"),
 ]
 
@@ -127,7 +140,12 @@ KAR98_MAPS = {"*": {"metal_diffuse": 0.4}}
 # the extractor lying beside it); the stripper clip with its rounds
 KAR98_BOLT_PICK = dict(name="bolt", mesh="model_0", box=((-0.06, 0.025), (0.085, 0.16), (-0.34, -0.10)),
                        target="bone:chamber", assign=("chamber", "KAR981"))
-KAR98_CLIP_PICK = dict(mesh="model_0", box=((0.08, 0.18), (-0.01, 0.03), (-0.28, -0.15)))
+KAR98_CLIP_PICK = dict(mesh="model_0", box=((0.10, 0.18), (-0.01, 0.03), (-0.28, -0.15)),   # not the loose strip beside it (x 0.093)
+                       # and in the receiver's guides once the hand lets go of it, where the
+                       # game's original rifle had its clip (material7 the rounds, material8
+                       # the strip, on bones Clip01 and Object01: the reload moves them)
+                       in_gun=dict(original=("Pak0.pk3", "models/weapons/kar98/kar98.skd"), anim="reload",
+                                   frame=44, surfaces=["material7", "material8"]))
 SPRINGFIELD_SCOPE = ((1.0, 33.0), (-5.0, 1.5), (-14.0, -8.0))   # the scope, above the bolt
 
 WEAPONS += [
@@ -138,22 +156,32 @@ WEAPONS += [
     # The rear sight (model_1, the leaf with its pin and windage knob, model_3 its aperture
     # slide) is loose too, folded down at its own origin: put on the receiver's sight base and
     # raised, the aperture on the aim line
-    dict(key="bar", folder="BAR", source=["model_*.obj"], pieces=["model_0", "model_17", "model_1", "model_3"],
-         maps={"*": _set("M1918_", "albedo", "Normal", "roughness", "metallic", "ao")},
-         material_of={"model_0": "bar", "model_17": "bar", "model_1": "bar", "model_3": "bar"},
-         prep=lambda pieces, stock: _bar_rear_sight(pieces),
-         aim="bar_stand_aim.skc", sight_at=((8.0, -0.4, -0.7), (85.0, 0.0, -0.4)),
-         place={"model_17": "bar4"}, fit_without=["bar4"], assign={"model_17": ("Box01", "bar4"),
-                                                   "model_1": ("Box01", "bar3"), "model_3": ("Box01", "bar3")},
+    dict(key="bar", folder="BAR", source=["*.glb"], rename={"gun_": "model_0", "magazine": "model_17"},
+         # the glTF download: the assembled gun, its magazine beside it (put in), and a
+         # display copy's loose parts (not used)
+         pieces=["model_0", "model_17"], material_of={"model_0": "bar", "model_17": "bar"},
+         drop=[((-0.06, 0.06), (0.19, 0.215), (0.53, 0.54))],   # its bipod (Notes.txt: none)
+         # its rear sight folded down (Notes.txt, the player's example.png), knobs and all
+         # metal near black as in its renders (a PBR metal takes no diffuse light)
+         maps={"*": {"metal_diffuse": 0.4}},
+         # aiming, the eye between the base's ears a little under their tops and the front
+         # sight between them, | /i\ |: the butt a little up, in the aim pose only (the gun
+         # held where the game has it otherwise)
+         aim="bar_stand_aim.skc", aim_pose_fix=True, sight_at=((8.0, -0.2, -2.8), (85.0, 0.0, -0.55)),
+         eye_relief=6.0,    # the eye near the folded sight: that low, the trigger hand (under it) behind the camera
+         place={"model_17": "bar4"}, fit_without=["bar4"], assign={"model_17": ("Box01", "bar4")},
          tik="models/weapons/bar.tik", ammo={"models/ammo/bar_clip.tik": "bar4"}),
     # Notes.txt: the Kar98k without its scope, the sniper's with it (the ZF scope)
     # The assembled rifle (model_1, in metres) has no bolt; the field-stripped one beside it
     # (model_0, in cm) has, and a stripper clip of five rounds: the bolt goes on the chamber
     # bone where the game's is, the clip is the reload's
     dict(key="kar98", folder="Kar98k", **KAR98_SOURCE, pieces=["model_1"], material_of=KAR98_MATS, maps=KAR98_MAPS,
+         new_bones=[("Clip01", "kar98"), ("Object01", "kar98")],   # the clip's in the gun (KAR98_CLIP_PICK)
          picks=[KAR98_BOLT_PICK], confine={"chamber": NOWHERE},
-         aim="kar98_stand_aim.skc", sight_at=((28.0, 0.0, -0.15), (90.0, -0.3, 0.05)),
-         sight_drop=1.2,    # the eye over the rear sight and the receiver, the front post in view
+         # the rear sight's two prongs' tops (41 cm) and the front post's tip level and in
+         # line: the post stands between the prongs, | /\ |
+         aim="kar98_stand_aim.skc", sight_at=((41.0, 0.02, 0.0), (90.0, -0.25, 0.05)),
+         sight_drop=0.24,   # in game the post showed 0.33 deg under the prongs' tops (the camera sits off the eye bone)
          ammo_picks={"models/ammo/kar98_clip_reload.tik": KAR98_CLIP_PICK},
          tik="models/weapons/kar98.tik"),
     dict(key="kar98sniper", folder="Kar98k", **KAR98_SOURCE, pieces=["model_1", "model_5"],
@@ -188,10 +216,12 @@ WEAPONS += [
          # the game's StG has its grip and magazine further forward than the real one: ours
          # by its grip, where the right hand holds it
          fit_without=["mp44clip"], fit_scale="length", nudge=(6.0, 0.0, 0.0), hulls=["mp44clip"],
-         level=True, ammo_fit="hand",
+         level=True, roll=8.8, ammo_fit="hand",   # levelled it still leant 8.8 deg left (its front post, measured at the aim)
          # its charging handle (on the left) on the game's cock bone, nothing else
          confine={"Box02": ((6.9, 11.8), (-4.9, -1.2), (-9.0, -6.8))},
-         aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.2, -2.3), (67.0, -0.3, -2.25)),
+         # (set by eye from the player's shots: the notch's slit under the front needle)
+         aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.29, -2.3), (67.0, -0.3, -2.25)),
+         sight_drop=0.03,
          tik="models/weapons/mp44.tik", ammo={"models/ammo/mp44_clip.tik": "mp44clip"}),
     dict(key="shotgun", folder="Winchester M12 Trench Gun", source=["*.glb"],
          # the glTF download: its two materials (wood set, metal set) with every map, the
@@ -202,15 +232,21 @@ WEAPONS += [
          maps={"*": _set("M1A1_Paint_", "Albedo", "Normal", "Roughness", "Metallic", None)},
          place={"model_2": "bazookashell"}, fit_without=["bazookashell"],
          assign={"model_2": ("bazooka_bazooka", "bazookashell")},
-         # the eyehole, and the middle of the front sight frame
-         aim="pose_bazooka_aim.skc", aim_pose_fix=True, sight_at=((4.5, 4.7, 0.9), (54.0, 0.5, -3.55)),
+         # the eyehole onto the front frame's 100 yd bar (the bore points at it; 200, 300 and
+         # the frame's bottom, 400, below it), the eye close; the eyehole's ring (0.6 cm
+         # across and 1.3 deep) thinned to the plate and its hole widened, so that the whole
+         # frame shows through it
+         aim="pose_bazooka_aim.skc", aim_pose_fix=True,
+         sight_pts=((-2.1, -3.4, -13.0), (48.4, -3.2, -10.94)), eye_relief=2.8, sight_shift=(0.05, 0.24),
+         reshape=[dict(centre=(-2.1, -3.4, -13.0), radius=1.1, scale=(0.35, 1.5, 1.5))],
          tik="models/weapons/bazooka.tik", ammo={"models/ammo/bazooka_shell.tik": "bazookashell"}),
     dict(key="panzerschreck", folder="Panzershreck", source=["model_*.obj"],
          pieces=["model_2"],     # model_0 and model_1 are the sling and its fittings
          maps={"*": {"base": "DEFAULT_0_0.png"}},
          keep_stock=["shell"], fit_without=["shell"],
          # the rear sight's notch, the front sight's post (the shield's window between)
-         aim="pose_panzershrek_aim.skc", aim_pose_fix=True, sight_at=((50.0, 2.65, -0.7), (88.0, -1.45, 1.2)),
+         aim="pose_panzershrek_aim.skc", aim_pose_fix=True, sight_at=((50.0, 2.8, -0.7), (88.0, -1.40, 1.2)),   # the notch between the prongs (2.3..3.3), the T post (0.05 right of its middle: the player saw it 1-2 px right)
+         eye_relief=12.0,   # the eye up at the rear sight, as the player's example
          tik="models/weapons/panzerschreck.tik"),
     dict(key="m2frag", folder="Frag Grenade", source=["source/grenade.7z!grenade_low.fbx"],
          pieces=["grenade_low_1"],
@@ -228,34 +264,6 @@ WEAPONS += [
          tik="models/weapons/steilhandgranate_base.txt",
          also=[dict(key="stielhandgranate_air", tik="models/projectiles/steilhandgranate_base.txt")]),
 ]
-
-
-# The BAR's sight base, in the source's space (cm, y up, the muzzle toward -z): the block on
-# the receiver's top from z 22 to 30, its top at y 8.49. The leaf's pin is the rear sight
-# model's origin; folded, the leaf lies forward of it, 1.32 thick
-BAR_SIGHT_PIN = (0.0, 8.49 + 0.66, 29.5)
-BAR_APERTURE_UP = 1.2     # the slide raised this far up the leaf, clear of the base
-BAR_LEAF_ACROSS = 2.7     # the leaf's frame onto the gun's middle, round the slide
-
-
-def _bar_rear_sight(pieces):
-    import numpy as np
-    up = np.eye(4)
-    up[:3, :3] = [[1, 0, 0], [0, 0, -1], [0, 1, 0]]     # the leaf raised: its forward (-z) to up
-    pin = np.eye(4)
-    pin[:3, 3] = BAR_SIGHT_PIN
-    out = []
-    for p in pieces:
-        if p.name == "model_1":      # its frame is 2.7 cm to the side of its pin's origin
-            across = np.eye(4)
-            across[0, 3] = BAR_LEAF_ACROSS
-            p = p.moved(across @ pin @ up)
-        elif p.name == "model_3":
-            lift = np.eye(4)
-            lift[2, 3] = -BAR_APERTURE_UP          # along the folded leaf, before it is raised
-            p = p.moved(pin @ up @ lift)
-        out.append(p)
-    return out
 
 
 def _colt_maps():

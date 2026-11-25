@@ -3,8 +3,8 @@
 
 The source is one unrigged mesh and its PBR maps, read in place and never committed:
 
-    <MOHAA_GAME>/models/Thompson/model_0.obj
-    <MOHAA_GAME>/models/Thompson/Thompson_{BASE,NM,ROUGH,MET,AO}.png
+    <MOHAA_GAME>/models/Thompson/source/*.rar (one FBX mesh), textures/m1a1_*.png
+    (or the first download: model_0.obj, Thompson_{BASE,NM,ROUGH,MET,AO}.png)
 
 (--src to read them from elsewhere). The game's Thompson is rigid: every vertex is on one
 bone ("tommy gun new"), the arms' animations carry it, and the reload only hides its Clip
@@ -37,6 +37,7 @@ new gun keeps all that and adds one moving part, its cocking knob (see BOLT_BOX)
 
 import argparse
 import os
+import re
 import struct
 import sys
 
@@ -89,6 +90,10 @@ WEAPON_TAG = "tag_weapon_right"
 STOCK_POST_Z = 58.0         # the game gun's front post: its highest vertices beyond this
 REAR_SIGHT_BOX = ((8.4, 11.3), (1.3, 2.7), (5.8, 6.4))     # our peep sight's plate
 FRONT_POST_BOX = ((6.5, 11.5), (0.6, 3.5), (62.8, 64.8))   # our front sight
+# The FBX download's sights are each one piece with their guards and sleeve: when no piece
+# lies in the boxes above, the triangles in these (its leaf, between the ears; its blade)
+REAR_LEAF_BOX = ((9.3, 10.95), (1.35, 2.9), (6.9, 7.4))
+FRONT_BLADE_BOX = ((9.0, 10.6), (1.5, 2.7), (61.5, 63.4))
 
 # The cocking knob: the one piece standing out of the receiver's right side, modelled at the
 # back of its slot (Z 15-16.6; the slot runs on to Z 26.3). It goes on a bone of its own and
@@ -96,6 +101,11 @@ FRONT_POST_BOX = ((6.5, 11.5), (0.6, 3.5), (62.8, 64.8))   # our front sight
 # to fire each and back again, left forward by the shot that empties the magazine, and
 # pulled back by the left hand when an emptied gun is reloaded
 BOLT_BOX = ((6.5, 9.0), (3.3, 5.8), (14.5, 17.0))
+# The forend (and the sling swivel on it), and the game's forend's size (see filled_forend)
+FOREND_BOX = ((2.5, 8.4), (0.3, 4.1), (36.5, 60.0))
+FOREND_WIDTH = 4.4
+FOREND_BOTTOM = 3.6
+KNOB_OUT = ((6.5, 9.0), (4.6, 5.8), (14.5, 17.0))   # the knob, past the receiver's side (Y 4.58)
 BOLT_BONE = "opm_bolt"
 BOLT_TRAVEL = 9.5
 # The gun's animations (the game loads the processed newanim/ copies where they exist) and
@@ -111,6 +121,10 @@ FIRE_EMPTY_BOLT = (1.0, 0.0, 0.0, 0.0, 0.0)
 # 28.2 -> 18.1, the knob's travel), where the sear holds it. With rounds left the bolt is
 # back already and stays there (the game plays reload_empty, ours, only for an empty gun)
 RELOAD_EMPTY_PULL = {0: 0.0, 64: 0.08, 65: 1.0}
+
+# The FBX download is 57k triangles (36k vertices), over the engine's 32 surfaces of 1000
+# vertices: Blender's collapse decimation keeps this share
+FBX_DECIMATE = 0.55
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -201,6 +215,15 @@ class Mesh:
         else:
             self.normal = vertex_normals(self.pos, self.tris)
 
+    @classmethod
+    def from_piece(cls, piece):
+        """A mesh read by remodel.read_glb (its t runs down the image: turned back)."""
+        self = cls.__new__(cls)
+        self.pos, self.tris, self.normal = piece.pos, piece.tris, piece.normal
+        self.uv = np.stack([piece.uv[:, 0], 1.0 - piece.uv[:, 1]], 1)
+        self.raw_positions, self.raw_tris = self.pos, self.tris
+        return self
+
     def transformed(self, s, r, t):
         pos = s * self.pos @ r.T + t
         n = self.normal @ r.T
@@ -226,6 +249,8 @@ def fit_gun(mesh, gun, rng):
         stock_p.append(p)
     stock = sample(np.concatenate(stock_p), np.concatenate(stock_t), 40000, rng)
     new = sample(mesh.raw_positions, mesh.raw_tris, 40000, rng)
+    k = np.ptp(stock, 0).max() / np.ptp(new, 0).max()   # a source in other units: sized first
+    new = new * k
     best = None
     # source Y up -> game X up; its X to the game's Y either way round, and Z (along the
     # barrel) with it so that the turn is a rotation, not a mirror
@@ -234,10 +259,10 @@ def fit_gun(mesh, gun, rng):
         if best is None or fit[3] < best[3]:
             best = fit
     s, r, t, err = best
-    print("gun fitted: scale %.4f, %.2f cm apart" % (s, err / 2))
+    print("gun fitted: scale %.4f, %.2f cm apart" % (s * k, err / 2))
     if not 0.8 < s < 1.25 or err > 2.0:
         raise SystemExit("the model does not fit the game's Thompson (scale %.3f, %.2f cm)" % (s, err / 2))
-    return s, r, t
+    return s * k, r, t
 
 
 def fit_clip(gun, clip, rng):
@@ -263,9 +288,10 @@ def fit_clip(gun, clip, rng):
 
 
 def split(name, tris):
-    """Triangles in pieces the engine takes, each with its own vertex list."""
+    """Triangles in pieces the engine takes, each with its own vertex list (taken in order
+    of their lowest vertex, so that neighbours share a piece: a vertex in two pieces is two)."""
     pieces, cur, remap = [], [], {}
-    for tri in tris:
+    for tri in sorted(tris, key=min):
         new = [i for i in tri if i not in remap]
         if len(cur) + 1 > skd.MAX_TRIS or len(remap) + len(new) > skd.MAX_VERTS:
             pieces.append((cur, remap))
@@ -314,9 +340,54 @@ def pieces_in(pos, tris, box, piece=None):
     return chosen
 
 
+def in_box(pos, tris, box, fallback):
+    """pieces_in(box), or, when no piece lies there, the triangles wholly inside fallback."""
+    chosen = pieces_in(pos, tris, box)
+    if not chosen.any():
+        lo, hi = np.array(fallback).T
+        chosen = ((pos[tris] > lo) & (pos[tris] < hi)).all((1, 2))
+    return chosen
+
+
+def filled_forend(pos, normal, tris):
+    """The forend (and the sling swivel under it) filled out to the game's: the arms' left
+    hand was posed round the game's forend, 4.6 cm wide with its bottom at X 3.57; the FBX
+    download's is 3.1 cm wide and tapers up, and the fingers did not touch it. Wider about
+    its middle, deeper from its top (where it meets the barrel). The first download's forend
+    was the game's size: no piece lies in FOREND_BOX there."""
+    chosen = pieces_in(pos, tris, FOREND_BOX)
+    if not chosen.any():
+        return pos, normal
+    verts = np.unique(tris[chosen])
+    lab = parts(pos, tris)
+    wood = pos[np.unique(tris[lab == np.bincount(lab[chosen]).argmax()])]   # measured on the wood
+    top, mid = wood[:, 0].max(), (wood[:, 1].min() + wood[:, 1].max()) / 2
+    deep = (top - FOREND_BOTTOM) / (top - wood[:, 0].min())
+    wide = FOREND_WIDTH / (wood[:, 1].max() - wood[:, 1].min())
+    p = pos[verts]
+    pos, normal = pos.copy(), normal.copy()
+    pos[verts, 0] = top - (top - p[:, 0]) * deep
+    pos[verts, 1] = mid + (p[:, 1] - mid) * wide
+    n = normal[verts] / np.array([deep, wide, 1.0])
+    normal[verts] = n / np.linalg.norm(n, axis=1, keepdims=True)
+    print("forend filled out: %d triangles, %.2fx wider, %.2fx deeper" % (chosen.sum(), wide, deep))
+    return pos, normal
+
+
 def bolt_triangles(pos, tris):
-    """The knob: the pieces lying wholly inside BOLT_BOX."""
+    """The knob: the pieces lying wholly inside BOLT_BOX; in a model whose knob is one piece
+    with the bolt (the FBX download), that piece, the one standing out of the receiver's
+    right side (KNOB_OUT): the whole bolt moves, as the real one does."""
     chosen = pieces_in(pos, tris, BOLT_BOX)
+    if not chosen.any():
+        lab = parts(pos, tris)
+        lo, hi = np.array(KNOB_OUT, float).T
+        inside = ((pos > lo) & (pos < hi)).all(1)
+        hit = np.unique(lab[inside[tris].any(1)])
+        chosen = np.isin(lab, hit)
+        if len(hit) != 1 or not 50 <= chosen.sum() <= 4000:
+            raise SystemExit("the bolt cut took %d pieces, %d triangles" % (len(hit), chosen.sum()))
+        return chosen
     if not 50 <= chosen.sum() <= 400:
         raise SystemExit("the cocking knob cut took %d triangles" % chosen.sum())
     return chosen
@@ -342,8 +413,8 @@ def stock_post(gun):
 def peep_hole(pos, tris, eye):
     """The middle of the rear sight's hole, as the eye sees it: the plate drawn from the eye
     (looking along Z), and the centre of the gap it closes round."""
-    plate = tris[pieces_in(pos, tris, REAR_SIGHT_BOX)]
-    if not 50 <= len(plate) <= 600:
+    plate = tris[in_box(pos, tris, REAR_SIGHT_BOX, REAR_LEAF_BOX)]
+    if not 50 <= len(plate) <= 3000:
         raise SystemExit("the rear sight cut took %d triangles" % len(plate))
     rel = pos[plate] - eye
     uv = rel[..., :2] / rel[..., 2:3]                  # X/Z, Y/Z: directions from the eye
@@ -369,7 +440,7 @@ def peep_hole(pos, tris, eye):
 
 
 def front_post(pos, tris):
-    p = pos[np.unique(tris[pieces_in(pos, tris, FRONT_POST_BOX)])]
+    p = pos[np.unique(tris[in_box(pos, tris, FRONT_POST_BOX, FRONT_BLADE_BOX)])]
     if not len(p):
         raise SystemExit("no front sight")
     return p[p[:, 0] > p[:, 0].max() - 0.03].mean(0)
@@ -483,8 +554,17 @@ def model_like(stock, name, surfs, extra_bones=()):
 
 # ----------------------------------------------------------------------------- textures
 
+# the maps' file names: the first OBJ download's, then the FBX download's (in textures/)
+MAP_NAMES = ({"BASE": "Thompson_BASE.png", "NM": "Thompson_NM.png", "ROUGH": "Thompson_ROUGH.png",
+              "MET": "Thompson_MET.png", "AO": "Thompson_AO.png"},
+             {"BASE": "textures/m1a1_Base_Color.png", "NM": "textures/m1a1_Normal_OpenGL.png",
+              "ROUGH": "textures/m1a1_Roughness.png", "MET": "textures/m1a1_Metallic.png",
+              "AO": "textures/m1a1_Mixed_AO.png"})
+
+
 def load_map(src, name, size, mode):
-    im = Image.open(os.path.join(src, "Thompson_%s.png" % name)).convert(mode)
+    names = next(n for n in MAP_NAMES if os.path.exists(os.path.join(src, n["BASE"])))
+    im = Image.open(os.path.join(src, names[name])).convert(mode)
     return im.resize((size, size), Image.LANCZOS) if im.size != (size, size) else im
 
 
@@ -495,8 +575,13 @@ def textures(src, out):
     diffuse = base * (1.0 - AO_AMOUNT + AO_AMOUNT * ao)
     Image.fromarray(np.clip(diffuse * 255 + 0.5, 0, 255).astype(np.uint8)).save(
         os.path.join(out, TEX_DIR, "thompson.jpg"), quality=92, subsampling=0)
-    load_map(src, "NM", TEX_SIZE, "RGB").save(os.path.join(out, TEX_DIR, "thompson_n.jpg"),
-                                              quality=95, subsampling=0)
+    from garand import normal_map_green_down
+    normal = load_map(src, "NM", TEX_SIZE, "RGB")
+    if not normal_map_green_down(normal):   # GL2's tangent space has green down the image
+        r, g, b = normal.split()
+        normal = Image.merge("RGB", (r, g.point(lambda v: 255 - v), b))
+        print("normal map's green turned to point down the image")
+    normal.save(os.path.join(out, TEX_DIR, "thompson_n.jpg"), quality=95, subsampling=0)
 
     sbase = np.asarray(load_map(src, "BASE", SPEC_SIZE, "RGB")).astype(np.float32) / 255.0
     metal = np.asarray(load_map(src, "MET", SPEC_SIZE, "L")).astype(np.float32)[..., None] / 255.0
@@ -527,6 +612,10 @@ def retarget_tik(text, skd_name, keep_surfaces, anims=None):
         words = line.split()
         if words[:1] == ["animations"]:
             in_anims = True
+        if in_anims and "surface" in words:   # a frame command hides only the first surface
+            for name in keep_surfaces:           # of a name: ours may be split in several
+                line = re.sub(r"(\bsurface\s+)%s(?=\s+[+-])" % re.escape(name), r"\g<1>%s*" % name, line)
+            words = line.split()
         if anims and in_anims and len(words) >= 2 and words[0] in anims and words[1].lower().endswith(".skc"):
             start = line.index(words[1], len(line) - len(line.lstrip()) + len(words[0]))
             line = line[:start] + anims[words[0]] + line[start + len(words[1]):]
@@ -595,22 +684,42 @@ def main():
     args = ap.parse_args()
 
     obj = os.path.join(args.src, "model_0.obj")
-    if not os.path.exists(obj):
-        raise SystemExit("no source model at %s" % obj)
+    if os.path.exists(obj):
+        mesh = Mesh(obj)
+    else:   # the FBX download: source/*.rar, its one mesh
+        import glob
+        from remodel import read_glb, unpack, via_blender
+        got = sorted(glob.glob(os.path.join(args.src, "source", "*.rar")))
+        fbx = sorted(glob.glob(os.path.join(unpack(got[0], "thompson"), "*.fbx"))) if got else []
+        if not fbx:
+            raise SystemExit("no source model in %s" % args.src)
+        pieces = read_glb(via_blender(fbx, "thompson", decimate=FBX_DECIMATE))
+        if len(pieces) != 1:
+            raise SystemExit("%s has %d meshes, not one" % (fbx[0], len(pieces)))
+        mesh = Mesh.from_piece(pieces[0])
     fs = vfs.GameFS([os.path.join(args.game, "main")], skip_paks=[PAK])
     gun = skd.read(fs.read(GUN_SKD))
     clip = skd.read(fs.read(CLIP_SKD))
     rng = np.random.default_rng(1)
 
-    mesh = Mesh(obj)
     s, r, t = fit_gun(mesh, gun, rng)
     pos, normal = mesh.transformed(s, r, t)
+
+    pos, normal = filled_forend(pos, normal, mesh.tris)
 
     corners = pos[mesh.tris]
     (x0, x1), (y0, y1), (z0, z1) = MAG_BOX
     in_mag = ((corners[..., 0] > x0) & (corners[..., 0] < x1) & (corners[..., 1] > y0)
               & (corners[..., 1] < y1) & (corners[..., 2] > z0) & (corners[..., 2] < z1)).all(1)
-    if not 40 <= in_mag.sum() <= 600:
+    # and the pieces centred in the box whole (the FBX's magazine body runs on up into the
+    # receiver, its floor plate past the box's sides)
+    lab = parts(pos, mesh.tris)
+    lo, hi = np.array(MAG_BOX).T
+    for k in np.unique(lab):
+        c = pos[np.unique(mesh.tris[lab == k])].mean(0)
+        if (c > lo).all() and (c < hi).all():
+            in_mag |= lab == k
+    if not 40 <= in_mag.sum() <= 3000:
         raise SystemExit("the magazine cut took %d triangles" % in_mag.sum())
     body, mag = mesh.tris[~in_mag].tolist(), mesh.tris[in_mag].tolist()
     print("%d triangles: %d gun, %d magazine" % (len(mesh.tris), len(body), len(mag)))

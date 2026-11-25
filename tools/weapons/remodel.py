@@ -96,6 +96,10 @@ SEVEN_ZIP = os.environ.get("SEVEN_ZIP", "/mnt/c/Program Files/7-Zip/7z.exe")
 AO_AMOUNT = 0.5
 METAL_SHARE = 0.5   # see thompson.py: the cubemap turns full-reflectance metal into a mirror
 MAX_GLOSS = 0.75
+# a material's settings given as values, not images: base_tint (a colour shading a grey base
+# map), rough_value (no roughness map), metal_diffuse (the share of diffuse light metal keeps:
+# a PBR metal has none), metal_share / max_gloss (METAL_SHARE, MAX_GLOSS for a polished gun)
+VALUE_MAPS = ("base_tint", "rough_value", "metal_diffuse", "metal_share", "max_gloss")
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -347,9 +351,13 @@ def winpath(path):
                           text=True, check=True).stdout.strip()
 
 
-def via_blender(files, key):
-    """Files Blender reads (.fbx, .obj, .blend) as one glTF binary, made once."""
+def via_blender(files, key, decimate=None):
+    """Files Blender reads (.fbx, .obj, .blend) as one glTF binary, made once; decimate: the
+    share of each mesh's triangles kept (Blender's collapse, UVs kept), for a source heavier
+    than the engine takes (32 surfaces of 1000 vertices)."""
     h = hashlib.sha1()
+    if decimate:
+        h.update(b"decimate %g" % decimate)
     for f in files:
         h.update(("%s %d %d" % (f, os.path.getsize(f), int(os.path.getmtime(f)))).encode())
     h.update(open(os.path.join(HERE, "blender_to_glb.py"), "rb").read())
@@ -362,7 +370,8 @@ def via_blender(files, key):
     native = BLENDER.endswith(".exe")
     conv = (lambda p: winpath(p)) if native else os.path.abspath
     run = subprocess.run([BLENDER, "-b", "--factory-startup", "--python", conv(os.path.join(HERE, "blender_to_glb.py")),
-                          "--", conv(out[:-4] + ".tmp.glb")] + [conv(f) for f in files], capture_output=True, text=True)
+                          "--", conv(out[:-4] + ".tmp.glb")] + (["--decimate=%g" % decimate] if decimate else [])
+                         + [conv(f) for f in files], capture_output=True, text=True)
     if run.returncode or not os.path.exists(out[:-4] + ".tmp.glb"):
         raise SystemExit("Blender could not read %s: %s" % (files[0], (run.stdout + run.stderr)[-400:]))
     os.replace(out[:-4] + ".tmp.glb", out)
@@ -446,7 +455,7 @@ def load_source(spec, folder):
     for p in out:
         m = spec.get("maps", {})
         for kind, rel in m.get(p.name, m.get(p.material, m.get("*", {}))).items():
-            p.maps[kind] = rel if kind in ("base_tint", "rough_value", "metal_diffuse") else Image.open(os.path.join(folder, rel))
+            p.maps[kind] = rel if kind in VALUE_MAPS else Image.open(os.path.join(folder, rel))
     return out
 
 
@@ -576,13 +585,21 @@ def sight_fix(spec, fs):
     camera's frame, measured on the model as the fit leaves it (REMODEL_NO_SIGHTS=1): a
     notch's bottom, a post's tip, an aperture's or an eyehole's middle."""
     eye, fwd, up, right = aim_eye(fs, spec["aim"])
-    r, f = (eye + fwd * d + right * x + up * y for d, x, y in spec["sight_at"])
+    if "sight_pts" in spec:    # or the two in the gun's space (cm), as REMODEL_PARTS gives them
+        r, f = (np.asarray(q, float) for q in spec["sight_pts"])
+    else:
+        r, f = (eye + fwd * d + right * x + up * y for d, x, y in spec["sight_at"])
     have = (f - r) / np.linalg.norm(f - r)
     axis = np.cross(have, fwd)
     sn, cs = np.linalg.norm(axis), have @ fwd
     k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
     rot = np.eye(3) + k + k @ k * ((1 - cs) / (sn * sn)) if sn > 1e-12 else np.eye(3)
-    new_r = eye + fwd * ((r - eye) @ fwd)
+    # the rear sight as far from the eye as it is, or (eye_relief, cm) brought to the eye: a
+    # peep sight close enough to see the whole front sight through it
+    new_r = eye + fwd * spec.get("eye_relief", (r - eye) @ fwd)
+    # (sight_shift: cm right, up: where the game's camera sits off the eye bone shows at a
+    # peep held this close)
+    new_r = new_r + right * spec.get("sight_shift", (0, 0))[0] + up * spec.get("sight_shift", (0, 0))[1]
     m = np.eye(4)
     m[:3, :3] = rot
     m[:3, 3] = new_r - rot @ r
@@ -621,6 +638,12 @@ def sight_fix(spec, fs):
         d[:3, 3] = eye - best[1] @ eye
         m = d @ m
         print("  levelled: rolled %.1f deg" % np.degrees(abs(t)))
+    if spec.get("roll"):     # and rolled this far right (degrees) about the line: the top to the right
+        d = np.eye(4)
+        d[:3, :3] = rotation(fwd, spec["roll"])     # about the view's forward, clockwise as seen: its top goes right
+        d[:3, 3] = eye - d[:3, :3] @ eye
+        m = d @ m
+        print("  rolled %.1f deg right" % spec["roll"])
     return m
 
 
@@ -673,6 +696,43 @@ def with_slide(src, bone, axis, curve):
         p = np.asarray(axis) * d[f]
         row[a.channels.index(bone + " pos")] = (float(p[0]), float(p[1]), float(p[2]), 0.0)
         row[a.channels.index(bone + " rot")] = (0.0, 0.0, 0.0, 1.0)
+        a.values.append(row)
+    return a
+
+
+def read_written(out, path):
+    return open(os.path.join(out, path), "rb").read()
+
+
+def rotation(axis, degrees):
+    a = np.asarray(axis, float) / np.linalg.norm(axis)
+    k = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    t = np.radians(degrees)
+    return np.eye(3) + np.sin(t) * k + (1 - np.cos(t)) * k @ k
+
+
+def with_turn(src, bone, pin, axis, curve):
+    """src with bone turned about pin (its parent's space) by curve[frame] degrees about
+    axis (held and linear between keys): its position the pin's offset, so it turns in place."""
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, src.frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.frames = list(src.frames)
+    a.channels = list(src.channels)
+    for ch in (bone + " pos", bone + " rot"):
+        if ch not in a.channels:
+            a.channels.append(ch)
+    keys = sorted(curve)
+    d = np.interp(np.arange(src.num_frames), keys, [curve[k] for k in keys])
+    u = np.asarray(axis, float) / np.linalg.norm(axis)
+    a.values = []
+    for f, row in enumerate(src.values):
+        row = list(row) + [None] * (len(a.channels) - len(row))
+        r = rotation(u, d[f])
+        p = pin - r @ pin
+        q = pose.matrix_to_quat(r)
+        row[a.channels.index(bone + " pos")] = (float(p[0]), float(p[1]), float(p[2]), 0.0)
+        row[a.channels.index(bone + " rot")] = tuple(float(x) for x in q)
         a.values.append(row)
     return a
 
@@ -745,7 +805,12 @@ def write_aim_lists(fs, out):
         except Exception:
             continue
         new = text
-        for old, ours in AIM_POSES.items():
+        poses = dict(AIM_POSES)    # and those an earlier run made (a build of some weapons only)
+        made = os.path.join(out, "models/human/animation/viewmodel")
+        for f in sorted(os.listdir(made)) if os.path.isdir(made) else ():
+            if f.startswith("opm_") and f.endswith(".skc"):
+                poses.setdefault("viewmodel/" + f[len("opm_"):], "viewmodel/" + f)
+        for old, ours in poses.items():
             new = re.sub(r"(?<![\w/])%s(?=\s)" % re.escape(old), ours, new)
         if new != text:
             put_tik(out, path, new)
@@ -780,6 +845,142 @@ def write_shell_reload(fs, out):
         lists = lists[:fill.end()] + lists[fill.end():].split("\n", 1)[0] + \
             "\n\tshotgun_rechamber\t\t%s\tcrossblend 0\n" % fill.group(1) + lists[fill.end():].split("\n", 1)[1]
     put_tik(out, path, lists)
+
+
+def clip_in_gun(fs, out, stock, spec, skd_name, p, shader, ig):
+    """The hand's ammunition (p) also in the gun, where the game's original model had it: the
+    Kar98k's stripper clip in the receiver's guides while the thumb pushes the rounds down.
+    The game's .tik and reload animation still show and move that clip (surfaces material7
+    and material8 on bones Clip01 and Object01), but the model the game loads (MOHAIM's)
+    lost it. ig: {original: (pak, its .skd), anim (the .tik's animation), frame (one where
+    the clip is in), surfaces [the original's clip surfaces]}; the bones are the spec's
+    new_bones. Our clip fitted onto the original's at that frame, each part on the nearer of
+    its surfaces and that surface's bone."""
+    import zipfile
+    orig = skd.read(zipfile.ZipFile(os.path.join(GAME, "main", ig["original"][0])).read(ig["original"][1]))
+    text = tik_text(fs, spec["tik"])
+    anim = read_anim(fs, stock.dir + "/" + re.search(r"^\s*%s\s+(\S+\.skc)" % re.escape(ig["anim"]), text, re.M).group(1))
+    ch = pose.frame_channels(anim, ig["frame"])
+    oheld = {k: np.array(v) for k, v in pose.Skeleton(orig.bones).evaluate(ch).items()}
+    rng = np.random.default_rng(5)
+    tpts, tlab, bones = [], [], []
+    for i, name in enumerate(ig["surfaces"]):
+        srf = next(x for x in orig.surfaces if x.name == name)
+        pts = np.array([sum(w * (oheld[orig.bones[bi].name.lower()][:3, :3] @ np.array(off)
+                                 + oheld[orig.bones[bi].name.lower()][:3, 3]) for bi, w, off in v.weights)
+                        for v in srf.verts])
+        tpts.append(sample(pts, np.array(srf.triangles, int), 4000, rng))
+        tlab.append(np.full(4000, i))
+        bones.append(orig.bones[srf.verts[0].weights[0][0]].name)
+    tpts, tlab = np.concatenate(tpts), np.concatenate(tlab)
+    _, r, t, _ = fit(sample(p.pos, p.tris, 6000, rng), tpts, scale=False, label="the clip in the gun: ")
+    p = p.moved(similarity_matrix(1.0, r, t))
+    trees = [cKDTree(tpts[tlab == i]) for i in range(len(ig["surfaces"]))]
+    lab = parts(p.pos, p.tris)
+    which = np.zeros(len(p.tris), int)
+    for k in np.unique(lab):     # each part on the surface it lies closest to on the whole
+        v = p.pos[np.unique(p.tris[lab == k])]
+        which[lab == k] = int(np.argmin([tr.query(v)[0].mean() for tr in trees]))
+    held = {k: np.array(v) for k, v in pose.Skeleton(stock.model.bones).evaluate(ch).items()}
+    path = os.path.join(out, stock.dir, skd_name)
+    model = skd.read(open(path, "rb").read())
+    lines = []
+    for i, name in enumerate(ig["surfaces"]):
+        bm = np.linalg.inv(held[bones[i].lower()])
+        pos = p.pos @ bm[:3, :3].T + bm[:3, 3]
+        nrm = p.normal @ bm[:3, :3].T
+        bi = model.bone_index(bones[i])
+        pieces = split(name, p.tris[which == i].tolist())
+        if len(pieces) != 1:
+            raise SystemExit("%s: %s is %d surfaces (its frame commands take one)" % (spec["key"], name, len(pieces)))
+        for sname, ptris, order in pieces:
+            srf = skd.Surface(sname)
+            srf.triangles = [(a, c, b) for a, b, c in ptris]   # the game's front faces wind clockwise
+            srf.verts = [skd.Vertex(nrm[j], (p.uv[j][0], p.uv[j][1]), [(bi, 1.0, tuple(pos[j]))]) for j in order]
+            model.surfaces.append(srf)
+        lines.append("\tsurface %s shader %s" % (name, shader))
+        print("  the clip in the gun: %s on %s, %d triangles" % (name, bones[i], (which == i).sum()))
+    write(out, "%s/%s" % (stock.dir, skd_name), skd.write(model))
+    tik_path = os.path.join(out, spec["tik"])
+    t = open(tik_path, "rb").read().decode("latin-1").replace("\r\n", "\n")
+    t = re.sub(r"(\bskelmodel\s+\S+\n)", lambda mm: mm.group(1) + "\n".join(lines) + "\n", t, count=1)
+    put_tik(out, spec["tik"], t)
+
+
+def cut_hole(p, h):
+    """p with a round hole through its faces across h's axis: h = {centre, axis, radius,
+    depth (cm along the axis either side of the centre)}. Each face crossing the circle is
+    triangulated again (its corners, where the circle crosses its edges, a 16-sided circle's
+    points inside it) and the triangles inside the circle go; positions, normals and UVs are
+    the face's, by barycentric weights."""
+    from scipy.spatial import Delaunay
+    c = np.asarray(h["centre"], float)
+    ax = np.asarray(h["axis"], float) / np.linalg.norm(h["axis"])
+    r, depth = h["radius"], h["depth"]
+    e1 = np.cross(ax, [1.0, 0, 0] if abs(ax[0]) < 0.9 else [0, 1.0, 0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(ax, e1)
+    flat = lambda x: np.stack([(x - c) @ e1, (x - c) @ e2], -1)
+    ring = r * np.stack([np.cos(np.linspace(0, 2 * np.pi, 16, endpoint=False)),
+                         np.sin(np.linspace(0, 2 * np.pi, 16, endpoint=False))], 1)
+    inside_ring = lambda q: np.linalg.norm(q, axis=-1) < r * np.cos(np.pi / 16)   # the 16-gon's inner circle
+
+    a_, b_, cc_ = (p.pos[p.tris[:, k]] for k in range(3))
+    fn = np.cross(b_ - a_, cc_ - a_)
+    fn /= np.linalg.norm(fn, axis=1, keepdims=True) + 1e-12
+    along = ((a_ + b_ + cc_) / 3 - c) @ ax
+    cand = (np.abs(fn @ ax) > 0.9) & (np.abs(along) < depth)
+    pos, nrm, uv = list(p.pos), list(p.normal), list(p.uv)
+    out, cut = [t for t in p.tris[~cand]], 0
+    for t in p.tris[cand]:
+        q = flat(p.pos[t])
+        # the face's own corners as a 2D triangle; barycentric weights of any point in it
+        T = np.array([q[0] - q[2], q[1] - q[2]]).T
+        if abs(np.linalg.det(T)) < 1e-12:
+            out.append(t)
+            continue
+        Ti = np.linalg.inv(T)
+        bary = lambda x: (lambda l: np.concatenate([l, 1 - l.sum(-1, keepdims=True)], -1))((x - q[2]) @ Ti.T)
+        pts = [q[0], q[1], q[2]]
+        for i in range(3):                     # where the circle crosses each edge
+            p0, d = q[i], q[(i + 1) % 3] - q[i]
+            A, B, C = d @ d, 2 * p0 @ d, p0 @ p0 - r * r
+            disc = B * B - 4 * A * C
+            if disc > 0:
+                for s_ in ((-B - np.sqrt(disc)) / (2 * A), (-B + np.sqrt(disc)) / (2 * A)):
+                    if 0 < s_ < 1:
+                        pts.append(p0 + s_ * d)
+        pts += [x for x in ring if (bary(x) > 1e-6).all()]
+        if len(pts) == 3:                      # the circle misses it
+            out.append(t)
+            continue
+        pts = np.array(pts)
+        tri = Delaunay(pts).simplices
+        keep = []
+        for k in tri:
+            m = pts[k].mean(0)
+            if (bary(m) > -1e-9).all() and not inside_ring(m):
+                keep.append(k)
+        cut += 1
+        base = len(pos)
+        w = bary(pts)
+        for wi in w:
+            pos.append(wi @ p.pos[t]); nrm.append(wi @ p.normal[t]); uv.append(wi @ p.uv[t])
+        for k in keep:   # the face's winding kept
+            k = list(k)
+            if np.cross(np.append(pts[k[1]] - pts[k[0]], 0), np.append(pts[k[2]] - pts[k[0]], 0))[2] * \
+               np.cross(np.append(q[1] - q[0], 0), np.append(q[2] - q[0], 0))[2] < 0:
+                k = [k[0], k[2], k[1]]
+            out.append([base + k[0], base + k[1], base + k[2]])
+    if not cut:
+        return p
+    print("  a hole of %.2f cm cut through %d faces of %s" % (r, cut, p.name))
+    n = np.array(nrm)
+    q = Piece(p.name, np.array(pos), n / (np.linalg.norm(n, axis=1, keepdims=True) + 1e-12), np.array(uv),
+              np.array(out, int), p.maps, p.material)
+    if hasattr(p, "material_key"):
+        q.material_key = p.material_key
+    return q
 
 
 def touch_clusters(p, gap):
@@ -943,9 +1144,9 @@ def write_textures(out, tex_dir, name, maps, size, spec_size):
     rough = chan(maps.get("rough"), spec_size, maps.get("rough_value", 0.6))
     sao = chan(maps.get("ao"), spec_size, 1.0)[..., None]
     spec = np.empty((spec_size, spec_size, 4), np.float32)
-    share = METAL_SHARE * metal
+    share = maps.get("metal_share", METAL_SHARE) * metal
     spec[..., :3] = (0.04 * (1.0 - share) + sbase * share) * (0.5 + 0.5 * sao)
-    spec[..., 3] = np.minimum(1.0 - rough, MAX_GLOSS)
+    spec[..., 3] = np.minimum(1.0 - rough, maps.get("max_gloss", MAX_GLOSS))
     Image.fromarray(np.clip(spec * 255 + 0.5, 0, 255).astype(np.uint8), "RGBA").save(
         os.path.join(out, tex_dir, name + "_s.png"), optimize=True)
 
@@ -1112,6 +1313,22 @@ def remodel(spec, fs, out, folder):
     if "after_fit" in spec:
         pieces = spec["after_fit"](pieces, stock)
     pieces = drop_strays(pieces, stock, spec.get("stray_cm", 2.0))
+    for box in spec.get("remove", ()):   # parts centred in a box of the gun's space (REMODEL_PARTS') go
+        lo, hi = np.array(box, float).T
+        kept = []
+        for p in pieces:
+            lab = parts(p.pos, p.tris)
+            keep = np.ones(len(p.tris), bool)
+            for k in np.unique(lab):
+                c = p.pos[np.unique(p.tris[lab == k])].mean(0)
+                if (c > lo).all() and (c < hi).all():
+                    keep &= lab != k
+            if not keep.all():
+                print("  removed %d triangles of %s" % ((~keep).sum(), p.name))
+            kept.append(p.subset(keep) if not keep.all() else p)
+        pieces = kept
+    for h in spec.get("holes", ()):    # a hole cut through flat faces (a removed bolt's bore)
+        pieces = [cut_hole(p, h) for p in pieces]
     if os.environ.get("REMODEL_PARTS"):          # for writing a spec's boxes
         for p in pieces:
             lab = parts(p.pos, p.tris)
@@ -1120,7 +1337,7 @@ def remodel(spec, fs, out, folder):
                     v = p.pos[np.unique(p.tris[lab == k])]
                     print("  part %s/%d: %d tris, centre %s, %s..%s" % (p.name, k, (lab == k).sum(),
                           np.round(v.mean(0), 1), np.round(v.min(0), 1), np.round(v.max(0), 1)))
-    if "sight_at" in spec and not os.environ.get("REMODEL_NO_SIGHTS"):
+    if ("sight_at" in spec or "sight_pts" in spec) and not os.environ.get("REMODEL_NO_SIGHTS"):
         sm = sight_fix(spec, fs)
         if spec.get("aim_pose_fix"):     # the arms' aim pose moves instead of the weapon
             aim_pose_moved(fs, out, spec["aim"], sm)
@@ -1131,8 +1348,8 @@ def remodel(spec, fs, out, folder):
     # parts the source has somewhere else than they belong (a slide locked back): moved
     # along the barrel, onto their bone
     shifted = []
-    barrel = stock.held["tag_barrel"][:3, 0] / np.linalg.norm(stock.held["tag_barrel"][:3, 0])  # out of the muzzle
     for sh in spec.get("shift", ()):
+        barrel = stock.held["tag_barrel"][:3, 0] / np.linalg.norm(stock.held["tag_barrel"][:3, 0])  # out of the muzzle
         lo, hi = np.array(sh["box"], float).T
         for i, p in enumerate(pieces):
             lab = parts(p.pos, p.tris)
@@ -1147,6 +1364,42 @@ def remodel(spec, fs, out, folder):
                 p.pos[v] += barrel * sh["forward"]
                 shifted.append((i, mask, sh["assign"]))
                 print("  moved %d triangles of %s %.1f cm forward" % (mask.sum(), p.name, sh["forward"]))
+
+    # a part reshaped (a peep sight's ring thinned and its hole widened, to see the whole
+    # front sight through it): the vertices within radius of centre scaled about it
+    for rs in spec.get("reshape", ()):
+        c = np.asarray(rs["centre"], float)
+        for p in pieces:
+            near = np.linalg.norm(p.pos - c, axis=1) < rs["radius"]
+            if near.any():
+                k = np.asarray(rs["scale"], float)
+                p.pos = p.pos.copy()
+                p.pos[near] = c + (p.pos[near] - c) * k
+                n = p.normal[near] / k
+                p.normal = p.normal.copy()
+                p.normal[near] = n / np.linalg.norm(n, axis=1, keepdims=True)
+                print("  reshaped %d vertices of %s" % (near.sum(), p.name))
+
+    # parts the source has turned to where they rest (a cocked hammer): turned about a pin
+    # (the gun's space; axis, degrees), onto their bone
+    for tu in spec.get("turn", ()):
+        lo, hi = np.array(tu["box"], float).T
+        rot = rotation(tu["axis"], tu["angle"])
+        pin = np.array(tu["pivot"], float)
+        for i, p in enumerate(pieces):
+            lab = parts(p.pos, p.tris)
+            mask = np.zeros(len(p.tris), bool)
+            for k in np.unique(lab):
+                c = p.pos[np.unique(p.tris[lab == k])].mean(0)
+                if (c > lo).all() and (c < hi).all():
+                    mask |= lab == k
+            if mask.any():
+                v = np.unique(p.tris[mask])
+                p.pos, p.normal = p.pos.copy(), p.normal.copy()
+                p.pos[v] = (p.pos[v] - pin) @ rot.T + pin
+                p.normal[v] = p.normal[v] @ rot.T
+                shifted.append((i, mask, tu["assign"]))
+                print("  turned %d triangles of %s %.1f deg" % (mask.sum(), p.name, tu["angle"]))
 
     # 2. bones and surfaces from the game's model
     overrides = spec.get("overrides", ())
@@ -1277,6 +1530,26 @@ def remodel(spec, fs, out, folder):
                   skc.write(with_slide(src, bone, back, {k: v * sl["travel"] for k, v in curve.items()})))
             renamed[anim] = name
         print("  %s slides %.1f cm in %s" % (bone, sl["travel"], ", ".join(sl["anims"])))
+    for tu in spec.get("turn", ()):   # and back to where the source had it in these animations
+        if "anims" not in tu:
+            continue
+        bone = tu["assign"][0]
+        parent = next(b.parent for b in stock.model.bones if b.name == bone)
+        pm = stock.held[parent.lower()]
+        pin = (np.linalg.inv(pm) @ np.append(np.asarray(tu["pivot"], float), 1.0))[:3]
+        axis = pm[:3, :3].T @ np.asarray(tu["axis"], float)
+        text0 = tik_text(fs, spec["tik"])
+        for anim, curve in tu["anims"].items():
+            if anim in renamed:
+                src = skc.read(read_written(out, "%s/%s" % (stock.dir, renamed[anim])))
+            else:
+                m = re.search(r"^\s*%s\s+(\S+\.skc)" % re.escape(anim), text0, re.M)
+                src = resampled(read_anim(fs, stock.dir + "/" + m.group(1)), tu.get("frame_time", 0.05))
+            name = "opm_%s_%s.skc" % (key, anim)
+            write(out, "%s/%s" % (stock.dir, name),
+                  skc.write(with_turn(src, bone, pin, axis, {k: -v * tu["angle"] for k, v in curve.items()})))
+            renamed[anim] = name
+        print("  %s turns %.1f deg in %s" % (bone, -tu["angle"], ", ".join(tu["anims"])))
 
     for tik in [spec["tik"]] + spec.get("more_tiks", []):
         text = retarget_tik(tik_text(fs, tik), skd_name, shaders, wild, [x.name for x in kept])
@@ -1285,6 +1558,18 @@ def remodel(spec, fs, out, folder):
         if "tik_edit" in spec:
             text = spec["tik_edit"](text, tik)
         put_tik(out, tik, text)
+
+    # the game's own models drawn two-sided (ammo_two_sided: {tik: (its shader, its image)}):
+    # the Hi-Standard's hand magazine has faces wound inward, holes in it
+    for tik, (shader, image) in spec.get("ammo_two_sided", {}).items():
+        name = "opm_%s_2s" % shader
+        put_tik(out, tik, re.sub(r"(?m)^(\s*surface\s+\S+\s+shader\s+)%s\b" % re.escape(shader),
+                                 lambda mm: mm.group(1) + name, tik_text(fs, tik)))
+        write(out, "scripts/opm_%s_2s.shader" % key,
+              ("// %s's %s drawn two-sided (tools/weapons/remodel.py)\n%s\n{\n\tcull none\n"
+               "\tqer_editorimage %s\n\t{\n\t\tmap %s\n\t\trgbGen lightingSpherical\n\t}\n}\n"
+               % (tik, shader, name, image, image)).replace("\n", "\r\n").encode("latin-1"))
+        print("  %s: drawn two-sided" % tik)
 
     # 3. the hand's ammunition taken from the source (a stripper clip, a round), fitted onto
     # the game's model of it at the gun's scale
@@ -1302,11 +1587,28 @@ def remodel(spec, fs, out, folder):
         if mk not in shader_of:
             raise SystemExit("%s: the ammunition's material %s has no shader" % (key, mk))
         abone = int(np.bincount(ammo.vbone).argmax())
+        # each part on the game's surface nearest it (a stripper clip's strip and its rounds:
+        # the reload shows the strip again once the rounds are in)
+        # (by points spread evenly over its surfaces: a thin strip has few vertices)
+        tsurf = ammo.vsurf[ammo.tris[:, 0]]
+        spread, which = [], []
+        for si in np.unique(tsurf):
+            spread.append(sample(ammo.pos, ammo.tris[tsurf == si], 3000, rng))
+            which.append(np.full(3000, si))
+        near = np.concatenate(which)[cKDTree(np.concatenate(spread)).query(p.pos)[1]]
+        lab = parts(p.pos, p.tris)
+        asurf = np.zeros(len(p.tris), int)
+        for k in np.unique(lab):
+            asurf[lab == k] = np.bincount(near[np.unique(p.tris[lab == k])]).argmax()
+        print("  %s: %s" % (ammo_tik, ", ".join("%s %d" % (ammo.model.surfaces[i].name, (asurf == i).sum())
+                                                for i in np.unique(asurf))))
         asurfs, ashaders, awild = build_surfaces(ammo, [p], [np.full(len(p.tris), abone)],
-                                                 [np.zeros(len(p.tris), int)], shader_of)
+                                                 [asurf], shader_of)
         aname = "opm_%s_%s" % (key, os.path.splitext(os.path.basename(ammo.skd_path))[0].lower())
         write(out, "%s/%s.skd" % (ammo.dir, aname), skd.write(model_like(ammo.model, aname + ".skd", asurfs)))
         put_tik(out, ammo_tik, retarget_tik(tik_text(fs, ammo_tik), aname + ".skd", ashaders, awild))
+        if "in_gun" in sel:
+            clip_in_gun(fs, out, stock, spec, skd_name, p, shader_of[mk], sel["in_gun"])
 
     # the hand's magazines: the new magazine moved as the game's is onto the hand's model
     for ammo_tik, gun_surface in spec.get("ammo", {}).items():
