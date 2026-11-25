@@ -125,6 +125,16 @@ typedef struct vma_s {
 
 class VoteUpload;
 
+// Added in OPM
+//  The player's gait (Player::UpdateStance): walking (the walk key) and sprinting each
+//  begin only from a normal run, and end once their key is up and the speed is back
+enum {
+    GAIT_RUN,
+    GAIT_SPRINT,
+    GAIT_WALK,
+    GAIT_RUN_FROM_WALK  // the walk key let go: running, no sprint until back up to speed
+};
+
 class Player : public Sentient
 {
     friend class Camera;
@@ -361,6 +371,7 @@ public:
     bool  m_bDiving;
     float m_fDiveTime;
     bool  m_bSprinting;
+    int   m_iGait;   // GAIT_*: the walk and the sprint each start only from a run
     bool  m_bHoldUpmove;
     float m_fSprintUsed;
     bool  m_bSprintExhausted;
@@ -937,6 +948,7 @@ public:
     void        SetStanceStat();
     bool        LeaveProne(bool crouch, bool force);
     void        SetProneHeight();
+    void        UpdateGait(usercmd_t *ucmd);
     float       StanceSpeed(float speed) const;
     const char *ProneLegAnim(const char *anim) const;
     bool        IsProne() const;
@@ -1229,6 +1241,7 @@ inline void Player::Archive(Archiver& arc)
         m_bDiving       = false;
         m_fDiveTime     = 0;
         m_bSprinting    = false;
+        m_iGait         = GAIT_RUN;
         m_bHoldUpmove   = false;
         m_fSprintUsed      = 0;
         m_bSprintExhausted = false;

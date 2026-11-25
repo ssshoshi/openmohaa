@@ -252,10 +252,68 @@ void IN_AttackSecondaryDown(void) { IN_KeyDown(&in_buttons[1]); }
 void IN_AttackSecondaryUp(void) { IN_KeyUp(&in_buttons[1]); }
 void IN_UseDown(void) { IN_KeyDown(&in_buttons[3]); }
 void IN_UseUp(void) { IN_KeyUp(&in_buttons[3]); }
-void IN_LeanLeftDown(void) { IN_KeyDown(&in_buttons[4]); }
-void IN_LeanLeftUp(void) { IN_KeyUp(&in_buttons[4]); }
-void IN_LeanRightDown(void) { IN_KeyDown(&in_buttons[5]); }
-void IN_LeanRightUp(void) { IN_KeyUp(&in_buttons[5]); }
+// Added in OPM
+//  With cl_leanToggle the lean keys toggle: a press leans that way (or straightens up
+//  if already leaning that way), the other key switches sides. Running straightens up
+//  at once and leaning cannot start while running, and walking the other way does too
+//  after cl_leanCancelMsec (see CL_LeanToggleMove).
+cvar_t	*cl_leanToggle;
+cvar_t	*cl_leanCancelMsec;
+static int		cl_leanToggled;		// BUTTON_LEAN_LEFT, BUTTON_LEAN_RIGHT or 0
+static unsigned	cl_leanAwayMsec;	// how long the player has walked away from the lean
+
+static qboolean IN_LeanToggles(void) {
+	return cl_leanToggle && cl_leanToggle->integer;
+}
+
+static void IN_LeanToggle(int button) {
+	cl_leanToggled = cl_leanToggled == button ? 0 : button;
+	cl_leanAwayMsec = 0;
+}
+
+void IN_LeanLeftDown(void) { if (IN_LeanToggles()) { IN_LeanToggle(BUTTON_LEAN_LEFT); return; } IN_KeyDown(&in_buttons[4]); }
+void IN_LeanLeftUp(void) { if (IN_LeanToggles()) { return; } IN_KeyUp(&in_buttons[4]); }
+void IN_LeanRightDown(void) { if (IN_LeanToggles()) { IN_LeanToggle(BUTTON_LEAN_RIGHT); return; } IN_KeyDown(&in_buttons[5]); }
+void IN_LeanRightUp(void) { if (IN_LeanToggles()) { return; } IN_KeyUp(&in_buttons[5]); }
+
+/*
+=================
+CL_LeanToggleMove
+
+The toggled lean on the command, given its movement: moving at a run (the run button
+held, not walking or aiming) straightens up at once, and walking the other way from the
+lean (strafing against it) does after cl_leanCancelMsec, a couple of steps.
+=================
+*/
+static void CL_LeanToggleMove( usercmd_t *cmd ) {
+	if ( !IN_LeanToggles() ) {
+		cl_leanToggled = 0;
+		return;
+	}
+
+	cmd->buttons &= ~( BUTTON_LEAN_LEFT | BUTTON_LEAN_RIGHT );
+	if ( !cl_leanToggled ) {
+		return;
+	}
+
+	if ( ( cmd->forwardmove || cmd->rightmove ) && ( cmd->buttons & BUTTON_RUN ) ) {
+		cl_leanToggled = 0;
+		return;
+	}
+
+	if ( ( cl_leanToggled == BUTTON_LEAN_LEFT && cmd->rightmove > 0 )
+		|| ( cl_leanToggled == BUTTON_LEAN_RIGHT && cmd->rightmove < 0 ) ) {
+		cl_leanAwayMsec += frame_msec;
+		if ( cl_leanAwayMsec >= (unsigned)cl_leanCancelMsec->integer ) {
+			cl_leanToggled = 0;
+			return;
+		}
+	} else {
+		cl_leanAwayMsec = 0;
+	}
+
+	cmd->buttons |= cl_leanToggled;
+}
 
 // Added in OPM
 //  Sprint and aim down the sights get button bits of their own. Aiming walks,
@@ -770,6 +828,10 @@ usercmd_t CL_CreateCmd( void ) {
 	if ( in_buttons[BUTTON_AIM_BITINDEX].active ) {
 		cmd.buttons &= ~BUTTON_RUN;
 	}
+
+	// Added in OPM
+	//  The toggled lean, once the movement is known
+	CL_LeanToggleMove( &cmd );
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {

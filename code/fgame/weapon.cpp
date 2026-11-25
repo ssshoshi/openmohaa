@@ -1522,7 +1522,7 @@ void Weapon::Shoot(Event *ev)
                     if (owner->client) {
                         Player *player = (Player *)owner.Pointer();
 
-                        fSpreadFactor = player->velocity.length() / sv_runspeed->integer;
+                        fSpreadFactor = player->velocity.length() / G_RunSpeed();
 
                         if (fSpreadFactor > 1.0f) {
                             fSpreadFactor = 1.0f;
@@ -1838,7 +1838,7 @@ qboolean Weapon::ReadyToFire(firemode_t mode, qboolean playsound)
                 return qtrue;
             }
 
-            if ((owner->velocity.lengthXY() / sv_runspeed->value) <= (m_fMovementSpeed * m_fMaxFireMovement)) {
+            if ((owner->velocity.lengthXY() / G_RunSpeed()) <= (m_fMovementSpeed * m_fMaxFireMovement)) {
                 return qtrue;
             }
 
@@ -3872,7 +3872,7 @@ qboolean Weapon::GetUseCrosshair() const
         return crosshair;
     }
 
-    if (!owner || (owner->velocity.lengthXY() / sv_runspeed->value) <= (m_fMaxFireMovement * m_fMovementSpeed)) {
+    if (!owner || (owner->velocity.lengthXY() / G_RunSpeed()) <= (m_fMaxFireMovement * m_fMovementSpeed)) {
         return crosshair;
     }
 
@@ -4295,7 +4295,7 @@ float Weapon::GetSpreadFactor(firemode_t mode)
     if (owner && owner->client) {
         Player *player = (Player *)owner.Pointer();
 
-        fSpreadFactor = player->velocity.length() / sv_runspeed->integer;
+        fSpreadFactor = player->velocity.length() / G_RunSpeed();
 
         if (fSpreadFactor > 1.0f) {
             fSpreadFactor = 1.0f;

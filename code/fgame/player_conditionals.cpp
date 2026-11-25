@@ -1674,7 +1674,7 @@ qboolean Player::CondCheckMovementSpeed(Conditional& condition)
         return true;
     }
 
-    return (velocity.length() / sv_runspeed->value) <= (weapon->m_fMaxFireMovement * weapon->m_fMovementSpeed + 0.1f);
+    return (velocity.length() / G_RunSpeed()) <= (weapon->m_fMaxFireMovement * weapon->m_fMovementSpeed + 0.1f);
 }
 
 qboolean Player::CondActionAnimDone(Conditional& condition)

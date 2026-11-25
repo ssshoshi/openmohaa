@@ -107,7 +107,7 @@ void Player::StartProne(usercmd_t *ucmd)
 {
     Vector hvel(velocity.x, velocity.y, 0);
     float  speed = hvel.length();
-    float  run   = sv_runspeed->value;
+    float  run   = G_RunSpeed();
 
     m_bProne      = true;
     m_bHoldUpmove = ucmd->upmove != 0;
@@ -137,6 +137,7 @@ void Player::StartProne(usercmd_t *ucmd)
     }
 
     m_bSprinting    = false;
+    m_iGait         = GAIT_RUN;
     m_iMovePosFlags = MPF_POSITION_PRONE;
 
     if (currentState_Legs) {
@@ -282,6 +283,7 @@ void Player::UpdateStance(usercmd_t *ucmd)
     }
 
     UpdateSprintStamina(ucmd);
+    UpdateGait(ucmd);
 
     wantSprint = allowed && g_sprint->integer && !m_bProne && !m_bSprintExhausted && (ucmd->buttons & BUTTON_SPRINT)
               && (ucmd->buttons & BUTTON_RUN) && !(ucmd->buttons & (BUTTON_ATTACKLEFT | BUTTON_ATTACKRIGHT | BUTTON_AIM))
@@ -289,6 +291,13 @@ void Player::UpdateStance(usercmd_t *ucmd)
 
     // a sprint starts on the ground and carries on through a jump
     m_bSprinting = wantSprint && (groundentity || m_bSprinting);
+
+    if (m_bSprinting) {
+        m_iGait = GAIT_SPRINT;
+    } else if (m_iGait == GAIT_SPRINT && velocity.lengthXY() <= G_RunSpeed() * 1.05f) {
+        // let go (or run out): a run again once slowed back down to it
+        m_iGait = GAIT_RUN;
+    }
 
     if (m_bSprinting) {
         client->ps.pm_flags |= PMF_SPRINTING;
@@ -455,6 +464,46 @@ void Player::UpdateSprintStamina(usercmd_t *ucmd)
     }
 }
 
+/*
+====================
+UpdateGait
+
+The walk key (no BUTTON_RUN, not aiming) and the sprint key each take only from a
+normal run: holding the walk key through a sprint keeps running until the sprint key is
+let go and the player has slowed back to running speed, and the sprint key does nothing
+while walking until the walk key is let go and the player is back up to it.
+====================
+*/
+void Player::UpdateGait(usercmd_t *ucmd)
+{
+    bool  walkKey = !(ucmd->buttons & (BUTTON_RUN | BUTTON_AIM));
+    bool  moving  = ucmd->forwardmove || ucmd->rightmove;
+    float speedXY = velocity.lengthXY();
+    float run     = G_RunSpeed();
+
+    if (g_gametype->integer != GT_SINGLE_PLAYER) {
+        m_iGait = m_bSprinting ? GAIT_SPRINT : GAIT_RUN;
+        return;
+    }
+
+    if (m_iGait == GAIT_WALK && !walkKey) {
+        m_iGait = GAIT_RUN_FROM_WALK;
+    }
+    if (m_iGait == GAIT_RUN_FROM_WALK && (speedXY >= run * 0.9f || !moving)) {
+        m_iGait = GAIT_RUN;
+    }
+    if ((m_iGait == GAIT_RUN || m_iGait == GAIT_RUN_FROM_WALK) && walkKey && !m_bSprinting) {
+        m_iGait = GAIT_WALK;
+    }
+
+    if (m_iGait == GAIT_WALK || m_iGait == GAIT_RUN_FROM_WALK) {
+        ucmd->buttons &= ~BUTTON_SPRINT;
+    } else if (m_iGait == GAIT_SPRINT && !(ucmd->buttons & BUTTON_AIM)) {
+        // the walk key waits until the sprint is over
+        ucmd->buttons |= BUTTON_RUN;
+    }
+}
+
 float Player::StanceSpeed(float speed) const
 {
     if (!groundentity) {
@@ -463,7 +512,7 @@ float Player::StanceSpeed(float speed) const
 
     if (m_bProne) {
         // crawling, slower again when aiming or walking
-        speed = sv_runspeed->value * g_prone_speed->value;
+        speed = G_RunSpeed() * g_prone_speed->value;
         if (!(last_ucmd.buttons & BUTTON_RUN)) {
             speed *= 0.6f;
         }
