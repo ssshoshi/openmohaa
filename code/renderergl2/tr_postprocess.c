@@ -398,13 +398,16 @@ r_breathBlur (the last copy's zoom less one).
 */
 void RB_FocusBlur(FBO_t *srcFbo, ivec4_t srcBox)
 {
-	static cvar_t *hold;
+	static cvar_t *hold, *lens;
 	float amount;
 
 	if (!hold)
 		hold = ri.Cvar_Get("cl_breathHold", "0", CVAR_ROM);
+	if (!lens)
+		lens = ri.Cvar_Get("cl_scopeLens", "0", 0);
 
-	amount = hold->value * r_breathBlur->value;
+	// and through a scope (cgame's cl_scopeLens, 0 to 1) the lens softens toward its rim
+	amount = hold->value * r_breathBlur->value + lens->value * r_scopeBlur->value;
 	if (!srcFbo || !tr.screenScratchFbo || amount < 0.002f)
 		return;
 

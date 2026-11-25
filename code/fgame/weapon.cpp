@@ -1457,6 +1457,8 @@ void Weapon::Shoot(Event *ev)
                         fSpreadFactor = 1.0f - fSpreadFactor;
                         vSpread += bulletspread[mode] * fSpreadFactor;
                         vSpread *= m_fFireSpreadMult[mode] + 1.0f;
+                        // Added in OPM: steadier kneeling, steadier again prone (single player)
+                        vSpread *= player->StanceSpreadMult();
 
                         if (m_iZoom) {
                             if (player->IsSubclassOfPlayer() && player->IsZoomed()) {
@@ -1532,6 +1534,8 @@ void Weapon::Shoot(Event *ev)
                         fSpreadFactor = 1.0f - fSpreadFactor;
                         vSpread += bulletspread[mode] * fSpreadFactor;
                         vSpread *= m_fFireSpreadMult[mode] + 1.0f;
+                        // Added in OPM: steadier kneeling, steadier again prone (single player)
+                        vSpread *= player->StanceSpreadMult();
 
                         if (m_iZoom) {
                             if (player->IsSubclassOfPlayer() && player->IsZoomed()) {

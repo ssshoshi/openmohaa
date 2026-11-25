@@ -501,7 +501,29 @@ static int CG_CalcFov(void)
         // Added in OPM
         //  Holding the breath aiming down the sights zooms in a little (the client's
         //  cl_breathHold, eased from 0 to 1)
-        float camera_fov = cg.camera_fov * (1.0f - cg_breathZoom->value * Q_clamp_float(cl_breathHold->value, 0, 1));
+        //  A scope's zoom eases in and out over cg_zoomEase rather than snapping, and the
+        //  scope's lens blurs toward its rim (cl_scopeLens, 0 to 1, for the renderer)
+        static float zoomFov, lens;
+        float        k = cg_zoomEase->value > 0 ? 1.0f - exp(-cg.frametime / (cg_zoomEase->value * 1000.0f)) : 1.0f;
+        qboolean     scoped = cg.snap && cg.snap->ps.stats[STAT_INZOOM] > 0 && cg.snap->ps.stats[STAT_INZOOM] <= 30;
+        float        camera_fov;
+        char         buf[16];
+
+        if (zoomFov <= 0 || (cg.predicted_player_state.pm_flags & PMF_CAMERA_VIEW)) {
+            zoomFov = cg.camera_fov;
+        } else {
+            zoomFov += (cg.camera_fov - zoomFov) * k;
+        }
+        if (fabs(zoomFov - cg.camera_fov) < 0.05f) {
+            zoomFov = cg.camera_fov;
+        }
+        lens += ((scoped ? 1.0f : 0.0f) - lens) * k;
+        if (fabs(lens - cl_scopeLens->value) > 0.01f || (!scoped && lens < 0.01f && cl_scopeLens->value)) {
+            Com_sprintf(buf, sizeof(buf), "%.2f", lens < 0.01f ? 0.0f : lens);
+            cgi.Cvar_Set("cl_scopeLens", buf);
+        }
+
+        camera_fov = zoomFov * (1.0f - cg_breathZoom->value * Q_clamp_float(cl_breathHold->value, 0, 1));
 
         if (fov_ratio == 1) {
             fov_x = camera_fov;

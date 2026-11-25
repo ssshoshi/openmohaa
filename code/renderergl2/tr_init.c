@@ -179,6 +179,7 @@ cvar_t  *r_forceSunAmbientScale;
 cvar_t  *r_sunlightMode;
 cvar_t  *r_drawSunRays;
 cvar_t  *r_breathBlur;
+cvar_t  *r_scopeBlur;
 cvar_t  *r_sunShadows;
 cvar_t  *r_sunShadowScale;
 cvar_t  *r_sunShadowBrushes;
@@ -1730,6 +1731,7 @@ void R_Register( void )
 	r_drawSunRays = ri.Cvar_Get( "r_drawSunRays", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	// Added in OPM: how much holding the breath blurs round the sights (RB_FocusBlur)
 	r_breathBlur = ri.Cvar_Get( "r_breathBlur", "0.035", CVAR_ARCHIVE );
+	r_scopeBlur = ri.Cvar_Get( "r_scopeBlur", "0.025", CVAR_ARCHIVE );
 	r_sunlightMode = ri.Cvar_Get( "r_sunlightMode", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	r_sunShadows = ri.Cvar_Get( "r_sunShadows", "1", CVAR_ARCHIVE | CVAR_LATCH );

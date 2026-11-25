@@ -531,6 +531,11 @@ extern "C" {
     extern cvar_t *vm_sprint_up;
     extern cvar_t *vm_sprint_speed;
     extern cvar_t *vm_sprint_pivot;
+    extern cvar_t *vm_recoil_back;
+    extern cvar_t *vm_recoil_pitch;
+    extern cvar_t *vm_recoil_freq;
+    extern cvar_t *vm_recoil_damp;
+    extern cvar_t *vm_recoil_pivot;
     extern cvar_t *vm_crawl;
     extern cvar_t *vm_idle;
     extern cvar_t *vm_idle_scale;
@@ -557,7 +562,9 @@ extern "C" {
     //
     extern cvar_t *cg_fov;
     extern cvar_t *cg_breathZoom;
+    extern cvar_t *cg_zoomEase;
     extern cvar_t *cl_breathHold;
+    extern cvar_t *cl_scopeLens;
     extern cvar_t *cg_cheats;
 
     //

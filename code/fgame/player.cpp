@@ -2274,6 +2274,7 @@ void Player::Init(void)
     m_fDiveTime     = 0;
     m_bSprinting    = false;
     m_iGait         = GAIT_RUN;
+    m_fScopeReady   = 0;
     m_bHoldUpmove   = false;
     m_fSprintUsed      = 0;
     m_bSprintExhausted = false;
@@ -4591,7 +4592,9 @@ void Player::ClientThink(void)
 
         // Added in OPM
         //  +aim looks through a scope for as long as it is held
-        if (((new_buttons & BUTTON_AIM) && !IsZoomed()) || (aim_released && IsZoomed())) {
+        if (g_gametype->integer == GT_SINGLE_PLAYER && g_aimButton->integer) {
+            UpdateScope((buttons & BUTTON_AIM) != 0);
+        } else if (((new_buttons & BUTTON_AIM) && !IsZoomed()) || (aim_released && IsZoomed())) {
             Weapon *weapon = GetActiveWeapon(WEAPON_MAIN);
 
             if (weapon && (weapon->GetZoom())) {

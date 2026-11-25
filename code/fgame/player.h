@@ -372,6 +372,7 @@ public:
     float m_fDiveTime;
     bool  m_bSprinting;
     int   m_iGait;   // GAIT_*: the walk and the sprint each start only from a run
+    float m_fScopeReady; // when the scope may be looked through (Player::UpdateScope)
     bool  m_bHoldUpmove;
     float m_fSprintUsed;
     bool  m_bSprintExhausted;
@@ -949,6 +950,8 @@ public:
     bool        LeaveProne(bool crouch, bool force);
     void        SetProneHeight();
     void        UpdateGait(usercmd_t *ucmd);
+    float       StanceSpreadMult() const;
+    void        UpdateScope(bool aimHeld);
     float       StanceSpeed(float speed) const;
     const char *ProneLegAnim(const char *anim) const;
     bool        IsProne() const;
@@ -1242,6 +1245,7 @@ inline void Player::Archive(Archiver& arc)
         m_fDiveTime     = 0;
         m_bSprinting    = false;
         m_iGait         = GAIT_RUN;
+        m_fScopeReady   = 0;
         m_bHoldUpmove   = false;
         m_fSprintUsed      = 0;
         m_bSprintExhausted = false;
