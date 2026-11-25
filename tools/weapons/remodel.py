@@ -1124,7 +1124,19 @@ def pick(pieces, sel):
         raise SystemExit("nothing of %s in %s" % (sel["mesh"], sel["box"]))
     out = p.subset(keep)
     out.name = sel.get("name", sel["mesh"] + "_pick")
-    out.material = p.material or p.name
+    out.material = sel.get("material_as") or p.material or p.name
+    if "hinge" in sel:   # turned about a hinge (the source's space): (point, axis, degrees)
+        point, axis, deg = sel["hinge"]
+        axis = np.asarray(axis, float) / np.linalg.norm(axis)
+        a = np.radians(deg)
+        k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        rot = np.eye(3) + np.sin(a) * k + (1 - np.cos(a)) * k @ k
+        m = np.eye(4)
+        m[:3, :3] = rot
+        m[:3, 3] = np.asarray(point, float) - rot @ np.asarray(point, float)
+        out = out.moved(m)
+        out.name = sel.get("name", sel["mesh"] + "_pick")
+        out.material = sel.get("material_as") or p.material or p.name
     print("  picked %s: %d triangles of %s" % (out.name, len(out.tris), sel["mesh"]))
     return out
 
@@ -1374,7 +1386,8 @@ def remodel(spec, fs, out, folder):
         pieces += [pick(raw, sel) for sel in spec["picks"]]
     pick_scale = {sel.get("name", sel["mesh"] + "_pick"): sel.get("scale", 1.0) for sel in spec.get("picks", ())}
     placed = dict(spec.get("place", {}))
-    placed.update({sel.get("name", sel["mesh"] + "_pick"): sel["target"] for sel in spec.get("picks", ())})
+    # a pick without a target stays where the source has it, on the gun (and fitted with it)
+    placed.update({sel.get("name", sel["mesh"] + "_pick"): sel["target"] for sel in spec.get("picks", ()) if "target" in sel})
     for sel in spec.get("picks", ()):
         if "assign" in sel:
             spec.setdefault("assign", {})[sel.get("name", sel["mesh"] + "_pick")] = sel["assign"]
@@ -1716,7 +1729,10 @@ def remodel(spec, fs, out, folder):
                                                  [asurf], shader_of)
         aname = "opm_%s_%s" % (key, os.path.splitext(os.path.basename(ammo.skd_path))[0].lower())
         write(out, "%s/%s.skd" % (ammo.dir, aname), skd.write(model_like(ammo.model, aname + ".skd", asurfs)))
-        put_tik(out, ammo_tik, retarget_tik(tik_text(fs, ammo_tik), aname + ".skd", ashaders, awild))
+        atext = retarget_tik(tik_text(fs, ammo_tik), aname + ".skd", ashaders, awild)
+        if "tik_edit" in sel:   # f(text) -> text
+            atext = sel["tik_edit"](atext)
+        put_tik(out, ammo_tik, atext)
         if "in_gun" in sel:
             clip_in_gun(fs, out, stock, spec, skd_name, p, shader_of[mk], sel["in_gun"])
 

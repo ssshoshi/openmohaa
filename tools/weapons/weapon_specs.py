@@ -55,6 +55,7 @@
                  f(text, tik path) -> text
 """
 
+
 WEAPONS = [
     dict(key="colt45", folder="M1911", source=["*.glb"],
          # the glTF download: two meshes (its two texture sets), two pistols in them: the
@@ -178,7 +179,14 @@ WEAPONS += [
          # display copy's loose parts (not used)
          pieces=["model_0", "model_17"], material_of={"model_0": "bar", "model_17": "bar"},
          drop=[((-0.06, 0.06), (0.19, 0.215), (0.53, 0.54))],   # its bipod (Notes.txt: none)
-         # its rear sight folded down (Notes.txt, the player's example.png), knobs and all
+         # its rear sight folded down (Notes.txt, the player's example.png), knobs and all: the
+         # leaf (and the knob on its top) stands up in the other mesh, which the gun's own
+         # leaves out; it is laid forward between the ears, turned about its front foot
+         picks=[dict(name="bar_leaf", mesh="magrelease.001_BAR-gun_0", material_as="model_0",
+                     box=((-0.015, 0.012), (0.19, 0.245), (-0.33, -0.30)),
+                     hinge=((0.0, 0.1859, -0.3093), (1, 0, 0), 90.0)),
+                dict(name="bar_leaf_knob", mesh="magrelease.001_BAR-gun_0", material_as="model_0",
+                     box=((-0.03, -0.015), (0.18, 0.20), (-0.33, -0.30)))],
          # metal near black as in its renders (a PBR metal takes no diffuse light)
          maps={"*": {"metal_diffuse": 0.4}},
          # aiming, the eye between the base's ears a little under their tops and the front
