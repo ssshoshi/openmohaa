@@ -737,6 +737,24 @@ def with_turn(src, bone, pin, axis, curve):
     return a
 
 
+def with_held(src, bone, frm, to):
+    """src with bone kept as it is at frame frm through frame to."""
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, src.frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.frames = list(src.frames)
+    a.channels = list(src.channels)
+    cols = [a.channels.index(bone + " pos"), a.channels.index(bone + " rot")]
+    a.values = []
+    for f, row in enumerate(src.values):
+        row = list(row)
+        if frm < f <= to:
+            for c in cols:
+                row[c] = src.values[frm][c]
+        a.values.append(row)
+    return a
+
+
 def mk_moved(p, m):
     q = p.moved(m)
     q.material_key = p.material_key
@@ -983,6 +1001,14 @@ def clip_in_gun(fs, out, stock, spec, skd_name, p, shader, ig):
     tik_path = os.path.join(out, spec["tik"])
     t = open(tik_path, "rb").read().decode("latin-1").replace("\r\n", "\n")
     t = re.sub(r"(\bskelmodel\s+\S+\n)", lambda mm: mm.group(1) + "\n".join(lines) + "\n", t, count=1)
+    if ig.get("hold"):   # {bone: (from frame, to frame)}: kept in the gun longer than the game's animation has it
+        held_anim = anim
+        for bone, (frm, to) in ig["hold"].items():
+            held_anim = with_held(held_anim, bone, frm, to)
+        name = "opm_%s_%s" % (spec["key"], os.path.basename(re.search(r"^\s*%s\s+(\S+\.skc)" % re.escape(ig["anim"]), t, re.M).group(1)).lower())
+        write(out, "%s/%s" % (stock.dir, name), skc.write(held_anim))
+        t, n = re.subn(r"^(\s*%s\s+)\S+\.skc" % re.escape(ig["anim"]), lambda mm: mm.group(1) + name, t, count=1, flags=re.M)
+        print("  %s held in %s to frame %s" % (", ".join(ig["hold"]), name, ", ".join(str(v[1]) for v in ig["hold"].values())))
     put_tik(out, spec["tik"], t)
 
 

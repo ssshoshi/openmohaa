@@ -56,6 +56,8 @@
 """
 
 
+import re
+
 WEAPONS = [
     dict(key="colt45", folder="M1911", source=["*.glb"],
          # the glTF download: two meshes (its two texture sets), two pistols in them: the
@@ -158,12 +160,27 @@ KAR98_MAPS = {"*": {"metal_diffuse": 0.4}}
 # the extractor lying beside it); the stripper clip with its rounds
 KAR98_BOLT_PICK = dict(name="bolt", mesh="model_0", box=((-0.06, 0.025), (0.085, 0.16), (-0.34, -0.10)),
                        target="bone:chamber", assign=("chamber", "KAR981"))
+def replace_once(pattern, new, what):
+    """A .tik edit: pattern (a regex, multiline) replaced once, or the build stops."""
+    def edit(text, *_):
+        out, n = re.subn(pattern, new, text, flags=re.M)
+        if n != 1:
+            raise SystemExit("%s: %d matches of %r" % (what, n, pattern))
+        return out
+    return edit
+
+
 KAR98_CLIP_PICK = dict(mesh="model_0", box=((0.10, 0.18), (-0.01, 0.03), (-0.28, -0.15)),   # not the loose strip beside it (x 0.093)
                        # and in the receiver's guides once the hand lets go of it, where the
                        # game's original rifle had its clip (material7 the rounds, material8
                        # the strip, on bones Clip01 and Object01: the reload moves them)
                        in_gun=dict(original=("Pak0.pk3", "models/weapons/kar98/kar98.skd"), anim="reload",
-                                   frame=44, surfaces=["material7", "material8"]))
+                                   frame=44, surfaces=["material7", "material8"],
+                                   # the strip stays in the guides until the bolt pushes it out
+                                   hold={"Object01": (50, 78)}),
+                       # the empty strip is the gun's from there on (none back in the hand)
+                       tik_edit=replace_once(r"^\s*61\s+surface material1_\* -nodraw\s*\n", "",
+                                             "kar98_clip_reload.tik"))
 SPRINGFIELD_SCOPE = ((1.0, 33.0), (-5.0, 1.5), (-14.0, -8.0))   # the scope, above the bolt
 
 WEAPONS += [
@@ -208,6 +225,9 @@ WEAPONS += [
          aim="kar98_stand_aim.skc", sight_at=((41.0, 0.02, 0.0), (90.0, -0.25, 0.05)),
          sight_drop=0.24,   # in game the post showed 0.33 deg under the prongs' tops (the camera sits off the eye bone)
          ammo_picks={"models/ammo/kar98_clip_reload.tik": KAR98_CLIP_PICK},
+         # the strip stays in the receiver's guides until the bolt, going forward (frames
+         # 76-80), pushes it out; the rounds went down into the magazine at 53
+         tik_edit=replace_once(r"^(\s*)62(\s+surface material8 \+nodraw)", r"\g<1>78\2", "kar98.tik"),
          tik="models/weapons/kar98.tik"),
     dict(key="kar98sniper", folder="Kar98k", **KAR98_SOURCE, pieces=["model_1", "model_5"],
          material_of=KAR98_MATS, maps=KAR98_MAPS,
