@@ -64,8 +64,8 @@ WEAPONS = [
          # less diffuse so that the highlights stand out
          maps={"*": {"metal_share": 0.85, "max_gloss": 0.85, "metal_diffuse": 0.5}},
          # aiming kneeling or prone two-handed: the left hand cupping the grip's butt, as the
-         # Colt's reload has it pushing a magazine in (frame 18); standing it is point-shot
-         # one-handed, as the period trained (the game's own aim pose)
+         # Colt's reload has it pushing a magazine in (frame 18); standing one-handed, as the
+         # period trained (the game's own aim pose, sighted)
          # its rear notch's top and front blade's tip on the aim (in the aim pose only)
          sight_at=((32.5, 0.15, -2.2), (51.5, -0.05, 0.2)), aim_pose_fix=True,
          sight_drop=0.25, sight_shift=(0.0, 0.2),   # the camera sits off the eye bone: the blade up into the notch, both onto the crosshair
@@ -98,6 +98,7 @@ WEAPONS = [
          shift=[dict(box=((-5.0, 3.0), (-4.0, 1.0), (-7.0, -4.4)), forward=4.0, assign=("opm_slide", "P381"))],
          slide=dict(bone="opm_slide", travel=4.0, anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}}),
          sight_at=((31.5, 0.18, -1.15), (52.5, -0.21, -0.4)), aim_pose_fix=True,
+         sight_drop=0.25, sight_shift=(0.0, 0.2),   # as the Colt's: the blade up into the notch
          aim="P38pose_aim.skc", two_hands=dict(reload="pistol/reload_colt.skc", frame=18, prefix="p38"),   # kneeling or prone two-handed (see the Colt)
          tik="models/weapons/p38.tik", ammo={"models/ammo/p38_clip.tik": "clip"}),
     dict(key="hspistol", folder="High Standard HDM Silenced", source=["source/textures.zip!HDM.fbx"],

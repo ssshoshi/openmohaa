@@ -814,8 +814,8 @@ def two_hand_pose(fs, out, aim_skc, reload_skc, frame, prefix, side="l"):
     the weapon tag, its fingers as there; the arm bent to reach it (two bones, the elbow on
     the side it bent to). From our sighted copy of the aim pose (opm_<aim_skc>, if an
     earlier step made one), written as opm_low_<prefix>.skc: the arms' <prefix>_charge_low,
-    which cgame plays aiming kneeling or prone. Standing keeps the game's pose (pistols are
-    point-shot standing, as the period trained), so the sighted copy goes."""
+    which cgame plays aiming kneeling or prone. Standing stays one-handed (pistols were
+    shot one-handed standing, as the period trained), sighted all the same."""
     arms = skd.read(fs.read(FPS_SKD))
     sk = pose.Skeleton(arms.bones)
     names = {b.name.lower(): b.name for b in arms.bones}
@@ -865,9 +865,6 @@ def two_hand_pose(fs, out, aim_skc, reload_skc, frame, prefix, side="l"):
         check = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(a, f)).items()}
         miss = max(miss, float(np.linalg.norm(check[hd][:3, 3] - pt)))
     write(out, AIM_DIR + "opm_low_%s.skc" % prefix, skc.write(a))
-    if os.path.exists(ours):
-        os.remove(ours)
-    AIM_POSES.pop("viewmodel/" + aim_skc, None)
     print("  %s_charge_low: the aim pose %s two-handed (the %s hand as at %s frame %d): %.2f cm off" % (
         prefix, aim_skc, side, reload_skc, frame, miss))
 
