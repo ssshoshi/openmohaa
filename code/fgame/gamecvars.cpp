@@ -865,7 +865,7 @@ void CVAR_Init(void)
     g_sprint_tired_speed = gi.Cvar_Get("g_sprint_tired_speed", "0.6", 0);
     g_sprint_tired_time  = gi.Cvar_Get("g_sprint_tired_time", "3", 0);
     // single player runs slower than multiplayer's sv_runspeed (G_RunSpeed)
-    g_sp_runspeed        = gi.Cvar_Get("g_sp_runspeed", "180", 0);
+    g_sp_runspeed        = gi.Cvar_Get("g_sp_runspeed", "200", 0);
     g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
     g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
     g_grenade_prone       = gi.Cvar_Get("g_grenade_prone", "0.5", 0);
