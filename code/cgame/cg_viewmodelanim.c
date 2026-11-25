@@ -378,6 +378,20 @@ void CG_ViewModelAnimation(refEntity_t *pModel)
         cgi.anim->g_iLastVMAnimChanged = cg.snap->ps.iViewModelAnimChanged;
     }
 
+    // Added in OPM
+    //  Aiming kneeling or prone has an animation of its own where the weapon has one
+    //  (<prefix>_charge_low: the pistols' two-handed hold; standing they point-shoot):
+    //  going down or getting up while aiming switches over
+    {
+        static qboolean lastLow;
+        qboolean        low = cg.predicted_player_state.viewheight <= CROUCH_EYE_HEIGHT;
+
+        if (low != lastLow && cgi.anim->g_iLastVMAnim == VM_ANIM_CHARGE) {
+            bAnimChanged = qtrue;
+        }
+        lastLow = low;
+    }
+
     if (bAnimChanged) {
         switch (cgi.anim->g_iLastVMAnim) {
         case VM_ANIM_CHARGE:
@@ -429,6 +443,14 @@ void CG_ViewModelAnimation(refEntity_t *pModel)
         }
 
         Com_sprintf(szAnimName, sizeof(szAnimName), "%s_%s", AnimPrefixList[iAnimPrefixIndex], pszAnimSuffix);
+        if (cgi.anim->g_iLastVMAnim == VM_ANIM_CHARGE && cg.predicted_player_state.viewheight <= CROUCH_EYE_HEIGHT) {
+            char szLow[MAX_QPATH];
+
+            Com_sprintf(szLow, sizeof(szLow), "%s_charge_low", AnimPrefixList[iAnimPrefixIndex]);
+            if (cgi.Anim_NumForName(pTiki, szLow) != -1) {
+                Q_strncpyz(szAnimName, szLow, sizeof(szAnimName));
+            }
+        }
         if (!bWeaponChanged) {
             fCrossblendTime =
                 cgi.Anim_CrossblendTime(pTiki, cgi.anim->g_VMFrameInfo[cgi.anim->g_iCurrentVMAnimSlot].index);
