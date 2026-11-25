@@ -386,6 +386,32 @@ static void RB_RadialBlur(FBO_t *srcFbo, FBO_t *dstFbo, int passes, float stretc
 }
 
 
+/*
+=============
+RB_FocusBlur
+
+Added in OPM: holding the breath aiming down the sights (the client's cl_breathHold,
+0 to 1) blurs what is round the sights: the frame averaged with copies of itself zoomed
+a little more each about its middle, the middle sharp and the edges smeared, by up to
+r_breathBlur (the last copy's zoom less one).
+=============
+*/
+void RB_FocusBlur(FBO_t *srcFbo, ivec4_t srcBox)
+{
+	static cvar_t *hold;
+	float amount;
+
+	if (!hold)
+		hold = ri.Cvar_Get("cl_breathHold", "0", CVAR_ROM);
+
+	amount = hold->value * r_breathBlur->value;
+	if (!srcFbo || !tr.screenScratchFbo || amount < 0.002f)
+		return;
+
+	FBO_FastBlit(srcFbo, srcBox, tr.screenScratchFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	RB_RadialBlur(tr.screenScratchFbo, srcFbo, 8, 1.0f + amount, srcBox[0], srcBox[1], srcBox[2], srcBox[3], 0.5f, 0.5f, 1.0f);
+}
+
 static qboolean RB_UpdateSunFlareVis(void)
 {
 	GLuint sampleCount = 0;

@@ -2650,6 +2650,9 @@ const void *RB_PostProcess(const void *data)
 	if (r_drawSunRays->integer)
 		RB_SunRays(srcFbo, srcBox, srcFbo, srcBox);
 
+	// Added in OPM: holding the breath aiming, what is round the sights blurs
+	RB_FocusBlur(srcFbo, srcBox);
+
 	if (1)
 		RB_BokehBlur(srcFbo, srcBox, srcFbo, srcBox, backEnd.refdef.blurFactor);
 	else

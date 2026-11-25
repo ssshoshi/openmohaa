@@ -1020,6 +1020,15 @@ qboolean Player::CondMovementType(Conditional& condition)
 
 qboolean Player::CondRun(Conditional& condition)
 {
+    // Added in OPM
+    //  MOHAIM's torso aims down the sights when not running (AIM1: !RUN). In single
+    //  player its RUN follows the aim button instead (g_aimButton), so that the walk key
+    //  walks without aiming; the legs' RUN is still the run button
+    if (g_gametype->integer == GT_SINGLE_PLAYER && g_aimButton->integer
+        && torso_conditionals.ObjectInList(&condition)) {
+        return !(last_ucmd.buttons & BUTTON_AIM);
+    }
+
     return (last_ucmd.buttons & BUTTON_RUN) != 0;
 }
 

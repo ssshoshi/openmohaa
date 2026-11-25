@@ -556,6 +556,8 @@ extern "C" {
     // Added in OPM
     //
     extern cvar_t *cg_fov;
+    extern cvar_t *cg_breathZoom;
+    extern cvar_t *cl_breathHold;
     extern cvar_t *cg_cheats;
 
     //

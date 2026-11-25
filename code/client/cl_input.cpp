@@ -278,6 +278,103 @@ void IN_LeanRightUp(void) { if (IN_LeanToggles()) { return; } IN_KeyUp(&in_butto
 
 /*
 =================
+CL_AimSway
+
+Aiming down the sights the aim drifts a little (cl_aimSway degrees, a slow figure of
+eight), and the drift moves the view angles the commands carry, so shots go where the
+sights point. The sprint key (Shift) while aiming and standing still holds the breath
+(cl_breathTime seconds of it): the drift all but stops and cl_breathHold rises to 1 for
+cgame's zoom and the renderer's blur. Moving or letting go breathes again. Holding to the
+end leaves the aim drifting harder (cl_aimSwayTired times) for cl_breathTiredTime
+seconds, and the breath cannot be held again until the key is let go and a third of it
+has come back.
+=================
+*/
+cvar_t	*cl_aimSway;
+cvar_t	*cl_aimSwayTired;
+cvar_t	*cl_breathTime;
+cvar_t	*cl_breathRecover;
+cvar_t	*cl_breathTiredTime;
+cvar_t	*cl_breathHold;
+
+static float	cl_breath = 1.0f;		// breath left, 0..1
+static float	cl_breathTired;			// seconds of tiredness left
+static qboolean	cl_breathWaitRelease;	// run out: the key must be let go first
+static float	cl_swayPhase;			// seconds of drift
+static float	cl_swayScale;			// how much of the drift is on, eased
+static float	cl_holdScale;			// how much the breath is held, eased
+static vec2_t	cl_swayApplied;			// the drift now on the view angles
+
+static float CL_Approach( float from, float to, float rate, float dt ) {
+	float step = rate * dt;
+	if ( from < to ) {
+		return from + step > to ? to : from + step;
+	}
+	return from - step < to ? to : from - step;
+}
+
+static void CL_AimSway( usercmd_t *cmd ) {
+	float		dt = frame_msec * 0.001f;
+	qboolean	aiming = in_buttons[BUTTON_AIM_BITINDEX].active && clc.state == CA_ACTIVE && !Key_GetCatcher();
+	qboolean	breathKey = in_buttons[BUTTON_SPRINT_BITINDEX].active;
+	qboolean	moving = cmd->forwardmove || cmd->rightmove;
+	qboolean	holding;
+	float		want, amp, yaw, pitch;
+
+	if ( !cl_aimSway || cl_aimSway->value <= 0 ) {
+		aiming = qfalse;
+	}
+
+	if ( !breathKey ) {
+		cl_breathWaitRelease = qfalse;
+	}
+	holding = aiming && breathKey && !moving && !cl_breathWaitRelease && cl_breath > 0;
+
+	if ( holding ) {
+		cl_breath -= dt / Q_max( 0.5f, cl_breathTime->value );
+		if ( cl_breath <= 0 ) {
+			cl_breath = 0;
+			cl_breathTired = cl_breathTiredTime->value;
+			cl_breathWaitRelease = qtrue;
+			holding = qfalse;
+		}
+	} else {
+		cl_breath = Q_min( 1.0f, cl_breath + dt / Q_max( 0.5f, cl_breathRecover->value ) );
+		if ( cl_breathWaitRelease && cl_breath >= 0.33f && !breathKey ) {
+			cl_breathWaitRelease = qfalse;
+		}
+	}
+	if ( cl_breathTired > 0 ) {
+		cl_breathTired = Q_max( 0.0f, cl_breathTired - dt );
+	}
+
+	cl_holdScale = CL_Approach( cl_holdScale, holding ? 1.0f : 0.0f, 3.0f, dt );
+	want = 0;
+	if ( aiming ) {
+		want = 1.0f - 0.9f * cl_holdScale;
+		if ( cl_breathTired > 0 ) {
+			want *= 1.0f + ( cl_aimSwayTired->value - 1.0f ) * Q_min( 1.0f, cl_breathTired / Q_max( 0.1f, cl_breathTiredTime->value * 0.5f ) );
+		}
+	}
+	cl_swayScale = CL_Approach( cl_swayScale, want, 1.5f, dt );
+	cl_swayPhase += dt;
+
+	amp = ( cl_aimSway ? cl_aimSway->value : 0 ) * cl_swayScale;
+	yaw = amp * sin( cl_swayPhase * 0.83f * 2 * M_PI * 0.35f );
+	pitch = amp * 0.6f * sin( cl_swayPhase * 1.31f * 2 * M_PI * 0.35f + 0.7f );
+
+	cl.viewangles[YAW] += yaw - cl_swayApplied[0];
+	cl.viewangles[PITCH] += pitch - cl_swayApplied[1];
+	cl_swayApplied[0] = yaw;
+	cl_swayApplied[1] = pitch;
+
+	if ( fabs( cl_breathHold->value - cl_holdScale ) > 0.001f ) {
+		Cvar_SetValue( "cl_breathHold", cl_holdScale );
+	}
+}
+
+/*
+=================
 CL_LeanToggleMove
 
 The toggled lean on the command, given its movement: moving at a run (the run button
@@ -320,8 +417,32 @@ static void CL_LeanToggleMove( usercmd_t *cmd ) {
 //  as the ironsight mods aim when the player walks (see CL_CmdButtons).
 void IN_SprintDown(void) { IN_KeyDown(&in_buttons[BUTTON_SPRINT_BITINDEX]); }
 void IN_SprintUp(void) { IN_KeyUp(&in_buttons[BUTTON_SPRINT_BITINDEX]); }
-void IN_AimDown(void) { IN_KeyDown(&in_buttons[BUTTON_AIM_BITINDEX]); }
-void IN_AimUp(void) { IN_KeyUp(&in_buttons[BUTTON_AIM_BITINDEX]); }
+// Added in OPM
+//  With cl_aimToggle the aim key toggles aiming down the sights instead of holding it
+cvar_t	*cl_aimToggle;
+static qboolean cl_aimToggled;
+
+void IN_AimDown(void) {
+	if (cl_aimToggle && cl_aimToggle->integer) {
+		cl_aimToggled = !cl_aimToggled;
+		if (cl_aimToggled) {
+			in_buttons[BUTTON_AIM_BITINDEX].active = qtrue;
+			in_buttons[BUTTON_AIM_BITINDEX].wasPressed = qtrue;
+		} else {
+			in_buttons[BUTTON_AIM_BITINDEX].active = qfalse;
+			in_buttons[BUTTON_AIM_BITINDEX].down[0] = in_buttons[BUTTON_AIM_BITINDEX].down[1] = 0;
+		}
+		return;
+	}
+	cl_aimToggled = qfalse;
+	IN_KeyDown(&in_buttons[BUTTON_AIM_BITINDEX]);
+}
+void IN_AimUp(void) {
+	if (cl_aimToggle && cl_aimToggle->integer) {
+		return;
+	}
+	IN_KeyUp(&in_buttons[BUTTON_AIM_BITINDEX]);
+}
 
 void IN_SpeedDown(void) {IN_KeyDown(&in_speed);}
 void IN_SpeedUp(void) {IN_KeyUp(&in_speed);}
@@ -832,6 +953,10 @@ usercmd_t CL_CreateCmd( void ) {
 	// Added in OPM
 	//  The toggled lean, once the movement is known
 	CL_LeanToggleMove( &cmd );
+
+	// Added in OPM
+	//  Aiming down the sights: the drift and holding the breath
+	CL_AimSway( &cmd );
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {

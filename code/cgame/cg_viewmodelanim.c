@@ -565,7 +565,13 @@ void CG_CalcViewModelMovement(float fViewBobPhase, float fViewBobAmp, vec_t *vVe
     vMovement[2] = (sin((fViewBobPhase - 0.94) * 4.0 + M_PI / 2) * 0.125 + fPhase) * fViewBobAmp * vm_sway_up->value;
 
     if (cg.predicted_player_state.walking) {
-        if (cg.predicted_player_state.viewheight == CROUCH_EYE_HEIGHT) {
+        // Added in OPM
+        //  Not while aiming down the sights (MOHAIM's aim poses play as the charge and
+        //  reload_single view animations): this close to the eye the crouch's shift
+        //  throws the sights off the middle. MOHAIM stood the crouch up to its jump
+        //  height to keep it away, which left the player too tall to crouch into vents
+        if (cg.predicted_player_state.viewheight == CROUCH_EYE_HEIGHT
+            && cgi.anim->g_iLastVMAnim != VM_ANIM_CHARGE && cgi.anim->g_iLastVMAnim != VM_ANIM_RELOAD_SINGLE) {
             if (cgi.anim->g_iLastAnimPrefixIndex == WPREFIX_BAZOOKA
                 || cgi.anim->g_iLastAnimPrefixIndex == WPREFIX_PANZERSCHRECK) {
                 vTargOfs[0] = vm_offset_rocketcrouch_front->value;

@@ -360,6 +360,7 @@ cvar_t *g_sprint_minhealth;
 cvar_t *g_sprint_tired_speed;
 cvar_t *g_sprint_tired_time;
 cvar_t *g_sp_runspeed;
+cvar_t *g_aimButton;
 
 // A grenade on the ground throws its fragments up and out (RadiusDamage)
 cvar_t *g_grenade_cone;
@@ -866,6 +867,8 @@ void CVAR_Init(void)
     g_sprint_tired_time  = gi.Cvar_Get("g_sprint_tired_time", "3", 0);
     // single player runs slower than multiplayer's sv_runspeed (G_RunSpeed)
     g_sp_runspeed        = gi.Cvar_Get("g_sp_runspeed", "200", 0);
+    // single player aims down the sights on the aim button only, not whenever walking
+    g_aimButton          = gi.Cvar_Get("g_aimButton", "1", 0);
     g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
     g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
     g_grenade_prone       = gi.Cvar_Get("g_grenade_prone", "0.5", 0);
