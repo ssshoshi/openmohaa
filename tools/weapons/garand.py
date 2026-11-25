@@ -89,6 +89,9 @@ MOVING_BOX = ((6.2, 8.6), (-3.5, 2.7), (9.0, 33.0))
 REAR_SIGHT_BOX = ((8.6, 10.6), (-2.4, -1.2), (5.4, 6.8))
 FRONT_SIGHT_BOX = ((8.4, 10.8), (-1.9, -0.2), (74.0, 76.4))
 POST_HALF_WIDTH = 0.2           # the post, between the ears: this near the sight's middle
+# The line the sights go onto passes this far (cm, X up) over the game gun's post: in game
+# the post's tip sat 5 px under the crosshair (the camera sits off the eye bone)
+AIM_RAISE = 0.25
 STOCK_FRONT_Z = 76.0            # the game gun's front sight is beyond this
 # The clip sits this far under the closed bolt
 CLIP_GAP = 0.05
@@ -573,7 +576,7 @@ def main():
 
     # the sights onto the aim pose's line (after the cut, whose box is the fit's)
     eye = aim_eye(fs, gun, stock["idle"])
-    sr, hole, new_hole = sight_fix(pos, mesh.tris, eye, stock_post(gun))
+    sr, hole, new_hole = sight_fix(pos, mesh.tris, eye, stock_post(gun) + np.array([AIM_RAISE, 0.0, 0.0]))
     pos = (pos - hole) @ sr.T + new_hole
     normal = normal @ sr.T
     forward = sr @ np.array([0.0, 0.0, 1.0])  # along the receiver

@@ -797,6 +797,77 @@ def aim_pose_moved(fs, out, aim_skc, m):
     print("  the arms' aim pose %s made over (the weapon left where the game holds it)" % aim_skc)
 
 
+def _turn_between(a, b):
+    """The smallest rotation taking direction a onto direction b (3x3)."""
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v, c = np.cross(a, b), float(a @ b)
+    if np.linalg.norm(v) < 1e-9:
+        return np.eye(3)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k * (1.0 / (1.0 + c))
+
+
+def two_hand_pose(fs, out, aim_skc, reload_skc, frame, side="l"):
+    """The arms' aim pose with the free hand on the gun too: where the reload has it at
+    frame (a pistol's left hand cupping the grip's butt as the magazine goes in), relative to
+    the weapon tag, its fingers as there; the arm bent to reach it (two bones, the elbow on
+    the side it bent to). Written over our copy of the aim pose (opm_<aim_skc>; made here
+    if no earlier step made it), which write_aim_lists points the arms' lists at."""
+    arms = skd.read(fs.read(FPS_SKD))
+    sk = pose.Skeleton(arms.bones)
+    names = {b.name.lower(): b.name for b in arms.bones}
+    parent = {b.name.lower(): (b.parent or "").lower() for b in arms.bones}
+    ours = os.path.join(out, AIM_DIR, "opm_" + aim_skc)
+    src = skc.read(open(ours, "rb").read()) if os.path.exists(ours) else read_anim(fs, AIM_DIR + aim_skc)
+    ref = read_anim(fs, AIM_DIR + reload_skc)
+    rch = pose.frame_channels(ref, frame)
+    rb = {k: np.array(v) for k, v in sk.evaluate(rch).items()}
+    rel = np.linalg.inv(rb[WEAPON_TAG.lower()]) @ rb["bip01 %s hand" % side]
+    ua, fa, hd = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side, "bip01 %s hand" % side)
+    fingers = [k for k in names if k.startswith("bip01 %s finger" % side)]
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, src.frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.frames, a.channels, a.values = list(src.frames), list(src.channels), []
+    for bone in [ua, fa, hd] + fingers:
+        if names[bone] + " rot" not in a.channels:
+            a.channels.append(names[bone] + " rot")
+    miss = 0.0
+    for f, row in enumerate(src.values):
+        row = list(row) + [None] * (len(a.channels) - len(row))
+        w = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(src, f)).items()}
+        target = w[WEAPON_TAG.lower()] @ rel
+        pt, rt = target[:3, 3], target[:3, :3]
+        s0, e0, h0 = w[ua][:3, 3], w[fa][:3, 3], w[hd][:3, 3]
+        l1, l2 = np.linalg.norm(e0 - s0), np.linalg.norm(h0 - e0)
+        to = pt - s0
+        d = float(np.clip(np.linalg.norm(to), abs(l1 - l2) + 0.01, l1 + l2 - 0.01))
+        u = to / np.linalg.norm(to)
+        p = s0 + u * d
+        along = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+        up = np.sqrt(max(l1 * l1 - along * along, 0.0))
+        pole = (e0 - s0) - u * ((e0 - s0) @ u)
+        pole = pole / np.linalg.norm(pole) if np.linalg.norm(pole) > 1e-6 else np.array([0.0, 0.0, -1.0])
+        e = s0 + u * along + pole * up
+        r1 = _turn_between(e0 - s0, e - s0)
+        r2 = _turn_between(r1 @ (h0 - e0), p - e)
+        wua = r1 @ w[ua][:3, :3]
+        wfa = r2 @ r1 @ w[fa][:3, :3]
+        local = {ua: w[parent[ua]][:3, :3].T @ wua, fa: wua.T @ wfa, hd: wfa.T @ rt}
+        for bone, m in local.items():
+            row[a.channels.index(names[bone] + " rot")] = tuple(float(x) for x in pose.matrix_to_quat(m))
+        for bone in fingers:
+            row[a.channels.index(names[bone] + " rot")] = tuple(rch[names[bone] + " rot"]) if names[bone] + " rot" in rch else row[a.channels.index(names[bone] + " rot")]
+        a.values.append(row)
+        check = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(a, f)).items()}
+        miss = max(miss, float(np.linalg.norm(check[hd][:3, 3] - pt)))
+    write(out, AIM_DIR + "opm_" + aim_skc, skc.write(a))
+    AIM_POSES["viewmodel/" + aim_skc] = "viewmodel/opm_" + aim_skc
+    print("  the arms' aim pose %s two-handed (the %s hand as at %s frame %d): %.2f cm off" % (
+        aim_skc, side, reload_skc, frame, miss))
+
+
 def write_aim_lists(fs, out):
     """The arms' animation lists that name an aim pose we made over, pointed at ours."""
     for path in FPS_ANIM_LISTS:
@@ -1594,6 +1665,9 @@ def remodel(spec, fs, out, folder):
                "\tqer_editorimage %s\n\t{\n\t\tmap %s\n\t\trgbGen lightingSpherical\n\t}\n}\n"
                % (tik, shader, name, image, image)).replace("\n", "\r\n").encode("latin-1"))
         print("  %s: drawn two-sided" % tik)
+
+    if "two_hands" in spec:     # {reload: arms' animation, frame}: the free hand on the gun too
+        two_hand_pose(fs, out, spec["aim"], spec["two_hands"]["reload"], spec["two_hands"]["frame"])
 
     for path, end in spec.get("sounds", {}).items():   # {the game's sound: seconds kept}
         write_trimmed_sound(fs, out, path, end)
