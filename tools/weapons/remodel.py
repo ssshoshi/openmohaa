@@ -59,6 +59,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
+from urllib.parse import unquote
 
 import numpy as np
 from PIL import Image
@@ -130,7 +131,7 @@ class Piece:
 
 def read_glb(path):
     """A glTF binary's meshes as Pieces, in the scene's space, each with its node's name
-    and its embedded maps."""
+    and its maps (embedded, or files beside it)."""
     data = open(path, "rb").read()
     if data[:4] != b"glTF":
         raise SystemExit("%s is not a glTF binary" % path)
@@ -158,8 +159,12 @@ def read_glb(path):
     def image(ref):
         k = j["textures"][ref["index"]]["source"]
         if k not in images:
-            raw, _ = view(j["images"][k]["bufferView"])
-            images[k] = Image.open(io.BytesIO(bytes(raw)))
+            img = j["images"][k]
+            if "uri" in img:     # a file beside the model (a .glb with its textures folder)
+                images[k] = Image.open(os.path.join(os.path.dirname(path), unquote(img["uri"])))
+            else:
+                raw, _ = view(img["bufferView"])
+                images[k] = Image.open(io.BytesIO(bytes(raw)))
             images[k].load()
         return images[k]
 
@@ -396,6 +401,12 @@ def load_source(spec, folder):
             continue
         seen.add(sig)
         out.append(p)
+    for pattern, name in (spec.get("rename") or {}).items():   # {regex: our name for the mesh}
+        for p in out:
+            if re.match(pattern, p.name):
+                if p.material == p.name:   # a glTF mesh named after its material: both renamed
+                    p.material = name
+                p.name = name
     if spec.get("piece_re"):
         out = [p for p in out if re.fullmatch(spec["piece_re"], p.name)]
     if spec.get("material_re"):
@@ -435,8 +446,9 @@ def load_source(spec, folder):
     for p in out:
         m = spec.get("maps", {})
         for kind, rel in m.get(p.name, m.get(p.material, m.get("*", {}))).items():
-            p.maps[kind] = rel if kind in ("base_tint", "rough_value") else Image.open(os.path.join(folder, rel))
+            p.maps[kind] = rel if kind in ("base_tint", "rough_value", "metal_diffuse") else Image.open(os.path.join(folder, rel))
     return out
+
 
 
 # ----------------------------------------------------------------------------- the game's model
@@ -739,6 +751,37 @@ def write_aim_lists(fs, out):
             put_tik(out, path, new)
 
 
+TORSO_STATES = "global/mike_torso.st"
+SHELL_STATE = "RELOAD_SHOTGUN_SINGLE"
+
+
+def write_shell_reload(fs, out):
+    """The shotgun's hand loading each shell. MOHAIM plays the arms' reload_single slot as
+    its aim pose, so its torso states load each shell with `viewmodelanim reload`, which
+    only holds the start of the reload (the hand never comes in). The shell loading
+    (shotgun_reload_single_1) goes in the shotgun's unused rechamber slot instead, played
+    from the start for each shell."""
+    text = fs.read_text(TORSO_STATES).replace("\r\n", "\n")
+    m = re.search(r"state\s+%s\s*\{.*?entrycommands\s*\{(.*?)\}" % SHELL_STATE, text, re.S)
+    if not m:
+        raise SystemExit("%s has no %s state" % (TORSO_STATES, SHELL_STATE))
+    body = re.sub(r"(?m)^(\s*)viewmodelanim\s+reload[ \t]*$", r"\1viewmodelanim rechamber 1", m.group(1))
+    if body == m.group(1):
+        if "viewmodelanim rechamber" not in body:
+            print("  %s: %s plays no `viewmodelanim reload`, left as it is" % (TORSO_STATES, SHELL_STATE))
+        return
+    put_tik(out, TORSO_STATES, text[:m.start(1)] + body + text[m.end(1):])
+    path = "models/player/base/fps_anims_shotgun.txt"
+    lists = fs.read_text(path).replace("\r\n", "\n")
+    fill = re.search(r"(?m)^\s*shotgun_reload_single_1\s+(\S+)", lists)
+    if not fill:
+        raise SystemExit("%s has no shotgun_reload_single_1" % path)
+    if not re.search(r"(?m)^\s*shotgun_rechamber\s", lists):
+        lists = lists[:fill.end()] + lists[fill.end():].split("\n", 1)[0] + \
+            "\n\tshotgun_rechamber\t\t%s\tcrossblend 0\n" % fill.group(1) + lists[fill.end():].split("\n", 1)[1]
+    put_tik(out, path, lists)
+
+
 def touch_clusters(p, gap):
     """Each triangle's cluster: connected parts within gap of each other joined (one object
     of a display: a bolt and its firing pin, a clip and its rounds)."""
@@ -884,6 +927,8 @@ def write_textures(out, tex_dir, name, maps, size, spec_size):
     base = np.asarray(sized(maps["base"], size, "RGB")).astype(np.float32) / 255.0
     ao = chan(maps.get("ao"), size, 1.0)[..., None]
     diffuse = base * (1.0 - AO_AMOUNT + AO_AMOUNT * ao)
+    if "metal_diffuse" in maps:   # a PBR metal takes no diffuse light: its share of it kept
+        diffuse *= 1.0 - (1.0 - maps["metal_diffuse"]) * chan(maps.get("metal"), size, 0.0)[..., None]
     Image.fromarray(np.clip(diffuse * 255 + 0.5, 0, 255).astype(np.uint8)).save(
         os.path.join(out, tex_dir, name + ".jpg"), quality=92, subsampling=0)
     if "normal" in maps:
@@ -1333,6 +1378,8 @@ def main():
             print("%s: %s" % (spec["key"], e))
             failed.append(spec["key"])
     write_aim_lists(fs, args.out)
+    if "shotgun" in made:
+        write_shell_reload(fs, args.out)
     print("made %s%s" % (", ".join(made) or "nothing", "; failed %s" % ", ".join(failed) if failed else ""))
     if failed and only:
         sys.exit(1)

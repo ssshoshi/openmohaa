@@ -117,14 +117,17 @@ KAR98_BOLT = ((-2.0, 19.5), (-4.0, 3.0), (-9.5, -1.5))          # the bolt (the 
 # The Kar98k source's bolt is in many small pieces, some welded to the receiver: until it is
 # cut out by hand, nothing goes on the chamber bone (the bolt does not move)
 NOWHERE = ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
-KAR98_MAPS = {"model_1": _set("Kar98k-rifle_"), "model_0": _set("Kar98k-rifle_"),
-              "model_5": _set("Kar98k-scope_")}
+# the glTF download (metres, the display's layout): its meshes by their old OBJ names
+KAR98_SOURCE = dict(source=["*.glb"], rename={"rears.*ght-button": "model_0", "rifle_": "model_1",
+                                              "scope-body": "model_5"})
 KAR98_MATS = {"model_0": "rifle", "model_1": "rifle"}
-# in model_0 (cm): the bolt, its firing pin, shroud and cocking piece (not the extractor
-# lying beside it); the stripper clip with its rounds
-KAR98_BOLT_PICK = dict(name="bolt", mesh="model_0", box=((-6.0, 2.5), (8.5, 16.0), (-34.0, -10.0)),
-                       scale=0.01, target="bone:chamber", assign=("chamber", "KAR981"))
-KAR98_CLIP_PICK = dict(mesh="model_0", box=((8.0, 18.0), (-1.0, 3.0), (-28.0, -15.0)), scale=0.01)
+# its renders' metal is near black (a PBR metal takes no diffuse light): ours keeps a part
+KAR98_MAPS = {"*": {"metal_diffuse": 0.4}}
+# in model_0 (the display's copy): the bolt, its firing pin, shroud and cocking piece (not
+# the extractor lying beside it); the stripper clip with its rounds
+KAR98_BOLT_PICK = dict(name="bolt", mesh="model_0", box=((-0.06, 0.025), (0.085, 0.16), (-0.34, -0.10)),
+                       target="bone:chamber", assign=("chamber", "KAR981"))
+KAR98_CLIP_PICK = dict(mesh="model_0", box=((0.08, 0.18), (-0.01, 0.03), (-0.28, -0.15)))
 SPRINGFIELD_SCOPE = ((1.0, 33.0), (-5.0, 1.5), (-14.0, -8.0))   # the scope, above the bolt
 
 WEAPONS += [
@@ -147,15 +150,14 @@ WEAPONS += [
     # The assembled rifle (model_1, in metres) has no bolt; the field-stripped one beside it
     # (model_0, in cm) has, and a stripper clip of five rounds: the bolt goes on the chamber
     # bone where the game's is, the clip is the reload's
-    dict(key="kar98", folder="Kar98k", source=["model_*.obj"], pieces=["model_1"],
-         maps=KAR98_MAPS, material_of=KAR98_MATS,
+    dict(key="kar98", folder="Kar98k", **KAR98_SOURCE, pieces=["model_1"], material_of=KAR98_MATS, maps=KAR98_MAPS,
          picks=[KAR98_BOLT_PICK], confine={"chamber": NOWHERE},
          aim="kar98_stand_aim.skc", sight_at=((28.0, 0.0, -0.15), (90.0, -0.3, 0.05)),
          sight_drop=1.2,    # the eye over the rear sight and the receiver, the front post in view
          ammo_picks={"models/ammo/kar98_clip_reload.tik": KAR98_CLIP_PICK},
          tik="models/weapons/kar98.tik"),
-    dict(key="kar98sniper", folder="Kar98k", source=["model_*.obj"], pieces=["model_1", "model_5"],
-         maps=KAR98_MAPS, material_of=KAR98_MATS,
+    dict(key="kar98sniper", folder="Kar98k", **KAR98_SOURCE, pieces=["model_1", "model_5"],
+         material_of=KAR98_MATS, maps=KAR98_MAPS,
          place={"model_5": "scope"}, fit_without=["scope", "lens"],
          assign={"model_5": ("sniper", "scope")},
          picks=[KAR98_BOLT_PICK], confine={"chamber": NOWHERE},
@@ -191,15 +193,9 @@ WEAPONS += [
          confine={"Box02": ((6.9, 11.8), (-4.9, -1.2), (-9.0, -6.8))},
          aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.2, -2.3), (67.0, -0.3, -2.25)),
          tik="models/weapons/mp44.tik", ammo={"models/ammo/mp44_clip.tik": "mp44clip"}),
-    dict(key="shotgun", folder="Winchester M12 Trench Gun", source=["model_*.obj"],
-         # model_0 is on the wood set's atlas (the wood and some metal), model_1 on the metal
-         # one, whose only map is its metalness (its colour and roughness were the
-         # material's plain values, not exported): blued steel shaded by the map's detail,
-         # and as smooth as gun metal
-         maps={"model_0": _set("winchester_m12_trench_gun_assembled_wood_", "B", "N", "R", "M", None),
-               "model_1": {"base": "winchester_m12_trench_gun_assembled_metal_.png",
-                           "metal": "winchester_m12_trench_gun_assembled_metal_.png",
-                           "base_tint": (0.34, 0.35, 0.40), "rough_value": 0.3}},
+    dict(key="shotgun", folder="Winchester M12 Trench Gun", source=["*.glb"],
+         # the glTF download: its two materials (wood set, metal set) with every map, the
+         # images in textures/ beside it
          confine={"Object01": ((26.0, 47.0), (-4.5, 0.5), (-7.0, -1.0))},
          tik="models/weapons/shotgun.tik"),
     dict(key="bazooka", folder="M1 Bazooka", source=["model_*.obj"], pieces=["model_0", "model_2"],
