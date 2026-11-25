@@ -808,12 +808,14 @@ def _turn_between(a, b):
     return np.eye(3) + k + k @ k * (1.0 / (1.0 + c))
 
 
-def two_hand_pose(fs, out, aim_skc, reload_skc, frame, side="l"):
+def two_hand_pose(fs, out, aim_skc, reload_skc, frame, prefix, side="l"):
     """The arms' aim pose with the free hand on the gun too: where the reload has it at
     frame (a pistol's left hand cupping the grip's butt as the magazine goes in), relative to
     the weapon tag, its fingers as there; the arm bent to reach it (two bones, the elbow on
-    the side it bent to). Written over our copy of the aim pose (opm_<aim_skc>; made here
-    if no earlier step made it), which write_aim_lists points the arms' lists at."""
+    the side it bent to). From our sighted copy of the aim pose (opm_<aim_skc>, if an
+    earlier step made one), written as opm_low_<prefix>.skc: the arms' <prefix>_charge_low,
+    which cgame plays aiming kneeling or prone. Standing keeps the game's pose (pistols are
+    point-shot standing, as the period trained), so the sighted copy goes."""
     arms = skd.read(fs.read(FPS_SKD))
     sk = pose.Skeleton(arms.bones)
     names = {b.name.lower(): b.name for b in arms.bones}
@@ -862,10 +864,12 @@ def two_hand_pose(fs, out, aim_skc, reload_skc, frame, side="l"):
         a.values.append(row)
         check = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(a, f)).items()}
         miss = max(miss, float(np.linalg.norm(check[hd][:3, 3] - pt)))
-    write(out, AIM_DIR + "opm_" + aim_skc, skc.write(a))
-    AIM_POSES["viewmodel/" + aim_skc] = "viewmodel/opm_" + aim_skc
-    print("  the arms' aim pose %s two-handed (the %s hand as at %s frame %d): %.2f cm off" % (
-        aim_skc, side, reload_skc, frame, miss))
+    write(out, AIM_DIR + "opm_low_%s.skc" % prefix, skc.write(a))
+    if os.path.exists(ours):
+        os.remove(ours)
+    AIM_POSES.pop("viewmodel/" + aim_skc, None)
+    print("  %s_charge_low: the aim pose %s two-handed (the %s hand as at %s frame %d): %.2f cm off" % (
+        prefix, aim_skc, side, reload_skc, frame, miss))
 
 
 def write_aim_lists(fs, out):
@@ -878,11 +882,18 @@ def write_aim_lists(fs, out):
         new = text
         poses = dict(AIM_POSES)    # and those an earlier run made (a build of some weapons only)
         made = os.path.join(out, "models/human/animation/viewmodel")
+        lows = []
         for f in sorted(os.listdir(made)) if os.path.isdir(made) else ():
-            if f.startswith("opm_") and f.endswith(".skc"):
+            if f.startswith("opm_low_") and f.endswith(".skc"):
+                lows.append(f[len("opm_low_"):-len(".skc")])
+            elif f.startswith("opm_") and f.endswith(".skc"):
                 poses.setdefault("viewmodel/" + f[len("opm_"):], "viewmodel/" + f)
         for old, ours in poses.items():
             new = re.sub(r"(?<![\w/])%s(?=\s)" % re.escape(old), ours, new)
+        for prefix in lows:     # the kneeling and prone aim, after the standing one
+            new = re.sub(r"(?m)^(\s*)%s_charge(\s+)\S+(.*)$" % re.escape(prefix),
+                         lambda m: m.group(0) + "\n%s%s_charge_low%sviewmodel/opm_low_%s.skc%s" % (
+                             m.group(1), prefix, m.group(2), prefix, m.group(3)), new, count=1)
         if new != text:
             put_tik(out, path, new)
 
@@ -1667,7 +1678,8 @@ def remodel(spec, fs, out, folder):
         print("  %s: drawn two-sided" % tik)
 
     if "two_hands" in spec:     # {reload: arms' animation, frame}: the free hand on the gun too
-        two_hand_pose(fs, out, spec["aim"], spec["two_hands"]["reload"], spec["two_hands"]["frame"])
+        two_hand_pose(fs, out, spec["aim"], spec["two_hands"]["reload"], spec["two_hands"]["frame"],
+                      spec["two_hands"]["prefix"])
 
     for path, end in spec.get("sounds", {}).items():   # {the game's sound: seconds kept}
         write_trimmed_sound(fs, out, path, end)
