@@ -41,6 +41,7 @@ import glob
 import io
 import json
 import os
+import re
 import struct
 import sys
 
@@ -644,6 +645,11 @@ def main():
     tik = retarget_tik(fs.read_text(GUN_TIK).replace("\r\n", "\n"), "opm_garand.skd",
                        {BODY: GUN_SHADER, MOVING: GUN_SHADER, CLIP: CLIP_SHADER}, anims)
     tik = clip_shown(tik)
+    # reloaded only when emptied, as the real en-bloc clip is (the game's own .tik says so;
+    # the HRRTM mods commented it out)
+    tik = re.sub(r"(?m)^(\s*)//\s*(dm)?cantpartialreload", r"\1\2cantpartialreload", tik)
+    if "\ncantpartialreload" not in "\n" + "\n".join(l.strip() for l in tik.splitlines()):
+        raise SystemExit("the Garand's .tik has no cantpartialreload line to put back")
     tik = add_animations(tik.replace("\n", "\r\n"),  # the empty rifle's bash: bolt back
                          {"secondaryfire_empty": ("secondaryfire", ours["empty"])})
     write(args.out, GUN_TIK, tik.encode("latin-1"))
