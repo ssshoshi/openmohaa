@@ -104,6 +104,9 @@ WEAPONS = [
          # the game's Hi-Standard never moves it: blowback, back with the shot and home
          slide=dict(bone="chamber", travel=2.5, anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}}),
          two_sided=True,   # its magazine is a thin plate: seen from behind in the reload
+         # its fire sound has the slide cycling recorded after the shot (0.42 s on): cut
+         # before it, as HRRTM's player asked (not realistic for the silenced pistol)
+         sounds={"sound/weapons/fire/SilencedFire2.wav": 0.38},
          # its magazine is only the floor plate: the game's magazine kept with it, for the
          # reload's end, when the gun's own slides back up into the grip
          tik_edit=lambda text, tik: text.replace("surface clip shader hi_standard", "surface clip shader opm_hi_standard_2s"),
@@ -220,8 +223,7 @@ WEAPONS += [
          # its charging handle (on the left) on the game's cock bone, nothing else
          confine={"Box02": ((6.9, 11.8), (-4.9, -1.2), (-9.0, -6.8))},
          # (set by eye from the player's shots: the notch's slit under the front needle)
-         aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.29, -2.3), (67.0, -0.3, -2.25)),
-         sight_drop=0.03,
+         aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.29, -2.36), (67.0, -0.3, -2.25)),
          tik="models/weapons/mp44.tik", ammo={"models/ammo/mp44_clip.tik": "mp44clip"}),
     dict(key="shotgun", folder="Winchester M12 Trench Gun", source=["*.glb"],
          # the glTF download: its two materials (wood set, metal set) with every map, the
@@ -245,7 +247,7 @@ WEAPONS += [
          maps={"*": {"base": "DEFAULT_0_0.png"}},
          keep_stock=["shell"], fit_without=["shell"],
          # the rear sight's notch, the front sight's post (the shield's window between)
-         aim="pose_panzershrek_aim.skc", aim_pose_fix=True, sight_at=((50.0, 2.8, -0.7), (88.0, -1.40, 1.2)),   # the notch between the prongs (2.3..3.3), the T post (0.05 right of its middle: the player saw it 1-2 px right)
+         aim="pose_panzershrek_aim.skc", aim_pose_fix=True, sight_at=((50.0, 2.8, -0.7), (88.0, -1.35, 1.2)),   # the notch between the prongs (2.3..3.3), the T post (0.1 right of its middle: the player saw it right of centre)
          eye_relief=12.0,   # the eye up at the rear sight, as the player's example
          tik="models/weapons/panzerschreck.tik"),
     dict(key="m2frag", folder="Frag Grenade", source=["source/grenade.7z!grenade_low.fbx"],

@@ -983,6 +983,30 @@ def cut_hole(p, h):
     return q
 
 
+def write_trimmed_sound(fs, out, path, end, fade=0.05):
+    """The game's sound cut off at end seconds (faded out over fade before it), at its own
+    path in the pak: a fire sound with the slide's cycling recorded after the shot."""
+    import wave
+    w = wave.open(io.BytesIO(fs.read(path)))
+    params, fr = w.getparams(), w.getframerate()
+    dt = {1: np.uint8, 2: np.int16}[w.getsampwidth()]
+    a = np.frombuffer(w.readframes(w.getnframes()), dt).reshape(-1, w.getnchannels()).astype(np.float32)
+    if dt == np.uint8:
+        a -= 128
+    n, f = int(end * fr), int(fade * fr)
+    a = a[:n]
+    a[n - f:] *= np.linspace(1.0, 0.0, f)[:, None]
+    if dt == np.uint8:
+        a += 128
+    buf = io.BytesIO()
+    o = wave.open(buf, "wb")
+    o.setparams(params)
+    o.writeframes(np.round(a).astype(dt).tobytes())
+    o.close()
+    write(out, path, buf.getvalue())
+    print("  %s: cut at %.2f s" % (path, end))
+
+
 def touch_clusters(p, gap):
     """Each triangle's cluster: connected parts within gap of each other joined (one object
     of a display: a bolt and its firing pin, a clip and its rounds)."""
@@ -1570,6 +1594,9 @@ def remodel(spec, fs, out, folder):
                "\tqer_editorimage %s\n\t{\n\t\tmap %s\n\t\trgbGen lightingSpherical\n\t}\n}\n"
                % (tik, shader, name, image, image)).replace("\n", "\r\n").encode("latin-1"))
         print("  %s: drawn two-sided" % tik)
+
+    for path, end in spec.get("sounds", {}).items():   # {the game's sound: seconds kept}
+        write_trimmed_sound(fs, out, path, end)
 
     # 3. the hand's ammunition taken from the source (a stripper clip, a round), fitted onto
     # the game's model of it at the gun's scale
