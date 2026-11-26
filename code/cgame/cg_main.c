@@ -163,6 +163,9 @@ cvar_t *ui_timemessage;
 cvar_t *cg_fov;
 cvar_t *cg_breathZoom;
 cvar_t *cg_zoomEase;
+cvar_t *cg_scopeFade;
+cvar_t *cg_scopeHideAt;
+float   cg_scopeOverlayAlpha;
 cvar_t *cl_breathHold;
 cvar_t *cl_scopeLens;
 cvar_t *cg_cheats;
@@ -308,7 +311,11 @@ void CG_RegisterCvars(void)
     // Added in OPM: holding the breath aiming zooms in by this share (CG_CalcFov)
     cg_breathZoom = cgi.Cvar_Get("cg_breathZoom", "0.12", CVAR_ARCHIVE);
     // Added in OPM: seconds a scope's zoom takes to settle in and out (CG_CalcFov)
-    cg_zoomEase = cgi.Cvar_Get("cg_zoomEase", "0.12", CVAR_ARCHIVE);
+    cg_zoomEase = cgi.Cvar_Get("cg_zoomEase", "0.2", CVAR_ARCHIVE);
+    // Added in OPM: the scope's overlay fades in over cg_scopeFade seconds, the view weapon
+    // (its eyepiece at the eye) drawn under it until it is cg_scopeHideAt opaque
+    cg_scopeFade   = cgi.Cvar_Get("cg_scopeFade", "0.2", CVAR_ARCHIVE);
+    cg_scopeHideAt = cgi.Cvar_Get("cg_scopeHideAt", "0.7", CVAR_ARCHIVE);
     cl_breathHold = cgi.Cvar_Get("cl_breathHold", "0", CVAR_ROM);
     cl_scopeLens  = cgi.Cvar_Get("cl_scopeLens", "0", 0);
     cg_cheats = cgi.Cvar_Get("cheats", "0", CVAR_USERINFO | CVAR_SERVERINFO | CVAR_LATCH);

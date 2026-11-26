@@ -876,7 +876,7 @@ void CVAR_Init(void)
     g_spread_crouch      = gi.Cvar_Get("g_spread_crouch", "0.75", 0);
     g_spread_prone       = gi.Cvar_Get("g_spread_prone", "0.5", 0);
     // seconds of bringing a scoped rifle to the eye before looking through it (Player::UpdateScope)
-    g_scopeDelay         = gi.Cvar_Get("g_scopeDelay", "0.3", 0);
+    g_scopeDelay         = gi.Cvar_Get("g_scopeDelay", "0.25", 0);
     g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
     g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
     g_grenade_prone       = gi.Cvar_Get("g_grenade_prone", "0.5", 0);

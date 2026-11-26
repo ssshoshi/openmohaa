@@ -563,6 +563,9 @@ extern "C" {
     extern cvar_t *cg_fov;
     extern cvar_t *cg_breathZoom;
     extern cvar_t *cg_zoomEase;
+    extern cvar_t *cg_scopeFade;
+    extern cvar_t *cg_scopeHideAt;
+    extern float   cg_scopeOverlayAlpha; // the zoom overlay's opacity now (CG_DrawZoomOverlay)
     extern cvar_t *cl_breathHold;
     extern cvar_t *cl_scopeLens;
     extern cvar_t *cg_cheats;

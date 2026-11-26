@@ -1042,6 +1042,20 @@ static void CG_ApplyIdleSway(refEntity_t *model)
 
 /*
 ======================
+CG_ZoomHidesViewModel
+
+Added in OPM
+  Zoomed, the view weapon goes once the scope's overlay is cg_scopeHideAt opaque: until
+  then its eyepiece, up at the eye, shows under the overlay fading in.
+======================
+*/
+static qboolean CG_ZoomHidesViewModel(void)
+{
+    return cg_scopeOverlayAlpha >= cg_scopeHideAt->value;
+}
+
+/*
+======================
 CG_RecoilViewModel
 
 Added in OPM
@@ -2083,7 +2097,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     memcpy(model.surfaces, s1->surfaces, MAX_MODEL_SURFACES);
 
     if (!(s1->renderfx & RF_ALWAYSDRAW) && s1->parent != ENTITYNUM_NONE && s1->parent == cg.snap->ps.clientNum
-        && ((!cg_drawviewmodel->integer && !bThirdPerson) || cg.snap->ps.stats[STAT_INZOOM])) {
+        && ((!cg_drawviewmodel->integer && !bThirdPerson) || (cg.snap->ps.stats[STAT_INZOOM] && CG_ZoomHidesViewModel()))) {
         // hide all surfaces while zooming or if the viewmodel shouldn't be shown
         for (i = 0; i < MAX_MODEL_SURFACES; i++) {
             model.surfaces[i] |= MDL_SURFACE_NODRAW;
@@ -2275,7 +2289,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
             cgi.ForceUpdatePose(&model);
 
             if ((cent->currentState.eFlags & EF_UNARMED) || cg_drawviewmodel->integer <= 1
-                || cg.snap->ps.stats[STAT_INZOOM] || cg.snap->ps.stats[STAT_HEALTH] <= 0) {
+                || (cg.snap->ps.stats[STAT_INZOOM] && CG_ZoomHidesViewModel()) || cg.snap->ps.stats[STAT_HEALTH] <= 0) {
                 // unarmed or zooming, hide the arms
                 for (i = 0; i < MAX_MODEL_SURFACES; i++) {
                     model.surfaces[i] |= MDL_SURFACE_NODRAW;
