@@ -90,6 +90,13 @@ WEAPON_TAG = "tag_weapon_right"
 STOCK_POST_Z = 58.0         # the game gun's front post: its highest vertices beyond this
 REAR_SIGHT_BOX = ((8.4, 11.3), (1.3, 2.7), (5.8, 6.4))     # our peep sight's plate
 FRONT_POST_BOX = ((6.5, 11.5), (0.6, 3.5), (62.8, 64.8))   # our front sight
+# The whole gun moved this far (cm, X up, Y) in the aim, the line kept: in game it sat a
+# little low and left of the crosshair (the camera sits off the eye bone): the peep hole
+# round the crosshair; then the post onto it, turned about the hole (the line's far end
+# moved, the post being much further from the eye moves more)
+AIM_SHIFT = np.array([0.0, 0.0, 0.0])
+AIM_POST = np.array([0.38, 0.15, 0.0])
+
 # The FBX download's sights are each one piece with their guards and sleeve: when no piece
 # lies in the boxes above, the triangles in these (its leaf, between the ears; its blade)
 REAR_LEAF_BOX = ((9.3, 10.95), (1.35, 2.9), (6.9, 7.4))
@@ -729,7 +736,7 @@ def main():
 
     # the sights onto the aim pose's line (after the cuts, whose boxes are the fit's)
     eye = aim_eye(fs, gun)
-    sr, hole, new_hole = sight_fix(pos, mesh.tris, eye, stock_post(gun))
+    sr, hole, new_hole = sight_fix(pos, mesh.tris, eye + AIM_SHIFT, stock_post(gun) + AIM_SHIFT + AIM_POST)
     pos = (pos - hole) @ sr.T + new_hole
     normal = normal @ sr.T
     slide = sr @ np.array([0.0, 0.0, 1.0])  # along the receiver

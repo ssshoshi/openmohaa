@@ -737,6 +737,24 @@ def with_turn(src, bone, pin, axis, curve):
     return a
 
 
+def with_held(src, bone, frm, to):
+    """src with bone kept as it is at frame frm through frame to."""
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, src.frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.frames = list(src.frames)
+    a.channels = list(src.channels)
+    cols = [a.channels.index(bone + " pos"), a.channels.index(bone + " rot")]
+    a.values = []
+    for f, row in enumerate(src.values):
+        row = list(row)
+        if frm < f <= to:
+            for c in cols:
+                row[c] = src.values[frm][c]
+        a.values.append(row)
+    return a
+
+
 def mk_moved(p, m):
     q = p.moved(m)
     q.material_key = p.material_key
@@ -797,6 +815,78 @@ def aim_pose_moved(fs, out, aim_skc, m):
     print("  the arms' aim pose %s made over (the weapon left where the game holds it)" % aim_skc)
 
 
+def _turn_between(a, b):
+    """The smallest rotation taking direction a onto direction b (3x3)."""
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v, c = np.cross(a, b), float(a @ b)
+    if np.linalg.norm(v) < 1e-9:
+        return np.eye(3)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k * (1.0 / (1.0 + c))
+
+
+def two_hand_pose(fs, out, aim_skc, reload_skc, frame, prefix, side="l"):
+    """The arms' aim pose with the free hand on the gun too: where the reload has it at
+    frame (a pistol's left hand cupping the grip's butt as the magazine goes in), relative to
+    the weapon tag, its fingers as there; the arm bent to reach it (two bones, the elbow on
+    the side it bent to). From our sighted copy of the aim pose (opm_<aim_skc>, if an
+    earlier step made one), written as opm_low_<prefix>.skc: the arms' <prefix>_charge_low,
+    which cgame plays aiming kneeling or prone. Standing stays one-handed (pistols were
+    shot one-handed standing, as the period trained), sighted all the same."""
+    arms = skd.read(fs.read(FPS_SKD))
+    sk = pose.Skeleton(arms.bones)
+    names = {b.name.lower(): b.name for b in arms.bones}
+    parent = {b.name.lower(): (b.parent or "").lower() for b in arms.bones}
+    ours = os.path.join(out, AIM_DIR, "opm_" + aim_skc)
+    src = skc.read(open(ours, "rb").read()) if os.path.exists(ours) else read_anim(fs, AIM_DIR + aim_skc)
+    ref = read_anim(fs, AIM_DIR + reload_skc)
+    rch = pose.frame_channels(ref, frame)
+    rb = {k: np.array(v) for k, v in sk.evaluate(rch).items()}
+    rel = np.linalg.inv(rb[WEAPON_TAG.lower()]) @ rb["bip01 %s hand" % side]
+    ua, fa, hd = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side, "bip01 %s hand" % side)
+    fingers = [k for k in names if k.startswith("bip01 %s finger" % side)]
+    a = skc.Animation()
+    a.flags, a.frame_time = src.flags, src.frame_time
+    a.total_delta, a.total_angle_delta = src.total_delta, src.total_angle_delta
+    a.frames, a.channels, a.values = list(src.frames), list(src.channels), []
+    for bone in [ua, fa, hd] + fingers:
+        if names[bone] + " rot" not in a.channels:
+            a.channels.append(names[bone] + " rot")
+    miss = 0.0
+    for f, row in enumerate(src.values):
+        row = list(row) + [None] * (len(a.channels) - len(row))
+        w = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(src, f)).items()}
+        target = w[WEAPON_TAG.lower()] @ rel
+        pt, rt = target[:3, 3], target[:3, :3]
+        s0, e0, h0 = w[ua][:3, 3], w[fa][:3, 3], w[hd][:3, 3]
+        l1, l2 = np.linalg.norm(e0 - s0), np.linalg.norm(h0 - e0)
+        to = pt - s0
+        d = float(np.clip(np.linalg.norm(to), abs(l1 - l2) + 0.01, l1 + l2 - 0.01))
+        u = to / np.linalg.norm(to)
+        p = s0 + u * d
+        along = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+        up = np.sqrt(max(l1 * l1 - along * along, 0.0))
+        pole = (e0 - s0) - u * ((e0 - s0) @ u)
+        pole = pole / np.linalg.norm(pole) if np.linalg.norm(pole) > 1e-6 else np.array([0.0, 0.0, -1.0])
+        e = s0 + u * along + pole * up
+        r1 = _turn_between(e0 - s0, e - s0)
+        r2 = _turn_between(r1 @ (h0 - e0), p - e)
+        wua = r1 @ w[ua][:3, :3]
+        wfa = r2 @ r1 @ w[fa][:3, :3]
+        local = {ua: w[parent[ua]][:3, :3].T @ wua, fa: wua.T @ wfa, hd: wfa.T @ rt}
+        for bone, m in local.items():
+            row[a.channels.index(names[bone] + " rot")] = tuple(float(x) for x in pose.matrix_to_quat(m))
+        for bone in fingers:
+            row[a.channels.index(names[bone] + " rot")] = tuple(rch[names[bone] + " rot"]) if names[bone] + " rot" in rch else row[a.channels.index(names[bone] + " rot")]
+        a.values.append(row)
+        check = {k: np.array(v) for k, v in sk.evaluate(pose.frame_channels(a, f)).items()}
+        miss = max(miss, float(np.linalg.norm(check[hd][:3, 3] - pt)))
+    write(out, AIM_DIR + "opm_low_%s.skc" % prefix, skc.write(a))
+    print("  %s_charge_low: the aim pose %s two-handed (the %s hand as at %s frame %d): %.2f cm off" % (
+        prefix, aim_skc, side, reload_skc, frame, miss))
+
+
 def write_aim_lists(fs, out):
     """The arms' animation lists that name an aim pose we made over, pointed at ours."""
     for path in FPS_ANIM_LISTS:
@@ -807,11 +897,18 @@ def write_aim_lists(fs, out):
         new = text
         poses = dict(AIM_POSES)    # and those an earlier run made (a build of some weapons only)
         made = os.path.join(out, "models/human/animation/viewmodel")
+        lows = []
         for f in sorted(os.listdir(made)) if os.path.isdir(made) else ():
-            if f.startswith("opm_") and f.endswith(".skc"):
+            if f.startswith("opm_low_") and f.endswith(".skc"):
+                lows.append(f[len("opm_low_"):-len(".skc")])
+            elif f.startswith("opm_") and f.endswith(".skc"):
                 poses.setdefault("viewmodel/" + f[len("opm_"):], "viewmodel/" + f)
         for old, ours in poses.items():
             new = re.sub(r"(?<![\w/])%s(?=\s)" % re.escape(old), ours, new)
+        for prefix in lows:     # the kneeling and prone aim, after the standing one
+            new = re.sub(r"(?m)^(\s*)%s_charge(\s+)\S+(.*)$" % re.escape(prefix),
+                         lambda m: m.group(0) + "\n%s%s_charge_low%sviewmodel/opm_low_%s.skc%s" % (
+                             m.group(1), prefix, m.group(2), prefix, m.group(3)), new, count=1)
         if new != text:
             put_tik(out, path, new)
 
@@ -904,6 +1001,14 @@ def clip_in_gun(fs, out, stock, spec, skd_name, p, shader, ig):
     tik_path = os.path.join(out, spec["tik"])
     t = open(tik_path, "rb").read().decode("latin-1").replace("\r\n", "\n")
     t = re.sub(r"(\bskelmodel\s+\S+\n)", lambda mm: mm.group(1) + "\n".join(lines) + "\n", t, count=1)
+    if ig.get("hold"):   # {bone: (from frame, to frame)}: kept in the gun longer than the game's animation has it
+        held_anim = anim
+        for bone, (frm, to) in ig["hold"].items():
+            held_anim = with_held(held_anim, bone, frm, to)
+        name = "opm_%s_%s" % (spec["key"], os.path.basename(re.search(r"^\s*%s\s+(\S+\.skc)" % re.escape(ig["anim"]), t, re.M).group(1)).lower())
+        write(out, "%s/%s" % (stock.dir, name), skc.write(held_anim))
+        t, n = re.subn(r"^(\s*%s\s+)\S+\.skc" % re.escape(ig["anim"]), lambda mm: mm.group(1) + name, t, count=1, flags=re.M)
+        print("  %s held in %s to frame %s" % (", ".join(ig["hold"]), name, ", ".join(str(v[1]) for v in ig["hold"].values())))
     put_tik(out, spec["tik"], t)
 
 
@@ -983,6 +1088,30 @@ def cut_hole(p, h):
     return q
 
 
+def write_trimmed_sound(fs, out, path, end, fade=0.05):
+    """The game's sound cut off at end seconds (faded out over fade before it), at its own
+    path in the pak: a fire sound with the slide's cycling recorded after the shot."""
+    import wave
+    w = wave.open(io.BytesIO(fs.read(path)))
+    params, fr = w.getparams(), w.getframerate()
+    dt = {1: np.uint8, 2: np.int16}[w.getsampwidth()]
+    a = np.frombuffer(w.readframes(w.getnframes()), dt).reshape(-1, w.getnchannels()).astype(np.float32)
+    if dt == np.uint8:
+        a -= 128
+    n, f = int(end * fr), int(fade * fr)
+    a = a[:n]
+    a[n - f:] *= np.linspace(1.0, 0.0, f)[:, None]
+    if dt == np.uint8:
+        a += 128
+    buf = io.BytesIO()
+    o = wave.open(buf, "wb")
+    o.setparams(params)
+    o.writeframes(np.round(a).astype(dt).tobytes())
+    o.close()
+    write(out, path, buf.getvalue())
+    print("  %s: cut at %.2f s" % (path, end))
+
+
 def touch_clusters(p, gap):
     """Each triangle's cluster: connected parts within gap of each other joined (one object
     of a display: a bolt and its firing pin, a clip and its rounds)."""
@@ -1021,7 +1150,25 @@ def pick(pieces, sel):
         raise SystemExit("nothing of %s in %s" % (sel["mesh"], sel["box"]))
     out = p.subset(keep)
     out.name = sel.get("name", sel["mesh"] + "_pick")
-    out.material = p.material or p.name
+    out.material = sel.get("material_as") or p.material or p.name
+    if "hinge" in sel:   # turned about a hinge (the source's space): (point, axis, degrees)
+        point, axis, deg = sel["hinge"]
+        axis = np.asarray(axis, float) / np.linalg.norm(axis)
+        a = np.radians(deg)
+        k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        rot = np.eye(3) + np.sin(a) * k + (1 - np.cos(a)) * k @ k
+        m = np.eye(4)
+        m[:3, :3] = rot
+        m[:3, 3] = np.asarray(point, float) - rot @ np.asarray(point, float)
+        out = out.moved(m)
+        out.name = sel.get("name", sel["mesh"] + "_pick")
+        out.material = sel.get("material_as") or p.material or p.name
+    if "shift" in sel:   # then moved (the source's space)
+        m = np.eye(4)
+        m[:3, 3] = sel["shift"]
+        out = out.moved(m)
+        out.name = sel.get("name", sel["mesh"] + "_pick")
+        out.material = sel.get("material_as") or p.material or p.name
     print("  picked %s: %d triangles of %s" % (out.name, len(out.tris), sel["mesh"]))
     return out
 
@@ -1271,7 +1418,8 @@ def remodel(spec, fs, out, folder):
         pieces += [pick(raw, sel) for sel in spec["picks"]]
     pick_scale = {sel.get("name", sel["mesh"] + "_pick"): sel.get("scale", 1.0) for sel in spec.get("picks", ())}
     placed = dict(spec.get("place", {}))
-    placed.update({sel.get("name", sel["mesh"] + "_pick"): sel["target"] for sel in spec.get("picks", ())})
+    # a pick without a target stays where the source has it, on the gun (and fitted with it)
+    placed.update({sel.get("name", sel["mesh"] + "_pick"): sel["target"] for sel in spec.get("picks", ()) if "target" in sel})
     for sel in spec.get("picks", ()):
         if "assign" in sel:
             spec.setdefault("assign", {})[sel.get("name", sel["mesh"] + "_pick")] = sel["assign"]
@@ -1571,6 +1719,13 @@ def remodel(spec, fs, out, folder):
                % (tik, shader, name, image, image)).replace("\n", "\r\n").encode("latin-1"))
         print("  %s: drawn two-sided" % tik)
 
+    if "two_hands" in spec:     # {reload: arms' animation, frame}: the free hand on the gun too
+        two_hand_pose(fs, out, spec["aim"], spec["two_hands"]["reload"], spec["two_hands"]["frame"],
+                      spec["two_hands"]["prefix"])
+
+    for path, end in spec.get("sounds", {}).items():   # {the game's sound: seconds kept}
+        write_trimmed_sound(fs, out, path, end)
+
     # 3. the hand's ammunition taken from the source (a stripper clip, a round), fitted onto
     # the game's model of it at the gun's scale
     src_all = None
@@ -1606,7 +1761,10 @@ def remodel(spec, fs, out, folder):
                                                  [asurf], shader_of)
         aname = "opm_%s_%s" % (key, os.path.splitext(os.path.basename(ammo.skd_path))[0].lower())
         write(out, "%s/%s.skd" % (ammo.dir, aname), skd.write(model_like(ammo.model, aname + ".skd", asurfs)))
-        put_tik(out, ammo_tik, retarget_tik(tik_text(fs, ammo_tik), aname + ".skd", ashaders, awild))
+        atext = retarget_tik(tik_text(fs, ammo_tik), aname + ".skd", ashaders, awild)
+        if "tik_edit" in sel:   # f(text) -> text
+            atext = sel["tik_edit"](atext)
+        put_tik(out, ammo_tik, atext)
         if "in_gun" in sel:
             clip_in_gun(fs, out, stock, spec, skd_name, p, shader_of[mk], sel["in_gun"])
 

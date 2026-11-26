@@ -55,6 +55,9 @@
                  f(text, tik path) -> text
 """
 
+
+import re
+
 WEAPONS = [
     dict(key="colt45", folder="M1911", source=["*.glb"],
          # the glTF download: two meshes (its two texture sets), two pistols in them: the
@@ -63,6 +66,13 @@ WEAPONS = [
          # polished blued steel in its renders: more of the metal's reflection, glossier, and
          # less diffuse so that the highlights stand out
          maps={"*": {"metal_share": 0.85, "max_gloss": 0.85, "metal_diffuse": 0.5}},
+         # aiming kneeling or prone two-handed: the left hand cupping the grip's butt, as the
+         # Colt's reload has it pushing a magazine in (frame 18); standing one-handed, as the
+         # period trained (the game's own aim pose, sighted)
+         # its rear notch's top and front blade's tip on the aim (in the aim pose only)
+         sight_at=((32.5, 0.30, -2.2), (51.5, -0.05, 0.2)), aim_pose_fix=True,   # rear left: centred on the blade (player)
+         sight_drop=0.2, sight_shift=(0.0, 0.2),   # the camera sits off the eye bone: the blade up into the notch, both onto the crosshair (the rear up a little: player)
+         aim="coltpose_aim.skc", two_hands=dict(reload="pistol/reload_colt.skc", frame=18, prefix="colt45"),
          tik="models/weapons/colt45.tik", ammo={"models/ammo/colt_clip.tik": "clip"}),
     dict(key="p38", folder="Walther P38", source=["source/*.fbx"],
          # the source: two pistols on a cloth, two loose magazines, rounds. The loaded one (its
@@ -90,6 +100,9 @@ WEAPONS = [
                     anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}})],
          shift=[dict(box=((-5.0, 3.0), (-4.0, 1.0), (-7.0, -4.4)), forward=4.0, assign=("opm_slide", "P381"))],
          slide=dict(bone="opm_slide", travel=4.0, anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}}),
+         sight_at=((31.5, 0.33, -1.15), (52.5, -0.21, -0.4)), aim_pose_fix=True,   # rear left: centred on the blade (player)
+         sight_drop=0.25, sight_shift=(0.0, 0.2),   # as the Colt's: the blade up into the notch
+         aim="P38pose_aim.skc", two_hands=dict(reload="pistol/reload_colt.skc", frame=18, prefix="p38"),   # kneeling or prone two-handed (see the Colt)
          tik="models/weapons/p38.tik", ammo={"models/ammo/p38_clip.tik": "clip"}),
     dict(key="hspistol", folder="High Standard HDM Silenced", source=["source/textures.zip!HDM.fbx"],
          maps={"*": {"base": "textures/DefaultMaterial_Base_Color.png",
@@ -104,6 +117,9 @@ WEAPONS = [
          # the game's Hi-Standard never moves it: blowback, back with the shot and home
          slide=dict(bone="chamber", travel=2.5, anims={"fire": {0: 1.0, 1: 1.0, 3: 0.0}}),
          two_sided=True,   # its magazine is a thin plate: seen from behind in the reload
+         # its fire sound has the slide cycling recorded after the shot (0.42 s on): cut
+         # before it, as HRRTM's player asked (not realistic for the silenced pistol)
+         sounds={"sound/weapons/fire/SilencedFire2.wav": 0.38},
          # its magazine is only the floor plate: the game's magazine kept with it, for the
          # reload's end, when the gun's own slides back up into the grip
          tik_edit=lambda text, tik: text.replace("surface clip shader hi_standard", "surface clip shader opm_hi_standard_2s"),
@@ -111,6 +127,10 @@ WEAPONS = [
          # the hand's magazine (the game's) has edge faces wound inward: holes, both sides drawn
          ammo_two_sided={"models/ammo/silencedpistol_clip.tik":
                          ("hi_standard", "textures/models/weapons/hi_standard/hi_standard.tga")},
+         # the rear notch over the silencer's front end (fatter than the slide, it hides the
+         # slide's own front sight)
+         sight_at=((30.0, 1.23, -4.05), (65.0, 0.55, -1.65)), aim_pose_fix=True, roll=-3.0,   # the rear a little left and up, levelled: it leant right (player)
+         aim="hs_coltpose_aim.skc", two_hands=dict(reload="pistol/reload_colt.skc", frame=18, prefix="histandard"),   # kneeling or prone two-handed (see the Colt)
          tik="models/weapons/silencedpistol.tik"),
 ]
 
@@ -140,12 +160,27 @@ KAR98_MAPS = {"*": {"metal_diffuse": 0.4}}
 # the extractor lying beside it); the stripper clip with its rounds
 KAR98_BOLT_PICK = dict(name="bolt", mesh="model_0", box=((-0.06, 0.025), (0.085, 0.16), (-0.34, -0.10)),
                        target="bone:chamber", assign=("chamber", "KAR981"))
+def replace_once(pattern, new, what):
+    """A .tik edit: pattern (a regex, multiline) replaced once, or the build stops."""
+    def edit(text, *_):
+        out, n = re.subn(pattern, new, text, flags=re.M)
+        if n != 1:
+            raise SystemExit("%s: %d matches of %r" % (what, n, pattern))
+        return out
+    return edit
+
+
 KAR98_CLIP_PICK = dict(mesh="model_0", box=((0.10, 0.18), (-0.01, 0.03), (-0.28, -0.15)),   # not the loose strip beside it (x 0.093)
                        # and in the receiver's guides once the hand lets go of it, where the
                        # game's original rifle had its clip (material7 the rounds, material8
                        # the strip, on bones Clip01 and Object01: the reload moves them)
                        in_gun=dict(original=("Pak0.pk3", "models/weapons/kar98/kar98.skd"), anim="reload",
-                                   frame=44, surfaces=["material7", "material8"]))
+                                   frame=44, surfaces=["material7", "material8"],
+                                   # the strip stays in the guides until the bolt pushes it out
+                                   hold={"Object01": (50, 78)}),
+                       # the empty strip is the gun's from there on (none back in the hand)
+                       tik_edit=replace_once(r"^\s*61\s+surface material1_\* -nodraw\s*\n", "",
+                                             "kar98_clip_reload.tik"))
 SPRINGFIELD_SCOPE = ((1.0, 33.0), (-5.0, 1.5), (-14.0, -8.0))   # the scope, above the bolt
 
 WEAPONS += [
@@ -161,13 +196,21 @@ WEAPONS += [
          # display copy's loose parts (not used)
          pieces=["model_0", "model_17"], material_of={"model_0": "bar", "model_17": "bar"},
          drop=[((-0.06, 0.06), (0.19, 0.215), (0.53, 0.54))],   # its bipod (Notes.txt: none)
-         # its rear sight folded down (Notes.txt, the player's example.png), knobs and all
+         # its rear sight folded down (Notes.txt, the player's example.png), knobs and all: the
+         # leaf (and the knob on its top) stands up in the other mesh, which the gun's own
+         # leaves out; it is laid forward flat (it leans back 2.9 deg standing) and back
+         # into the guard's frame, end to end inside it as in the player's render
+         picks=[dict(name="bar_leaf", mesh="magrelease.001_BAR-gun_0", material_as="model_0",
+                     box=((-0.015, 0.012), (0.19, 0.245), (-0.33, -0.30)),
+                     hinge=((0.0, 0.1859, -0.3093), (1, 0, 0), 92.9), shift=(0.0, 0.003, -0.011)),
+                dict(name="bar_leaf_knob", mesh="magrelease.001_BAR-gun_0", material_as="model_0",
+                     box=((-0.03, -0.015), (0.18, 0.20), (-0.33, -0.30)))],
          # metal near black as in its renders (a PBR metal takes no diffuse light)
          maps={"*": {"metal_diffuse": 0.4}},
          # aiming, the eye between the base's ears a little under their tops and the front
          # sight between them, | /i\ |: the butt a little up, in the aim pose only (the gun
          # held where the game has it otherwise)
-         aim="bar_stand_aim.skc", aim_pose_fix=True, sight_at=((8.0, -0.2, -2.8), (85.0, 0.0, -0.55)),
+         aim="bar_stand_aim.skc", aim_pose_fix=True, sight_at=((8.0, -0.38, -2.65), (85.0, 0.0, -0.55)),
          eye_relief=6.0,    # the eye near the folded sight: that low, the trigger hand (under it) behind the camera
          place={"model_17": "bar4"}, fit_without=["bar4"], assign={"model_17": ("Box01", "bar4")},
          tik="models/weapons/bar.tik", ammo={"models/ammo/bar_clip.tik": "bar4"}),
@@ -183,12 +226,19 @@ WEAPONS += [
          aim="kar98_stand_aim.skc", sight_at=((41.0, 0.02, 0.0), (90.0, -0.25, 0.05)),
          sight_drop=0.24,   # in game the post showed 0.33 deg under the prongs' tops (the camera sits off the eye bone)
          ammo_picks={"models/ammo/kar98_clip_reload.tik": KAR98_CLIP_PICK},
+         # the strip stays in the receiver's guides until the bolt, going forward (frames
+         # 76-80), pushes it out; the rounds went down into the magazine at 53
+         tik_edit=replace_once(r"^(\s*)62(\s+surface material8 \+nodraw)", r"\g<1>78\2", "kar98.tik"),
          tik="models/weapons/kar98.tik"),
     dict(key="kar98sniper", folder="Kar98k", **KAR98_SOURCE, pieces=["model_1", "model_5"],
          material_of=KAR98_MATS, maps=KAR98_MAPS,
          place={"model_5": "scope"}, fit_without=["scope", "lens"],
          assign={"model_5": ("sniper", "scope")},
          picks=[KAR98_BOLT_PICK], confine={"chamber": NOWHERE},
+         # aiming, the scope comes up to the eye along its axis (the eyepiece's and the
+         # objective's middles), the eyepiece about as big as the zoomed view's ring
+         aim="karsnp_stand_aim.skc", aim_pose_fix=True,
+         sight_pts=((0.5, -3.65, -10.7), (28.5, -3.65, -10.7)), eye_relief=5.6,
          tik="models/weapons/KAR98sniper.tik"),
     # Notes.txt: the one with the shorter scope (model_4; model_3 is the long one, beside the
     # display's loose parts)
@@ -205,12 +255,16 @@ WEAPONS += [
          confine={"Object02": NOWHERE},
          ammo_picks={"models/ammo/springfield_clip_reload.tik":
                      dict(mesh="model_0", box=((-16.0, -7.5), (-1.0, 1.0), (-22.5, -17.5)), scale=0.01)},
+         # aiming, the scope up to the eye along its axis, as the Kar98k sniper's
+         aim="springfield_stand_aim.skc", aim_pose_fix=True,
+         sight_pts=((6.4, -1.6, -10.0), (30.8, -1.6, -10.0)), eye_relief=4.6,
          tik="models/weapons/springfield.tik"),
     dict(key="mp40", folder="Mp40", source=["source/model.zip!model/model.dae"],
          maps={"*": {"base": "textures/GunMetal_albedo.jpeg", "normal": "textures/GunMetal_normal.jpeg",
                      "rough": "textures/GunMetal_roughness.jpeg", "metal": "textures/GunMetal_metallic.jpeg",
                      "ao": "textures/GunMetal_AO.jpeg"}},
          aim="mp40_stand_aim.skc", sight_at=((26.0, 0.05, -0.6), (65.0, -0.3, -0.35)),
+         sight_drop=0.12,   # the camera sits off the eye bone: the blade up into the V
          tik="models/weapons/mp40.tik"),
     dict(key="mp44", folder="STG44", source=["*.glb"],
          # the game's StG has its grip and magazine further forward than the real one: ours
@@ -220,8 +274,7 @@ WEAPONS += [
          # its charging handle (on the left) on the game's cock bone, nothing else
          confine={"Box02": ((6.9, 11.8), (-4.9, -1.2), (-9.0, -6.8))},
          # (set by eye from the player's shots: the notch's slit under the front needle)
-         aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.29, -2.3), (67.0, -0.3, -2.25)),
-         sight_drop=0.03,
+         aim="mp44_idle_stand_aim.skc", sight_at=((26.0, -0.29, -2.43), (67.0, -0.3, -2.28)),   # raised 0.03, the butt a little more (player)
          tik="models/weapons/mp44.tik", ammo={"models/ammo/mp44_clip.tik": "mp44clip"}),
     dict(key="shotgun", folder="Winchester M12 Trench Gun", source=["*.glb"],
          # the glTF download: its two materials (wood set, metal set) with every map, the
@@ -245,7 +298,7 @@ WEAPONS += [
          maps={"*": {"base": "DEFAULT_0_0.png"}},
          keep_stock=["shell"], fit_without=["shell"],
          # the rear sight's notch, the front sight's post (the shield's window between)
-         aim="pose_panzershrek_aim.skc", aim_pose_fix=True, sight_at=((50.0, 2.8, -0.7), (88.0, -1.40, 1.2)),   # the notch between the prongs (2.3..3.3), the T post (0.05 right of its middle: the player saw it 1-2 px right)
+         aim="pose_panzershrek_aim.skc", aim_pose_fix=True, sight_at=((50.0, 2.8, -0.7), (88.0, -1.35, 1.2)),   # the notch between the prongs (2.3..3.3), the T post (0.1 right of its middle: the player saw it right of centre)
          eye_relief=12.0,   # the eye up at the rear sight, as the player's example
          tik="models/weapons/panzerschreck.tik"),
     dict(key="m2frag", folder="Frag Grenade", source=["source/grenade.7z!grenade_low.fbx"],
