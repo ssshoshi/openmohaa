@@ -388,6 +388,7 @@ extern cvar_t *g_dive_sprint;
 extern cvar_t *g_dive_sprint_up;
 extern cvar_t *g_sprint_time;
 extern cvar_t *g_sprint_recover;
+extern cvar_t *g_sprint_water_drain;
 extern cvar_t *g_sprint_minhealth;
 extern cvar_t *g_sprint_tired_speed;
 extern cvar_t *g_sprint_tired_time;

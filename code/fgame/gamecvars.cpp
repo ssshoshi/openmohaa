@@ -356,6 +356,7 @@ cvar_t *g_sprint;
 cvar_t *g_sprint_speed;
 cvar_t *g_sprint_time;
 cvar_t *g_sprint_recover;
+cvar_t *g_sprint_water_drain;
 cvar_t *g_sprint_minhealth;
 cvar_t *g_sprint_tired_speed;
 cvar_t *g_sprint_tired_time;
@@ -865,6 +866,7 @@ void CVAR_Init(void)
     g_sprint_speed     = gi.Cvar_Get("g_sprint_speed", "1.4", 0);
     g_sprint_time      = gi.Cvar_Get("g_sprint_time", "5.6", 0);
     g_sprint_recover   = gi.Cvar_Get("g_sprint_recover", "1", 0);
+    g_sprint_water_drain = gi.Cvar_Get("g_sprint_water_drain", "2", 0);
     g_sprint_minhealth = gi.Cvar_Get("g_sprint_minhealth", "25", 0);
     g_sprint_tired_speed = gi.Cvar_Get("g_sprint_tired_speed", "0.6", 0);
     g_sprint_tired_time  = gi.Cvar_Get("g_sprint_tired_time", "3", 0);
