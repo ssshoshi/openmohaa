@@ -54,6 +54,7 @@ cvar_t *s_show_num_active_sounds;
 cvar_t *s_show_sounds;
 cvar_t *s_speaker_type;
 cvar_t *s_obstruction_cal_time;
+cvar_t *s_ambientFade; // Added in OPM
 cvar_t *s_lastSoundTime;
 // Added in OPM
 cvar_t *s_openaldriver;
@@ -106,6 +107,15 @@ openal_internal_t openal;
 static float      s_fFadeStartTime;
 static float      s_fFadeStopTime;
 static char       current_soundtrack[128];
+
+//
+// Added in OPM: how far each song channel is faded in (0 silent, 1 full), and when
+// that was last stepped. A fade moves this level at the song's rate from wherever it
+// is, so turning back halfway through a crossfade turns it round instead of cutting.
+//
+static float s_songFadeLevel[MAX_SOUNDSYSTEM_SONGS];
+static int   s_songFadeTime[MAX_SOUNDSYSTEM_SONGS];
+static float s_songFadeSecs[MAX_SOUNDSYSTEM_SONGS];
 
 static void S_OPENAL_PlayMP3();
 static void S_OPENAL_StopMP3();
@@ -602,6 +612,8 @@ qboolean S_OPENAL_Init()
     s_show_sounds            = Cvar_Get("s_show_sounds", "0", 0);
     s_speaker_type           = Cvar_Get("s_speaker_type", "0", CVAR_ARCHIVE);
     s_obstruction_cal_time   = Cvar_Get("s_obstruction_cal_time", "500", CVAR_ARCHIVE);
+    // Added in OPM: the least time one ambient track (a soundtrack mood) crossfades into the next
+    s_ambientFade            = Cvar_Get("s_ambientFade", "2", CVAR_ARCHIVE);
     //
     // Added in OPM
     //  Initialize the AL driver DLL
@@ -4071,6 +4083,7 @@ qboolean MUSIC_PlaySong(const char *alias)
     openal_channel_two_d_stream *song_channel;
     unsigned int                 loop_start;
     int                          rate;
+    float                        fadetime;
 
     fading_song = 0;
     songnum     = MUSIC_FindSong(alias);
@@ -4088,19 +4101,40 @@ qboolean MUSIC_PlaySong(const char *alias)
     channel_number    = MUSIC_CurrentSongChannel();
     music_currentsong = songnum;
 
+    // Added in OPM: crossfade over the song's fade time, but never quicker than s_ambientFade
+    fadetime = Q_max(song->fadetime, s_ambientFade ? s_ambientFade->value : 0.0f);
+
     if (channel_number != -1) {
-        if (song->flags & 4) {
+        if ((song->flags & 4) || fadetime <= 0) {
             MUSIC_StopChannel(channel_number);
         } else {
-            song_channel                  = &openal.chan_song[channel_number];
-            song_channel->fading          = FADE_OUT;
-            song_channel->fade_time       = (int)song->fadetime;
-            song_channel->fade_start_time = cls.realtime;
-            fading_song                   = true;
+            // the song now playing fades out from where it is
+            song_channel = &openal.chan_song[channel_number];
+            if (song_channel->fading == FADE_NONE) {
+                s_songFadeLevel[channel_number] = 1.0f;
+            }
+            song_channel->fading            = FADE_OUT;
+            song_channel->fade_time         = (int)fadetime;
+            song_channel->fade_start_time   = cls.realtime;
+            s_songFadeTime[channel_number]  = cls.realtime;
+            s_songFadeSecs[channel_number]  = fadetime;
+            fading_song                     = true;
         }
     }
     channel_to_play_on = (fading_song != 0) && (channel_number == 0);
     song_channel       = &openal.chan_song[channel_to_play_on];
+
+    if (fading_song && song_channel->is_playing() && song_channel->song_number == songnum
+        && song_channel->fading == FADE_OUT) {
+        // Added in OPM: still fading out from a moment ago (back through the door it
+        // came in by): fade it back in from there, rather than restart it from silence
+        song_channel->fading                = FADE_IN;
+        song_channel->fade_time             = (int)fadetime;
+        song_channel->fade_start_time       = cls.realtime;
+        s_songFadeTime[channel_to_play_on]  = cls.realtime;
+        s_songFadeSecs[channel_to_play_on]  = fadetime;
+        return true;
+    }
 
     if (song_channel->is_playing() || song_channel->is_paused()) {
         MUSIC_StopChannel(channel_to_play_on);
@@ -4128,13 +4162,19 @@ qboolean MUSIC_PlaySong(const char *alias)
     }
 
     if (fading_song) {
-        song_channel->fading    = FADE_IN;
-        song_channel->fade_time = (int)song->fadetime;
+        song_channel->fading                = FADE_IN;
+        song_channel->fade_time             = (int)fadetime;
+        song_channel->fade_start_time       = cls.realtime;
+        s_songFadeLevel[channel_to_play_on] = 0.0f;
+        s_songFadeTime[channel_to_play_on]  = cls.realtime;
+        s_songFadeSecs[channel_to_play_on]  = fadetime;
         song_channel->set_gain(0.0);
-        song_channel->fade_start_time = cls.realtime;
     } else {
-        song_channel->fading = FADE_NONE;
-        song_channel->set_gain(S_GetBaseVolume() * (song->volume * s_ambientVolume->value) * s_fVolumeGain);
+        song_channel->fading                = FADE_NONE;
+        s_songFadeLevel[channel_to_play_on] = 1.0f;
+        song_channel->set_gain(
+            S_GetBaseVolume() * (song->volume * s_ambientVolume->value) * s_fVolumeGain * music_volume
+        );
     }
 
     song_channel->play();
@@ -4179,26 +4219,36 @@ void MUSIC_UpdateMusicVolumes()
 
         switch (openal.chan_song[i].fading) {
         case fade_t::FADE_IN:
-            max_volume = music_songs[openal.chan_song[i].song_number].volume * s_ambientVolume->value;
-            new_volume = (unsigned int)(cls.realtime - openal.chan_song[i].fade_start_time)
-                       / (openal.chan_song[i].fade_time * 1000.f) * max_volume;
-
-            if (new_volume > max_volume) {
-                openal.chan_song[i].set_gain(S_GetBaseVolume() * (max_volume * s_fVolumeGain * music_volume));
-                openal.chan_song[i].fading = FADE_NONE;
-            } else {
-                openal.chan_song[i].set_gain(S_GetBaseVolume() * (new_volume * s_fVolumeGain * music_volume));
-            }
-            break;
         case fade_t::FADE_OUT:
-            max_volume = music_songs[openal.chan_song[i].song_number].volume * s_ambientVolume->value;
-            new_volume = (unsigned int)(cls.realtime - openal.chan_song[i].fade_start_time)
-                       / (openal.chan_song[i].fade_time * 1000.f) * max_volume;
+            // Changed in OPM: the fade out counted up from silence like the fade in, so
+            //  its first frame was silent and stopped the song at once: every change of
+            //  ambient track was a cut. Both now step the channel's level from where it is
+            //  (the step is capped, so a pause or a load does not finish a fade at once).
+            {
+                float step;
+                int   dt = Q_min(cls.realtime - s_songFadeTime[i], 100);
 
-            if (new_volume > 0) {
+                s_songFadeTime[i] = cls.realtime;
+                step              = s_songFadeSecs[i] > 0 ? Q_max(dt, 0) / (s_songFadeSecs[i] * 1000.f) : 1.0f;
+                max_volume        = music_songs[openal.chan_song[i].song_number].volume * s_ambientVolume->value;
+
+                if (openal.chan_song[i].fading == FADE_IN) {
+                    s_songFadeLevel[i] = Q_min(s_songFadeLevel[i] + step, 1.0f);
+                    if (s_songFadeLevel[i] >= 1.0f) {
+                        openal.chan_song[i].fading = FADE_NONE;
+                    }
+                } else {
+                    s_songFadeLevel[i] = Q_max(s_songFadeLevel[i] - step, 0.0f);
+                    if (s_songFadeLevel[i] <= 0) {
+                        MUSIC_StopChannel(i);
+                        openal.chan_song[i].fading = FADE_NONE;
+                        break;
+                    }
+                }
+
+                // equal power, so the two together do not dip in the middle
+                new_volume = max_volume * sinf(s_songFadeLevel[i] * (float)M_PI * 0.5f);
                 openal.chan_song[i].set_gain(S_GetBaseVolume() * (new_volume * s_fVolumeGain * music_volume));
-            } else {
-                MUSIC_StopChannel(i);
             }
             break;
         default:
