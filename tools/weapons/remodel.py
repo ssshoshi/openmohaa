@@ -1405,12 +1405,15 @@ def remodel(spec, fs, out, folder):
     for name, parent in spec.get("new_bones", ()):   # a moving part the game's model has no bone for
         stock.model.bones.append(skd.Bone(name, parent=parent, type=skd.POSROT))
         stock.held[name.lower()] = stock.held[parent.lower()].copy()
+    # how parts are found (welded or not) for this weapon, before its source's drop and keep
+    # boxes use it: left from the weapon before, a full build dropped other parts (the BAR
+    # kept its bipod)
+    WELD[0] = not spec.get("index_parts", False)
     pieces = load_source(spec, folder)
     print("  source: %s" % ", ".join("%s %d" % (p.name, len(p.tris)) for p in pieces))
     if "prep" in spec:
         pieces = spec["prep"](pieces, stock)
 
-    WELD[0] = not spec.get("index_parts", False)
     # pieces taken out of a mesh (a display's bolt, a loose magazine) and placed like a
     # loose mesh; their mesh then goes unless the spec keeps it
     if spec.get("picks"):
