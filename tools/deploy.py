@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 GAME_MAIN = os.path.join(GAME, "main")
@@ -110,12 +111,22 @@ def build_paks(dry):
     return out
 
 
+def pak_files(path):
+    with zipfile.ZipFile(path) as z:
+        return len(z.namelist())
+
+
 def install_paks(folder, dry):
     stamp = time.strftime("%Y-%m-%d_%H%M")
     changed = []
     for f in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
         src, dst = os.path.join(folder, f), os.path.join(GAME_MAIN, f)
         if md5(src) == md5(dst):
+            continue
+        if f.endswith(".pk3") and os.path.isfile(dst) and pak_files(src) == 0 and pak_files(dst) > 0:
+            # a generator that found no sources (models moved, say) makes an empty pak:
+            # it would wipe out the one in main/ without a word
+            print(f"  {f}: built empty, the one in main/ ({pak_files(dst)} files) is kept")
             continue
         changed.append(f)
         if not dry:

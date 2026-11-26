@@ -3,7 +3,7 @@
 
 The source is one glTF binary, read in place and never committed:
 
-    <MOHAA_GAME>/models/Garand/*.glb
+    <MOHAA_GAME>/models/Guns/Garand/*.glb (or models/Garand/)
 
 (--src to read it from elsewhere): the rifle ("M1_Garand", one unrigged mesh) and an en-bloc
 clip of eight rounds ("Bullets"), each with its PBR maps (base colour, packed occlusion /
@@ -207,6 +207,12 @@ class Mesh:
     def transformed(self, s, r, t):
         n = self.normal @ r.T
         return s * self.pos @ r.T + t, n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+
+
+def source_folder(game, name):
+    """A weapon's source folder: models/Guns/<name>, or models/<name> where it used to be."""
+    guns = os.path.join(game, "models", "Guns", name)
+    return guns if os.path.isdir(guns) else os.path.join(game, "models", name)
 
 
 def find_source(src):
@@ -548,9 +554,10 @@ def clip_shown(text):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--src", default=os.path.join(GAME, "models", "Garand"))
+    ap.add_argument("--src", help="the model's folder (default: models/Guns/Garand in the game folder)")
     ap.add_argument("--game", default=GAME)
     args = ap.parse_args()
+    args.src = args.src or source_folder(args.game, "Garand")
 
     src = Glb(find_source(args.src))
     if "M1_Garand" not in src.meshes or "Bullets" not in src.meshes:

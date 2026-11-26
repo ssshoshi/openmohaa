@@ -3,7 +3,7 @@
 
 The source is one unrigged mesh and its PBR maps, read in place and never committed:
 
-    <MOHAA_GAME>/models/Thompson/source/*.rar (one FBX mesh), textures/m1a1_*.png
+    <MOHAA_GAME>/models/Guns/Thompson/source/*.rar (one FBX mesh), textures/m1a1_*.png
     (or the first download: model_0.obj, Thompson_{BASE,NM,ROUGH,MET,AO}.png)
 
 (--src to read them from elsewhere). The game's Thompson is rigid: every vertex is on one
@@ -686,9 +686,11 @@ def write(out, path, data):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--src", default=os.path.join(GAME, "models", "Thompson"))
+    ap.add_argument("--src", help="the model's folder (default: models/Guns/Thompson in the game folder)")
     ap.add_argument("--game", default=GAME)
     args = ap.parse_args()
+    from garand import source_folder
+    args.src = args.src or source_folder(args.game, "Thompson")
 
     obj = os.path.join(args.src, "model_0.obj")
     if os.path.exists(obj):
