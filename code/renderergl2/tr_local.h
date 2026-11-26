@@ -4295,6 +4295,7 @@ void R_WaterLoadWorld(const char *mapName);
 // Added in OPM: tr_froxel.c, r_volumetric 2 and the maps' fog banks
 extern cvar_t *r_volumetricFog;
 extern cvar_t *r_volumetricTemporal;
+extern cvar_t *r_volumetricCubic;
 void R_FroxelInit(void);
 void R_FroxelShutdown(void);
 void R_FogLoadWorld(const char *mapName);
