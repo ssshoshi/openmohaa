@@ -1,0 +1,42 @@
+--- a/scripts/items.shader
++++ b/scripts/items.shader
+@@ -1231,7 +1231,8 @@
+ 		map textures/models/items/healthcanteen.tga
+ 		rgbGen lightingSpherical
+ 	}
+-	{ // pulsating layer
++	{ // pulsating layer, only with cg_healthBlink 1 (OPM)
++		ifCvar cg_healthBlink 1
+ 		map $whiteimage
+ 		blendFunc GL_SRC_ALPHA GL_ONE // this is an additive blend that uses alpha
+ 		rgbGen wave sin 0.1 0.07 0 0.75
+@@ -1246,7 +1247,8 @@
+ 		map textures/models/items/first_aid.tga
+ 		rgbGen lightingSpherical
+ 	}
+-	{ // pulsating layer
++	{ // pulsating layer, only with cg_healthBlink 1 (OPM)
++		ifCvar cg_healthBlink 1
+ 		map $whiteimage
+ 		blendFunc GL_SRC_ALPHA GL_ONE // this is an additive blend that uses alpha
+ 		rgbGen wave sin 0.1 0.07 0 0.75
+@@ -1262,7 +1264,8 @@
+ 		map textures/models/items/first_aid.tga
+ 		rgbGen lightingSpherical
+ 	}
+-	{ // pulsating layer
++	{ // pulsating layer, only with cg_healthBlink 1 (OPM)
++		ifCvar cg_healthBlink 1
+ //		map textures/models/items/pulse.tga
+ 		map $whiteimage
+ 		blendFunc GL_SRC_ALPHA GL_ONE // this is an additive blend that uses alpha
+@@ -1278,7 +1281,8 @@
+ 		map textures/models/items/field_medpack.tga
+ 		rgbGen lightingSpherical
+ 	}
+-	{ // pulsating layer
++	{ // pulsating layer, only with cg_healthBlink 1 (OPM)
++		ifCvar cg_healthBlink 1
+ 		map $whiteimage
+ 		blendFunc GL_SRC_ALPHA GL_ONE // this is an additive blend that uses alpha
+ 		rgbGen wave sin 0.1 0.07 0 0.75
