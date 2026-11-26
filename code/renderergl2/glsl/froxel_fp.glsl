@@ -381,11 +381,11 @@ void main()
 	// scatters in them taken as a surface takes it
 	vec3  Lm    = vec3(0.0);
 
-	// behind everything in its tile and the tiles round it: no pixel sees
-	// it, nor filters it in (apply)
+	// behind everything in its tile and the tiles two round it (as far as
+	// apply's filter reaches): no pixel sees it, nor filters it in
 	float seen = 0.0;
-	for (int y = -1; y <= 1; y++)
-		for (int x = -1; x <= 1; x++)
+	for (int y = -2; y <= 2; y++)
+		for (int x = -2; x <= 2; x++)
 			seen = max(seen, texture2D(u_ScreenDepthMap, (clamp(cell + vec2(float(x), float(y)), vec2(0.0), u_Froxel.xy - 1.0) + 0.5) / u_Froxel.xy).r);
 	if (z0 > seen)
 	{
@@ -586,6 +586,30 @@ void main()
 
 #elif defined(FROXEL_APPLY)
 
+// the grid at uv in slice s through a cubic B-spline (four filtered reads):
+// read as it is (one filtered read), a cell's light was a square sixteen
+// pixels a side, and the shadow a man throws in the air round him as a
+// lit haze came out in blocks round his outline
+vec4 Cell(vec2 uv, float s)
+{
+	// u_FroxelJitter.x 0 (r_volumetricCubic 0): read as it is
+	if (u_FroxelJitter.x < 0.5)
+		return texture2D(u_ScreenImageMap, AtlasUV(uv, s));
+	vec2 t  = uv * u_Froxel.xy - 0.5;
+	vec2 i  = floor(t);
+	vec2 f  = t - i;
+	vec2 f2 = f * f, f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 w2 = 1.0 - w0 - w1 - w3;
+	vec2 g0 = w0 + w1, g1 = w2 + w3;
+	vec2 p0 = (i - 0.5 + w1 / g0) / u_Froxel.xy;
+	vec2 p1 = (i + 1.5 + w3 / g1) / u_Froxel.xy;
+	return g0.y * (g0.x * texture2D(u_ScreenImageMap, AtlasUV(vec2(p0.x, p0.y), s)) + g1.x * texture2D(u_ScreenImageMap, AtlasUV(vec2(p1.x, p0.y), s)))
+	     + g1.y * (g0.x * texture2D(u_ScreenImageMap, AtlasUV(vec2(p0.x, p1.y), s)) + g1.x * texture2D(u_ScreenImageMap, AtlasUV(vec2(p1.x, p1.y), s)));
+}
+
 void main()
 {
 	float z     = texture2D(u_ScreenDepthMap, var_DepthTex).r;
@@ -598,14 +622,14 @@ void main()
 	if (f < 0.0)
 	{
 		a = vec4(0.0, 0.0, 0.0, 1.0);
-		b = texture2D(u_ScreenImageMap, AtlasUV(var_CellUV, 0.0));
+		b = Cell(var_CellUV, 0.0);
 		f += 1.0;
 	}
 	else
 	{
 		float s = floor(f);
-		a = texture2D(u_ScreenImageMap, AtlasUV(var_CellUV, s));
-		b = texture2D(u_ScreenImageMap, AtlasUV(var_CellUV, min(s + 1.0, u_Froxel.z - 1.0)));
+		a = Cell(var_CellUV, s);
+		b = Cell(var_CellUV, min(s + 1.0, u_Froxel.z - 1.0));
 		f -= s;
 	}
 

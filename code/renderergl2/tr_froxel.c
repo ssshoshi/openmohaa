@@ -55,6 +55,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 cvar_t *r_volumetricFog;
 cvar_t *r_volumetricTemporal;
+cvar_t *r_volumetricCubic;
 cvar_t *r_volumetricSmoke;
 cvar_t *r_volumetricSmokeNoise;
 cvar_t *r_volumetricSmokeSprites;
@@ -222,6 +223,8 @@ void R_FroxelInit(void)
 {
 	r_volumetricFog = ri.Cvar_Get("r_volumetricFog", "1", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_volumetricFog, "With r_volumetric 2: how thick the map's fog banks are (fog/<map>.txt), 0 none");
+	r_volumetricCubic = ri.Cvar_Get("r_volumetricCubic", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_volumetricCubic, "With r_volumetric 2: the grid of the light in the air read smoothly across its cells (a cubic B-spline) where each pixel takes it; 0: read as it is, its cells' squares showing round what throws a shadow in the haze");
 	r_volumetricTemporal = ri.Cvar_Get("r_volumetricTemporal", "0.9", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_volumetricTemporal, "With r_volumetric 2: how much of the light in the air each frame keeps from the last (0 none: noisier, quicker to change)");
 	r_volumetricSmoke = ri.Cvar_Get("r_volumetricSmoke", "1", CVAR_ARCHIVE);
@@ -743,6 +746,11 @@ void RB_VolumetricFroxels(FBO_t *dstFbo, ivec4_t dstBox, image_t *depthImage, qb
 	GL_State(GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_SRC_ALPHA);
 	qglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 	GLSL_BindProgram(&tr.froxelShader[2]);
+	{
+		vec4_t filter = { r_volumetricCubic->integer ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+
+		GLSL_SetUniformVec4(&tr.froxelShader[2], UNIFORM_FROXELJITTER, filter);
+	}
 	GL_BindToTMU(tr.froxelSumImage[sum], TB_COLORMAP);
 	GL_BindToTMU(depthImage, TB_LIGHTMAP);
 	RB_InstantQuad2(quadVerts, texCoords);
