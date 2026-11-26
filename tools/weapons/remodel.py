@@ -5,7 +5,7 @@ The Thompson and the Garand have tools of their own (thompson.py, garand.py), wr
 working out how; the rest go through this one, each weapon described by a spec (WEAPONS,
 in weapon_specs.py). The sources are the player's, read in place under
 
-    <MOHAA_GAME>/models/<folder>/
+    <MOHAA_GAME>/models/Guns/<folder>/ (or models/<folder>/)
 
 and never committed. They come in whatever form they were published in: glTF binaries,
 .obj sets (Sketchfab dumps: one .obj a piece, often each piece twice), .fbx, a Collada .dae
@@ -84,7 +84,7 @@ def parts(pos, tris):
     n = len(pos)
     g = coo_matrix((np.ones(3 * len(tris)), (tris.ravel(), tris[:, [1, 2, 0]].ravel())), shape=(n, n))
     return connected_components(g, directed=False)[1][tris[:, 0]]
-from garand import GLTF_TYPES, GLTF_WIDTH, normal_map_green_down, sized  # noqa: E402
+from garand import GLTF_TYPES, GLTF_WIDTH, normal_map_green_down, sized, source_folder  # noqa: E402
 
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 PAK = "zzzzzzzzzzzzzzzz-opm-weapons.pk3"   # what this builds: never read back from
@@ -1830,7 +1830,7 @@ def main():
     for spec in WEAPONS:
         if only and spec["key"] not in only:
             continue
-        folder = os.path.join(args.game, "models", spec["folder"])
+        folder = source_folder(args.game, spec["folder"])
         if not os.path.isdir(folder):
             print("%s: no %s, the game keeps its own" % (spec["key"], folder))
             continue
