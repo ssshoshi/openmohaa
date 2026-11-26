@@ -1781,8 +1781,10 @@ void R_Register( void )
 	r_sunCascade2CacheDist = ri.Cvar_Get( "r_sunCascade2CacheDist", "48", CVAR_ARCHIVE );
 	r_sunCascade2CacheAngle = ri.Cvar_Get( "r_sunCascade2CacheAngle", "0.97", CVAR_ARCHIVE );
 	// Added in OPM: 1 draws sun cascades 1 and 2 on alternate frames (see
-	// RE_RenderScene); a cascade not drawn keeps its map and matrix.
-	r_sunCascadeStagger = ri.Cvar_Get( "r_sunCascadeStagger", "0", CVAR_ARCHIVE );
+	// RE_RenderScene); a cascade not drawn keeps its map and matrix. On by
+	// default: on the sun-heavy maps it cut the sun pass about a third
+	// (m6l1a 8.5 -> 5.1 ms GPU) and nobody saw the one-frame lag in play.
+	r_sunCascadeStagger = ri.Cvar_Get( "r_sunCascadeStagger", "1", CVAR_ARCHIVE );
 	// Leave a skeletal model out of a sun cascade it lies wholly outside of,
 	// instead of skinning and drawing it into every cascade that takes
 	// entities. 0 restores that. Not archived, so it stays an A/B switch.
