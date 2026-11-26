@@ -262,6 +262,8 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_ParticleSceneMap", GLSL_INT },
 	{ "u_ParticleBlend",   GLSL_FLOAT },
 	{ "u_GroundCover",     GLSL_VEC4 },
+	{ "u_FloraCrown",      GLSL_VEC4 },
+	{ "u_FloraRadii",      GLSL_VEC4 },
 	{ "u_SkelBones",       GLSL_INT },
 	{ "u_SkelParams",      GLSL_VEC4 },
 	{ "u_SkelAmbient",     GLSL_VEC4 },

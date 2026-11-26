@@ -810,3 +810,137 @@ qboolean RB_Sharpen(FBO_t *src, ivec4_t srcBox, FBO_t *dst, ivec4_t dstBox)
 	RB_InstantQuad2(quadVerts, texCoords);
 	return qtrue;
 }
+
+/*
+=============
+RB_SunDepthProbe
+
+Added in OPM: the sun's flare and its glare were hidden only by the world's
+solid brushes (SunCheckRay), so they shone on under every tree. Whether the
+sun reaches the eye is read from its nearest shadow cascade instead, which has
+the leaves: a block of it round a point just sunward of the eye, its share
+that is lit how much of the sun shows (none under a crown, some under the
+holes in it), on the screen or above it alike. Taken back a frame later
+without waiting for it (a pixel buffer and a fence), as RB_EyeAdapt does.
+=============
+*/
+#define SUN_PROBE 8
+
+static struct {
+    GLuint   pbo;
+    GLsync   fence;
+    qboolean pending;
+    int      count;   // the texels the reading has
+    float    depth;   // the point's own depth in the cascade
+    float    open;    // the share of it lit, last read
+    float    shown;   // eased toward it
+    int      lastMs;
+} sunProbe = { 0, 0, qfalse, 0, 0.0f, 1.0f, 1.0f, 0 };
+
+void RB_SunDepthProbe(void)
+{
+    static cvar_t *sunProbeDebug;
+    const float   *mvp = backEnd.refdef.sunShadowMvp[0];
+    FBO_t         *fbo = tr.sunShadowFbo[0];
+    vec4_t         point, clip;
+    int            i, j, x, y, size;
+
+    if (!sunProbeDebug) {
+        sunProbeDebug = ri.Cvar_Get("r_sunProbeDebug", "0", 0);
+        ri.Cvar_SetDescription(sunProbeDebug, "Print how much of the sun's light reaches the eye past leaves and the like each time it is read, for its flare (RB_SunDepthProbe)");
+    }
+    if (!s_sun.exists || backEnd.viewParms.isPortal || backEnd.viewParms.isMirror || backEnd.viewParms.isPortalSky
+        || !fbo || !glRefConfig.framebufferObject) {
+        return;
+    }
+    // (no sun shadows this frame: nothing to tell, as before)
+    if (!r_sunlightMode->integer || !(backEnd.viewParms.flags & VPF_USESUNLIGHT)) {
+        sunProbe.open = 1.0f;
+        return;
+    }
+
+    if (!sunProbe.pbo) {
+        qglGenBuffers(1, &sunProbe.pbo);
+        qglBindBuffer(GL_PIXEL_PACK_BUFFER, sunProbe.pbo);
+        qglBufferData(GL_PIXEL_PACK_BUFFER, SUN_PROBE * SUN_PROBE * sizeof(float), NULL, GL_STREAM_READ);
+        qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+
+    // a reading the card has done
+    if (sunProbe.pending && qglClientWaitSync(sunProbe.fence, 0, 0) != GL_TIMEOUT_EXPIRED) {
+        const float *d;
+
+        qglDeleteSync(sunProbe.fence);
+        sunProbe.pending = qfalse;
+        qglBindBuffer(GL_PIXEL_PACK_BUFFER, sunProbe.pbo);
+        d = (const float *)qglMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sunProbe.count * sizeof(float), GL_MAP_READ_BIT);
+        if (d) {
+            int lit = 0;
+
+            for (i = 0; i < sunProbe.count; i++) {
+                lit += d[i] >= sunProbe.depth - 0.0005f;
+            }
+            sunProbe.open = sunProbe.count ? (float)lit / sunProbe.count : 1.0f;
+            qglUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            if (sunProbeDebug->integer) {
+                ri.Printf(PRINT_ALL, "sun probe: %d of %d lit (depth %f, first %f)\n", lit, sunProbe.count,
+                          sunProbe.depth, sunProbe.count ? d[0] : 0.0f);
+            }
+        }
+        qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    if (sunProbe.pending) {
+        return;
+    }
+
+    // a little toward the sun from the eye: clear of the player's own head
+    VectorMA(backEnd.viewParms.ori.origin, 24.0f, s_sun.flaredirection, point);
+    point[3] = 1.0f;
+    VectorClear4(clip);
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            clip[i] += mvp[i + j * 4] * point[j];
+        }
+    }
+    if (clip[3] == 0.0f || fabs(clip[0]) >= fabs(clip[3]) || fabs(clip[1]) >= fabs(clip[3])
+        || fabs(clip[2]) >= fabs(clip[3])) {
+        sunProbe.open = 1.0f; // (out of the cascade: nothing to tell)
+        return;
+    }
+    size = Q_min(SUN_PROBE, Q_min(fbo->width, fbo->height));
+    x    = Com_Clamp(0, fbo->width - size, (int)((clip[0] / clip[3] * 0.5f + 0.5f) * fbo->width) - size / 2);
+    y    = Com_Clamp(0, fbo->height - size, (int)((clip[1] / clip[3] * 0.5f + 0.5f) * fbo->height) - size / 2);
+
+    // a new one, not waited for
+    {
+        FBO_t *was = glState.currentFBO;
+
+        FBO_Bind(fbo);
+        qglBindBuffer(GL_PIXEL_PACK_BUFFER, sunProbe.pbo);
+        qglReadPixels(x, y, size, size, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        qglBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        FBO_Bind(was);
+    }
+    sunProbe.count   = size * size;
+    sunProbe.depth   = clip[2] / clip[3] * 0.5f + 0.5f;
+    sunProbe.fence   = qglFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    sunProbe.pending = qtrue;
+}
+
+/*
+=============
+R_SunShown
+
+How much of the sun shows past what is drawn (RB_SunDepthProbe), eased a
+little so a flare does not flicker as leaves sway across it.
+=============
+*/
+float R_SunShown(void)
+{
+    const int now = ri.Milliseconds();
+    float     dt  = Com_Clamp(0.0f, 0.25f, (now - sunProbe.lastMs) * 0.001f);
+
+    sunProbe.lastMs = now;
+    sunProbe.shown += (sunProbe.open - sunProbe.shown) * (1.0f - exp(-12.0f * dt));
+    return sunProbe.shown;
+}

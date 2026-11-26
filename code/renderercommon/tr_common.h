@@ -88,6 +88,10 @@ typedef struct image_s {
 #define LIGHTMAP_NONE       -1
 
 extern	refimport_t		ri;
+
+// tr_modelswaps.c: a map's static models shown as another by their scale
+void     R_BeginModelSwaps(void);
+qboolean R_SwapStaticModel(char *name, size_t size, float scale);
 extern glconfig_t	glConfig;		// outside of TR since it shouldn't be cleared during ref re-init
 
 // These variables should live inside glConfig but can't because of

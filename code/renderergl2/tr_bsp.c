@@ -3708,8 +3708,11 @@ void R_LoadStaticModelDefs(lump_t* lump) {
     in = (cStaticModel_t*)(fileBase + lump->fileofs);
     out = s_worldData.staticModels;
 
+    R_BeginModelSwaps();
     for (i = 0; i < s_worldData.numStaticModels; in++, out++, i++) {
         R_CopyStaticModel(in, out);
+        // (a big oak shown as a big oak's model, not a young one's blown up: tr_modelswaps.c)
+        R_SwapStaticModel(out->model, sizeof(out->model), out->scale);
     }
 }
 

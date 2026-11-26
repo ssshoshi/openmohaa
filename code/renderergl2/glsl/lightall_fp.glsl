@@ -67,6 +67,26 @@ uniform vec4      u_Wet;    // how wet, the mark's height; the rain: how wet, wh
 uniform vec4      u_WetSky; // the sky it gives back
 uniform vec4      u_WetSun; // towards the sun, and how bright it is
 uniform vec3      u_ViewOrigin;
+#if defined(USE_FLORA)
+varying vec3      var_Flora; // Added in OPM: how much light from round about reaches here in a tree's crown, 1 on a leaf, how much sun comes through one
+
+// Added in OPM: the sun through a tree's leaves (r_floraThrough), over what a
+// leaf lit from behind takes already: past the first leaves it meets, the
+// shadow maps stop all of it, though a leaf passes some on and the canopy
+// glows above who stands under it; and looking toward the sun, the leaves
+// between are lit up from behind (light scattered on through them, forward).
+// sun: toward it; vis: its shadow here; E: toward the eye; N: facing the eye
+vec3 FloraThrough(vec3 sunColor, vec3 sun, float vis, vec3 E, vec3 N, vec3 diffuse)
+{
+	float back   = clamp(-dot(N, sun), 0.0, 1.0);
+	float t      = clamp(dot(-E, sun), 0.0, 1.0);
+	// (broad, the whole crown before the sun, and bright close round it)
+	float toward = 0.8 * t * t * t * t + 3.0 * pow(t, 24.0);
+	float glow   = back * (1.0 - vis) * 0.3 + toward * mix(0.35, 1.0, vis);
+	// (thin green: what comes through it yellower than what it gives back)
+	return sunColor * diffuse * vec3(1.15, 1.2, 0.7) * glow * var_Flora.y * var_Flora.z;
+}
+#endif
 varying vec3      var_WetPos;
 varying vec3      var_WetNormal;
 // Added in OPM: the rain (tr_water.c's R_RainBuildCover): the highest of the
@@ -1046,6 +1066,11 @@ void main()
   #endif
 #endif
 
+#if defined(USE_FLORA)
+	// Added in OPM: deep in a tree's crown and under it, less of it (r_floraShade)
+	lightColor *= var_Flora.x;
+#endif
+
 	vec2 texCoords = var_TexCoords.xy;
 #if defined(USE_GROUNDVARY)
 	float groundFlat = GroundFlat();
@@ -1152,6 +1177,8 @@ void main()
   #if defined(USE_SHADOWMAP) 
 	vec2 shadowTex = gl_FragCoord.xy * r_FBufScale;
 	float shadowValue = texture2D(u_ShadowMap, shadowTex).r;
+
+	float shadowRaw = shadowValue; // (Added in OPM: as the maps have it, for a leaf lit from behind)
 
 	// surfaces not facing the light are always shadowed
 	shadowValue *= clamp(dot(N, var_PrimaryLightDir.xyz), 0.0, 1.0);
@@ -1421,6 +1448,12 @@ void main()
   #endif
 
 	gl_FragColor.rgb += lightColor * reflectance * NL2;
+
+    #if defined(USE_FLORA) && defined(USE_SHADOWMAP)
+	// Added in OPM: the sun through the leaves
+	gl_FragColor.rgb += FloraThrough(Lin(u_PrimaryLightColor), normalize(L2), shadowRaw,
+		normalize(u_ViewOrigin - var_WetPos), N, diffuse.rgb);
+    #endif
   #endif
 
   #if defined(USE_PBR)
@@ -1649,6 +1682,13 @@ void main()
   #endif
   #if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
 		gl_FragColor.rgb += rt_spec * specular.rgb;
+  #endif
+  #if defined(USE_FLORA) && defined(USE_LIGHT)
+		// Added in OPM: the sun through the leaves, with all of it live
+		if (u_RtParams.y > 1.5 && u_RtSunDir.w > 0.5)
+			gl_FragColor.rgb += FloraThrough(u_RtSunColor.rgb, u_RtSunDir.xyz,
+				u_RtSunColor.w > 0.5 ? texture2D(u_RtSunShadow, gl_FragCoord.xy * r_FBufScale).r : 1.0,
+				normalize(u_ViewOrigin - var_WetPos), rtNormal, diffuse.rgb);
   #endif
 	}
 #endif

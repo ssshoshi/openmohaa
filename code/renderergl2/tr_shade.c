@@ -1834,6 +1834,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			vec4_t pushers[8], who[8];
 
 			GLSL_SetUniformVec4(sp, UNIFORM_GROUNDCOVER, tess.floraParams);
+			GLSL_SetUniformVec4(sp, UNIFORM_FLORACROWN, tess.floraCrown);
+			GLSL_SetUniformVec4(sp, UNIFORM_FLORARADII, tess.floraRadii);
 			// a blast's throw first, then who stands in it (as the grass's)
 			RB_GroundCoverPushers(who);
 			Vector4Copy(tess.floraBlast, pushers[0]);

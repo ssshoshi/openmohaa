@@ -271,6 +271,8 @@ cvar_t	*r_marksOnTriangleMeshes;
 cvar_t	*r_vaoCache;
 cvar_t	*r_staticModelVao; // Added in OPM
 cvar_t	*r_floraWind;      // Added in OPM
+cvar_t	*r_floraShade;     // Added in OPM
+cvar_t	*r_floraThrough;   // Added in OPM
 cvar_t	*r_floraLod;       // Added in OPM
 cvar_t	*r_floraSeat;      // Added in OPM
 cvar_t	*r_floraShadowLod; // Added in OPM
@@ -1940,6 +1942,10 @@ void R_Register( void )
 	r_floraShadowLod = ri.Cvar_Get("r_floraShadowLod", "0.35", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_floraShadowLod, "How far off remade trees cast their shadows from their far models, of where they are seen to change (r_floraLod): the trees near keep casting what is seen. 1: as seen; 0.35: a dense wood's shadows cost half");
 	r_floraWind = ri.Cvar_Get("r_floraWind", "1", CVAR_ARCHIVE);
+	r_floraShade = ri.Cvar_Get("r_floraShade", "0.75", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraShade, "How much less of the sky's and the map's light reaches the leaves deep in a remade tree's or bush's crown and under it than its outside (0: all alike, as one shade; 1: none at its heart)");
+	r_floraThrough = ri.Cvar_Get("r_floraThrough", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_floraThrough, "How much sun shines through the leaves of remade trees and bushes beyond the first it meets, and how bright they light up seen against the sun (0: none, as before; 1: as made)");
 	ri.Cvar_SetDescription(r_floraWind, "How far the wind moves remade trees and bushes: trunks bend, boughs sway and leaves flutter, harder under a gust (1: as made, 0 still; r_wind and the map's wind scale it too)");
 	// Added in OPM: grass tufts on grass ground (tr_groundcover.c)
 	R_GroundCoverRegisterCvars();
