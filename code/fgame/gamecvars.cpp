@@ -359,6 +359,7 @@ cvar_t *g_sprint_recover;
 cvar_t *g_sprint_minhealth;
 cvar_t *g_sprint_tired_speed;
 cvar_t *g_sprint_tired_time;
+cvar_t *g_sp_runspeed;
 
 // A grenade on the ground throws its fragments up and out (RadiusDamage)
 cvar_t *g_grenade_cone;
@@ -390,6 +391,14 @@ cvar_t *ai_smoke_advance;
 cvar_t *ai_accuracy_model;
 cvar_t *ai_accuracy_acquire;
 cvar_t *ai_cover;
+
+float G_RunSpeed(void)
+{
+    if (g_gametype->integer == GT_SINGLE_PLAYER && g_sp_runspeed && g_sp_runspeed->value > 0) {
+        return g_sp_runspeed->value;
+    }
+    return sv_runspeed->value;
+}
 
 void CVAR_Init(void)
 {
@@ -850,11 +859,13 @@ void CVAR_Init(void)
     g_dive_sprint_up   = gi.Cvar_Get("g_dive_sprint_up", "180", 0);
     g_sprint           = gi.Cvar_Get("g_sprint", "1", CVAR_ARCHIVE);
     g_sprint_speed     = gi.Cvar_Get("g_sprint_speed", "1.4", 0);
-    g_sprint_time      = gi.Cvar_Get("g_sprint_time", "8", 0);
+    g_sprint_time      = gi.Cvar_Get("g_sprint_time", "5.6", 0);
     g_sprint_recover   = gi.Cvar_Get("g_sprint_recover", "1", 0);
     g_sprint_minhealth = gi.Cvar_Get("g_sprint_minhealth", "25", 0);
     g_sprint_tired_speed = gi.Cvar_Get("g_sprint_tired_speed", "0.6", 0);
     g_sprint_tired_time  = gi.Cvar_Get("g_sprint_tired_time", "3", 0);
+    // single player runs slower than multiplayer's sv_runspeed (G_RunSpeed)
+    g_sp_runspeed        = gi.Cvar_Get("g_sp_runspeed", "200", 0);
     g_grenade_cone     = gi.Cvar_Get("g_grenade_cone", "1", CVAR_ARCHIVE);
     g_grenade_cone_min = gi.Cvar_Get("g_grenade_cone_min", "0.3", 0);
     g_grenade_prone       = gi.Cvar_Get("g_grenade_prone", "0.5", 0);

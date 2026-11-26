@@ -865,7 +865,7 @@ void BotController::State_Attack(void)
                 float length;
 
                 length = controlledEnt->velocity.length();
-                if ((length / sv_runspeed->value) > (pWeap->GetMaxFireMovementMult())) {
+                if ((length / G_RunSpeed()) > (pWeap->GetMaxFireMovementMult())) {
                     bNoMove = true;
                     movement.ClearMove();
                 }

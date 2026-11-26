@@ -1,0 +1,40 @@
+--- a/default.cfg
++++ b/default.cfg
+@@ -13,10 +13,10 @@
+ //bind RIGHTARROW "+moveright"
+ bind SPACE "+moveup"
+ bind LCTRL "+movedown"
+-bind LSHIFT "+speed"
++bind LSHIFT "+sprint"
++bind ALT "+speed"
+ //bind z "toggle cl_run"
+-bind c "+leanright"
+-bind z "+leanleft"
++bind c "prone"
+ 
+ //
+ // View Keys for keyboard players
+@@ -32,9 +32,11 @@
+ // Combat Keys
+ //
+ bind MOUSE1 "+attackprimary"
+-bind MOUSE2 "+attacksecondary"
++bind MOUSE2 "+aim"
++bind MOUSE3 "+attacksecondary"
+ bind r "reload"
+-bind q "holster"
++bind q "+leanleft"
++bind F1 "holster"
+ bind h "weapdrop"
+ //bind RCTRL "+attackprimary"
+ //bind RSHIFT "+attacksecondary"
+@@ -63,7 +65,8 @@
+ //bind 8 "useweaponclass item2"
+ //bind 9 "useweaponclass item3"
+ //bind 0 "useweaponclass item4"
+-bind e "+use"
++bind e "+leanright"
++bind f "+use"
+ 
+ //
+ // Interface Keys

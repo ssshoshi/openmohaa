@@ -2273,6 +2273,7 @@ void Player::Init(void)
     m_bDiving       = false;
     m_fDiveTime     = 0;
     m_bSprinting    = false;
+    m_iGait         = GAIT_RUN;
     m_bHoldUpmove   = false;
     m_fSprintUsed      = 0;
     m_bSprintExhausted = false;
@@ -4111,9 +4112,9 @@ void Player::ClientMove(usercmd_t *ucmd)
 
     if (movetype == MOVETYPE_NOCLIP) {
         if (!(last_ucmd.buttons & BUTTON_RUN)) {
-            client->ps.speed = sv_runspeed->value * sv_walkspeedmult->value;
+            client->ps.speed = G_RunSpeed() * sv_walkspeedmult->value;
         } else {
-            client->ps.speed = sv_runspeed->value;
+            client->ps.speed = G_RunSpeed();
         }
     } else if (!groundentity) {
         client->ps.speed = airspeed;
@@ -4123,7 +4124,7 @@ void Player::ClientMove(usercmd_t *ucmd)
         if (last_ucmd.buttons & BUTTON_RUN) {
             client->ps.speed = GetRunSpeed();
         } else {
-            client->ps.speed = sv_runspeed->value * sv_walkspeedmult->value;
+            client->ps.speed = G_RunSpeed() * sv_walkspeedmult->value;
         }
 
         if (m_iMovePosFlags & MPF_POSITION_CROUCHING) {
@@ -11966,7 +11967,7 @@ qboolean Player::ViewModelAnim(str anim, qboolean force_restart, qboolean bFullA
             float length;
 
             length = velocity.length();
-            if (length / sv_runspeed->value > ((weapon->m_fMaxFireMovement * weapon->m_fMovementSpeed) + 0.1f)) {
+            if (length / G_RunSpeed() > ((weapon->m_fMaxFireMovement * weapon->m_fMovementSpeed) + 0.1f)) {
                 // Set the view model animation to disabled
                 viewModelAnim = VM_ANIM_DISABLED;
             }
@@ -12055,9 +12056,9 @@ float Player::GetRunSpeed() const
     }
 
     if (sv_sprinton->integer == 1 && m_fLastSprintTime && (level.time - m_fLastSprintTime) > sprintTime) {
-        return sv_runspeed->value * sprintMult;
+        return G_RunSpeed() * sprintMult;
     } else {
-        return sv_runspeed->value;
+        return G_RunSpeed();
     }
 }
 
