@@ -415,6 +415,9 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_OPM_EXPLOSION_LARGE:
             szEffectModel = "models/fx/opm_explosion_large.tik";
             break;
+        case SFX_OPM_EXPLOSION_FUEL:
+            szEffectModel = "models/fx/opm_explosion_fuel.tik";
+            break;
         case SFX_OPM_EARTH_GREN:
             szEffectModel = "models/fx/opm_earth_gren.tik";
             break;
@@ -1242,4 +1245,25 @@ qboolean ClientSpecialEffectsManager::EffectsPending()
 specialeffect_t *ClientSpecialEffectsManager::GetTestEffectPointer()
 {
     return &m_effects[SFX_TEST_EFFECT];
+}
+
+/*
+===============
+CG_OpmExplosionEffect
+
+Added in OPM
+===============
+*/
+int CG_OpmExplosionEffect(const char *size)
+{
+    if (!Q_stricmp(size, "small")) {
+        return SFX_OPM_EXPLOSION_SMALL;
+    }
+    if (!Q_stricmp(size, "medium")) {
+        return SFX_OPM_EXPLOSION_MEDIUM;
+    }
+    if (!Q_stricmp(size, "fuel")) {
+        return SFX_OPM_EXPLOSION_FUEL;
+    }
+    return SFX_OPM_EXPLOSION_LARGE;
 }

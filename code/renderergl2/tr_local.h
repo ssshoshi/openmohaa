@@ -1889,6 +1889,8 @@ typedef struct refSprite_s {
     float shaderTime;
     qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke (R_FroxelTakesSprite)
     byte     froxelAlpha; // and its alpha before its sprite gave the grid its share
+    byte     froxelRGB[3]; // and its colour (fire: the sprite gives its share by its colour)
+    float    froxelHeat;  // fire (RF_VOLUME_FIRE): how hot it is still, 1 to 0
 } refSprite_t;
 
 //=========================

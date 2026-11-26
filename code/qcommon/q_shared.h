@@ -1958,6 +1958,12 @@ typedef struct usercmd_s {
 // OPM: set by cgame only, never sent by a server. Such a sprite's colour has
 // the light grid's light in it already (R_GetLightingForSmoke).
 #define RF_SMOKE_GRIDLIT		(1<<6)
+// OPM: set by cgame only, never sent by a server, on sprites only (it is
+// RF_GORE_DENTS's bit, which only skeletal models read). A puff of an
+// RF_VOLUME_SMOKE sprite that is fire: it glows, by refEntity_t::shadowPlane,
+// its heat (1 just thrown out, 0 burnt out to soot), which a sprite has no
+// other use for.
+#define RF_VOLUME_FIRE			(1<<27)
 //
 // use this mask when propagating renderfx from one entity to another
 //

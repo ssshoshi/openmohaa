@@ -241,3 +241,34 @@ extern "C" void CG_BlastUpdate(vec3_t angles)
         cgi.Cvar_Set("s_volume", va("%.3f", saved * (1.0f - 0.75f * cg_ringDepth * muffle)));
     }
 }
+
+/*
+===============
+CG_FxExplode_f
+
+Added in OPM: fx_explode <small|medium|large|fuel> [x y z]: one of the opm-explosions
+effects, where the view looks (on what it meets, a little short of it) or at a
+point; only what it looks like and how it feels, no damage. For seeing the
+explosions' fire and smoke (r_volumetric 2) and tuning them.
+===============
+*/
+extern "C" void CG_FxExplode_f(void)
+{
+    const int effect = CG_OpmExplosionEffect(cgi.Argc() > 1 ? cgi.Argv(1) : "medium");
+    vec3_t    origin;
+
+    if (cgi.Argc() > 4) {
+        origin[0] = atof(cgi.Argv(2));
+        origin[1] = atof(cgi.Argv(3));
+        origin[2] = atof(cgi.Argv(4));
+    } else {
+        trace_t trace;
+        vec3_t  end;
+
+        VectorMA(cg.refdef.vieworg, 4096, cg.refdef.viewaxis[0], end);
+        CG_Trace(&trace, cg.refdef.vieworg, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, MASK_SHOT, qfalse, qtrue, "fx_explode");
+        VectorMA(trace.endpos, -16, cg.refdef.viewaxis[0], origin);
+    }
+
+    sfxManager.MakeEffect_Normal(effect, Vector(origin), Vector(0, 0, 1));
+}
