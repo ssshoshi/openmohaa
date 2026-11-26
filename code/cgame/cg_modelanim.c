@@ -938,6 +938,14 @@ static void CG_IdleViewModelSway(const refEntity_t *model)
           && (cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE || cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE_0
               || cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE_1 || cgi.anim->g_iLastVMAnim == VM_ANIM_IDLE_2);
 
+    // a shot ends the idle there and then: it starts again calm, easing in from the
+    // weapon's own pose, and not from wherever the idle had got to (the gun went back there)
+    if (cgi.anim->g_iLastVMAnim == VM_ANIM_FIRE || cgi.anim->g_iLastVMAnim == VM_ANIM_FIRE_SECONDARY
+        || cgi.anim->g_iLastVMAnim == VM_ANIM_RECHAMBER) {
+        idleSwayFrac = 0;
+        CG_IdleGestureSchedule();
+    }
+
     target = idling ? 1 : 0;
     step   = cg.frametime / 1000.0f * vm_idle_speed->value;
     if (idleSwayFrac < target) {
@@ -1030,6 +1038,113 @@ static void CG_ApplyIdleSway(refEntity_t *model)
         VectorMA(model->origin, idleSwayMove[i], model->axis[i], model->origin);
     }
     AxisCopy(axis, model->axis);
+}
+
+/*
+======================
+CG_ZoomHidesViewModel
+
+Added in OPM
+  Zoomed, the view weapon goes once the scope's overlay is cg_scopeHideAt opaque: until
+  then its eyepiece, up at the eye, shows under the overlay fading in.
+======================
+*/
+static qboolean CG_ZoomHidesViewModel(void)
+{
+    return cg_scopeOverlayAlpha >= cg_scopeHideAt->value;
+}
+
+/*
+======================
+CG_RecoilViewModel
+
+Added in OPM
+  The kick in the arms: each shot (a fire view animation started) pushes the view
+  weapon, arms and all, back along it and tips it up about the grip, on a damped
+  spring (vm_recoil_freq, vm_recoil_damp) that brings it back into the hold.
+  vm_recoil_back units and vm_recoil_pitch degrees at the peak, scaled by the kind of
+  weapon: a rifle or the shotgun more, a submachine gun less.
+======================
+*/
+static float CG_RecoilScale(int prefix)
+{
+    switch (prefix) {
+    case 3: case 4: case 5:     // pistols
+        return 0.8f;
+    case 6: case 7: case 8: case 9: // rifles
+        return 1.4f;
+    case 10: case 11:           // submachine guns
+        return 0.55f;
+    case 12:                    // BAR
+        return 0.9f;
+    case 13:                    // StG 44
+        return 0.7f;
+    case 16: case 17:           // launchers
+        return 0.6f;
+    case 18:                    // shotgun
+        return 1.8f;
+    default:
+        return 0;
+    }
+}
+
+static void CG_RecoilViewModel(refEntity_t *model)
+{
+    static int   lastChanged = -1;
+    static float back, backVel, pitch, pitchVel;
+    float        dt, w, k, c, s, cs, sn, f[3], u[3];
+    vec3_t       pivot, rel;
+    int          i;
+
+    dt = Q_clamp_float(cg.frametime / 1000.0f, 0, 0.05f);
+    w  = 2 * M_PI * Q_max(1.0f, vm_recoil_freq->value);
+    k  = w * w;
+    c  = 2 * Q_clamp_float(vm_recoil_damp->value, 0.05f, 2.0f) * w;
+
+    if (cgi.anim->g_iLastVMAnimChanged != lastChanged) {
+        if (lastChanged != -1 && cgi.anim->g_iLastVMAnim == VM_ANIM_FIRE) {
+            s = CG_RecoilScale(cgi.anim->g_iLastAnimPrefixIndex);
+            // a speed that peaks near the wanted amount on this spring
+            backVel += vm_recoil_back->value * s * w * 1.6f;
+            pitchVel += vm_recoil_pitch->value * s * w * 1.6f;
+        }
+        lastChanged = cgi.anim->g_iLastVMAnimChanged;
+    }
+
+    backVel += (-k * back - c * backVel) * dt;
+    back += backVel * dt;
+    pitchVel += (-k * pitch - c * pitchVel) * dt;
+    pitch += pitchVel * dt;
+
+    if (fabs(back) < 0.001f && fabs(pitch) < 0.001f) {
+        return;
+    }
+
+    // tipped up about a point near the grip: forward tips toward up
+    VectorMA(model->origin, vm_recoil_pivot->value, model->axis[0], pivot);
+    VectorMA(pivot, -vm_recoil_pivot->value * 0.4f, model->axis[2], pivot);
+    VectorSubtract(model->origin, pivot, rel);
+
+    cs = cos(DEG2RAD(pitch));
+    sn = sin(DEG2RAD(pitch));
+    for (i = 0; i < 3; i++) {
+        f[i] = model->axis[0][i] * cs + model->axis[2][i] * sn;
+        u[i] = model->axis[2][i] * cs - model->axis[0][i] * sn;
+    }
+    {
+        float relF = DotProduct(rel, model->axis[0]);
+        float relL = DotProduct(rel, model->axis[1]);
+        float relU = DotProduct(rel, model->axis[2]);
+
+        for (i = 0; i < 3; i++) {
+            model->origin[i] = pivot[i] + f[i] * relF + model->axis[1][i] * relL + u[i] * relU;
+        }
+    }
+    VectorCopy(f, model->axis[0]);
+    VectorCopy(u, model->axis[2]);
+
+    // and back along it
+    VectorMA(model->origin, -back, model->axis[0], model->origin);
 }
 
 /*
@@ -1982,7 +2097,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
     memcpy(model.surfaces, s1->surfaces, MAX_MODEL_SURFACES);
 
     if (!(s1->renderfx & RF_ALWAYSDRAW) && s1->parent != ENTITYNUM_NONE && s1->parent == cg.snap->ps.clientNum
-        && ((!cg_drawviewmodel->integer && !bThirdPerson) || cg.snap->ps.stats[STAT_INZOOM])) {
+        && ((!cg_drawviewmodel->integer && !bThirdPerson) || (cg.snap->ps.stats[STAT_INZOOM] && CG_ZoomHidesViewModel()))) {
         // hide all surfaces while zooming or if the viewmodel shouldn't be shown
         for (i = 0; i < MAX_MODEL_SURFACES; i++) {
             model.surfaces[i] |= MDL_SURFACE_NODRAW;
@@ -2174,7 +2289,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
             cgi.ForceUpdatePose(&model);
 
             if ((cent->currentState.eFlags & EF_UNARMED) || cg_drawviewmodel->integer <= 1
-                || cg.snap->ps.stats[STAT_INZOOM] || cg.snap->ps.stats[STAT_HEALTH] <= 0) {
+                || (cg.snap->ps.stats[STAT_INZOOM] && CG_ZoomHidesViewModel()) || cg.snap->ps.stats[STAT_HEALTH] <= 0) {
                 // unarmed or zooming, hide the arms
                 for (i = 0; i < MAX_MODEL_SURFACES; i++) {
                     model.surfaces[i] |= MDL_SURFACE_NODRAW;
@@ -2229,6 +2344,7 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
                     CG_SprintViewModel(&model);
                     CG_CrawlViewModel(&model);
                     CG_ApplyIdleSway(&model);
+                    CG_RecoilViewModel(&model);
                 }
 
                 AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);

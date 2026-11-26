@@ -3168,6 +3168,7 @@ extern  cvar_t  *r_forceSunAmbientScale;
 extern  cvar_t  *r_sunlightMode;
 extern  cvar_t  *r_drawSunRays;
 extern  cvar_t  *r_breathBlur;
+extern  cvar_t  *r_scopeBlur;
 extern  cvar_t  *r_sunShadows;
 
 // Added in OPM: the realtime lights (tr_rtlight.c)

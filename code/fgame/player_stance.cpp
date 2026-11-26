@@ -504,6 +504,69 @@ void Player::UpdateGait(usercmd_t *ucmd)
     }
 }
 
+/*
+====================
+StanceSpreadMult
+
+How much of a weapon's spread the player's stance leaves in single player: all of
+it standing, g_spread_crouch kneeling, g_spread_prone lying down.
+====================
+*/
+/*
+====================
+UpdateScope
+
+Single player, +aim on a scoped rifle: the rifle comes up to the eye first (the aim
+animation, g_scopeDelay seconds) and only then is the scope looked through. Working the
+bolt or reloading takes the eye off it, as does moving; still holding +aim afterwards,
+the rifle comes back up and the scope with it.
+====================
+*/
+void Player::UpdateScope(bool aimHeld)
+{
+    Weapon     *weapon = GetActiveWeapon(WEAPON_MAIN);
+    const char *torso  = currentState_Torso ? currentState_Torso->getName() : "";
+    bool        blocked;
+
+    if (!weapon || !weapon->GetZoom()) {
+        if (IsZoomed()) {
+            ZoomOff();
+        }
+        m_fScopeReady = level.time + g_scopeDelay->value;
+        return;
+    }
+
+    blocked = !aimHeld || (current_ucmd && (current_ucmd->forwardmove || current_ucmd->rightmove)) || m_bProneRequest
+           || (weapon->GetState() != WEAPON_READY && weapon->GetState() != WEAPON_FIRING)
+           || (torso && Q_stristr(torso, "RECHAMBER")) || (torso && Q_stristr(torso, "RELOAD"));
+
+    if (blocked) {
+        m_fScopeReady = level.time + g_scopeDelay->value;
+    }
+
+    if ((!blocked && level.time >= m_fScopeReady) != (IsZoomed() != qfalse)) {
+        if (IsZoomed()) {
+            ZoomOff();
+        } else {
+            ToggleZoom(weapon->GetZoom());
+        }
+    }
+}
+
+float Player::StanceSpreadMult() const
+{
+    if (g_gametype->integer != GT_SINGLE_PLAYER) {
+        return 1.0f;
+    }
+    if (m_bProne) {
+        return Q_clamp_float(g_spread_prone->value, 0.05f, 2.0f);
+    }
+    if (m_iMovePosFlags & MPF_POSITION_CROUCHING) {
+        return Q_clamp_float(g_spread_crouch->value, 0.05f, 2.0f);
+    }
+    return 1.0f;
+}
+
 float Player::StanceSpeed(float speed) const
 {
     if (!groundentity) {

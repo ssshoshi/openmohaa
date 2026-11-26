@@ -131,6 +131,11 @@ cvar_t *vm_sprint_side;
 cvar_t *vm_sprint_up;
 cvar_t *vm_sprint_speed;
 cvar_t *vm_sprint_pivot;
+cvar_t *vm_recoil_back;
+cvar_t *vm_recoil_pitch;
+cvar_t *vm_recoil_freq;
+cvar_t *vm_recoil_damp;
+cvar_t *vm_recoil_pivot;
 cvar_t *vm_crawl;
 cvar_t *vm_idle;
 cvar_t *vm_idle_scale;
@@ -157,7 +162,12 @@ cvar_t *ui_timemessage;
 //
 cvar_t *cg_fov;
 cvar_t *cg_breathZoom;
+cvar_t *cg_zoomEase;
+cvar_t *cg_scopeFade;
+cvar_t *cg_scopeHideAt;
+float   cg_scopeOverlayAlpha;
 cvar_t *cl_breathHold;
+cvar_t *cl_scopeLens;
 cvar_t *cg_cheats;
 
 /*
@@ -260,6 +270,12 @@ void CG_RegisterCvars(void)
     vm_sprint_up                  = cgi.Cvar_Get("vm_sprint_up", "-1", 0);
     vm_sprint_speed               = cgi.Cvar_Get("vm_sprint_speed", "7", 0);
     vm_sprint_pivot               = cgi.Cvar_Get("vm_sprint_pivot", "16", 0);
+    // Added in OPM: the kick in the arms (CG_RecoilViewModel)
+    vm_recoil_back                = cgi.Cvar_Get("vm_recoil_back", "1.0", 0);
+    vm_recoil_pitch               = cgi.Cvar_Get("vm_recoil_pitch", "2.0", 0);
+    vm_recoil_freq                = cgi.Cvar_Get("vm_recoil_freq", "7", 0);
+    vm_recoil_damp                = cgi.Cvar_Get("vm_recoil_damp", "0.55", 0);
+    vm_recoil_pivot               = cgi.Cvar_Get("vm_recoil_pivot", "10", 0);
     // Added in OPM: the third person idle on the view weapon (CG_IdleViewModelSway)
     vm_idle                       = cgi.Cvar_Get("vm_idle", "1", CVAR_ARCHIVE);
     vm_idle_scale                 = cgi.Cvar_Get("vm_idle_scale", "0.5", 0);
@@ -294,7 +310,14 @@ void CG_RegisterCvars(void)
     cg_fov = cgi.Cvar_Get("cg_fov", "80", CVAR_ARCHIVE);
     // Added in OPM: holding the breath aiming zooms in by this share (CG_CalcFov)
     cg_breathZoom = cgi.Cvar_Get("cg_breathZoom", "0.12", CVAR_ARCHIVE);
+    // Added in OPM: seconds a scope's zoom takes to settle in and out (CG_CalcFov)
+    cg_zoomEase = cgi.Cvar_Get("cg_zoomEase", "0.2", CVAR_ARCHIVE);
+    // Added in OPM: the scope's overlay fades in over cg_scopeFade seconds, the view weapon
+    // (its eyepiece at the eye) drawn under it until it is cg_scopeHideAt opaque
+    cg_scopeFade   = cgi.Cvar_Get("cg_scopeFade", "0.2", CVAR_ARCHIVE);
+    cg_scopeHideAt = cgi.Cvar_Get("cg_scopeHideAt", "0.7", CVAR_ARCHIVE);
     cl_breathHold = cgi.Cvar_Get("cl_breathHold", "0", CVAR_ROM);
+    cl_scopeLens  = cgi.Cvar_Get("cl_scopeLens", "0", 0);
     cg_cheats = cgi.Cvar_Get("cheats", "0", CVAR_USERINFO | CVAR_SERVERINFO | CVAR_LATCH);
 }
 /*

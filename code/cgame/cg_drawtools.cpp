@@ -534,21 +534,24 @@ void CG_DrawZoomOverlay()
         }
     }
 
+    // Changed in OPM: over cg_scopeFade seconds (was a fixed 1/15 a millisecond)
     if (bDrawOverlay) {
-        fAlpha += cg.frametime * 0.015;
+        fAlpha += cg.frametime / (1000.0f * Q_max(0.01f, cg_scopeFade->value));
         if (fAlpha > 1.0) {
             fAlpha = 1.0;
         }
     } else {
-        fAlpha -= cg.frametime * 0.015;
+        fAlpha -= cg.frametime / (1000.0f * Q_max(0.01f, cg_scopeFade->value));
         if (fAlpha < 0.0) {
             fAlpha = 0.0;
         }
 
         if (!fAlpha) {
+            cg_scopeOverlayAlpha = 0;
             return;
         }
     }
+    cg_scopeOverlayAlpha = bDrawOverlay ? fAlpha : 0;
 
     switch (zoomType) {
     case 1:
