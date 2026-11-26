@@ -2570,11 +2570,16 @@ static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
         qglVertexAttrib4f(ATTR_INDEX_COLOR, grid[0] / 255.0f, grid[1] / 255.0f, grid[2] / 255.0f, 1.0f);
     }
 
-    if (windy) {
+    // (a tree or a bush, still or not: the wind sways it, and its crown is
+    // darker at its heart, r_floraShade)
+    if (SM->floraHeight > 0.0f) {
         vec2_t dir;
         float  strength, yaw;
 
         R_AtmosWind(dir, &strength);
+        if (!windy) {
+            strength = 0.0f;
+        }
         yaw = atan2(dir[1], dir[0]);
         if (yaw < 0.0f) {
             yaw += 2.0f * M_PI;
@@ -2583,9 +2588,17 @@ static qboolean RB_StaticMeshVao(staticSurface_t *staticSurf)
         tess.floraParams[0] = (float)fmod(backEnd.refdef.floatTime, 3600.0);
         // leaves (drawn from both sides) flutter
         tess.floraParams[1] = tess.shader->cullType == CT_TWO_SIDED ? -SM->floraHeight : SM->floraHeight;
-        tess.floraParams[2] = strength * r_floraWind->value;
+        tess.floraParams[2] = strength * (windy ? r_floraWind->value : 0.0f);
         tess.floraParams[3] = yaw + 7.0f * floor(Com_Clamp(0.0f, 2.0f, R_AtmosGusts()) * 10.0f + 0.5f);
         R_BlastSway(SM->origin, tess.floraBlast);
+        if (!windy) {
+            VectorClear4(tess.floraBlast);
+        }
+        VectorCopy(SM->floraCrown, tess.floraCrown);
+        VectorCopy(SM->floraRadii, tess.floraRadii);
+        // (a model with the map's own light has its shade in it already)
+        tess.floraCrown[3] = SM->vaoColors ? 0.0f : Com_Clamp(0.0f, 1.0f, r_floraShade->value);
+        tess.floraRadii[3] = Q_max(0.0f, r_floraThrough->value);
     }
 
     staticModelNumIndexes[SM - backEnd.refdef.staticModels] += tess.numIndexes;

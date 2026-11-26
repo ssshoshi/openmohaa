@@ -1619,6 +1619,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 				backEnd.softDepth = qtrue;
 			}
 
+			// Added in OPM: how much of the sun reaches the eye, for its flare (leaves hide it)
+			RB_SunDepthProbe();
+
 			if (r_sunlightMode->integer && backEnd.viewParms.flags & VPF_USESUNLIGHT)
 			{
 				vec4_t quadVerts[4];

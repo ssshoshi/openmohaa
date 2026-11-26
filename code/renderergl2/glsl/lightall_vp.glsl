@@ -107,6 +107,16 @@ varying vec3   var_RtNormal;
 // Added in OPM: ground cover tufts (tr_groundcover.c). attr_Tangent is where
 // the tuft stands, and in w how far this vertex sways (0 on the ground);
 // attr_TexCoord1 its phase, and the fraction of the draw distance it reaches
+#if defined(USE_FLORA)
+// Added in OPM: a tree's crown (R_StaticFloraCrown): its middle and how dark its
+// heart is (r_floraShade), and how far it reaches each way (w: how much sun
+// comes through its leaves, r_floraThrough); how much of the light from round
+// about reaches this part of it, and whether it is a leaf
+uniform vec4   u_FloraCrown;
+uniform vec4   u_FloraRadii;
+varying vec3   var_Flora;
+#endif
+
 #if defined(USE_GROUNDCOVER) || defined(USE_FLORA)
 uniform vec4   u_GroundCover; // time, draw distance, wind, where the wind blows to (radians, under 7) with how gusty it is in tenths times 7 over it
                               // (a tree's, USE_FLORA: time, its height, negative for leaves, wind, the same)
@@ -507,6 +517,18 @@ void main()
 		float t      = u_GroundCover.x;
 		float height = abs(u_GroundCover.y);
 		float leafy  = u_GroundCover.y < 0.0 ? 1.0 : 0.0;
+
+		// the light from round about (the sky's, the light grid's) reaches the
+		// outside of the crown; its heart and its underside see little of it,
+		// for the leaves round them. (The sun is apart: its shadow maps have
+		// the leaves.) A trunk under the crown is shaded by it too.
+		{
+			vec3  q     = (position - u_FloraCrown.xyz) / u_FloraRadii.xyz;
+			float d     = length(q);
+			float heart = 1.0 - smoothstep(0.15, 1.0, d);
+			float under = clamp(-q.z, 0.0, 1.0) * (1.0 - smoothstep(1.0, 1.6, length(q.xy)));
+			var_Flora = vec3(1.0 - u_FloraCrown.w * clamp(0.75 * heart + 0.35 * under, 0.0, 0.85), leafy, u_FloraRadii.w);
+		}
 		vec3  root   = u_ModelMatrix[3].xyz;
 		vec3  ax     = u_ModelMatrix[0].xyz;
 		vec3  ay     = u_ModelMatrix[1].xyz;

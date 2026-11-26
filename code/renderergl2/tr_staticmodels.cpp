@@ -129,6 +129,57 @@ static vao_t *R_StaticSurfaceVao(skelSurfaceGame_t *surf, const color4ub_t *colo
     return vao;
 }
 
+/*
+=============
+R_StaticFloraCrown
+
+A tree's or a bush's crown, for its shade (r_floraShade): the box round its
+leaves (a remade one's surfaces named leaves*, tools/flora), else round all of
+it, taken as an ellipsoid.
+=============
+*/
+static void R_StaticFloraCrown(cStaticModelUnpacked_t *pSM)
+{
+    vec3_t   mins, maxs, allMins, allMaxs;
+    qboolean leaves = qfalse;
+    int      j, k, v;
+
+    ClearBounds(mins, maxs);
+    ClearBounds(allMins, allMaxs);
+    for (j = 0; j < pSM->tiki->numMeshes; j++) {
+        skelHeaderGame_t  *skel = ri.TIKI_GetSkel(pSM->tiki->mesh[j]);
+        skelSurfaceGame_t *surf;
+
+        for (k = 0, surf = skel ? skel->pSurfaces : NULL; skel && k < skel->numSurfaces; k++, surf = surf->pNext) {
+            const qboolean leafy = !Q_stricmpn(surf->name, "leaves", 6);
+
+            if (!surf->pStaticXyz) {
+                continue;
+            }
+            for (v = 0; v < surf->numVerts; v++) {
+                AddPointToBounds(surf->pStaticXyz[v], allMins, allMaxs);
+                if (leafy) {
+                    AddPointToBounds(surf->pStaticXyz[v], mins, maxs);
+                }
+            }
+            leaves |= leafy;
+        }
+    }
+    if (!leaves) {
+        VectorCopy(allMins, mins);
+        VectorCopy(allMaxs, maxs);
+    }
+    if (mins[0] > maxs[0]) {
+        VectorClear(pSM->floraCrown);
+        VectorSet(pSM->floraRadii, 1.0f, 1.0f, 1.0f);
+        return;
+    }
+    for (j = 0; j < 3; j++) {
+        pSM->floraCrown[j] = (mins[j] + maxs[j]) * 0.5f;
+        pSM->floraRadii[j] = Q_max((maxs[j] - mins[j]) * 0.5f, 1.0f);
+    }
+}
+
 static void R_StaticModelVaos(cStaticModelUnpacked_t *pSM, const char *name, float top)
 {
     int numSurfaces = 0;
@@ -164,6 +215,7 @@ static void R_StaticModelVaos(cStaticModelUnpacked_t *pSM, const char *name, flo
     // a tree or a bush: the wind moves it
     if ((strstr(name, "/tree_") || strstr(name, "/bush_")) && top > 8.0f) {
         pSM->floraHeight = top;
+        R_StaticFloraCrown(pSM);
     }
 }
 

@@ -685,8 +685,11 @@ void sun_flare_class::SunTry()
         return;
     }
 
-    if (SunCheckRay()) {
-        alpha = (dot - dot_min) / (1.0 - dot_min);
+    // (and what is drawn before it: leaves, RB_SunDepthProbe)
+    float shown = R_SunShown();
+
+    if (SunCheckRay() && shown > 0.01f) {
+        alpha = (dot - dot_min) / (1.0 - dot_min) * shown;
     } else {
         int timediff;
 

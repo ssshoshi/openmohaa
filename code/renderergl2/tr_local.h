@@ -1106,6 +1106,8 @@ typedef enum
 	UNIFORM_PARTICLESCENEMAP, // Added in OPM: the view behind dust and smoke (r_linearParticleBlend)
 	UNIFORM_PARTICLEBLEND,    // and 1 to blend them as shown, from it
 	UNIFORM_GROUNDCOVER,  // Added in OPM: time, draw distance, wind (tr_groundcover.c)
+	UNIFORM_FLORACROWN,   // Added in OPM: a tree's crown, its middle and how dark its heart (r_floraShade)
+	UNIFORM_FLORARADII,   // and how far it reaches each way
 	UNIFORM_SKELBONES,    // Added in OPM: a skeletal model posed by the vertex program (tr_skelgpu.c)
 	UNIFORM_SKELPARAMS,
 	UNIFORM_SKELAMBIENT,
@@ -1872,6 +1874,10 @@ typedef struct cStaticModelUnpacked_s {
     struct vao_s **surfaceVaos;
     qboolean       vaoColors; // they hold the map's own light for it (R_StaticFloraVaos)
     float          floraHeight;
+    // the crown of a tree or a bush, an ellipsoid round its leaves (model space):
+    // its middle, and how far it reaches each way (R_StaticModelVaos; r_floraShade)
+    vec3_t         floraCrown;
+    vec3_t         floraRadii;
     // where the light grid is read for it: where the map put it, though a remade
     // tree is set down onto the ground (R_SeatStaticFlora)
     vec3_t         lightOrigin;
@@ -3345,6 +3351,8 @@ extern cvar_t* r_showportal;
 extern cvar_t *r_vaoCache;
 extern cvar_t *r_staticModelVao; // Added in OPM
 extern cvar_t *r_floraWind;      // Added in OPM
+extern cvar_t *r_floraShade;     // Added in OPM
+extern cvar_t *r_floraThrough;   // Added in OPM
 extern cvar_t *r_floraLod;       // Added in OPM
 extern cvar_t *r_floraSeat;      // Added in OPM
 extern cvar_t *r_floraShadowLod; // Added in OPM
@@ -3739,6 +3747,8 @@ typedef struct shaderCommands_s
 	qboolean    flora;
 	vec4_t      floraParams;
 	vec4_t      floraBlast; // which way a blast throws it and how far (of its height), how hard it shakes
+	vec4_t      floraCrown; // its crown's middle, and how dark its heart is (r_floraShade)
+	vec4_t      floraRadii; // how far its crown reaches each way
 
 	// Added in OPM: the batch is polygons (marks, decals): the realtime
 	// bounce lights them from the probes where they are (R_RtSetUniforms)
@@ -4192,6 +4202,8 @@ SUN FLARE
 */
 void R_InitLensFlare();
 void R_DrawLensFlares();
+void RB_SunDepthProbe(void); // Added in OPM: how much of the sun the drawn scene hides (leaves too)
+float R_SunShown(void);      // and how much of it shows, eased (tr_postprocess.c)
 
 /*
 =============================================================

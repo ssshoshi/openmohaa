@@ -7,8 +7,8 @@ are made from it instead:
 
     OPM_PINES=<folder> tools/flora/flora.py --out DIR
 
-The folder (default: "D:\\Medal of Honor\\models\\Realistic Pine Conifer Tree
-Collection" as WSL sees it) holds model_0.obj .. model_6.obj, one a material
+The folder (default: "D:\\Medal of Honor\\models\\Trees\\Realistic Pine Conifer
+Tree Collection" as WSL sees it, or the same without Trees) holds model_0.obj .. model_6.obj, one a material
 over the whole row of trees standing side by side: model_0/1 the bark (tiling
 bark_albedo), model_2..5 the needle cards (branch atlas, its alpha apart in
 branch_alpha), model_6 the root flares (trunks atlas). Each OBJ is triangle
@@ -49,7 +49,8 @@ from scipy.spatial import cKDTree
 
 import paint
 
-DEFAULT = "/mnt/d/Medal of Honor/models/Realistic Pine Conifer Tree Collection"
+DEFAULTS = ("/mnt/d/Medal of Honor/models/Trees/Realistic Pine Conifer Tree Collection",
+            "/mnt/d/Medal of Honor/models/Realistic Pine Conifer Tree Collection")
 MAX_VERTS, MAX_TRIS = 1000, 2000
 BARK_PARTS, CARD_PARTS, ROOT_PARTS = (0, 1), (2, 3, 4, 5), (6,)
 KEEP = 0.7  # (of the flare under the origin, kept as it is: see build)
@@ -73,8 +74,10 @@ PINES = {
 
 
 def source():
-    path = os.environ.get("OPM_PINES", DEFAULT)
-    return path if os.path.exists(os.path.join(path, "model_0.obj")) else None
+    for path in ([os.environ["OPM_PINES"]] if "OPM_PINES" in os.environ else DEFAULTS):
+        if os.path.exists(os.path.join(path, "model_0.obj")):
+            return path
+    return None
 
 
 def _meshopt():
