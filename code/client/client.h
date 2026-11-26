@@ -441,6 +441,13 @@ extern	cvar_t	*cl_pitchspeed;
 extern	cvar_t	*cl_run;
 extern	cvar_t	*cl_leanToggle;
 extern	cvar_t	*cl_leanCancelMsec;
+extern	cvar_t	*cl_aimToggle;
+extern	cvar_t	*cl_aimSway;
+extern	cvar_t	*cl_aimSwayTired;
+extern	cvar_t	*cl_breathTime;
+extern	cvar_t	*cl_breathRecover;
+extern	cvar_t	*cl_breathTiredTime;
+extern	cvar_t	*cl_breathHold;
 extern	cvar_t	*cl_anglespeedkey;
 
 extern	cvar_t	*cl_sensitivity;

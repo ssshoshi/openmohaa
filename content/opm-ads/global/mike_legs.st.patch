@@ -1,0 +1,83 @@
+--- a/global/mike_legs.st
++++ b/global/mike_legs.st
+@@ -522,7 +522,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight  "jumpstart" //"duck"  
++		modheight  "duck" // was "jumpstart" (MOHAIM): too tall to crouch into vents  
+ 		movementstealth "1.25" 
+ 		moveposflags "crouching"
+ 	}
+@@ -577,7 +577,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "1.0"
+ 		moveposflags "crouching" "walking"
+ 	}
+@@ -628,7 +628,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "1.0"
+ 		moveposflags "crouching" "walking"
+ 	}
+@@ -680,7 +680,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "1.0"
+ 		moveposflags "crouching" "walking"
+ 	}
+@@ -732,7 +732,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "1.0"
+ 		moveposflags "crouching" "walking"
+ 	}
+@@ -790,7 +790,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "0.75"
+ 		moveposflags "crouching" "running"
+ 	}
+@@ -841,7 +841,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight  "jumpstart" //"duck"
++		modheight  "duck" // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "0.75"
+ 		moveposflags "crouching" "running"
+ 	}
+@@ -892,7 +892,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "0.75"
+ 		moveposflags "crouching" "running"
+ 	}
+@@ -943,7 +943,7 @@
+ {
+ 	entrycommands
+ 	{
+-		modheight "jumpstart"  //"duck"
++		modheight "duck"  // was "jumpstart" (MOHAIM): too tall to crouch into vents
+ 		movementstealth "0.75"
+ 		moveposflags "crouching" "running"
+ 	}

@@ -156,6 +156,8 @@ cvar_t *ui_timemessage;
 // Added in OPM
 //
 cvar_t *cg_fov;
+cvar_t *cg_breathZoom;
+cvar_t *cl_breathHold;
 cvar_t *cg_cheats;
 
 /*
@@ -290,6 +292,9 @@ void CG_RegisterCvars(void)
     //
 
     cg_fov = cgi.Cvar_Get("cg_fov", "80", CVAR_ARCHIVE);
+    // Added in OPM: holding the breath aiming zooms in by this share (CG_CalcFov)
+    cg_breathZoom = cgi.Cvar_Get("cg_breathZoom", "0.12", CVAR_ARCHIVE);
+    cl_breathHold = cgi.Cvar_Get("cl_breathHold", "0", CVAR_ROM);
     cg_cheats = cgi.Cvar_Get("cheats", "0", CVAR_USERINFO | CVAR_SERVERINFO | CVAR_LATCH);
 }
 /*

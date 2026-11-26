@@ -3617,6 +3617,17 @@ void CL_Init( void ) {
 	//  Lean keys toggle (cl_input.cpp)
 	cl_leanToggle = Cvar_Get( "cl_leanToggle", "1", CVAR_ARCHIVE );
 	cl_leanCancelMsec = Cvar_Get( "cl_leanCancelMsec", "400", CVAR_ARCHIVE );
+	// Added in OPM
+	//  The aim key toggles aiming instead of holding it (cl_input.cpp)
+	cl_aimToggle = Cvar_Get( "cl_aimToggle", "0", CVAR_ARCHIVE );
+	// Added in OPM
+	//  The aim's drift and holding the breath (cl_input.cpp, CL_AimSway)
+	cl_aimSway = Cvar_Get( "cl_aimSway", "0.35", CVAR_ARCHIVE );
+	cl_aimSwayTired = Cvar_Get( "cl_aimSwayTired", "2.5", 0 );
+	cl_breathTime = Cvar_Get( "cl_breathTime", "6", 0 );
+	cl_breathRecover = Cvar_Get( "cl_breathRecover", "5", 0 );
+	cl_breathTiredTime = Cvar_Get( "cl_breathTiredTime", "4", 0 );
+	cl_breathHold = Cvar_Get( "cl_breathHold", "0", CVAR_ROM );
 	cl_sensitivity = Cvar_Get( "sensitivity", "5", CVAR_ARCHIVE );
     cl_mouseAccel = Cvar_Get("cl_mouseAccel", "0", CVAR_ARCHIVE);
     cl_freelook = Cvar_Get("cl_freelook", "1", CVAR_ARCHIVE);

@@ -497,10 +497,17 @@ static int CG_CalcFov(void)
     float fov_ratio;
 
     fov_ratio = (float)cg.refdef.width / (float)cg.refdef.height * (3.0 / 4.0);
-    if (fov_ratio == 1) {
-        fov_x = cg.camera_fov;
-    } else {
-        fov_x = RAD2DEG(atan(tan(DEG2RAD(cg.camera_fov / 2.0)) * fov_ratio)) * 2.0;
+    {
+        // Added in OPM
+        //  Holding the breath aiming down the sights zooms in a little (the client's
+        //  cl_breathHold, eased from 0 to 1)
+        float camera_fov = cg.camera_fov * (1.0f - cg_breathZoom->value * Q_clamp_float(cl_breathHold->value, 0, 1));
+
+        if (fov_ratio == 1) {
+            fov_x = camera_fov;
+        } else {
+            fov_x = RAD2DEG(atan(tan(DEG2RAD(camera_fov / 2.0)) * fov_ratio)) * 2.0;
+        }
     }
 
     x = cg.refdef.width / tan(fov_x / 360 * M_PI);

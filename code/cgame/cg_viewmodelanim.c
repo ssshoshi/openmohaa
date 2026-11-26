@@ -378,6 +378,20 @@ void CG_ViewModelAnimation(refEntity_t *pModel)
         cgi.anim->g_iLastVMAnimChanged = cg.snap->ps.iViewModelAnimChanged;
     }
 
+    // Added in OPM
+    //  Aiming kneeling or prone has an animation of its own where the weapon has one
+    //  (<prefix>_charge_low: the pistols' two-handed hold; standing they point-shoot):
+    //  going down or getting up while aiming switches over
+    {
+        static qboolean lastLow;
+        qboolean        low = cg.predicted_player_state.viewheight <= CROUCH_EYE_HEIGHT;
+
+        if (low != lastLow && cgi.anim->g_iLastVMAnim == VM_ANIM_CHARGE) {
+            bAnimChanged = qtrue;
+        }
+        lastLow = low;
+    }
+
     if (bAnimChanged) {
         switch (cgi.anim->g_iLastVMAnim) {
         case VM_ANIM_CHARGE:
@@ -429,6 +443,14 @@ void CG_ViewModelAnimation(refEntity_t *pModel)
         }
 
         Com_sprintf(szAnimName, sizeof(szAnimName), "%s_%s", AnimPrefixList[iAnimPrefixIndex], pszAnimSuffix);
+        if (cgi.anim->g_iLastVMAnim == VM_ANIM_CHARGE && cg.predicted_player_state.viewheight <= CROUCH_EYE_HEIGHT) {
+            char szLow[MAX_QPATH];
+
+            Com_sprintf(szLow, sizeof(szLow), "%s_charge_low", AnimPrefixList[iAnimPrefixIndex]);
+            if (cgi.Anim_NumForName(pTiki, szLow) != -1) {
+                Q_strncpyz(szAnimName, szLow, sizeof(szAnimName));
+            }
+        }
         if (!bWeaponChanged) {
             fCrossblendTime =
                 cgi.Anim_CrossblendTime(pTiki, cgi.anim->g_VMFrameInfo[cgi.anim->g_iCurrentVMAnimSlot].index);
@@ -565,7 +587,13 @@ void CG_CalcViewModelMovement(float fViewBobPhase, float fViewBobAmp, vec_t *vVe
     vMovement[2] = (sin((fViewBobPhase - 0.94) * 4.0 + M_PI / 2) * 0.125 + fPhase) * fViewBobAmp * vm_sway_up->value;
 
     if (cg.predicted_player_state.walking) {
-        if (cg.predicted_player_state.viewheight == CROUCH_EYE_HEIGHT) {
+        // Added in OPM
+        //  Not while aiming down the sights (MOHAIM's aim poses play as the charge and
+        //  reload_single view animations): this close to the eye the crouch's shift
+        //  throws the sights off the middle. MOHAIM stood the crouch up to its jump
+        //  height to keep it away, which left the player too tall to crouch into vents
+        if (cg.predicted_player_state.viewheight == CROUCH_EYE_HEIGHT
+            && cgi.anim->g_iLastVMAnim != VM_ANIM_CHARGE && cgi.anim->g_iLastVMAnim != VM_ANIM_RELOAD_SINGLE) {
             if (cgi.anim->g_iLastAnimPrefixIndex == WPREFIX_BAZOOKA
                 || cgi.anim->g_iLastAnimPrefixIndex == WPREFIX_PANZERSCHRECK) {
                 vTargOfs[0] = vm_offset_rocketcrouch_front->value;

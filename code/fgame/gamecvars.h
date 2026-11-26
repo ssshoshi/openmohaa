@@ -392,6 +392,7 @@ extern cvar_t *g_sprint_minhealth;
 extern cvar_t *g_sprint_tired_speed;
 extern cvar_t *g_sprint_tired_time;
 extern cvar_t *g_sp_runspeed;
+extern cvar_t *g_aimButton;
 extern cvar_t *g_sprint;
 extern cvar_t *g_sprint_speed;
 extern cvar_t *g_grenade_cone;
