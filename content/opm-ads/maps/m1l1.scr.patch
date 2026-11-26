@@ -1,0 +1,11 @@
+--- a/maps/m1l1.scr
++++ b/maps/m1l1.scr
+@@ -1004,7 +1004,7 @@
+ 		$player show
+ 		$player unglue $truckorg
+                 $player forcelegsstate CROUCH_IDLE
+-		$player.origin = $player.origin + (0 0 100) //(0 0 -35)
++		$player.origin = $player.origin + (0 0 -35) //(0 0 -35)
+ 
+ 	waitframe
+ 	local.ent = spawn script_origin
