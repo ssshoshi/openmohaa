@@ -1163,6 +1163,12 @@ def pick(pieces, sel):
         out = out.moved(m)
         out.name = sel.get("name", sel["mesh"] + "_pick")
         out.material = sel.get("material_as") or p.material or p.name
+    if "shift" in sel:   # then moved (the source's space)
+        m = np.eye(4)
+        m[:3, 3] = sel["shift"]
+        out = out.moved(m)
+        out.name = sel.get("name", sel["mesh"] + "_pick")
+        out.material = sel.get("material_as") or p.material or p.name
     print("  picked %s: %d triangles of %s" % (out.name, len(out.tris), sel["mesh"]))
     return out
 
