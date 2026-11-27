@@ -28,13 +28,14 @@
  bind h "weapdrop"
  //bind RCTRL "+attackprimary"
  //bind RSHIFT "+attacksecondary"
-@@ -63,7 +65,8 @@
+@@ -63,7 +65,9 @@
  //bind 8 "useweaponclass item2"
  //bind 9 "useweaponclass item3"
  //bind 0 "useweaponclass item4"
 -bind e "+use"
 +bind e "+leanright"
 +bind f "+use"
++bind l "flashlight"
  
  //
  // Interface Keys

@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Init functions for the cgame
 
 #include "cg_local.h"
+#include "cg_flashlight.h"
 #include "cg_parsemsg.h"
 #include "cg_archive.h"
 #include "cg_radar.h"
@@ -1009,6 +1010,7 @@ void CG_Init(clientGameImport_t *imported, int serverMessageNum, int serverComma
     CG_InitWater();
     CG_InitLens();
     CG_InitSnow();
+    CG_InitFlashlight();
     CG_GoreInit();
     CG_BlastInit();
     CG_InitPhysics();

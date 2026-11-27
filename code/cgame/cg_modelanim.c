@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Functions for doing model animation and attachments
 
 #include "cg_local.h"
+#include "cg_flashlight.h"
 #include "cg_ragdoll.h"
 #include "cg_gore.h"
 #include "cg_orch.h"
@@ -1301,7 +1302,7 @@ Added in OPM
   the eyes inside the chest.
 ======================
 */
-static void CG_AddFirstPersonBody(const refEntity_t *model, const vec3_t eyeBase)
+static void CG_AddFirstPersonBody(const refEntity_t *model, const vec3_t eyeBase, refEntity_t *wearer, int *wearerFx)
 {
     refEntity_t body = *model;
     refEntity_t fpsBody;
@@ -1338,10 +1339,16 @@ static void CG_AddFirstPersonBody(const refEntity_t *model, const vec3_t eyeBase
         cg.playerShadowBody.renderfx |= RF_THIRD_PERSON;
         cgi.R_AddRefEntityToScene(&cg.playerShadowBody, ENTITYNUM_NONE);
         cg.iPlayerShadowBodyTime = cg.time;
+        // what is worn on the body (the flashlight) goes on this one, unseen
+        *wearer   = cg.playerShadowBody;
+        *wearerFx = RF_THIRD_PERSON;
     }
 
     if (bDrawBody) {
         cgi.R_AddRefEntityToScene(&fpsBody, ENTITYNUM_NONE);
+        // or on the one seen through the eyes
+        *wearer   = fpsBody;
+        *wearerFx = RF_FIRST_PERSON;
     }
 }
 
@@ -2350,8 +2357,19 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
                 AnglesToAxis(cg.refdefViewAngles, cg.refdef.viewaxis);
             }
 
-            if ((cg_firstPersonShadow->integer || cg_firstPersonBody->integer) && !(s1->renderfx & RF_DONTDRAW)) {
-                CG_AddFirstPersonBody(&worldModel, eyeBase);
+            {
+                // Added in OPM
+                //  The body the flashlight is worn on: where the body is
+                //  drawn or shadowed, else the world body's own place, unseen
+                refEntity_t wearer   = worldModel;
+                int         wearerFx = RF_THIRD_PERSON;
+
+                if ((cg_firstPersonShadow->integer || cg_firstPersonBody->integer) && !(s1->renderfx & RF_DONTDRAW)) {
+                    CG_AddFirstPersonBody(&worldModel, eyeBase, &wearer, &wearerFx);
+                }
+                if (!(s1->renderfx & RF_DONTDRAW)) {
+                    CG_Flashlight(cent, &wearer, wearerFx);
+                }
             }
 
             model.renderfx &= ~(RF_FIRST_PERSON | RF_THIRD_PERSON);
@@ -2388,6 +2406,12 @@ void CG_ModelAnim(centity_t *cent, qboolean bDoShaderTime)
         // Added in OPM
         //  A man's breath in the cold, on a snow map.
         CG_BreathEntity(cent, &model);
+        // Added in OPM
+        //  The flashlight on his shirt (the player's own in first person goes
+        //  on the first person body, above)
+        if (s1->number != cg.snap->ps.clientNum || bThirdPerson) {
+            CG_Flashlight(cent, &model, 0);
+        }
 
         if (bShadowAttach) {
             refEntity_t shadowModel = model;

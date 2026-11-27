@@ -592,6 +592,16 @@ Event EV_Player_Prone
     "Lies down, or gets up. Moving at a run it is a dive. Single player.",
     EV_NORMAL
 );
+// Added in OPM
+Event EV_Player_Flashlight
+(
+    "flashlight",
+    EV_CONSOLE,
+    NULL,
+    NULL,
+    "Turns the flashlight worn on the shirt on or off.",
+    EV_NORMAL
+);
 Event EV_Player_SafeHolster
 (
     "safeholster",
@@ -1867,6 +1877,7 @@ CLASS_DECLARATION(Sentient, Player, "player") {
     {&EV_Show,                            &Player::PlayerShowModel              },
     {&EV_Player_ModifyHeight,             &Player::ModifyHeight                 },
     {&EV_Player_Prone,                    &Player::EventProne                   },
+    {&EV_Player_Flashlight,               &Player::EventFlashlight              },
 
     // Added in 2.40
     {&EV_Player_ModifyHeightFloat,        &Player::ModifyHeightFloat            },

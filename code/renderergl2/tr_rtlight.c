@@ -721,6 +721,12 @@ truck still shadows the other lights; its own are in front of it.
 #define RT_ENTITY_LAMPS      8
 #define RT_ENTITY_PRIORITY   0.1f // how much nearer than it is an entity lamp is taken to be, choosing the lights lit
 #define RT_SEARCHLIGHT_SLACK 48.0f // a game's light this far off its beam is in it
+// A lamp the game draws with no entity of its own (a player's flashlight, put
+// on the body by cgame's CG_Flashlight) is known again frame to frame by being
+// the nearest to where one of them was: keys from RT_WORN_KEY up
+#define RT_WORN_KEY   (MAX_GENTITIES * 2)
+#define RT_WORN_KEYS  64
+#define RT_WORN_REACH 96.0f
 
 static const rtLampDef_t *rt_modelDefs[MAX_MOD_KNOWN];
 static byte               rt_modelDefLooked[MAX_MOD_KNOWN];
@@ -796,12 +802,40 @@ static qboolean R_RtHeadlightsOn(refEntity_t *e, const rtLampDef_t *def)
 
 #define RT_FLARE_REACH 32.0f // a fake flare this near a live headlight's lens is its own
 
+// The key of a lamp with no entity of its own at lens: the one of the last
+// frame's nearest it, not yet taken this frame, else a new one
+static int R_RtWornLampKey(const vec3_t lens)
+{
+	static int next;
+	float      best = Square(RT_WORN_REACH);
+	int        key  = -1;
+	int        j;
+
+	for (j = rt.numMapLights; j < rt.numLights; j++) {
+		const rtLight_t *l = &rt.lights[j];
+		float            d;
+
+		if (l->entity < RT_WORN_KEY || l->entityFrame == rt.frame) {
+			continue;
+		}
+		d = DistanceSquared(l->origin, lens);
+		if (d < best) {
+			best = d;
+			key  = l->entity;
+		}
+	}
+	if (key < 0) {
+		key = RT_WORN_KEY + (next++ % RT_WORN_KEYS);
+	}
+	return key;
+}
+
 static void R_RtEntityLamps(void)
 {
 	vec3_t lenses[RT_ENTITY_LAMPS];
 	char   flares[RT_ENTITY_LAMPS][MAX_QPATH];
 	int    numLenses = 0;
-	int    i, j, k, b;
+	int    i, j, k, b, key;
 
 	Com_Memset(rt.dlightTaken, 0, sizeof(rt.dlightTaken));
 	if (!rt_numLampDefs || r_realtimeLighting->integer != 2 || !r_rtLamps->integer) {
@@ -821,13 +855,23 @@ static void R_RtEntityLamps(void)
 		if (def->kind != RT_LAMP_SEARCHLIGHT && def->kind != RT_LAMP_HEADLIGHT) {
 			continue;
 		}
-		if (e->entityNumber < 0 || e->entityNumber >= ENTITYNUM_WORLD) {
-			continue;
-		}
 		scale = e->scale > 0 ? e->scale : 1.0f;
 		for (k = 0; k < 3; k++) {
 			VectorCopy(e->axis[k], axis[k]);
 			VectorNormalize(axis[k]);
+		}
+		if (e->entityNumber >= 0 && e->entityNumber < ENTITYNUM_WORLD) {
+			key = e->entityNumber;
+		} else if (def->kind == RT_LAMP_HEADLIGHT && def->numBulbs == 1) {
+			vec3_t lens;
+
+			VectorCopy(e->origin, lens);
+			for (k = 0; k < 3; k++) {
+				VectorMA(lens, def->bulbs[0][k] * scale, axis[k], lens);
+			}
+			key = R_RtWornLampKey(lens);
+		} else {
+			continue;
 		}
 
 		if (def->kind == RT_LAMP_HEADLIGHT) {
@@ -843,7 +887,7 @@ static void R_RtEntityLamps(void)
 			if (!R_RtHeadlightsOn(e, def)) {
 				// out with the lenses' glow, the same frame: not eased out
 				for (j = rt.numMapLights; j < rt.numLights; j++) {
-					if (rt.lights[j].entity == e->entityNumber) {
+					if (rt.lights[j].entity == key) {
 						rt.lights[j].weight = 0;
 						rt.lights[j].range  = 0;
 					}
@@ -855,7 +899,7 @@ static void R_RtEntityLamps(void)
 		// a searchlight: one light, from its lens; headlights: one from each
 		numBulbs = def->kind == RT_LAMP_HEADLIGHT ? Q_max(1, def->numBulbs) : 1;
 		for (b = 0; b < numBulbs; b++) {
-			rtLight_t *l = R_RtEntityLight(e->entityNumber, b);
+			rtLight_t *l = R_RtEntityLight(key, b);
 			vec3_t     lens, dir;
 			float      cone, nearest = 0;
 
@@ -897,7 +941,7 @@ static void R_RtEntityLamps(void)
 				}
 			}
 
-			if (l->entity != e->entityNumber || l->entityBulb != b) {
+			if (l->entity != key || l->entityBulb != b) {
 				// a new one: its shadows from where it is
 				if (l->staticSlot >= 0) {
 					rt.staticOwner[l->staticSlot] = -1;
@@ -907,7 +951,7 @@ static void R_RtEntityLamps(void)
 				l->staticReady = qfalse;
 				l->bakedFaces  = 0;
 				l->weight      = 0;
-				l->entity      = e->entityNumber;
+				l->entity      = key;
 				l->entityBulb  = b;
 				// a searchlight's from its pivot, which stands still while its
 				// lens turns; a headlight's from its lens
@@ -943,14 +987,14 @@ static void R_RtEntityLamps(void)
 	for (i = 0; i < tr.refdef.num_entities && numLenses; i++) {
 		trRefEntity_t *ent = &tr.refdef.entities[i];
 		const model_t *model;
-		char           key[MAX_QPATH];
+		char           name[MAX_QPATH];
 
 		if (ent->e.reType != RT_MODEL || !(model = R_GetModelByHandle(ent->e.hModel)) || model->type != MOD_TIKI) {
 			continue;
 		}
-		R_RtLampKey(model->name, key, sizeof(key));
+		R_RtLampKey(model->name, name, sizeof(name));
 		for (j = 0; j < numLenses; j++) {
-			if (flares[j][0] && !strcmp(key, flares[j]) && DistanceSquared(ent->e.origin, lenses[j]) < Square(RT_FLARE_REACH)) {
+			if (flares[j][0] && !strcmp(name, flares[j]) && DistanceSquared(ent->e.origin, lenses[j]) < Square(RT_FLARE_REACH)) {
 				ent->rtHidden = qtrue;
 				break;
 			}

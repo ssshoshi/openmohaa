@@ -941,6 +941,7 @@ public:
     //====
     // Added in OPM (player_stance.cpp)
     void        EventProne(Event *ev);
+    void        EventFlashlight(Event *ev);
     bool        StanceAllowed() const;
     bool        HasRoomFor(float height);
     void        UpdateStance(usercmd_t *ucmd);
