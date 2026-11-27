@@ -1068,6 +1068,7 @@ s_alMinDistance			code/client/snd_openal.c:2513	Distance within which sounds pla
 s_alPrecache	0	1	code/client/snd_openal.c:2508	Load sounds into OpenAL when registered rather than when first played.
 s_alRolloff			code/client/snd_openal.c:2515	How fast sounds get quieter with distance. Cheat-protected.
 s_alSources			code/client/snd_openal.c:2510	Number of OpenAL sources (simultaneous sounds).
+s_ambientFade	0	30	code/client/snd_openal_new.cpp:616	The least time, in seconds, one ambient track crossfades into the next as you walk between areas (a map's soundtrack moods); a track's own longer fade time is kept. 0 uses the soundtrack's own times.
 s_ambientvolume	0	1	code/client/snd_dma_new.cpp:105	Volume of ambient sound and soundtrack songs.
 s_backend			code/client/snd_main.c:483	Read-only: sound system in use.
 s_debugmusic	0	1	code/fgame/gamecvars.cpp:602	Debug: print music mood changes.
