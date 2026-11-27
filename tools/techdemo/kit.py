@@ -34,7 +34,7 @@ LIGHT_SCALE = 15
 # textures
 
 
-def T(shader, sx=None, sy=None, u0=0.0, v0=0.0, length=None, height=None, rot=0, mult=1.0):
+def T(shader, sx=None, sy=None, u0=0.0, v0=0.0, length=None, height=None, rot=0, mult=1.0, density=None):
     """A texture at its retail size. u0, v0: where a tile starts along the
     face (s) and up it (t: a tile's bottom at v0 on a wall, its top edge at
     v0 on a floor). length, height: stretch the scale (by up to a fifth) so a
@@ -48,7 +48,16 @@ def T(shader, sx=None, sy=None, u0=0.0, v0=0.0, length=None, height=None, rot=0,
         sy = _fit(height, h, sy)
     xoff = (-u0 / sx) % w
     yoff = (v0 / sy) % h
-    return Tex(shader, xoff=round(xoff, 2), yoff=round(yoff, 2), rot=rot, sx=round(sx, 4), sy=round(sy, 4))
+    return Tex(shader, xoff=round(xoff, 2), yoff=round(yoff, 2), rot=rot, sx=round(sx, 4), sy=round(sy, 4), density=density)
+
+
+# lightmap texel sizes (surfaceDensity): the open ground and the outsides of
+# buildings coarser than rooms, or the map's lightmaps overflow (MOHlight's
+# 256 of 128 by 128 with the patched MOHlight, build.py); the retail levels
+# use 64 on much of theirs
+GROUND_DENSITY = 32
+ROCK_DENSITY = 48
+OUTSIDE_DENSITY = 24
 
 
 def _fit(span, pixels, scale):
@@ -542,9 +551,9 @@ class Building:
             band = self.floor_z + st.base_h if st.base else None
             out_len = hi - lo
             sh = self.storey_h if st.storey_tile else None
-            out_t = T(st.wall, u0=lo, v0=self.floor_z, length=out_len, height=sh)
+            out_t = T(st.wall, u0=lo, v0=self.floor_z, length=out_len, height=sh, density=OUTSIDE_DENSITY)
             in_t = T(st.inner, u0=ilo, v0=self.floor_z, length=ihi - ilo, height=self.storey_h if st.inner_storey_tile else None)
-            base_t = T(st.base, u0=lo, v0=self.floor_z, length=out_len) if st.base else None
+            base_t = T(st.base, u0=lo, v0=self.floor_z, length=out_len, density=OUTSIDE_DENSITY) if st.base else None
             for a, b, z1, z2 in _pieces(lo, hi, zlo, self.top, holes):
                 splits = [z1, z2]
                 if band and z1 < band < z2:
@@ -556,6 +565,12 @@ class Building:
                     o_face = ("p" if sign > 0 else "n") + ("y" if side in "ns" else "x")
                     i_face = ("n" if sign > 0 else "p") + ("y" if side in "ns" else "x")
                     faces = {o_face: outside, i_face: in_t}
+                    # faces nobody sees take no lightmap: the bottom in the
+                    # ground, and where a base course meets the wall above
+                    if za == zlo or (band and za == band):
+                        faces["nz"] = CAULK
+                    if band and zb == band:
+                        faces["pz"] = CAULK
                     if side in "ns":
                         self.brushes.append(box6((a, c1, za), (b, c2, zb), rev, **faces))
                     else:
@@ -593,7 +608,7 @@ class Building:
         st, T_ = self.st, self.T
         x1, y1, x2, y2, z = self.x1, self.y1, self.x2, self.y2, self.top
         self.brushes.append(box6((x1 - T_, y1 - T_, z), (x2 + T_, y2 + T_, z + t), T(st.trim, u0=x1, v0=z),
-                                 pz=T(st.roof, u0=x1, v0=y2), nz=T(st.ceil, u0=x1, v0=y2)))
+                                 pz=T(st.roof, u0=x1, v0=y2, density=OUTSIDE_DENSITY), nz=T(st.ceil, u0=x1, v0=y2)))
         if parapet:
             zt = z + t + parapet
             cap = T(st.sill, u0=x1, v0=y2)
@@ -624,7 +639,7 @@ class Building:
             return z + slope * min(v - (v1 - T_), (v2 + T_) - v)
 
         ua, ub = u1 - T_ - ov, u2 + T_ + ov
-        roof_t = T(st.roof, u0=ua if not swap else v1, v0=0)
+        roof_t = T(st.roof, u0=self.x1 - T_ - ov, v0=self.y2 + T_ + ov, rot=90 if swap else 0, density=OUTSIDE_DENSITY)
         under_t = T(st.under, u0=ua, v0=0)
         n = max(1, int((ub - ua) // 192))
         for side in (-1, 1):
@@ -645,7 +660,7 @@ class Building:
                          ((0, 1, 3), trim), ((4, 5, 7), trim)]
                 self.brushes.append(hull(pts, faces))
         top = under(vm)
-        gt = T(st.gable, u0=v1 - T_, v0=self.floor_z, height=self.storey_h if st.storey_tile else None)
+        gt = T(st.gable, u0=v1 - T_, v0=self.floor_z, height=self.storey_h if st.storey_tile else None, density=OUTSIDE_DENSITY)
         gi = T(st.inner, u0=v1, v0=self.floor_z)
         for ga, gb, outer in ((u1 - T_, u1, "a"), (u2, u2 + T_, "b")):
             pts = []

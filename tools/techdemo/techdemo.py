@@ -39,9 +39,11 @@ WALL = 16
 
 T_SKY = "sky/mohday1"
 T_CAULK = "common/caulk"
-T_COBBLE = Tex("central_europe/small_cobble", 0.5)
-T_GRASS = Tex("misc_outside/nu_grass_set2", 0.5)
-T_MUD = Tex("misc_outside/nu_earth_set2", 0.5)
+# the ground at the size the retail levels draw it (texscale.py)
+from kit import T as _retail
+T_COBBLE = _retail("central_europe/small_cobble", density=32)
+T_GRASS = _retail("misc_outside/nu_grass_set2", density=32)
+T_MUD = _retail("misc_outside/nu_earth_set2", density=32)
 T_WATER = Tex("misc_outside/pond", 0.5)
 T_CEIL = Tex("blasted/dday_bunker_wall1", 0.5)
 
@@ -172,10 +174,7 @@ def field_heights():
                 h -= POND_DEPTH * (1 - d * d) ** 1.5
             row.append(round(h))
         hs.append(row)
-    # a unit or so of noise inside the field (biomes.py, ground.py: flat
-    # stretches came out with holes), not along the edges others meet
-    from ground import jitter
-    return jitter(hs, 5, keep=lambda i, j: i in (0, nx - 1) or j in (0, ny - 1))
+    return hs
 
 
 def field_height_at(hs, x, y):
@@ -197,7 +196,13 @@ def build_field(m):
         low = min(hs[j][i], hs[j][i + 1], hs[j + 1][i], hs[j + 1][i + 1])
         return T_MUD if low < WATER_Z - 10 else T_GRASS
 
-    m.add(heightfield(-HALF, -HALF, FIELD_STEP, hs, tex_for, FLOOR_LOW + 64))
+    # flat stretches merged into bigger cells, a little noise on the rest
+    # (ground.py: brush sides, and holes where the compiler merged faces)
+    from ground import Ground
+    nx, ny = len(hs[0]), len(hs)
+    g = Ground(-HALF, -HALF, FIELD_STEP, hs, tex_for, keep=lambda i, j: i in (0, nx - 1) or j in (0, ny - 1), seed=5)
+    m.add(g.brushes(FLOOR_LOW + 64))
+    hs = g.hs
 
     # the pond: one water brush over the hollow; the ground outside the
     # hollow rises through it, so its edge is the shoreline

@@ -203,9 +203,21 @@ def gamedir(used, extra=None):
     return d
 
 
+def big_mohlight(d):
+    """A copy of MOHlight.exe in the compilers' folder with room for 256
+    lightmaps instead of 170 (mohlight_patch.py); the biomes need more."""
+    import mohlight_patch
+    src = os.path.join(TOOLS, "MOHlight.exe")
+    dst = os.path.join(d, "MOHlight_bigmap.exe")
+    if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
+        mohlight_patch.patch(src, dst)
+        print("  made %s (room for 256 lightmaps)" % dst)
+    return dst
+
+
 def run(exe, args, log):
     t = time.time()
-    p = subprocess.run([os.path.join(TOOLS, exe)] + args, capture_output=True, text=True, errors="replace")
+    p = subprocess.run([exe if os.path.isabs(exe) else os.path.join(TOOLS, exe)] + args, capture_output=True, text=True, errors="replace")
     out = p.stdout + p.stderr
     with open(log, "a") as f:
         f.write("==== %s %s\n%s\n" % (exe, " ".join(args), out))
@@ -252,7 +264,9 @@ def main():
     run("Q3map.exe", ["-v", "-nomerge", "-gamedir", wg, wm], log)
     run("Q3map.exe", ["-vis", "-v"] + fast + ["-gamedir", wg, wm], log)
     if not a.no_light:
-        run("MOHlight.exe", ["-v"] + fast + ["-gamedir", wg, wm], log)
+        # -nocurveshadows: the only patches are the ground's decals, whose
+        # see-through squares would otherwise shadow the ground under them
+        run(big_mohlight(d), ["-v", "-nocurveshadows"] + fast + ["-gamedir", wg, wm], log)
 
     bsp = os.path.join(d, "main", "maps", name + ".bsp")
     pk3 = os.path.join(a.out, PAK)

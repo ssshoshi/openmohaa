@@ -36,8 +36,11 @@ def _num(v):
 class Tex:
     """A shader and how it lies on a face."""
 
-    def __init__(self, shader, scale=0.5, xoff=0, yoff=0, rot=0, sx=None, sy=None):
+    def __init__(self, shader, scale=0.5, xoff=0, yoff=0, rot=0, sx=None, sy=None, density=None):
         self.shader = shader
+        # units a lightmap texel (MOHAA's per-face surfaceDensity; the
+        # worldspawn's lightmapdensity where None)
+        self.density = density
         self.sx = sx if sx is not None else scale
         self.sy = sy if sy is not None else scale
         self.xoff, self.yoff, self.rot = xoff, yoff, rot
@@ -72,7 +75,10 @@ class Brush:
         for pts, t in self.faces:
             line = " ".join("( %s %s %s )" % tuple(_num(v) for v in p) for p in pts) + " " + t.text()
             # detail brushes don't split the vis tree (as MOHRadiant marks them)
-            out.append(line + (" +surfaceparm detail" if self.detail else ""))
+            line += " +surfaceparm detail" if self.detail else ""
+            if t.density:
+                line += " surfaceDensity %d" % t.density
+            out.append(line)
         out.append("}")
         return "\n".join(out)
 
@@ -247,3 +253,22 @@ def smooth_noise(nx, ny, seed, octaves=3, scale=1.0):
 def yaw_vec(yaw):
     r = math.radians(yaw)
     return math.cos(r), math.sin(r)
+
+
+class Patch:
+    """A patch mesh (patchDef2): rows of control points (x, y, z, s, t), an
+    odd number each way. The surface passes through the even ones. Patches
+    are surfaces, not brushes: they cost no brush sides."""
+
+    def __init__(self, shader, rows):
+        self.shader = shader
+        self.rows = rows
+        self.detail = True
+
+    def text(self):
+        w, h = len(self.rows), len(self.rows[0])
+        out = ["{", " patchDef2", " {", "  " + self.shader, "  ( %d %d 0 0 0 )" % (w, h), "("]
+        for row in self.rows:
+            out.append("( " + " ".join("( %s %s %s %s %s )" % tuple(_num(v) if k < 3 else ("%.5f" % v) for k, v in enumerate(p)) for p in row) + " )")
+        out += [")", " }", "}"]
+        return "\n".join(out)

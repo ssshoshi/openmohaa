@@ -28,7 +28,7 @@ outwards, so a zone reads the same on either side of the map.
 import math
 import random
 
-from ground import OVERLAYS, heightfield_tris, ground_brushes, jitter, road_brushes, splat_brushes
+from ground import OVERLAYS, Ground, road_patches, splat_patch
 import kit
 from kit import CAULK, LIGHT_SCALE, Building, Style, T, box6, footprint, overlap, static
 from mapgen import smooth_noise
@@ -126,10 +126,10 @@ class Zone:
 
     def tex(self, x, y, h, slope):
         if slope > self.rock_slope:
-            return T(self.rock)
+            return T(self.rock, density=kit.ROCK_DENSITY)
         if self.road_tex and self.near_road(x, y, 40):
-            return T(self.verge)
-        return T(self.base)
+            return T(self.verge, density=kit.GROUND_DENSITY)
+        return T(self.base, density=kit.GROUND_DENSITY)
 
     def plan(self):
         """Roads, pads and passes, before the ground is made."""
@@ -527,10 +527,10 @@ class Beach(Zone):
     def tex(self, x, y, h, slope):
         u = abs(x) - INNER
         if slope > 1.1:
-            return T(self.rock)
+            return T(self.rock, density=kit.ROCK_DENSITY)
         if u < self.BLUFF + 200 and h > 60:
-            return T("wilderness/m3l3grass_1rough")
-        return T(self.base)
+            return T("wilderness/m3l3grass_1rough", density=kit.GROUND_DENSITY)
+        return T(self.base, density=kit.GROUND_DENSITY)
 
     def splat_region(self, u, y, material):
         if "grass" in material:
@@ -759,26 +759,11 @@ class Band:
                     pz = round(self.height(i, j))
                     z.pads = saved
                 z.padz[(px1, py1, px2, py2)] = pz
-        hs = [[round(self.height(i, j)) for i in range(self.nx)] for j in range(self.ny)]
+        self.hs = [[round(self.height(i, j)) for i in range(self.nx)] for j in range(self.ny)]
         # the column that meets the middle stays as it is (the field and plaza meet it)
         mid_i = 0 if self.band > 0 else self.nx - 1
-        self.hs = jitter(hs, 77 + self.band, keep=lambda i, j: i == mid_i)
-        self.tris = heightfield_tris(self.x0, -YEDGE, STEP, self.hs)
-
-    def at(self, x, y):
-        """The ground's height under x y, on the triangle there."""
-        i = max(0, min(int((x - self.x0) // STEP), self.nx - 2))
-        j = max(0, min(int((y + YEDGE) // STEP), self.ny - 2))
-        for a, b, c in self.tris[(i, j)]:
-            d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
-            if abs(d) < 1e-9:
-                continue
-            l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d
-            l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d
-            l3 = 1 - l1 - l2
-            if min(l1, l2, l3) >= -1e-6:
-                return l1 * a[2] + l2 * b[2] + l3 * c[2]
-        return self.hs[j][i]
+        self.ground = Ground(self.x0, -YEDGE, STEP, self.hs, self.tex_for, keep=lambda i, j: i == mid_i, seed=77 + self.band)
+        self.at = self.ground.at
 
     def slope(self, i, j):
         hs = self.hs
@@ -795,6 +780,7 @@ class Band:
     def overlays(self, m):
         """The decals that blend the grounds: splats, the rock's edges, roads."""
         out = []
+        at = self.at
         for z in self.zones:
             rnd = random.Random(500 + z.seed)
             u1, u2 = 2 * RIDGE_W, OUTER - INNER - RIDGE_W // 2
@@ -806,25 +792,25 @@ class Band:
                         if not hasattr(z, "splat_region") or z.splat_region(u, y, mat):
                             break
                     shader = OVERLAYS.splat(mat, 512, k % 3)
-                    out += _splat(self, z.X(u), y, rnd.uniform(lo, hi), rnd.uniform(0, 360), shader, 1.0)
+                    out.append(splat_patch(at, z.X(u), y, rnd.uniform(lo, hi), rnd.uniform(0, 360), shader, 1.5))
             # the zone's own ground over the edge of its rock
-            shader = OVERLAYS.splat(z.base, 512, 0)
-            for (i, j) in self.tris:
+            for (i, j) in list(self.ground.cell):
                 x, y = self.point(i, j)
                 if self.zone_at(y + STEP / 2) is not z:
                     continue
                 if self.slope(i, j)[0] <= z.rock_slope:
                     continue
-                flat_next = any((i + di, j + dj) in self.tris and self.slope(i + di, j + dj)[0] <= z.rock_slope * 0.8
+                flat_next = any((i + di, j + dj) in self.ground.cell and self.slope(i + di, j + dj)[0] <= z.rock_slope * 0.8
                                 for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)))
-                if flat_next and rnd.random() < 0.3:
-                    out += _splat(self, x + STEP / 2 + rnd.uniform(-40, 40), y + STEP / 2 + rnd.uniform(-40, 40),
-                                  rnd.uniform(200, 300), rnd.uniform(0, 360), shader, 1.25)
+                if flat_next and rnd.random() < 0.35:
+                    shader = OVERLAYS.splat(z.base, 512, rnd.randrange(3))
+                    out.append(splat_patch(at, x + STEP / 2 + rnd.uniform(-40, 40), y + STEP / 2 + rnd.uniform(-40, 40),
+                                           rnd.uniform(224, 352), rnd.uniform(0, 360), shader, 2.0))
             if z.road_tex:
                 for pts, half in z.roads:
-                    across = 640
-                    shader = OVERLAYS.road(z.road_tex, int(half * 2), across, 512)
-                    out += road_brushes(self.tris, self.x0, -YEDGE, STEP, pts, half, shader, across, 512)
+                    width = int(half * 2 + 96)
+                    shader = OVERLAYS.road(z.road_tex, int(half * 2), width, width)
+                    out += road_patches(at, pts, width, shader, width, 2.5)
         m.add(out)
 
     def vis_walls(self, m):
@@ -866,10 +852,6 @@ class Band:
         m.add(out)
 
 
-def _splat(band, x, y, size, angle, shader, lift):
-    return splat_brushes(band.tris, band.x0, -YEDGE, STEP, x, y, size, angle, shader, lift)
-
-
 def build_biomes(m):
     """Adds the six zones to the map. Returns {zone name: (x, y, z)} of a spot
     just inside each one's pass from the middle."""
@@ -887,7 +869,7 @@ def build_biomes(m):
                             o.passes.append(("s" if side == "n" else "n", at))
         b = Band(band, sorted(zones, key=lambda z: z.row))
         b.make()
-        m.add(ground_brushes(b.tris, b.tex_for, GROUND_BOTTOM))
+        m.add(b.ground.brushes(GROUND_BOTTOM))
         b.vis_walls(m)
         b.overlays(m)
         for z in zones:

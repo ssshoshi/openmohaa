@@ -28,8 +28,7 @@ import math
 import random
 
 import texscale
-from kit import NODRAW, T, overlay_tri, tex_rot
-from mapgen import Tex, prism
+from mapgen import Patch, prism
 
 SPLAT_PX = 512
 ROAD_PX = 512
@@ -49,6 +48,8 @@ class Overlays:
         return name
 
     def road(self, material, width, across, along):
+        """A road's picture: across units wide (the strip), the road width
+        of them solid and the rest faded out; along units long."""
         name = "opm_td/rd_%s_%d" % (material.split("/")[-1], width)
         self.images[name] = {"kind": "road", "src": material, "width": width, "across": across, "along": along}
         return name
@@ -68,8 +69,7 @@ class Overlays:
 	{
 		%s textures/%s.%s
 		blendFunc blend
-	nextbundle
-		map $lightmap
+		rgbGen vertex
 	}
 }
 """ % (name, name, ext, mapkw, name, ext))
@@ -79,108 +79,180 @@ class Overlays:
 OVERLAYS = Overlays()
 
 
-def heightfield_tris(x0, y0, step, hs):
-    """{(i, j): [two triangles]} of a heightfield, split as mapgen's is."""
-    out = {}
-    for j in range(len(hs) - 1):
-        for i in range(len(hs[0]) - 1):
+class Ground:
+    """A heightfield as brush prisms, flat stretches merged into bigger cells.
+
+    The grid's cells (step wide) are merged into blocks of 2, 4 cells a side
+    where the ground in a block lies within tol of the plane its corners
+    make and the block is all one texture: that halves the prisms (the BSP
+    has room for 131072 brush sides, the compiler adds bevels to each). Where
+    a small cell meets a big one, the small one's corner on the big one's
+    edge is put on that edge, so they meet without a crack (the compiler
+    adds the point to the big face). Corners no bigger block shares get a
+    unit or so of noise: flat stretches merged by the compiler came out with
+    holes. keep(i, j): grid points left as they are (edges other ground meets)."""
+
+    def __init__(self, x0, y0, step, hs, texfor, keep=lambda i, j: False, seed=1, tol=3.0, maxk=4, noise=1.5):
+        self.x0, self.y0, self.step = x0, y0, step
+        nx, ny = len(hs[0]), len(hs)
+        self.nx, self.ny = nx, ny
+        hs = [list(r) for r in hs]
+        tex = {(i, j): texfor(i, j) for j in range(ny - 1) for i in range(nx - 1)}
+        name = {k: v.shader for k, v in tex.items()}
+        owner = {}
+        blocks = []
+        for k in (maxk, 2, 1):
+            for bj in range(0, ny - 1, k):
+                for bi in range(0, nx - 1, k):
+                    if bi + k > nx - 1 or bj + k > ny - 1:
+                        continue
+                    if any((bi + a, bj + b) in owner for a in range(k) for b in range(k)):
+                        continue
+                    if k > 1 and not self._flat(hs, bi, bj, k, tol, name):
+                        continue
+                    blocks.append((bi, bj, k))
+                    for a in range(k):
+                        for b in range(k):
+                            owner[(bi + a, bj + b)] = len(blocks) - 1
+        self.blocks = blocks
+        # which grid points are a block's corner, which lie on a bigger block's edge
+        corner = set()
+        for bi, bj, k in blocks:
+            corner.update({(bi, bj), (bi + k, bj), (bi, bj + k), (bi + k, bj + k)})
+        rnd = random.Random(seed)
+        for (i, j) in sorted(corner):
+            if not keep(i, j) and not self._on_big_edge(blocks, owner, i, j):
+                hs[j][i] = round(hs[j][i] + rnd.uniform(-noise, noise), 2)
+        for bi, bj, k in blocks:
+            if k == 1:
+                continue
+            for e in range(1, k):
+                for (i, j), (a, b) in (((bi + e, bj), ((bi, bj), (bi + k, bj))), ((bi + e, bj + k), ((bi, bj + k), (bi + k, bj + k))),
+                                       ((bi, bj + e), ((bi, bj), (bi, bj + k))), ((bi + k, bj + e), ((bi + k, bj), (bi + k, bj + k)))):
+                    if (i, j) in corner:
+                        hs[j][i] = round(hs[a[1]][a[0]] + (hs[b[1]][b[0]] - hs[a[1]][a[0]]) * e / k, 3)
+        self.hs = hs
+        self.tris = []      # (triangle, texture)
+        self.cell = {}      # (i, j) -> the triangles over that cell
+        for bi, bj, k in blocks:
             def P(ii, jj):
                 return (x0 + ii * step, y0 + jj * step, hs[jj][ii])
-            a, b, c, d = P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)
-            if abs(a[2] - c[2]) <= abs(b[2] - d[2]):
-                out[(i, j)] = ((a, b, c), (a, c, d))
-            else:
-                out[(i, j)] = ((a, b, d), (b, c, d))
-    return out
+            a, b, c, d = P(bi, bj), P(bi + k, bj), P(bi + k, bj + k), P(bi, bj + k)
+            pair = ((a, b, c), (a, c, d)) if abs(a[2] - c[2]) <= abs(b[2] - d[2]) else ((a, b, d), (b, c, d))
+            for tri in pair:
+                self.tris.append((tri, tex[(bi, bj)]))
+            for u in range(k):
+                for v in range(k):
+                    self.cell[(bi + u, bj + v)] = pair
 
-
-def ground_brushes(tris, texfor, zbottom):
-    out = []
-    for (i, j), pair in tris.items():
-        t = texfor(i, j)
-        for tri in pair:
-            out.append(prism(tri, zbottom, t, detail=True))
-    return out
-
-
-def jitter(hs, seed, amount=1.5, keep=lambda i, j: False):
-    """A unit or so of noise on each height, but where keep(i, j) (the edges
-    another piece of ground or a floor meets)."""
-    rnd = random.Random(seed)
-    for j, row in enumerate(hs):
-        for i in range(len(row)):
-            d = rnd.uniform(-amount, amount)
-            if not keep(i, j):
-                row[i] = round(row[i] + d, 2)
-    return hs
-
-
-def splat_brushes(tris, x0, y0, step, cx, cy, size, angle, shader, lift=1.0):
-    """A splat: the cells' triangles under a size-wide square at cx cy,
-    turned by angle, lifted, drawn with the splat's picture laid once."""
-    # the picture is a disc (its alpha is nothing past half its width), so
-    # only the triangles that reach into the disc are needed
-    r = size * 0.49
-    i0, i1 = int((cx - r - x0) // step), int((cx + r - x0) // step)
-    j0, j1 = int((cy - r - y0) // step), int((cy + r - y0) // step)
-    t = tex_rot(shader, cx, cy, angle, size / SPLAT_PX, size / SPLAT_PX, SPLAT_PX, SPLAT_PX)
-    out = []
-    for j in range(j0, j1 + 1):
-        for i in range(i0, i1 + 1):
-            for tri in tris.get((i, j), ()):
-                if _tri_disc(tri, cx, cy, r):
-                    out.append(overlay_tri(tri, t, lift=lift))
-    return out
-
-
-def _tri_disc(tri, cx, cy, r):
-    """Whether a triangle reaches into a disc (seen from above)."""
-    if any(math.hypot(p[0] - cx, p[1] - cy) < r for p in tri):
+    @staticmethod
+    def _flat(hs, bi, bj, k, tol, name):
+        n0 = name[(bi, bj)]
+        if any(name[(bi + a, bj + b)] != n0 for a in range(k) for b in range(k)):
+            return False
+        h00, h10, h01, h11 = hs[bj][bi], hs[bj][bi + k], hs[bj + k][bi], hs[bj + k][bi + k]
+        if abs(h00 + h11 - h10 - h01) > tol:
+            return False
+        for b in range(k + 1):
+            for a in range(k + 1):
+                fx, fy = a / k, b / k
+                plane = h00 + (h10 - h00) * fx + (h01 - h00) * fy
+                if abs(hs[bj + b][bi + a] - plane) > tol:
+                    return False
         return True
-    for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        L2 = dx * dx + dy * dy or 1
-        t = max(0, min(1, ((cx - a[0]) * dx + (cy - a[1]) * dy) / L2))
-        if math.hypot(a[0] + t * dx - cx, a[1] + t * dy - cy) < r:
-            return True
-    # the disc's middle inside the triangle
-    (ax, ay, _), (bx, by, _), (qx, qy, _) = tri
-    d1 = (cx - bx) * (ay - by) - (ax - bx) * (cy - by)
-    d2 = (cx - qx) * (by - qy) - (bx - qx) * (cy - qy)
-    d3 = (cx - ax) * (qy - ay) - (qx - ax) * (cy - ay)
-    return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
 
-
-def road_brushes(tris, x0, y0, step, pts, half, shader, across, along, lift=1.5):
-    """A road's strip: every triangle near the line, drawn with the road's
-    picture turned along its nearest stretch (across: the picture's width in
-    units, wide enough that it never repeats across a triangle; along: its
-    length)."""
-    reach = half + step * 1.5
-    out = []
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    i0, i1 = int((min(xs) - reach - x0) // step), int((max(xs) + reach - x0) // step)
-    j0, j1 = int((min(ys) - reach - y0) // step), int((max(ys) + reach - y0) // step)
-    for j in range(j0, j1 + 1):
-        for i in range(i0, i1 + 1):
-            for tri in tris.get((i, j), ()):
-                cx = sum(p[0] for p in tri) / 3
-                cy = sum(p[1] for p in tri) / 3
-                best = None
-                for a, b in zip(pts, pts[1:]):
-                    dx, dy = b[0] - a[0], b[1] - a[1]
-                    L2 = dx * dx + dy * dy or 1
-                    tt = max(0, min(1, ((cx - a[0]) * dx + (cy - a[1]) * dy) / L2))
-                    d = math.hypot(cx - a[0] - tt * dx, cy - a[1] - tt * dy)
-                    if best is None or d < best[0]:
-                        best = (d, a, b)
-                if best[0] > half + step * 0.75:
+    @staticmethod
+    def _on_big_edge(blocks, owner, i, j):
+        for di in (-1, 0):
+            for dj in (-1, 0):
+                o = owner.get((i + di, j + dj))
+                if o is None:
                     continue
-                d, a, b = best
-                ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) + 90
-                t = tex_rot(shader, a[0], a[1], ang, across / ROAD_PX, along / ROAD_PX, ROAD_PX, ROAD_PX)
-                out.append(overlay_tri(tri, t, lift=lift))
+                bi, bj, k = blocks[o]
+                if k > 1 and not ((i - bi) % k == 0 and (j - bj) % k == 0):
+                    return True
+        return False
+
+    def brushes(self, zbottom):
+        return [prism(tri, zbottom, t, detail=True) for tri, t in self.tris]
+
+    def at(self, x, y):
+        i = max(0, min(int((x - self.x0) // self.step), self.nx - 2))
+        j = max(0, min(int((y - self.y0) // self.step), self.ny - 2))
+        for a, b, c in self.cell[(i, j)]:
+            d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+            if abs(d) < 1e-9:
+                continue
+            l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d
+            l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d
+            l3 = 1 - l1 - l2
+            if min(l1, l2, l3) >= -1e-6:
+                return l1 * a[2] + l2 * b[2] + l3 * c[2]
+        return self.hs[j][i]
+
+    def slope(self, i, j):
+        hs = self.hs
+        c = [hs[j][i], hs[j][i + 1], hs[j + 1][i], hs[j + 1][i + 1]]
+        return (max(c) - min(c)) / self.step, sum(c) / 4
+
+
+# decals: patch meshes laid a little over the ground, their control points
+# every DECAL_GRID units on it
+
+
+DECAL_GRID = 32
+
+
+def splat_patch(at, cx, cy, size, angle, shader, lift=1.5):
+    """A splat: a square patch over the ground at cx cy, its picture (a
+    disc, faded at its edge) laid once, turned by angle."""
+    n = max(2, int(math.ceil(size / DECAL_GRID / 2))) * 2      # intervals, even
+    a = math.radians(angle)
+    ca, sa = math.cos(a), math.sin(a)
+    rows = []
+    for ii in range(n + 1):
+        row = []
+        for jj in range(n + 1):
+            x = cx + (ii / n - 0.5) * size
+            y = cy + (jj / n - 0.5) * size
+            dx, dy = x - cx, y - cy
+            s_ = 0.5 + (dx * ca + dy * sa) / size
+            t_ = 0.5 - (-dx * sa + dy * ca) / size
+            row.append((x, y, at(x, y) + lift, s_, t_))
+        rows.append(row)
+    return Patch(shader, rows)
+
+
+def road_patches(at, pts, width, shader, along, lift=2.0):
+    """A road: a strip of patch along each stretch of its line, the road's
+    picture across the strip's width (its edges faded) and repeating along."""
+    out = []
+    dist = 0.0
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        L = math.hypot(bx - ax, by - ay)
+        if L < 1:
+            continue
+        ux, uy = (bx - ax) / L, (by - ay) / L
+        nx_, ny_ = -uy, ux
+        # a little past each end, so that stretches overlap at a bend
+        start, end = -width * 0.25, L + width * 0.25
+        chunk = DECAL_GRID * 30
+        p = start
+        while p < end - 1:
+            q = min(end, p + chunk)
+            n = max(2, int(math.ceil((q - p) / DECAL_GRID / 2)) * 2)
+            rows = []
+            for ii in range(n + 1):
+                d = p + (q - p) * ii / n
+                row = []
+                for jj, f in enumerate((-0.5, -0.25, 0, 0.25, 0.5)):
+                    x = ax + ux * d + nx_ * f * width
+                    y = ay + uy * d + ny_ * f * width
+                    row.append((x, y, at(x, y) + lift, f + 0.5, (dist + d) / along))
+                rows.append(row)
+            out.append(Patch(shader, rows))
+            p = q
+        dist += L
     return out
 
 
