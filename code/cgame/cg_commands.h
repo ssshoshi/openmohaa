@@ -122,6 +122,9 @@ TIKI file, similar to ScriptMaster in the server game dll.
 // Added in OPM: come to rest on a floor: it stays where it lies, still, until it
 // fades (it went on falling into the floor and out again, a step at a time)
 #define T2_RESTING            (1 << 26)
+// Added in OPM: fire with a volume (T2_SMOKEVOLUME too): with r_volumetric 2 it
+// glows in the air's grid, hot at first, cooling to soot over its life
+#define T2_FIREVOLUME         (1 << 27)
 
 class spawnthing_t;
 class specialeffect_t;
@@ -260,6 +263,9 @@ public:
     qboolean      addedOnce;
     qboolean      lastEntValid;
     spawnthing_t *m_spawnthing;
+    // Added in OPM: how wide a puff with a volume may be drawn where it is, kept
+    // off the walls round it (CG_SmokeVolumeWalls); 0 as wide as it is
+    float         volumeFit;
 
     void (*touchfcn)(ctempmodel_t *ct, trace_t *trace);
 
@@ -279,6 +285,7 @@ inline ctempmodel_t::ctempmodel_t()
     aliveTime             = 0;
     addedOnce             = qfalse;
     lastEntValid          = qfalse;
+    volumeFit             = 0;
 }
 
 enum class vsstypes_t : unsigned char {
@@ -891,6 +898,7 @@ private:
     void          SetWindAffect(Event *ev);
     void          SpriteGridLighting(Event *ev);
     void          SmokeVolume(Event *ev); // Added in OPM
+    void          FireVolume(Event *ev);  // Added in OPM
     void          SetWaterOnly(Event *ev);
     void          SetAlignStretch(Event *ev);
     void          SetClampVel(Event *ev);

@@ -415,6 +415,9 @@ void ClientSpecialEffectsManager::LoadEffects()
         case SFX_OPM_EXPLOSION_LARGE:
             szEffectModel = "models/fx/opm_explosion_large.tik";
             break;
+        case SFX_OPM_EXPLOSION_FUEL:
+            szEffectModel = "models/fx/opm_explosion_fuel.tik";
+            break;
         case SFX_OPM_EARTH_GREN:
             szEffectModel = "models/fx/opm_earth_gren.tik";
             break;
@@ -435,6 +438,12 @@ void ClientSpecialEffectsManager::LoadEffects()
             break;
         case SFX_OPM_LEAVES_BUSH:
             szEffectModel = "models/fx/opm_leaves_bush.tik";
+            break;
+        case SFX_OPM_PYRO_MEDIUM:
+            szEffectModel = "models/fx/opm_pyro_medium.tik";
+            break;
+        case SFX_OPM_PYRO_LARGE:
+            szEffectModel = "models/fx/opm_pyro_large.tik";
             break;
         default:
             szEffectModel = "models/fx/bh_stone_hard.tik";
@@ -1242,4 +1251,37 @@ qboolean ClientSpecialEffectsManager::EffectsPending()
 specialeffect_t *ClientSpecialEffectsManager::GetTestEffectPointer()
 {
     return &m_effects[SFX_TEST_EFFECT];
+}
+
+/*
+===============
+CG_OpmExplosionEffect
+
+Added in OPM
+===============
+*/
+static qboolean CG_PyroVolumesOn(void)
+{
+    // the renderer's own cvar: GL1 has none (it is made here at 0), nor draws volumes
+    static cvar_t *r_pyro;
+
+    if (!r_pyro) {
+        r_pyro = cgi.Cvar_Get("r_pyro", "0", 0);
+    }
+    // and the volume itself, loaded with the effects (opm-pyro data)
+    return r_pyro->integer && cgi.R_RegisterModel("models/fx/opm_pyro_truck_hit.vol") ? qtrue : qfalse;
+}
+
+int CG_OpmExplosionEffect(const char *size)
+{
+    if (!Q_stricmp(size, "small")) {
+        return SFX_OPM_EXPLOSION_SMALL;
+    }
+    if (!Q_stricmp(size, "medium")) {
+        return CG_PyroVolumesOn() ? SFX_OPM_PYRO_MEDIUM : SFX_OPM_EXPLOSION_MEDIUM;
+    }
+    if (!Q_stricmp(size, "fuel")) {
+        return SFX_OPM_EXPLOSION_FUEL;
+    }
+    return CG_PyroVolumesOn() ? SFX_OPM_PYRO_LARGE : SFX_OPM_EXPLOSION_LARGE;
 }

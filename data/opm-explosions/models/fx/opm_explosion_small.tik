@@ -50,6 +50,23 @@ init
 			friction 1.5
 			randomroll
 		)
+		sfx originspawn
+		(
+			model vsssource.spr
+			firevolume
+			count 5
+			color 1.0 0.62 0.34
+			alpha 0.02
+			scalemin 1.58
+			scalemax 2.45
+			scalerate 0.9
+			life 1.35
+			offset crandom 25.2 crandom 25.2 random 28.8
+			randvel crandom 126 crandom 126 range 72 216
+			accel 0 0 132
+			friction 2.2
+			randomroll
+		)
 		delayedsfx 0.05 originspawn
 		(
 			model fgrenexplosion.spr

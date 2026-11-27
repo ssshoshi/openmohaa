@@ -918,6 +918,7 @@ extern double cgmOpen[CGM_COUNT];
     void CG_BlastInit(void);
     void CG_BlastShutdown(void);
     void CG_BlastFeel(const vec3_t origin, float size);
+    void CG_FxExplode_f(void);
     void CG_BlastUpdate(vec3_t angles);
 
     void CG_InitTestTreadMark();

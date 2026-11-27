@@ -42,6 +42,19 @@ EXPLOSIONS = {
     "opm_explosion_small":  (1.8, None, 0.6, False),
     "opm_explosion_medium": (2.4, None, 0.6, True),
     "opm_explosion_large":  (3.0, None, 0.7, True),
+    # a fuel barrel going up: all fire, no earth (barrel_gas_destroyed)
+    "opm_explosion_fuel":   (1.6, None, 1.2, False),
+}
+
+# Effects of the game's that are given one of the above in place of their own:
+# the effect model a gas barrel leaves when shot through (fgame barrels.cpp),
+# its server side kept as the game has it.
+#   name: (explosion, sound, server lines)
+REPLACED = {
+    "barrel_gas_destroyed": ("fuel", "gas_explode", [
+        "first commanddelay .3 ai_event explosion",
+        "first commanddelay .3 anim dummy",
+    ]),
 }
 
 # The maps' explosion models: script models whose animation plays one of the
@@ -117,6 +130,31 @@ def emitters(s, fire=1.0, dirt=False):
 	randomroll
 )""" % (n((2 + s) * fire), f(0.9 * s * (0.4 + 0.6 * fire)), f(1.5 * s * (0.4 + 0.6 * fire)),
         f(14 * s), f(14 * s), f(18 * s), f(50 * s), f(50 * s), f(40 * s), f(90 * s)))
+
+    # the fireball's body in the air (r_volumetric 2, cgame firevolume): a ball
+    # of flame that billows out and up, white-hot, then orange and red, and
+    # burns out to soot as the smoke takes over. Its sprite is all but
+    # invisible: without the volume the sprites above are the fireball
+    if fire > 0:
+        c.append("""originspawn
+(
+	model vsssource.spr
+	firevolume
+	count %d
+	color 1.0 0.62 0.34
+	alpha 0.02
+	scalemin %s
+	scalemax %s
+	scalerate 0.9
+	life %s
+	offset crandom %s crandom %s random %s
+	randvel crandom %s crandom %s range %s %s
+	accel 0 0 %s
+	friction 2.2
+	randomroll
+)""" % (n((4 + 2 * s) * fire), f(1.1 * s * (0.5 + 0.5 * fire)), f(1.7 * s * (0.5 + 0.5 * fire)),
+        f(0.9 + 0.25 * s), f(14 * s), f(14 * s), f(16 * s), f(70 * s), f(70 * s), f(40 * s), f(120 * s),
+        f(60 + 40 * s)))
 
     # fire thrown further out
     if fire >= 0.5:
@@ -472,6 +510,37 @@ def earth_tiki(size):
     return "\n".join(lines) + "\n"
 
 
+def replaced_tiki(name, explosion, sound, server):
+    lines = HEADER + ["// The game's %s, which plays opm_explosion_%s." % (name, explosion)]
+    lines += ["setup", "{", "\tscale 0.02", "\tpath models/fx/dummy", "\tskelmodel dummy2.skd", "}", ""]
+    lines += [
+        "init",
+        "{",
+        "\tserver",
+        "\t{",
+        "\t\tclassname effectentity",
+        "\t\tnotsolid",
+        "\t\trendereffects +dontdraw",
+        "\t}",
+        "}",
+        "",
+        "animations",
+        "{",
+        "\tdummy dummy2.skc",
+        "",
+        "\tidle dummy2.skc",
+        "\t{",
+        "\t\tserver",
+        "\t\t{",
+    ]
+    lines += ["\t\t\t" + line for line in server]
+    lines += ["\t\t}", "\t\tclient", "\t\t{"]
+    if sound:
+        lines.append("\t\t\tenter sound %s" % sound)
+    lines += ["\t\t\tenter opm_explode %s" % explosion, "\t\t}", "\t}", "}"]
+    return "\n".join(lines) + "\n"
+
+
 def model_tiki(explosion, anims):
     lines = HEADER + ["// A map's explosion: plays opm_explosion_%s where it is spawned." % explosion] + SETUP
     lines += [
@@ -530,11 +599,14 @@ def main():
     for name, (explosion, anims) in MODELS.items():
         with open(os.path.join(fx, name + ".tik"), "w", newline="\r\n") as out:
             out.write(model_tiki(explosion, anims))
+    for name, (explosion, sound, server) in REPLACED.items():
+        with open(os.path.join(fx, name + ".tik"), "w", newline="\r\n") as out:
+            out.write(replaced_tiki(name, explosion, sound, server))
 
     snd = os.path.join(OUT, "sound", "opm")
     os.makedirs(snd, exist_ok=True)
     ear_ring(os.path.join(snd, "ear_ring.wav"))
-    print("wrote %d effects and the ear ring into %s" % (len(EXPLOSIONS) + len(EARTH) + len(MODELS), os.path.normpath(OUT)))
+    print("wrote %d effects and the ear ring into %s" % (len(EXPLOSIONS) + len(EARTH) + len(MODELS) + len(REPLACED), os.path.normpath(OUT)))
 
 
 if __name__ == "__main__":

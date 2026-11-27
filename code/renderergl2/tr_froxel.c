@@ -59,11 +59,14 @@ cvar_t *r_volumetricCubic;
 cvar_t *r_volumetricSmoke;
 cvar_t *r_volumetricSmokeNoise;
 cvar_t *r_volumetricSmokeSprites;
+cvar_t *r_volumetricFire;
 
 // the smoke's noise: a tiling 3D texture, made once (R_FroxelSmokeNoise)
 #define SMOKE_NOISE_SIZE 64
 // how much of the light on it smoke gives back
 #define SMOKE_ALBEDO 0.45f
+// how many of the puffs (SMOKE_MAX_BLOBS) only fire may take
+#define SMOKE_FIRE_BLOBS 16
 static GLuint smokeNoiseTexture;
 
 // the air summed from the eye, for what the main view draws after it
@@ -233,6 +236,8 @@ void R_FroxelInit(void)
 	ri.Cvar_SetDescription(r_volumetricSmokeNoise, "With r_volumetric 2: how much the noise breaks up the smoke's puffs, 0 smooth balls, 1 shreds");
 	r_volumetricSmokeSprites = ri.Cvar_Get("r_volumetricSmokeSprites", "0.5", CVAR_ARCHIVE);
 	ri.Cvar_SetDescription(r_volumetricSmokeSprites, "With r_volumetric 2: how much of a puff of smoke in the air is still drawn as its sprite, for the sprite's texture (0 all volume, 1 all sprite)");
+	r_volumetricFire = ri.Cvar_Get("r_volumetricFire", "1", CVAR_ARCHIVE);
+	ri.Cvar_SetDescription(r_volumetricFire, "With r_volumetric 2: how brightly the fire of explosions glows in the air, as a ball of flame cooling to soot (0: fire is drawn as sprites)");
 	ri.Cmd_AddCommand("foginfo", R_FogInfo_f);
 	ri.Cmd_AddCommand("fogreload", R_FogReload_f);
 	froxelPrev.frame = -1;
@@ -276,7 +281,15 @@ qboolean R_FroxelTakesSprite(const refSprite_t *sprite)
 	if (spr->froxelTaken) {
 		return qtrue;
 	}
+	if ((spr->renderfx & RF_VOLUME_FIRE) && r_volumetricFire->value <= 0) {
+		return qfalse;
+	}
 	if (smokeTaken.taken >= SMOKE_MAX_BLOBS) {
+		return qfalse;
+	}
+	// the last few are kept for fire: an explosion's earth and dust (dozens of
+	// clods) came first and left its fireball none
+	if (!(spr->renderfx & RF_VOLUME_FIRE) && smokeTaken.taken >= SMOKE_MAX_BLOBS - SMOKE_FIRE_BLOBS) {
 		return qfalse;
 	}
 	// a little short of the grid's far side, so the puff fits in it
@@ -307,6 +320,17 @@ qboolean R_FroxelTakesSprite(const refSprite_t *sprite)
 	// the sprite keeps r_volumetricSmokeSprites of it, for its texture; the
 	// grid the rest (R_FroxelSmokeBlobs)
 	spr->froxelAlpha = spr->shaderRGBA[3];
+	VectorCopy(spr->shaderRGBA, spr->froxelRGB);
+	if (spr->renderfx & RF_VOLUME_FIRE) {
+		// fire's sprites add their colour (blendFunc add, alphaadd): the share
+		// is taken off that, the alpha left as the effect has it
+		const float keep = Com_Clamp(0.0f, 1.0f, r_volumetricSmokeSprites->value);
+
+		spr->shaderRGBA[0] = (byte)(spr->shaderRGBA[0] * keep);
+		spr->shaderRGBA[1] = (byte)(spr->shaderRGBA[1] * keep);
+		spr->shaderRGBA[2] = (byte)(spr->shaderRGBA[2] * keep);
+		return qtrue;
+	}
 	spr->shaderRGBA[3] = (byte)(spr->shaderRGBA[3] * Com_Clamp(0.0f, 1.0f, r_volumetricSmokeSprites->value));
 	return qtrue;
 }
@@ -314,7 +338,52 @@ qboolean R_FroxelTakesSprite(const refSprite_t *sprite)
 // whether a taken puff's sprite is drawn too
 qboolean R_FroxelSpriteToo(const refSprite_t *sprite)
 {
+	if (sprite->renderfx & RF_VOLUME_FIRE) {
+		return sprite->shaderRGBA[0] || sprite->shaderRGBA[1] || sprite->shaderRGBA[2];
+	}
 	return sprite->shaderRGBA[3] > 0;
+}
+
+/*
+=============
+R_FroxelFireBlob
+
+A puff of fire, as the shader takes it (R_FroxelSmokeBlobs): a ball of flame
+that glows as it cools, white-yellow when thrown out, orange, then a dull red,
+and dark soot at the end of its life, thinning away as it goes. Its glow is the
+light it gives back where it is thick enough to hide what is behind it, so a
+thin edge glows less; the w of the third vector marks it fire.
+=============
+*/
+static void R_FroxelFireBlob(const refSprite_t *spr, float radius, vec4_t *blob)
+{
+	const float heat = spr->froxelHeat;
+	// as thick as a fireball is for most of its life, thinning out at its end
+	const float alpha = 0.85f * Com_Clamp(0.0f, 1.0f, heat * 3.0f);
+	// how hot it looks: a blackbody's colour, roughly, from 1 (about 2000 K, yellow
+	// white) down to 0 (out), and its brightness falling faster than its colour
+	const float t = heat;
+	vec3_t      glow;
+	float       bright;
+
+	glow[0] = Com_Clamp(0.0f, 1.0f, t * 2.2f);
+	glow[1] = Com_Clamp(0.0f, 1.0f, t * t * 1.6f);
+	glow[2] = Com_Clamp(0.0f, 1.0f, t * t * t * 1.1f);
+	bright  = t * t * 4.0f * r_volumetricFire->value;
+	// the effect's own tint, by its brightness (its colour is the blackbody's)
+	bright *= Com_Clamp(0.0f, 1.0f, Q_max(spr->froxelRGB[0], Q_max(spr->froxelRGB[1], spr->froxelRGB[2])) / 255.0f);
+	if (spr->shaderRGBA[0] || spr->shaderRGBA[1] || spr->shaderRGBA[2]) {
+		// the sprite still draws its share of it
+		bright *= 1.0f - Com_Clamp(0.0f, 1.0f, r_volumetricSmokeSprites->value);
+	}
+
+	VectorCopy(spr->origin, blob[0]);
+	blob[0][3] = radius;
+	// soot: near black, as a burnt-out fireball is smoke
+	VectorSet(blob[1], 0.06f, 0.055f, 0.05f);
+	blob[1][3] = alpha > 0.0f ? -logf(1.0f - alpha) / (2.0f * radius * (2.0f / 3.0f)) * r_volumetricSmoke->value : 0.0f;
+	VectorScale(glow, bright, blob[2]);
+	blob[2][3] = 1.0f;
 }
 
 /*
@@ -343,6 +412,13 @@ static int R_FroxelSmokeBlobs(vec4_t *out)
 		}
 		// a little wider than the sprite: the noise eats its edge
 		radius = Q_max(model->d.sprite->origin_x, model->d.sprite->origin_y) * spr->scale * model->d.sprite->scale * 1.15f;
+		if (spr->renderfx & RF_VOLUME_FIRE) {
+			if (radius >= 1.0f && spr->froxelHeat > 0.0f) {
+				R_FroxelFireBlob(spr, radius, &out[n * 3]);
+				n++;
+			}
+			continue;
+		}
 		// what the sprite does not cover of the puff: together as opaque as
 		// the sprite was alone
 		alpha  = Com_Clamp(0.0f, 0.99f, spr->froxelAlpha / 255.0f);

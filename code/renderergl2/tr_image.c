@@ -3143,6 +3143,10 @@ void R_CreateBuiltinImages( void ) {
 			tr.ssrPrevImage = R_CreateImage("*ssrPrev", NULL, width, height, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, hdrFormat);
 		}
 
+		// Added in OPM: simulated explosions (tr_pyro.c), marched at half the
+		// view's size and blended over it
+		tr.pyroImage = R_CreateImage("*pyro", NULL, (width + 1) / 2, (height + 1) / 2, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
+
 		// Added in OPM: r_volumetric's, at a quarter of the view's size
 		// across, brighter than white
 		if (r_volumetric->integer == 1 && r_realtimeLighting->integer == 2)

@@ -1781,6 +1781,9 @@ static void R_AddEntitySurface (int entityNum)
             case MOD_TIKI:
                 R_AddSkelSurfaces(ent);
                 break;
+            case MOD_VOLUME:
+                // drawn after the opaque world (RB_PyroVolumes)
+                break;
 			//=========================
 			case MOD_BAD:		// null model axis
 				if ( (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal) {

@@ -34,6 +34,8 @@ cvar_t *cg_detail;
 // Added in OPM: the sprites that are puffs of smoke, dust or spray with a
 // volume, whatever effect throws them (T2_SMOKEVOLUME)
 cvar_t *cg_smokeVolumeSprites;
+cvar_t *cg_fireVolumeSprites;
+cvar_t *cg_smokeVolumeWalls;
 cvar_t *cg_effectdetail;
 cvar_t *cg_effect_physicsrate;
 
@@ -231,53 +233,169 @@ void ClientGameCommandManager::InitializeTempModels(void)
 
 /*
 ===============
-CG_SmokeVolumeSprite
+CG_SpriteNamed
 
-Added in OPM: whether a temp model's sprite is one cg_smokeVolumeSprites
-names (its file's name, without folder or .spr): smoke, dust and spray the
-renderer may draw in the air with a volume (r_volumetric 2), lit and
-shadowed, whatever effect throws it. The emitter keyword smokevolume marks
-any other.
+Added in OPM: whether a temp model's sprite is one a list cvar names (its
+file's name, without folder or .spr). Each list keeps its parsed names.
 ===============
 */
-static qboolean CG_SmokeVolumeSprite(const char *model)
+struct spriteNameList_t {
+    int  modified;
+    char names[64][MAX_QPATH];
+    int  numNames;
+};
+
+static qboolean CG_SpriteNamed(cvar_t *list, spriteNameList_t *parsed, const char *model)
 {
-    static int  modified = -1;
-    static char names[64][MAX_QPATH];
-    static int  numNames;
     char        base[MAX_QPATH];
     const char *slash;
     int         i;
 
-    if (!cg_smokeVolumeSprites) {
+    if (!list) {
         return qfalse;
     }
-    if (modified != cg_smokeVolumeSprites->modificationCount) {
-        const char *text = cg_smokeVolumeSprites->string;
+    if (parsed->modified != list->modificationCount) {
+        const char *text = list->string;
         const char *token;
 
-        modified = cg_smokeVolumeSprites->modificationCount;
-        numNames = 0;
-        for (token = COM_Parse((char **)&text); token[0] && numNames < 64; token = COM_Parse((char **)&text)) {
-            Q_strncpyz(names[numNames++], token, MAX_QPATH);
+        parsed->modified = list->modificationCount;
+        parsed->numNames = 0;
+        for (token = COM_Parse((char **)&text); token[0] && parsed->numNames < 64; token = COM_Parse((char **)&text)) {
+            Q_strncpyz(parsed->names[parsed->numNames++], token, MAX_QPATH);
         }
     }
-    if (!numNames) {
+    if (!parsed->numNames) {
         return qfalse;
     }
 
-    slash = strrchr(model, '/');
-    Q_strncpyz(base, slash ? slash + 1 : model, sizeof(base));
-    COM_StripExtension(base, base, sizeof(base));
     if (Q_stricmp(model + strlen(model) - Q_min(strlen(model), 4), ".spr")) {
         return qfalse;
     }
-    for (i = 0; i < numNames; i++) {
-        if (!Q_stricmp(base, names[i])) {
+    slash = strrchr(model, '/');
+    Q_strncpyz(base, slash ? slash + 1 : model, sizeof(base));
+    COM_StripExtension(base, base, sizeof(base));
+    for (i = 0; i < parsed->numNames; i++) {
+        if (!Q_stricmp(base, parsed->names[i])) {
             return qtrue;
         }
     }
     return qfalse;
+}
+
+/*
+===============
+CG_SmokeVolumeSprite
+
+Added in OPM: smoke, dust and spray the renderer may draw in the air with a
+volume (r_volumetric 2), lit and shadowed, whatever effect throws it
+(cg_smokeVolumeSprites). The emitter keyword smokevolume marks any other.
+===============
+*/
+static qboolean CG_SmokeVolumeSprite(const char *model)
+{
+    static spriteNameList_t parsed = {-1};
+
+    return CG_SpriteNamed(cg_smokeVolumeSprites, &parsed, model);
+}
+
+/*
+===============
+CG_FireVolumeSprite
+
+Added in OPM: the fire of explosions, which glows in the air with a volume
+(cg_fireVolumeSprites): the fireballs of the grenades, shells and the maps'
+demolitions, a fuel barrel's. The emitter keyword firevolume marks any other.
+===============
+*/
+static qboolean CG_FireVolumeSprite(const char *model)
+{
+    static spriteNameList_t parsed = {-1};
+
+    return CG_SpriteNamed(cg_fireVolumeSprites, &parsed, model);
+}
+
+/*
+===============
+CG_SmokeVolumeWalls
+
+Added in OPM: a puff with a volume is a ball in the air, as wide as its sprite.
+Up against a wall it went through it, and showed on the far side; in a doorway or
+a corridor it filled the rooms either side. Round the puff (its six sides) the
+walls push its middle off them, so it rolls along a wall rather than into it, and
+where they stand closer than it is wide (a corridor, a doorway, under a low
+ceiling) it is drawn no wider than the room it has (ctempmodel_t::volumeFit).
+At the temp model's physics rate, against the world only.
+===============
+*/
+static void CG_SmokeVolumeWalls(ctempmodel_t *p)
+{
+    static const vec3_t dirs[6] = {
+        {1, 0, 0},
+        {-1, 0, 0},
+        {0, 1, 0},
+        {0, -1, 0},
+        {0, 0, 1},
+        {0, 0, -1}
+    };
+    float   radius, hit[6], fit;
+    vec3_t  push, end;
+    trace_t trace;
+    int     i;
+
+    p->volumeFit = 0;
+    if (!cg_smokeVolumeWalls || !cg_smokeVolumeWalls->integer || p->ent.reType != RT_SPRITE || !p->ent.hModel) {
+        return;
+    }
+
+    // as the renderer makes the puff (R_FroxelSmokeBlobs): a little wider than the sprite
+    radius = cgi.R_ModelRadius(p->ent.hModel) * p->ent.scale * 1.15f;
+    if (radius < 8.0f) {
+        return;
+    }
+
+    VectorClear(push);
+    for (i = 0; i < 6; i++) {
+        VectorMA(p->cgd.origin, radius, dirs[i], end);
+        cgi.CM_BoxTrace(&trace, p->cgd.origin, end, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse);
+        if (trace.startsolid || trace.allsolid) {
+            // inside a wall already: leave it be, the sprite shows it
+            return;
+        }
+        hit[i] = trace.fraction * radius;
+        if (trace.fraction < 1.0f) {
+            // off the wall, as far as it reaches into it
+            VectorMA(push, -(radius - hit[i]), dirs[i], push);
+        }
+    }
+
+    // between two walls (or floor and ceiling) closer than it is wide it can not
+    // get clear of both: it is pushed to the middle and drawn as wide as the gap
+    fit = radius;
+    for (i = 0; i < 6; i += 2) {
+        if (hit[i] + hit[i + 1] < radius * 2.0f) {
+            fit       = Q_min(fit, (hit[i] + hit[i + 1]) * 0.5f);
+            push[i / 2] = (hit[i] - hit[i + 1]) * 0.5f;
+        }
+    }
+
+    if (VectorLengthSquared(push) > 0.01f) {
+        Vector  to = p->cgd.origin + Vector(push);
+        trace_t move;
+
+        // never pushed through something to get there
+        cgi.CM_BoxTrace(&move, p->cgd.origin, to, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse);
+        p->cgd.origin = move.endpos;
+        // and whatever carried it at the wall goes along it from now on
+        for (i = 0; i < 3; i++) {
+            if (push[i] * p->cgd.velocity[i] < 0) {
+                p->cgd.velocity[i] = 0;
+            }
+        }
+    }
+
+    if (fit < radius) {
+        p->volumeFit = fit / radius;
+    }
 }
 
 void ClientGameCommandManager::InitializeTempModelCvars(void)
@@ -291,6 +409,10 @@ void ClientGameCommandManager::InitializeTempModelCvars(void)
         "opm_ocean_plume opm_waterplume",
         CVAR_ARCHIVE
     );
+    cg_fireVolumeSprites = cgi.Cvar_Get(
+        "cg_fireVolumeSprites", "gren_explosion fgrenexplosion explosed explosed2 air_explosion", CVAR_ARCHIVE
+    );
+    cg_smokeVolumeWalls = cgi.Cvar_Get("cg_smokeVolumeWalls", "1", CVAR_ARCHIVE);
 
     cg_effectdetail = cgi.Cvar_Get("cg_effectdetail", "1.0", CVAR_ARCHIVE);
     cgi.Cvar_CheckRange(cg_effectdetail, 0.2, 1.0, qfalse);
@@ -875,6 +997,27 @@ qboolean ClientGameCommandManager::TempModelPhysics(ctempmodel_t *p, float ftime
         }
     }
 
+    // Added in OPM: smoke and fire with a volume meet the walls: what does not
+    // collide (explosions' smoke and fire) slides along a wall it runs into rather
+    // than on through it, and none of it is drawn through one (CG_SmokeVolumeWalls)
+    if ((p->cgd.flags2 & T2_SMOKEVOLUME) && !(p->cgd.flags & (T_PARENTLINK | T_HARDLINK | T_SWARM))
+        && cg_smokeVolumeWalls && cg_smokeVolumeWalls->integer) {
+        if (!(p->cgd.flags & T_COLLISION) && !(p->cgd.flags2 & T2_RESTING)) {
+            trace_t slide;
+
+            cgi.CM_BoxTrace(&slide, p->cgd.oldorigin, p->cgd.origin, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse);
+            if (slide.fraction < 1.0f && !slide.startsolid) {
+                float into = DotProduct(p->cgd.velocity, slide.plane.normal);
+
+                VectorMA(slide.endpos, 1.0f, slide.plane.normal, p->cgd.origin);
+                if (into < 0) {
+                    p->cgd.velocity -= Vector(slide.plane.normal) * into;
+                }
+            }
+        }
+        CG_SmokeVolumeWalls(p);
+    }
+
     // copy over origin
     VectorCopy(p->cgd.origin, p->ent.origin);
 
@@ -1165,11 +1308,20 @@ void ClientGameCommandManager::AddTempModels(void)
         // Animate and do trails (swipes)
         newEnt.renderfx   = p->ent.renderfx;
         // Added in OPM: a puff of smoke the renderer may draw in the air
-        if (p->cgd.flags2 & T2_SMOKEVOLUME) {
+        if ((p->cgd.flags2 & T2_SMOKEVOLUME) && p->ent.reType == RT_SPRITE) {
             newEnt.renderfx |= RF_VOLUME_SMOKE;
             // its colour has the light grid's in it (OtherTempModelEffects)
             if (p->cgd.flags & T_COLLISION) {
                 newEnt.renderfx |= RF_SMOKE_GRIDLIT;
+            }
+            // fire: how hot it is still, by how far through its life
+            if (p->cgd.flags2 & T2_FIREVOLUME) {
+                newEnt.renderfx |= RF_VOLUME_FIRE;
+                newEnt.shadowPlane = p->cgd.life > 0 ? Q_clamp_float(1.0f - (float)p->aliveTime / p->cgd.life, 0.0f, 1.0f) : 1.0f;
+            }
+            // no wider than the room it has (CG_SmokeVolumeWalls)
+            if (p->volumeFit > 0) {
+                newEnt.scale *= p->volumeFit;
             }
         }
         newEnt.hModel     = p->ent.hModel;
@@ -1434,6 +1586,11 @@ void ClientGameCommandManager::SpawnTempModel(int mcount)
         if (p->modelname.length() && CG_SmokeVolumeSprite(p->modelname.c_str())) {
             p->cgd.flags2 |= T2_SMOKEVOLUME;
         }
+        // Added in OPM: fire with a volume
+        if (p->modelname.length() && CG_FireVolumeSprite(p->modelname.c_str())) {
+            p->cgd.flags2 |= T2_SMOKEVOLUME | T2_FIREVOLUME;
+        }
+        p->volumeFit = 0;
 
         if (p->modelname.length()) {
             ent.hModel = cgi.R_RegisterModel(p->modelname.c_str());

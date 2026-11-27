@@ -618,6 +618,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			RB_MotionBlurOpaqueDone(drawSurfs, numDrawSurfs);
 			// Added in OPM: the frames blended, under what is blended (r_taa)
 			RB_TaaOpaqueDone();
+			// Added in OPM: simulated explosions, over the world, under what is blended
+			RB_PyroVolumes();
 		}
 
 		//
@@ -876,6 +878,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		RB_FroxelOpaqueDone();
 		RB_MotionBlurOpaqueDone(drawSurfs, numDrawSurfs);
 		RB_TaaOpaqueDone();
+		RB_PyroVolumes();
 	}
 	RB_SurfProfEnd();
 

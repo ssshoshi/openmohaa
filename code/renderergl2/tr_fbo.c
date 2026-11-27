@@ -534,6 +534,12 @@ void FBO_Init(void)
 		FBO_AttachImage(tr.volumeBlurFbo, tr.volumeBlurImage, GL_COLOR_ATTACHMENT0, 0);
 		R_CheckFBO(tr.volumeBlurFbo);
 	}
+	if (tr.pyroImage)
+	{
+		tr.pyroFbo = FBO_Create("_pyro", tr.pyroImage->width, tr.pyroImage->height);
+		FBO_AttachImage(tr.pyroFbo, tr.pyroImage, GL_COLOR_ATTACHMENT0, 0);
+		R_CheckFBO(tr.pyroFbo);
+	}
 	if (tr.froxelLightImage[0] && tr.froxelLightImage[1] && tr.froxelSumImage[0] && tr.froxelSumImage[1] && tr.froxelDepthImage && tr.froxelDepthQuarterImage)
 	{
 		tr.froxelDepthQuarterFbo = FBO_Create("_froxeldepthquarter", tr.froxelDepthQuarterImage->width, tr.froxelDepthQuarterImage->height);

@@ -52,6 +52,8 @@ extern const char *fallbackShader_volumetric_vp;
 extern const char *fallbackShader_volumetric_fp;
 extern const char *fallbackShader_froxel_vp;
 extern const char *fallbackShader_froxel_fp;
+extern const char *fallbackShader_pyro_vp;
+extern const char *fallbackShader_pyro_fp;
 extern const char *fallbackShader_ssao_vp;
 extern const char *fallbackShader_ssao_fp;
 extern const char *fallbackShader_texturecolor_vp;
@@ -340,6 +342,18 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_MbPrevBones",    GLSL_INT },
 	{ "u_MbVelocityMap",  GLSL_INT },
 	{ "u_MbTileMap",      GLSL_INT },
+
+	{ "u_PyroMap",        GLSL_INT },
+	{ "u_PyroBox",        GLSL_VEC4 },
+	{ "u_PyroSize",       GLSL_VEC4 },
+	{ "u_PyroFrames",     GLSL_VEC4 },
+	{ "u_PyroParams",     GLSL_VEC4 },
+	{ "u_PyroCells",      GLSL_VEC4 },
+	{ "u_PyroAmbient",    GLSL_VEC4 },
+	{ "u_PyroSun",        GLSL_VEC4 },
+	{ "u_PyroDir",        GLSL_VEC4 },
+	{ "u_PyroView",       GLSL_VEC4 },
+	{ "u_PyroDepth",      GLSL_VEC4 },
 };
 
 typedef enum
@@ -1015,15 +1029,12 @@ static const char *froxelFog_glsl =
 	"	vec2 tile = vec2(mod(s, 8.0), floor(s / 8.0));\n"
 	"	return (tile + clamp(uv, edge, 1.0 - edge)) / 8.0;\n"
 	"}\n"
-	"vec3 FroxelFog(vec3 c, float alpha)\n"
+	// the air at a pixel of the view and a depth forward of the eye: the
+	// fragment's (FroxelFog), or what an explosion's volume gives (pyro_fp.glsl)
+	"vec3 FroxelFogAt(vec3 c, float alpha, vec2 frag, float depth)\n"
 	"{\n"
 	"	if (u_FroxelFog.x < 0.5) return c;\n"
-	// w more than 0: the depth to take it at (a flare, drawn flat at the
-	// end); less: the depth range squeezed into one part of it (the view
-	// weapon's), undone
-	"	float zf = u_FroxelFog.w < 0.0 ? min(gl_FragCoord.z * -u_FroxelFog.w, 1.0) : gl_FragCoord.z;\n"
-	"	float depth = u_FroxelFog.w > 0.0 ? u_FroxelFog.w : u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, zf);\n"
-	"	vec2  uv = (gl_FragCoord.xy - u_FroxelFogGrid.zw) * u_FroxelFogView.zw;\n"
+	"	vec2  uv = (frag - u_FroxelFogGrid.zw) * u_FroxelFogView.zw;\n"
 	"	float f  = min(log2(depth / 256.0 + 1.0) / u_FroxelFog.z * u_FroxelFog.y, u_FroxelFog.y) - 1.0;\n"
 	"	vec4  a, b;\n"
 	"	if (f < 0.0)\n"
@@ -1044,6 +1055,16 @@ static const char *froxelFog_glsl =
 	"	if (u_FroxelFog.x < 2.5) return c * air.a;\n"
 	"	if (u_FroxelFog.x < 3.5) return mix(vec3(1.0), c, air.a);\n"
 	"	return c * air.a + air.rgb * clamp(alpha, 0.0, 1.0);\n"
+	"}\n"
+	"vec3 FroxelFog(vec3 c, float alpha)\n"
+	"{\n"
+	"	if (u_FroxelFog.x < 0.5) return c;\n"
+	// w more than 0: the depth to take it at (a flare, drawn flat at the
+	// end); less: the depth range squeezed into one part of it (the view
+	// weapon's), undone
+	"	float zf = u_FroxelFog.w < 0.0 ? min(gl_FragCoord.z * -u_FroxelFog.w, 1.0) : gl_FragCoord.z;\n"
+	"	float depth = u_FroxelFog.w > 0.0 ? u_FroxelFog.w : u_FroxelFogView.y / mix(u_FroxelFogView.x, 1.0, zf);\n"
+	"	return FroxelFogAt(c, alpha, gl_FragCoord.xy, depth);\n"
 	"}\n";
 
 static const char *rt_skyBake_vp =
@@ -3161,6 +3182,33 @@ void GLSL_InitGPUShaders(void)
 	}
 
 
+	// Added in OPM: simulated explosions (tr_pyro.c)
+	if (qglTexImage3D)
+	{
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		// the air in front of it (r_volumetric 2), as smoke sprites take it
+		Q_strncpyz(extradefines, "#define USE_FROXEL_FOG\n", sizeof(extradefines));
+		if (!GLSL_InitGPUShader(&tr.pyroShader, "pyro", attribs, qtrue, extradefines, qtrue, fallbackShader_pyro_vp, fallbackShader_pyro_fp))
+		{
+			ri.Error(ERR_FATAL, "Could not load pyro shader!");
+		}
+		GLSL_InitUniforms(&tr.pyroShader);
+		GLSL_SetUniformInt(&tr.pyroShader, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+		GLSL_SetUniformInt(&tr.pyroShader, UNIFORM_PYROMAP, TB_SPECULARMAP);
+		GLSL_FinishGPUShader(&tr.pyroShader);
+		numEtcShaders++;
+
+		Q_strncpyz(extradefines, "#define PYRO_COMPOSITE\n", sizeof(extradefines));
+		if (!GLSL_InitGPUShader(&tr.pyroCompositeShader, "pyro", attribs, qtrue, extradefines, qtrue, fallbackShader_pyro_vp, fallbackShader_pyro_fp))
+		{
+			ri.Error(ERR_FATAL, "Could not load pyro composite shader!");
+		}
+		GLSL_InitUniforms(&tr.pyroCompositeShader);
+		GLSL_SetUniformInt(&tr.pyroCompositeShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+		GLSL_FinishGPUShader(&tr.pyroCompositeShader);
+		numEtcShaders++;
+	}
+
 	if (!GLSL_InitGPUShader(&tr.greyscaleShader, "greyscale", attribs, qtrue, extradefines, qtrue,
 		fallbackShader_greyscale_vp, fallbackShader_greyscale_fp))
 	{
@@ -3548,6 +3596,8 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.volumetricShader);
 	for (i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.froxelShader[i]);
+	GLSL_DeleteGPUShader(&tr.pyroShader);
+	GLSL_DeleteGPUShader(&tr.pyroCompositeShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.gtaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);

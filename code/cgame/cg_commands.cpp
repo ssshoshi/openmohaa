@@ -1128,6 +1128,15 @@ Event EV_Client_SmokeVolume
     NULL,
     "The sprites are puffs of smoke with a volume: with r_volumetric 2 they are drawn in the air, lit and shadowed, in place of the sprites"
 );
+// Added in OPM
+Event EV_Client_FireVolume
+(
+    "firevolume",
+    EV_DEFAULT,
+    NULL,
+    NULL,
+    "The sprites are fire with a volume: with r_volumetric 2 they glow in the air, white-hot at first and cooling to soot over their life"
+);
 Event EV_Client_SpriteGridLighting
 (
     "spritegridlighting",
@@ -1208,7 +1217,7 @@ Event EV_Client_Explode
     EV_DEFAULT,
     "s",
     "size",
-    "Plays one of the opm-explosions effects here: small, medium or large\n"
+    "Plays one of the opm-explosions effects here: small, medium, large or fuel\n"
     "(models/fx/opm_explosion_<size>.tik), with the timing an effect model's\n"
     "own commands can't have."
 );
@@ -1376,6 +1385,7 @@ CLASS_DECLARATION(Listener, ClientGameCommandManager, NULL) {
     {&EV_Client_Wind,                       &ClientGameCommandManager::SetWindAffect             },
     {&EV_Client_SpriteGridLighting,         &ClientGameCommandManager::SpriteGridLighting        },
     {&EV_Client_SmokeVolume,                &ClientGameCommandManager::SmokeVolume               },
+    {&EV_Client_FireVolume,                 &ClientGameCommandManager::FireVolume                },
     {&EV_Client_WaterOnly,                  &ClientGameCommandManager::SetWaterOnly              },
     {&EV_Client_SetAlignStretch,            &ClientGameCommandManager::SetAlignStretch           },
     {&EV_Client_SetClampVelocity,           &ClientGameCommandManager::SetClampVel               },
@@ -1782,6 +1792,15 @@ void ClientGameCommandManager::SmokeVolume(Event *ev)
     }
 
     m_spawnthing->cgd.flags2 |= T2_SMOKEVOLUME;
+}
+
+void ClientGameCommandManager::FireVolume(Event *ev)
+{
+    if (!m_spawnthing) {
+        return;
+    }
+
+    m_spawnthing->cgd.flags2 |= T2_SMOKEVOLUME | T2_FIREVOLUME;
 }
 
 void ClientGameCommandManager::SpriteGridLighting(Event *ev)
@@ -5950,14 +5969,8 @@ void ClientGameCommandManager::EventExplode(Event *ev)
         }
     }
 
-    size = ev->GetString(1);
-    if (!size.icmp("small")) {
-        effect = SFX_OPM_EXPLOSION_SMALL;
-    } else if (!size.icmp("medium")) {
-        effect = SFX_OPM_EXPLOSION_MEDIUM;
-    } else {
-        effect = SFX_OPM_EXPLOSION_LARGE;
-    }
+    size   = ev->GetString(1);
+    effect = CG_OpmExplosionEffect(size.c_str());
 
     sfxManager.MakeEffect_Normal(effect, Vector(current_entity->origin), Vector(0, 0, 1));
 }

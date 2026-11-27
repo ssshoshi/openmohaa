@@ -249,6 +249,12 @@ static qhandle_t R_RegisterModelInternal(const char *name, qboolean bBeginTiki, 
                 mod->type = MOD_SPRITE;
                 return mod->index;
             }
+        } else if (!stricmp(ptr, "vol")) {
+            // Added in OPM: a simulated explosion (tr_pyro.c)
+            Q_strncpyz(mod->name, name, sizeof(mod->name));
+            if (R_RegisterPyroVolume(name, mod)) {
+                return mod->index;
+            }
         } else if (!stricmp(ptr, "tik")) {
             // Added in OPM: how long a model new to the renderer takes, its
             // textures with it (tiki_loadlog)

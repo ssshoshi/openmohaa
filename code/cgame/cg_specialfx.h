@@ -148,6 +148,8 @@ typedef enum {
     SFX_OPM_EXPLOSION_SMALL,
     SFX_OPM_EXPLOSION_MEDIUM,
     SFX_OPM_EXPLOSION_LARGE,
+    //  A fuel barrel going up: all fire, no earth (opm_explosion_fuel.tik).
+    SFX_OPM_EXPLOSION_FUEL,
     //  The earth a grenade or a bazooka round throws up from soft ground
     //  (CG_MakeExplosionEffect).
     SFX_OPM_EARTH_GREN,
@@ -162,6 +164,10 @@ typedef enum {
     //  opm-trees data).
     SFX_OPM_LEAVES_TREE,
     SFX_OPM_LEAVES_BUSH,
+    //  The medium and large explosions simulated and drawn as volumes
+    //  (opm_pyro_*.tik, tools/pyro), where the renderer draws them (r_pyro).
+    SFX_OPM_PYRO_MEDIUM,
+    SFX_OPM_PYRO_LARGE,
     SFX_TEST_EFFECT,
     SFX_COUNT
 } SpecialEffects;
@@ -215,3 +221,7 @@ public:
 };
 
 extern ClientSpecialEffectsManager sfxManager;
+
+// Added in OPM: the opm-explosions effect for a size's name (small, medium,
+// large, fuel), as opm_explode and fx_explode take it
+int CG_OpmExplosionEffect(const char *size);

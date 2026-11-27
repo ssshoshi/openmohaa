@@ -75,6 +75,7 @@ cg_drawviewmodel	0	2	code/cgame/cg_main.c:159	First-person weapon: 0 hides it, 1
 cg_effect_physicsrate			code/cgame/cg_tempmodels.cpp:237	How many times per second the physics of effect particles (debris, sparks, smoke) is stepped. Lower is cheaper but coarser.
 cg_effectdetail	0.2	1	code/cgame/cg_tempmodels.cpp:234	Scales how many particles effects spawn: 1 is full detail, lower values thin out smoke, sparks and debris for performance.
 cg_errordecay			code/cgame/cg_main.c:148	Milliseconds over which a prediction error is smoothed out instead of snapping the view to the corrected position.
+cg_fireVolumeSprites			code/cgame/cg_tempmodels.cpp:413	The sprites (file names, without .spr) that are fire with a volume: with r_volumetric 2 they glow in the air, white-hot at first, cooling to soot over their life. The emitter keyword firevolume marks any other.
 cg_firstPersonBody	0	1	code/cgame/cg_main.c:180	Draw your own body when looking down in first person (the legs and torso of the player model under the camera).
 cg_firstPersonBodyNeckGap	-100	40	code/cgame/cg_main.c:193	How far below the camera the first person body's neck is kept: the body goes down when jumping, falling or climbing stairs would bring it up into view.
 cg_firstPersonBodyOffset			code/cgame/cg_main.c:181	How far back to shift your first-person body behind the camera, in game units, so it does not fill the view when looking down.
@@ -163,6 +164,7 @@ cg_shadowscount	1	8	code/cgame/cg_main.c:172	How many lights may cast a characte
 cg_showemitters	0	1	code/cgame/cg_commands.cpp:5481	Debug: print information about effect emitters as they spawn particles.
 cg_showmiss	0	2	code/cgame/cg_main.c:150	Debug: report prediction misses (when the server's position disagrees with the client's prediction). 2 adds more detail.
 cg_showtempmodels	0	1	code/cgame/cg_tempmodels.cpp:231	Debug: print how many temporary models are alive each frame.
+cg_smokeVolumeWalls	0	1	code/cgame/cg_tempmodels.cpp:415	Smoke and fire with a volume (r_volumetric 2) keep to the room they are in: puffs slide along a wall they meet and are pushed off it, and are drawn no wider than the room they have, so none shows through a wall.
 cg_smoothClients	0	1	code/cgame/cg_main.c:166	Smooth other players' movement by extrapolating between server snapshots.
 cg_smoothClientsTime			code/cgame/cg_main.c:167	How far ahead, in milliseconds, other players may be extrapolated when cg_smoothClients is on.
 cg_sprintbar	0	1	code/cgame/cg_main.c:228	The sprint bar low in the middle of the screen: shows while sprint is used or coming back, red when run out or tired.
@@ -958,6 +960,13 @@ r_prepassFarModels	0		code/renderergl2/tr_init.c:1687	Animated models smaller in
 r_primitives	0	3	code/renderergl1/tr_init.c:1414	How geometry is sent to the GPU (0 auto, other values force a method). (OpenGL 1 renderer.)
 r_printShaders	0	1	code/renderergl1/tr_init.c:1459	Print each shader as it is loaded.
 r_pshadowDist			code/renderergl2/tr_init.c:1615	Maximum distance at which characters cast projected shadows. (OpenGL 2 renderer.)
+r_pyro	0	1	code/renderergl2/tr_pyro.c:66	Simulated explosions (.vol models, tools/pyro) drawn as 3D volumes, lit by the map and cut by walls; 0 does not draw them. (OpenGL 2 renderer.)
+r_pyroAlbedo	0	1	code/renderergl2/tr_pyro.c:74	How much light the smoke of simulated explosions sends back: soot is near black (0.025), dust and steam lighter (0.3). (OpenGL 2 renderer.)
+r_pyroDebug	0	3	code/renderergl2/tr_pyro.c:78	Debug for simulated explosions: 1 tints each volume's box, 2 prints what is drawn, 3 prints every volume entity. Cheat-protected.
+r_pyroDensity	0	4	code/renderergl2/tr_pyro.c:72	How thick the smoke of simulated explosions is. (OpenGL 2 renderer.)
+r_pyroFire	0	4	code/renderergl2/tr_pyro.c:70	How brightly the fire of simulated explosions glows. (OpenGL 2 renderer.)
+r_pyroHalf	0	1	code/renderergl2/tr_pyro.c:76	Simulated explosions marched at half the view's size and blended over it; 0 marches them at full size, about four times the cost. (OpenGL 2 renderer.)
+r_pyroSteps	8	256	code/renderergl2/tr_pyro.c:68	Steps through a simulated explosion for each pixel: more is finer and slower. (OpenGL 2 renderer.)
 r_railCoreWidth			code/renderergl2/tr_init.c:1706	Width of the rail beam core effect. (OpenGL 2 renderer.)
 r_railSegmentLength			code/renderergl2/tr_init.c:1707	Segment length of the rail beam effect. (OpenGL 2 renderer.)
 r_railWidth			code/renderergl2/tr_init.c:1705	Width of the rail beam effect. (OpenGL 2 renderer.)
@@ -1030,6 +1039,7 @@ r_verbose	0	1	code/renderergl1/tr_init.c:1492	Print extra renderer information. 
 r_vertexLight	0	1	code/renderergl1/tr_init.c:1374	Light the world by vertex instead of lightmaps: faster and much flatter.
 r_vidmode1024	0	1	code/renderergl1/tr_init.c:1356	Legacy: the 1024x768 mode is available.
 r_vidmodemax	0	1	code/renderergl1/tr_init.c:1357	Legacy: highest video mode available.
+r_volumetricFire	0	4	code/renderergl2/tr_froxel.c:239	With r_volumetric 2: how brightly the fire of explosions glows in the air, as a ball of flame cooling to soot; 0 draws fire as sprites.
 r_water	0	1	code/renderergl2/tr_water.c:88	Draws water with the water program: waves, the sky mirrored in it, the bottom seen through it darkening with depth, surf and foam in the shallows, and blood where a map or a body puts some. How a map's water looks is in water/<map>.txt. Needs vid_restart. (OpenGL 2 renderer.)
 r_lens	0	1	code/renderergl2/tr_lens.c:41	Draws what lands on the camera's lens (cg_lens): water drops that bend the view, blood that runs, dirt.
 r_waterBlood	0		code/renderergl2/tr_water.c:89	How much of the blood a map puts in its water (water/<map>.txt): 0 none, 1 as the map has it. At 0 bodies in water leave none either.

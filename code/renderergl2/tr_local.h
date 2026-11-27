@@ -1184,6 +1184,18 @@ typedef enum
 	UNIFORM_MBVELOCITYMAP,  // each pixel's smear
 	UNIFORM_MBTILEMAP,      // the longest about each tile
 
+	UNIFORM_PYROMAP,        // Added in OPM: simulated explosions (pyro_fp.glsl): the frames, a 3D texture
+	UNIFORM_PYROBOX,        // the box's lowest corner, extinction per unit
+	UNIFORM_PYROSIZE,       // its size, how much of it is left (fade)
+	UNIFORM_PYROFRAMES,     // the two frames' tiles: x y, x y
+	UNIFORM_PYROPARAMS,     // from the first frame to the second, tiles across, up, steps
+	UNIFORM_PYROCELLS,      // cells across, up, deep in a frame; draw the box (debug)
+	UNIFORM_PYROAMBIENT,    // the light all round it, the fire's brightness
+	UNIFORM_PYROSUN,        // the directed light
+	UNIFORM_PYRODIR,        // toward it
+	UNIFORM_PYROVIEW,       // the viewport's corner, one over its size
+	UNIFORM_PYRODEPTH,      // one over the depth image's size
+
 	UNIFORM_COUNT
 } uniform_t;
 
@@ -1895,6 +1907,8 @@ typedef struct refSprite_s {
     float shaderTime;
     qboolean froxelTaken; // Added in OPM: drawn in the air's grid as a puff of smoke (R_FroxelTakesSprite)
     byte     froxelAlpha; // and its alpha before its sprite gave the grid its share
+    byte     froxelRGB[3]; // and its colour (fire: the sprite gives its share by its colour)
+    float    froxelHeat;  // fire (RF_VOLUME_FIRE): how hot it is still, 1 to 0
 } refSprite_t;
 
 //=========================
@@ -2204,7 +2218,8 @@ typedef enum {
 	// OPENMOHAA-specific stuff
 	//
     MOD_TIKI,
-    MOD_SPRITE
+    MOD_SPRITE,
+    MOD_VOLUME  // Added in OPM: a simulated explosion (tr_pyro.c)
 } modtype_t;
 
 typedef struct model_s {
@@ -2223,6 +2238,7 @@ typedef struct model_s {
     union {
         dtiki_t* tiki;
         sprite_t* sprite;
+        struct pyroVolume_s* volume;
     } d;
     qboolean serveronly;
 } model_t;
@@ -2408,6 +2424,7 @@ typedef enum {
 	GPUTIMER_VOLUME,   // Added in OPM: r_volumetric
 	GPUTIMER_TAA,      // Added in OPM: r_taa
 	GPUTIMER_MOTIONBLUR, // Added in OPM: r_motionBlur
+	GPUTIMER_PYRO,     // Added in OPM: simulated explosions (tr_pyro.c)
 
 	GPUTIMER_COUNT
 } gpuTimerId_t;
@@ -2750,7 +2767,8 @@ typedef struct {
 	image_t                 *froxelLightImage[2]; // Added in OPM: r_volumetric 2, the grid of the air's cells lit (FROXEL_TILES slices a row), this frame's and last
 	image_t                 *froxelSumImage[2]; // and summed from the eye, in passes from one to the other
 	image_t                 *froxelDepthImage; // and each tile of the view's furthest depth
-	image_t                 *froxelDepthQuarterImage; // and each quarter tile's, on the way (raw depth)
+	image_t                 *froxelDepthQuarterImage;
+	image_t                 *pyroImage;  // Added in OPM: simulated explosions at half size (tr_pyro.c) // and each quarter tile's, on the way (raw depth)
 	image_t					*hdrDepthImage;
 	image_t					*waterSceneImage; // Added in OPM: the view before its water (tr_water.c)
 	image_t					*waterSkyImage; // Added in OPM: the sky box water mirrors, a cubemap (tr_water.c)
@@ -2795,6 +2813,7 @@ typedef struct {
 	FBO_t					*volumeBlurFbo;
 	FBO_t					*froxelLightFbo[2];
 	FBO_t					*froxelSumFbo[2];
+	FBO_t					*pyroFbo;
 	FBO_t					*froxelDepthFbo;
 	FBO_t					*froxelDepthQuarterFbo;
 	FBO_t					*hdrDepthFbo;
@@ -2849,6 +2868,8 @@ typedef struct {
 	shaderProgram_t calclevels4xShader[2];
 	shaderProgram_t shadowmaskShader;
 	shaderProgram_t volumetricShader; // Added in OPM: r_volumetric (volumetric_fp.glsl)
+	shaderProgram_t pyroShader;       // Added in OPM: simulated explosions (pyro_fp.glsl, tr_pyro.c)
+	shaderProgram_t pyroCompositeShader; // and their half size image over the view
 	shaderProgram_t froxelShader[4];  // Added in OPM: r_volumetric 2 (froxel_fp.glsl): FROXEL_LIGHT, FROXEL_INTEGRATE, FROXEL_APPLY, FROXEL_DEPTH
 	shaderProgram_t ssaoShader;
 	shaderProgram_t gtaoShader; // Added in OPM: r_gtao (gtao_fp.glsl)
@@ -4309,6 +4330,13 @@ extern cvar_t *r_volumetricFog;
 extern cvar_t *r_volumetricTemporal;
 extern cvar_t *r_volumetricCubic;
 void R_FroxelInit(void);
+
+// Added in OPM: simulated explosions drawn as volumes (tr_pyro.c)
+void      R_PyroInit(void);
+void      R_PyroShutdown(void);
+qhandle_t R_RegisterPyroVolume(const char *name, model_t *mod);
+void      RB_PyroVolumes(void);
+
 void R_FroxelShutdown(void);
 void R_FogLoadWorld(const char *mapName);
 // Added in OPM: a map's atmosphere and the picture's grade (tr_atmos.c)

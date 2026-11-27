@@ -242,8 +242,9 @@ float LampShape(int i, vec3 P, out vec3 toLight)
 // what is in the air at P: rgb what it scatters (the haze's, the banks', the
 // smoke's), a what it takes out; fog the banks' share of the scattering,
 // smoke the smoke's, smokeLit the smoke's as its sprites were lit (the light
-// grid's: the light baked into the map, which the realtime lights leave out)
-vec4 Media(vec3 P, out vec3 fog, out vec3 smoke, out vec3 smokeLit)
+// grid's: the light baked into the map, which the realtime lights leave out),
+// glow the light fire gives off of itself (a puff whose third vector's w is set)
+vec4 Media(vec3 P, out vec3 fog, out vec3 smoke, out vec3 smokeLit, out vec3 glow)
 {
 	vec4 m = vec4(vec3(u_VolParams.x), u_VolRange.z);
 	int  count = int(u_FogParams.x);
@@ -251,6 +252,7 @@ vec4 Media(vec3 P, out vec3 fog, out vec3 smoke, out vec3 smokeLit)
 	fog = vec3(0.0);
 	smoke = vec3(0.0);
 	smokeLit = vec3(0.0);
+	glow = vec3(0.0);
 	for (int i = 0; i < WATER_MAX_SPOTS / 3; i++)
 	{
 		if (i >= count) break;
@@ -320,7 +322,11 @@ vec4 Media(vec3 P, out vec3 fog, out vec3 smoke, out vec3 smokeLit)
 		m.rgb    += d * b.rgb;
 		m.a      += d;
 		smoke    += d * b.rgb;
-		smokeLit += d * u_SmokeBlobs[i * 3 + 2].rgb;
+		vec4 c = u_SmokeBlobs[i * 3 + 2];
+		if (c.a > 0.5)
+			glow += d * c.rgb;
+		else
+			smokeLit += d * c.rgb;
 	}
 	return m;
 }
@@ -395,8 +401,8 @@ void main()
 
 	// what is in the air here; the smoke's shadows are worked out only where
 	// there is fog or smoke (the haze in the open is not shadowed by it)
-	vec3 fog, smoke, smokeLit;
-	vec4 media  = Media(P, fog, smoke, smokeLit);
+	vec3 fog, smoke, smokeLit, glow;
+	vec4 media  = Media(P, fog, smoke, smokeLit, glow);
 	bool smoky  = max(smoke.r, max(smoke.g, smoke.b)) > 0.0;
 	bool thick  = smoky || max(fog.r, max(fog.g, fog.b)) > 0.0;
 
@@ -504,7 +510,8 @@ void main()
 	}
 	// the smoke as lit live, or as its sprites were (the map's baked light),
 	// whichever is brighter: under a roof the baked light is most of it
-	vec4 cur = vec4(L * hazeS + Lm * fog + max(Lm * smoke, smokeLit), media.a);
+	// and fire, glowing of itself
+	vec4 cur = vec4(L * hazeS + Lm * fog + max(Lm * smoke, smokeLit) + glow, media.a);
 
 	// last frame's, where this cell's middle was then
 	if (u_FroxelPrevOrigin.w > 0.0)

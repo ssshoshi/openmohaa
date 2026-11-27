@@ -901,6 +901,8 @@ void RE_AddRefSpriteToScene(const refEntity_t* ent) {
     spr->renderfx = ent->renderfx;
     spr->shaderTime = ent->shaderTime;
     spr->froxelTaken = qfalse;
+    // Added in OPM: fire's heat comes in the field a sprite has no use for
+    spr->froxelHeat = (ent->renderfx & RF_VOLUME_FIRE) ? Com_Clamp(0.0f, 1.0f, ent->shadowPlane) : 0.0f;
 	AxisCopy(ent->axis, spr->axis);
 
 	for (i = 0; i < 4; ++i) {
