@@ -486,6 +486,7 @@ extern "C" {
     extern cvar_t *cg_forceModel;
     extern cvar_t *cg_animationviewmodel;
     extern cvar_t *cg_firstPersonShadow;
+    extern cvar_t *cg_healthBlink;
     extern cvar_t *cg_firstPersonBody;
     extern cvar_t *cg_firstPersonBodyOffset;
     extern cvar_t *cg_firstPersonBodyNeckGap;

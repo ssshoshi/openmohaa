@@ -86,6 +86,7 @@ cvar_t *dm_playergermanmodel;
 cvar_t *cg_forceModel;
 cvar_t *cg_animationviewmodel;
 cvar_t *cg_firstPersonShadow;
+cvar_t *cg_healthBlink;
 cvar_t *cg_firstPersonBody;
 cvar_t *cg_firstPersonBodyOffset;
 cvar_t *cg_firstPersonBodyNeckGap;
@@ -221,6 +222,8 @@ void CG_RegisterCvars(void)
     cg_forceModel                 = cgi.Cvar_Get("cg_forceModel", "0", CVAR_ARCHIVE);
     cg_animationviewmodel         = cgi.Cvar_Get("cg_animationviewmodel", "0", CVAR_SYSTEMINFO);
     cg_firstPersonShadow          = cgi.Cvar_Get("cg_firstPersonShadow", "0", CVAR_ARCHIVE);
+    // read by the health items' shaders (ifCvar, opm-items pak), so a change shows after vid_restart
+    cg_healthBlink                = cgi.Cvar_Get("cg_healthBlink", "0", CVAR_ARCHIVE);
     cg_firstPersonBody            = cgi.Cvar_Get("cg_firstPersonBody", "0", CVAR_ARCHIVE);
     cg_firstPersonBodyOffset      = cgi.Cvar_Get("cg_firstPersonBodyOffset", "0", CVAR_ARCHIVE);
     cg_firstPersonBodyNeckGap     = cgi.Cvar_Get("cg_firstPersonBodyNeckGap", "8", 0);

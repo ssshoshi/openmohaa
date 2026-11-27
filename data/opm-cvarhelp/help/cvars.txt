@@ -94,6 +94,7 @@ cg_gore_maxPolys	0	8000	code/cgame/cg_gore.cpp:212	Most wound triangles drawn in
 cg_gore_maxWounds	1	200	code/cgame/cg_gore.cpp:211	Most wounds kept on one body; the oldest goes first.
 cg_gore_pools	0	1	code/cgame/cg_gore.cpp:215	A pool of blood spreads under a corpse.
 cg_gore_scale	0.25	4	code/cgame/cg_gore.cpp:216	Size of wounds and pools.
+cg_healthBlink	0	1	code/cgame/cg_main.c:226	Health items (canteens, first aid kits, surgeon packs) pulse with a glow, as in the stock game; 0 leaves them plain. Read by their shaders in the opm-items pak, so a change shows after vid_restart.
 cg_hidetempmodels	0	1	code/cgame/cg_main.c:152	Debug: stop drawing temporary models (particles, debris, sprites from effects).
 cg_hitmessages	0	1	code/cgame/cg_main.c:182	Show hit feedback messages in multiplayer.
 cg_hud	0	1	code/cgame/cg_main.c:184	Whether the HUD is currently shown. Managed by the UI; use ui_hud to change it.
