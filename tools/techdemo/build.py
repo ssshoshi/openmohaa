@@ -48,6 +48,12 @@ PAK = "zzzzzzzzz-opm-techdemo.pk3"
 SHADERFIX = "zzzzzzzzzzzzzzzzzzzz-techdemo-shaderfix.pk3"
 RETAIL = {"Pak0.pk3", "Pak1.pk3", "Pak2.pk3", "Pak3.pk3", "Pak4.pk3", "Pak5.pk3", "Pak6EnUk.pk3"}
 IMAGE_EXTS = (".tga", ".jpg", ".dds")
+# paks the compilers don't get. The trees pak swaps the static trees and
+# bushes for meshes many times denser, and MOHlight lights a static model
+# vertex by vertex: 136 of its pines made the light pass 16 minutes longer.
+# Lit as the retail trees, as every retail map was, the game draws the new
+# trees over them just the same.
+COMPILE_WITHOUT = {"zzzzzzzzz-opm-trees.pk3"}
 
 
 def winpath(p):
@@ -115,7 +121,8 @@ def gamedir(used):
     d = os.path.join(GAME, "techdemo-build")
     main = os.path.join(d, "main")
     os.makedirs(os.path.join(main, "maps"), exist_ok=True)
-    paks = sorted((p for p in os.listdir(os.path.join(GAME, "main")) if p.lower().endswith(".pk3") and p != PAK), key=str.lower)
+    paks = sorted((p for p in os.listdir(os.path.join(GAME, "main"))
+                   if p.lower().endswith(".pk3") and p != PAK and p.lower() not in COMPILE_WITHOUT), key=str.lower)
     for p in os.listdir(main):
         if p.lower().endswith(".pk3") and p not in paks and p != SHADERFIX:
             os.remove(os.path.join(main, p))

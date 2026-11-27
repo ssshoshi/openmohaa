@@ -45,7 +45,7 @@ drawn with the pond's water settings.
 
 ## Building
 
-    tools/techdemo/build.py --fast                 # about 25 s: rough vis and light
+    tools/techdemo/build.py --fast                 # about 10 min: rough vis and light
     tools/techdemo/build.py                        # full vis and light
     tools/techdemo/build.py --install "/mnt/d/Medal of Honor/orch-test/home/main"
 
@@ -63,6 +63,13 @@ retail's, which made every texture four times too big. Compiled against the
 retail sizes, as the retail maps were, the HD images draw at the retail scale. The result is
 `build/techdemo/zzzzzzzzz-opm-techdemo.pk3`: the bsp, the map's script,
 precache and water file, and nothing retail or from a mod.
+
+The compilers don't get the trees pak (`zzzzzzzzz-opm-trees.pk3`): its trees
+are many times denser than retail's and MOHlight lights static models vertex
+by vertex, so the biomes' pines alone made the light pass an hour longer.
+They are lit as the retail trees, like every retail map, and the game draws
+the new ones over them. The light pass is still most of the build: the map's
+lit area is over twice what it was before the biomes.
 
 - `mapgen.py` writes .map files: brushes from corners (the winding is worked
   out), heightfields as triangular prisms, entities.

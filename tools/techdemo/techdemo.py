@@ -221,7 +221,12 @@ def build_field(m):
 
 
 def build_plaza(m):
-    m.add(box((-HALF, 0, FLOOR_LOW + 64), (HALF, HALF, 0), T_CAULK, top=T_COBBLE))
+    # in tiles: one face this big, with the biomes' ground meeting its
+    # edges, gets a point added for every ground vertex along them, and a
+    # face of over 64 points stops the map loading (MAX_FACE_POINTS)
+    for x in range(-HALF, HALF, 1024):
+        for y in range(0, HALF, 896):
+            m.add(box((x, y, FLOOR_LOW + 64), (x + 1024, y + 896, 0), T_CAULK, top=T_COBBLE))
 
 
 HALL = (-3072, 512, -1024, 2560, 384)

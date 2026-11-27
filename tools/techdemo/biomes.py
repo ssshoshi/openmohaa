@@ -513,7 +513,7 @@ class Norway(Zone):
 
     def tex(self, x, y, h, slope, patch):
         if slope > 1.0:
-            return T("central_europe_winter/forstsnow_rock256")
+            return T("central_europe_winter/cliffset_2snow")
         if self.on_road(x, y):
             return T("norway/road_nortraveled")
         return T("norway/norsnowmedium") if patch > 0.62 else T("norway/norsnow_lite256")
@@ -597,7 +597,7 @@ class Ardennes(Zone):
 
     def tex(self, x, y, h, slope, patch):
         if slope > 0.9:
-            return T("central_europe_winter/forstsnow_rock256")
+            return T("central_europe_winter/cliffset_2snow")
         if self.on_road(x, y):
             return T("central_europe_winter/stset_1awinter")
         if patch > 0.66:
@@ -786,7 +786,8 @@ class Beach(Zone):
     name = "beach"
     seed = 69
     amp = 30
-    kinds = {"out": "open"}
+    # the sea's far side is a ridge too, a headland round a cove: open to
+    # the world's edge, the sky wall showed through the water
 
     BLUFF = 1800      # where the bluff starts falling
     SAND = 2500       # where the sand starts
@@ -877,9 +878,10 @@ class Town(Zone):
         return T("brest/mud_set1") if patch > 0.58 else T("wilderness/m3l3grass_1rough")
 
     def plan(self):
-        self.passes = [("mid", -2400), ("n", 6400)]
+        # the pass to the beach comes out on the bluff, not by the sea
+        self.passes = [("mid", -2400), ("n", 5528)]
         self.roads = [([self.P(0, -2400), self.P(900, -2400), self.P(3200, -2400)], 112),
-                      ([self.P(2816, -2400), self.P(2816, -1152)], 80)]
+                      ([self.P(1944, -2400), self.P(1944, -1152)], 60)]
         self.row_n = []
         self.row_s = []
         u = 1000
