@@ -960,6 +960,13 @@ r_prepassFarModels	0		code/renderergl2/tr_init.c:1687	Animated models smaller in
 r_primitives	0	3	code/renderergl1/tr_init.c:1414	How geometry is sent to the GPU (0 auto, other values force a method). (OpenGL 1 renderer.)
 r_printShaders	0	1	code/renderergl1/tr_init.c:1459	Print each shader as it is loaded.
 r_pshadowDist			code/renderergl2/tr_init.c:1615	Maximum distance at which characters cast projected shadows. (OpenGL 2 renderer.)
+r_pyro	0	1	code/renderergl2/tr_pyro.c:66	Simulated explosions (.vol models, tools/pyro) drawn as 3D volumes, lit by the map and cut by walls; 0 does not draw them. (OpenGL 2 renderer.)
+r_pyroAlbedo	0	1	code/renderergl2/tr_pyro.c:74	How much light the smoke of simulated explosions sends back: soot is near black (0.025), dust and steam lighter (0.3). (OpenGL 2 renderer.)
+r_pyroDebug	0	3	code/renderergl2/tr_pyro.c:78	Debug for simulated explosions: 1 tints each volume's box, 2 prints what is drawn, 3 prints every volume entity. Cheat-protected.
+r_pyroDensity	0	4	code/renderergl2/tr_pyro.c:72	How thick the smoke of simulated explosions is. (OpenGL 2 renderer.)
+r_pyroFire	0	4	code/renderergl2/tr_pyro.c:70	How brightly the fire of simulated explosions glows. (OpenGL 2 renderer.)
+r_pyroHalf	0	1	code/renderergl2/tr_pyro.c:76	Simulated explosions marched at half the view's size and blended over it; 0 marches them at full size, about four times the cost. (OpenGL 2 renderer.)
+r_pyroSteps	8	256	code/renderergl2/tr_pyro.c:68	Steps through a simulated explosion for each pixel: more is finer and slower. (OpenGL 2 renderer.)
 r_railCoreWidth			code/renderergl2/tr_init.c:1706	Width of the rail beam core effect. (OpenGL 2 renderer.)
 r_railSegmentLength			code/renderergl2/tr_init.c:1707	Segment length of the rail beam effect. (OpenGL 2 renderer.)
 r_railWidth			code/renderergl2/tr_init.c:1705	Width of the rail beam effect. (OpenGL 2 renderer.)

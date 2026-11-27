@@ -1,0 +1,117 @@
+{
+ "comment": "A vehicle or TNT blast (m1l1's truck, mortar_higgins): a fireball about twice a grenade's that belches black smoke, rolling, not a mushroom",
+ "domain": [
+  10,
+  10
+ ],
+ "res": 128,
+ "frames": 200,
+ "fps": 24,
+ "px": 256,
+ "samples": 64,
+ "seed": 3,
+ "blobs": {
+  "count": 6,
+  "radius": 0.5,
+  "spread": 0.5,
+  "height": 0.6
+ },
+ "emit_frames": 8,
+ "burst": 5.0,
+ "burst_random": 3.0,
+ "lift": [
+  0,
+  0,
+  1.0
+ ],
+ "fuel": 3.5,
+ "temperature": 2.0,
+ "density": 1.0,
+ "alpha": 0.0,
+ "beta": 1.2,
+ "vorticity": 0.5,
+ "burning_rate": 0.18,
+ "flame_smoke": 3.0,
+ "flame_vorticity": 1.0,
+ "density_scale": 90.0,
+ "fire_strength": 4.0,
+ "sun": 3.0,
+ "smoke_tint": [
+  0.2,
+  0.19,
+  0.18
+ ],
+ "noise": 0,
+ "noise_strength": 1.0,
+ "start_frame": 6,
+ "replaces": {
+  "model": "models/emitters/mortar_higgins.tik",
+  "light": 600,
+  "blast": 1.5,
+  "scale": 1.0,
+  "debris": [
+   {
+    "models": [
+     "models/fx/ibeam_piece.tik",
+     "models/fx/metal_section.tik"
+    ],
+    "count": 5,
+    "scale": [
+     0.2,
+     0.4
+    ],
+    "speed": 260,
+    "up": [
+     300,
+     520
+    ],
+    "spin": 300,
+    "bounce": 0.25,
+    "life": 7
+   },
+   {
+    "models": [
+     "models/fx/heavy_pipe.tik",
+     "models/fx/ibeam_piece.tik",
+     "models/fx/metal_section.tik"
+    ],
+    "count": 16,
+    "scale": [
+     0.04,
+     0.14
+    ],
+    "speed": 480,
+    "up": [
+     200,
+     600
+    ],
+    "spin": 800,
+    "bounce": 0.35,
+    "life": 5
+   }
+  ]
+ },
+ "alpha_gamma": 0.7,
+ "fade_frames": 24,
+ "flame_max_temp": 2.5,
+ "vol_fire": 18.0,
+ "modes": [],
+ "smoke_source": {
+  "radius": 0.4,
+  "height": 0.5,
+  "density": 1.5,
+  "temperature": 2.5,
+  "burst": 0.0,
+  "burst_random": 0.3,
+  "lift": [
+   0,
+   0,
+   2.5
+  ],
+  "frames": [
+   6,
+   60
+  ]
+ },
+ "vol_density": 1.5
+}

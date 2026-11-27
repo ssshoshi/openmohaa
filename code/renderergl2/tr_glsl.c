@@ -52,6 +52,8 @@ extern const char *fallbackShader_volumetric_vp;
 extern const char *fallbackShader_volumetric_fp;
 extern const char *fallbackShader_froxel_vp;
 extern const char *fallbackShader_froxel_fp;
+extern const char *fallbackShader_pyro_vp;
+extern const char *fallbackShader_pyro_fp;
 extern const char *fallbackShader_ssao_vp;
 extern const char *fallbackShader_ssao_fp;
 extern const char *fallbackShader_texturecolor_vp;
@@ -338,6 +340,18 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_MbPrevBones",    GLSL_INT },
 	{ "u_MbVelocityMap",  GLSL_INT },
 	{ "u_MbTileMap",      GLSL_INT },
+
+	{ "u_PyroMap",        GLSL_INT },
+	{ "u_PyroBox",        GLSL_VEC4 },
+	{ "u_PyroSize",       GLSL_VEC4 },
+	{ "u_PyroFrames",     GLSL_VEC4 },
+	{ "u_PyroParams",     GLSL_VEC4 },
+	{ "u_PyroCells",      GLSL_VEC4 },
+	{ "u_PyroAmbient",    GLSL_VEC4 },
+	{ "u_PyroSun",        GLSL_VEC4 },
+	{ "u_PyroDir",        GLSL_VEC4 },
+	{ "u_PyroView",       GLSL_VEC4 },
+	{ "u_PyroDepth",      GLSL_VEC4 },
 };
 
 typedef enum
@@ -3159,6 +3173,32 @@ void GLSL_InitGPUShaders(void)
 	}
 
 
+	// Added in OPM: simulated explosions (tr_pyro.c)
+	if (qglTexImage3D)
+	{
+		attribs = ATTR_POSITION | ATTR_TEXCOORD;
+		extradefines[0] = '\0';
+		if (!GLSL_InitGPUShader(&tr.pyroShader, "pyro", attribs, qtrue, extradefines, qtrue, fallbackShader_pyro_vp, fallbackShader_pyro_fp))
+		{
+			ri.Error(ERR_FATAL, "Could not load pyro shader!");
+		}
+		GLSL_InitUniforms(&tr.pyroShader);
+		GLSL_SetUniformInt(&tr.pyroShader, UNIFORM_SCREENDEPTHMAP, TB_LIGHTMAP);
+		GLSL_SetUniformInt(&tr.pyroShader, UNIFORM_PYROMAP, TB_SPECULARMAP);
+		GLSL_FinishGPUShader(&tr.pyroShader);
+		numEtcShaders++;
+
+		Q_strncpyz(extradefines, "#define PYRO_COMPOSITE\n", sizeof(extradefines));
+		if (!GLSL_InitGPUShader(&tr.pyroCompositeShader, "pyro", attribs, qtrue, extradefines, qtrue, fallbackShader_pyro_vp, fallbackShader_pyro_fp))
+		{
+			ri.Error(ERR_FATAL, "Could not load pyro composite shader!");
+		}
+		GLSL_InitUniforms(&tr.pyroCompositeShader);
+		GLSL_SetUniformInt(&tr.pyroCompositeShader, UNIFORM_SCREENIMAGEMAP, TB_COLORMAP);
+		GLSL_FinishGPUShader(&tr.pyroCompositeShader);
+		numEtcShaders++;
+	}
+
 	if (!GLSL_InitGPUShader(&tr.greyscaleShader, "greyscale", attribs, qtrue, extradefines, qtrue,
 		fallbackShader_greyscale_vp, fallbackShader_greyscale_fp))
 	{
@@ -3546,6 +3586,8 @@ void GLSL_ShutdownGPUShaders(void)
 	GLSL_DeleteGPUShader(&tr.volumetricShader);
 	for (i = 0; i < 4; i++)
 		GLSL_DeleteGPUShader(&tr.froxelShader[i]);
+	GLSL_DeleteGPUShader(&tr.pyroShader);
+	GLSL_DeleteGPUShader(&tr.pyroCompositeShader);
 	GLSL_DeleteGPUShader(&tr.ssaoShader);
 	GLSL_DeleteGPUShader(&tr.gtaoShader);
 	GLSL_DeleteGPUShader(&tr.waterShader);

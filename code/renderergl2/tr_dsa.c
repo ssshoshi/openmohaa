@@ -76,6 +76,24 @@ int GL_BindMultiTexture(GLenum texunit, GLenum target, GLuint texture)
 	return 1;
 }
 
+/*
+Added in OPM: a 3D texture's image (tr_pyro.c). There is no DSA call for it
+here: the texture is bound on the unit the state says is active, made the
+active one in fact (with real DSA, binding a unit leaves the active one as
+it was, and a plain upload went to whatever that one had bound).
+*/
+void GL_TextureImage3D(GLuint texture, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth,
+	GLenum format, GLenum type, const GLvoid *pixels)
+{
+	const GLenum unit = glDsaState.texunit ? glDsaState.texunit : GL_TEXTURE0;
+
+	qglActiveTexture(unit);
+	glDsaState.texunit = unit;
+	qglBindTexture(GL_TEXTURE_3D, texture);
+	glDsaState.textures[unit - GL_TEXTURE0] = texture;
+	qglTexImage3D(GL_TEXTURE_3D, 0, internalformat, width, height, depth, 0, format, type, pixels);
+}
+
 GLvoid APIENTRY GLDSA_BindMultiTextureEXT(GLenum texunit, GLenum target, GLuint texture)
 {
 	if (glDsaState.texunit != texunit)
