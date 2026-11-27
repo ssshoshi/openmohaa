@@ -67,11 +67,18 @@ def _fit(span, pixels, scale):
     return fitted if abs(fitted / scale - 1) <= 0.2 else scale
 
 
+# the size of pictures a shader's first stage doesn't show (windowframe1's
+# first stage is its glass's reflection)
+IMAGE_SIZE = {"general_structure/windowframe1": (128, 256)}
+
+
 def fitted(shader, u0, v0, w, h, rot=0):
     """A texture laid once over a w by h rectangle whose left is at u0 and
     bottom at v0 (a door, a pane, a decal)."""
     _, _, pw, ph = texscale.scale(shader)
-    if pw == 256 and ph == 256 and shader not in texscale.table():
+    if shader in IMAGE_SIZE:
+        pw, ph = IMAGE_SIZE[shader]
+    elif pw == 256 and ph == 256 and shader not in texscale.table():
         pw, ph = _image_size(shader)
     sx, sy = w / pw, h / ph
     return Tex(shader, xoff=round((-u0 / sx) % pw, 2), yoff=round(((v0 + h) / sy) % ph, 2), rot=rot, sx=round(sx, 5), sy=round(sy, 5))
@@ -794,7 +801,7 @@ class Building:
                     static(self.m, lamp, (rx1 + rx2) / 2, (ry1 + ry2) / 2, z + h - lamp_drop(lamp))
                 area = (rx2 - rx1) * (ry2 - ry1)
                 self.m.ent("light", origin=((rx1 + rx2) / 2, (ry1 + ry2) / 2, z + h - 44),
-                           light=round(max(8, min(18, light * area / 60000)) * LIGHT_SCALE), _color=color)
+                           light=round(max(13, min(28, light * 1.6 * area / 60000)) * LIGHT_SCALE), _color=color)
                 if rk and rk in ROOM_KITS:
                     ROOM_KITS[rk](r)
                 rooms.append(r)
@@ -965,8 +972,8 @@ def kit_desert(r):
     r.table_with("static/round_table.tik", ["furniture/simplestool.tik", "furniture/simplestool.tik"],
                  ["static/pitcher.tik", "static/dish.tik"])
     r.against(r.rnd.choice(["static/single_bed.tik", "static/cot.tik"]))
-    for m in ("static/south_africa_ceramic_pot_1.tik", "static/south_africa_ceramic_pot_3.tik",
-              "static/south_africa_ceramic_pot_5.tik", "static/wicker_basket_1.tik", "static/basket1.tik"):
+    for m in ("static/wicker_basket_2.tik", "static/wicker_basket_3.tik",
+              "static/jug.tik", "static/wicker_basket_1.tik", "static/basket1.tik"):
         r.against(m, gap=4)
     r.against("static/cabinet_dark.tik")
 

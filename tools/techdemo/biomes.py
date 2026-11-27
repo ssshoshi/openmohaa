@@ -476,7 +476,7 @@ class Desert(Zone):
             self.door_lamp(r, door_side, 0.5, z, "static/lightbulb_desertcage.tik", (1, 0.8, 0.5))
             cx = x1 + (x2 - x1) * 0.5
             dy = y1 - 40 if door_side == "s" else y2 + 40
-            pot = ["static/south_africa_ceramic_pot_1.tik", "static/south_africa_ceramic_pot_3.tik", "static/basket1.tik"][k % 3]
+            pot = ["static/wicker_basket_2.tik", "static/wicker_basket_3.tik", "static/basket1.tik"][k % 3]
             self.put(pot, cx - 76, dy, g, check=False)
         x1, y1, x2, y2 = self.shed
         z = self.pad_z(self.shed)
@@ -504,9 +504,10 @@ class Beach(Zone):
     seed = 69
     amp = 30
     base = "test/omaha_pjspick5"
-    rock = "misc_outside/rockwall2"
+    # a sandy earth bluff (algiers' cliffs), not masonry
+    rock = "algiers/cliffset2"
     verge = "test/omaha_pjspick5"
-    splats = (("misc_outside/trench_mud", 12, 256, 512), ("wilderness/m3l3grass_1", 18, 320, 640))
+    splats = (("wilderness/m3l3grass_1", 18, 320, 640),)
     BLUFF = 1800
     SAND = 2500
     SHORE = 3350
@@ -598,7 +599,7 @@ class Town(Zone):
     seed = 81
     amp = 36
     base = "wilderness/m3l3grass_1rough"
-    rock = "misc_outside/rockwall2"
+    rock = "wilderness/wldrrckset1_1"
     verge = "brest/mud_set1"
     splats = (("brest/mud_set1", 22, 320, 640), ("wilderness/m3l3grass_1", 12, 384, 640))
     road_tex = "central_europe/small_cobble"
