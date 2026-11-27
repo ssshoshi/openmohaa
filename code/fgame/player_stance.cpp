@@ -59,6 +59,19 @@ void Player::EventProne(Event *ev)
     m_bProneRequest = true;
 }
 
+// Added in OPM
+//  The TL-122 on the shirt: on or off. The state is an entity flag, so it goes
+//  to every client (cgame draws the flashlight and its light) and into saves
+//  with the rest of the entity's flags; a new level starts with it off.
+void Player::EventFlashlight(Event *ev)
+{
+    if (IsDead() || IsSpectator()) {
+        return;
+    }
+
+    edict->s.eFlags ^= EF_OPM_FLASHLIGHT;
+}
+
 bool Player::StanceAllowed() const
 {
     if (g_gametype->integer != GT_SINGLE_PLAYER) {

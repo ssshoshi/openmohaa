@@ -448,6 +448,21 @@ models/vehicles/opeltruck.tik
 	flare models/fx/searchlight.tik
 }
 
+// the TL-122 flashlight a player wears on the shirt (content/opm-flashlight,
+// cgame's CG_Flashlight, which draws it only while it is on): an incandescent
+// bulb behind a small reflector, from just in front of its lens. It has no
+// entity of its own: the renderer knows it again by where it was
+models/items/opm_tl122.tik
+{
+	kind headlight
+	color 1 0.84 0.6
+	intensity 1500
+	bulb 3.4 0 0
+	spot 1 0 0 40
+	lightsurface tl122_beam
+	glowsurface tl122_lens
+}
+
 // ---------------------------------------------------------------- lamps in the brushwork
 
 // a shader the level designer built a lamp of (kind surface): the map's light

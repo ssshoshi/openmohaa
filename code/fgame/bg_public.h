@@ -408,6 +408,11 @@ movement on the server game.
 //  (weapon clip), so the client gets no solid for them; the grabber finds
 //  them by this (cg_physics_movers.cpp). In the 16 bits sent; unused in MoHAA.
 #define EF_PHYSICS_BODY 0x00004000
+// Added in OPM
+//  The player's flashlight is on (the "flashlight" command, player.cpp; drawn
+//  and lit by cgame's CG_Flashlight). In the 16 bits sent; MoHAA's bit for
+//  this was a Quake III award sprite it never used.
+#define EF_OPM_FLASHLIGHT 0x00008000
 
 //
 // Team assault flags

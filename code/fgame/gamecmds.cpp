@@ -126,6 +126,7 @@ void G_InitConsoleCommands(void)
     gi.AddCommand("gameversion", NULL);
     gi.AddCommand("fov", NULL);
     gi.AddCommand("holster", NULL);
+    gi.AddCommand("flashlight", NULL); // Added in OPM
     gi.AddCommand("safeholster", NULL);
     gi.AddCommand("safezoom", NULL);
     gi.AddCommand("zoomoff", NULL);

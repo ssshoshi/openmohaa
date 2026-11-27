@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // Some tools used to drawing 2d stuff
 
 #include "cg_local.h"
+#include "cg_flashlight.h"
 #include "cg_physics.h"
 #include "cg_bugreport.h"
 #include "cg_orch.h"
@@ -1633,6 +1634,7 @@ void CG_Draw2D(void)
     CG_DrawCrosshair();
     // Added in OPM
     CG_DrawSprintBar();
+    CG_DrawFlashlight();
     CG_PhysicsEditDraw2D();
     CG_BugReportDraw2D();
     CG_OrchDraw2D();
