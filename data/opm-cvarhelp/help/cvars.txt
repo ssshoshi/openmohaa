@@ -648,6 +648,7 @@ g_sprint_speed	1	3	code/fgame/gamecvars.cpp:840	Sprint speed, as a multiple of t
 g_sprint_time	0	60	code/fgame/gamecvars.cpp:841	Seconds of sprint at full health, fewer as the player is hurt; 0 for no limit.
 g_sprint_tired_speed	0.1	1	code/fgame/gamecvars.cpp:844	How slow a player below half health is when he runs out of sprint, as a fraction of his speed; he eases back over g_sprint_tired_time.
 g_sprint_tired_time	0	30	code/fgame/gamecvars.cpp:845	Seconds a player below half health stays tired (slowed) after running out of sprint.
+g_sprint_water_drain	0	10	code/fgame/gamecvars.cpp:869	How many times as fast sprinting uses up stamina while the player is in water.
 g_statefile			code/fgame/gamecvars.cpp:498	Base name of the player state machine files (_Legs.st and _Torso.st).
 g_subtitle	0	2	code/cgame/cg_commands.cpp:3873	Subtitles for dialogue: 1 nearby dialogue, 2 all dialogue regardless of distance.
 g_success	0	1	code/cgame/cg_view.c:1217	Set by the game when the mission succeeded; read by the end-of-mission screen.

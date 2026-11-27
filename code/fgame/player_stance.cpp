@@ -78,7 +78,8 @@ bool Player::StanceAllowed() const
         return false;
     }
 
-    return waterlevel < 2;
+    // swimming: neither lying down nor sprinting
+    return waterlevel < 3;
 }
 
 bool Player::HasRoomFor(float height)
@@ -216,9 +217,12 @@ bool Player::LeaveProne(bool crouch, bool force)
 void Player::UpdateStance(usercmd_t *ucmd)
 {
     bool allowed = StanceAllowed();
+    // no lying down in water past the knees; sprinting wades on, slowed with the
+    // rest of the move by the water (PM_WalkMove clamps to a share of ps.speed)
+    bool proneAllowed = allowed && waterlevel < 2;
     bool wantSprint;
 
-    if (m_bProne && (!allowed || !g_prone->integer)) {
+    if (m_bProne && (!proneAllowed || !g_prone->integer)) {
         LeaveProne(false, true);
     }
 
@@ -229,7 +233,7 @@ void Player::UpdateStance(usercmd_t *ucmd)
             if (!m_bDiving) {
                 LeaveProne(false, false);
             }
-        } else if (allowed && g_prone->integer && groundentity) {
+        } else if (proneAllowed && g_prone->integer && groundentity) {
             StartProne(ucmd);
         }
     }
@@ -422,7 +426,8 @@ UpdateSprintStamina
 
 How long the player can sprint depends on his health: g_sprint_time seconds
 at full health, less as he is hurt, none at all below g_sprint_minhealth
-percent. Run out below half health and he is tired: slowed to
+percent. Sprinting through water uses it g_sprint_water_drain times as fast.
+Run out below half health and he is tired: slowed to
 g_sprint_tired_speed, easing back over g_sprint_tired_time seconds.
 Run out and he cannot sprint again until half of it has come back
 (g_sprint_recover seconds of sprint a second, while not sprinting) and the
@@ -439,7 +444,7 @@ void Player::UpdateSprintStamina(usercmd_t *ucmd)
     endurance  = g_sprint_time->value > 0 ? g_sprint_time->value * Q_min(1.0f, healthFrac) : 0;
 
     if (m_bSprinting) {
-        m_fSprintUsed += dt;
+        m_fSprintUsed += waterlevel ? dt * Q_max(0.0f, g_sprint_water_drain->value) : dt;
     } else {
         m_fSprintUsed = Q_max(0.0f, m_fSprintUsed - dt * g_sprint_recover->value);
     }
