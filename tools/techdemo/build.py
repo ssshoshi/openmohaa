@@ -41,6 +41,25 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 import techdemo  # noqa: E402
+import ground  # noqa: E402
+
+
+def retail_image(shader):
+    """The picture the game draws a texture with (the texture pack's, where
+    it has one), as a PIL image."""
+    sys.path.insert(0, os.path.join(REPO, "tools", "lamps"))
+    import lamps
+    from PIL import Image
+    path = lamps.shader_image("textures/" + shader) or ("textures/" + shader)
+    base = re.sub(r"\.(tga|jpg)$", "", path, flags=re.I)
+    for ext in (".dds", ".tga", ".jpg"):
+        data = lamps.read(base + ext)
+        if data:
+            try:
+                return Image.open(io.BytesIO(data))
+            except Exception:  # noqa: BLE001
+                continue
+    return None
 
 GAME = os.environ.get("MOHAA_GAME", "/mnt/d/Medal of Honor")
 TOOLS = os.environ.get("MOHTOOLS", "/mnt/d/MOHTools-master")
@@ -108,7 +127,7 @@ def shader_images(text):
     return out
 
 
-def gamedir(used):
+def gamedir(used, extra=None):
     """The compilers' own game folder: the game's paks, and one more pak that
     sorts last with what the compilers need instead of the mods' files.
 
@@ -149,6 +168,10 @@ def gamedir(used):
         want.add(t)
         want.update(os.path.splitext(i)[0] for i in images_of.get(t, []))
     with zipfile.ZipFile(os.path.join(main, SHADERFIX), "w", zipfile.ZIP_DEFLATED) as z:
+        # the map's own shaders and pictures (the ground's decals): the
+        # compilers need their surface flags and sizes
+        for path, data in (extra or {}).items():
+            z.writestr(path, data)
         for p, n, text in shaders.values():
             if text is not None:
                 print("  repaired for the compilers: %s (%s)" % (n, p))
@@ -213,7 +236,9 @@ def main():
     m = techdemo.build()
     text = m.text()
     # a face line ends in: ) texture xoff yoff rot xscale yscale ...
-    d = gamedir(set(re.findall(r"\) (\S+) -?[\d.]+ -?[\d.]+ ", text)))
+    print("making the ground's decal pictures from the game's textures")
+    made = ground.make_textures(retail_image)
+    d = gamedir(set(re.findall(r"\) (\S+) -?[\d.]+ -?[\d.]+ ", text)), made)
     mapfile = os.path.join(d, "main", "maps", name + ".map")
     with open(mapfile, "w") as f:
         f.write(text)
@@ -222,7 +247,9 @@ def main():
 
     wg, wm = winpath(d) + "\\", winpath(mapfile)
     fast = ["-fast"] if a.fast else []
-    run("Q3map.exe", ["-v", "-gamedir", wg, wm], log)
+    # -nomerge: merged coplanar faces (a flat stretch of ground) came out as
+    # faces the compiler couldn't triangulate, and dropped (holes)
+    run("Q3map.exe", ["-v", "-nomerge", "-gamedir", wg, wm], log)
     run("Q3map.exe", ["-vis", "-v"] + fast + ["-gamedir", wg, wm], log)
     if not a.no_light:
         run("MOHlight.exe", ["-v"] + fast + ["-gamedir", wg, wm], log)
@@ -232,6 +259,8 @@ def main():
     with zipfile.ZipFile(pk3, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(bsp, "maps/%s.bsp" % name)
         z.writestr("maps/%s_bench.scr" % name, techdemo.bench_script(m.bench_lap))
+        for path, data in made.items():
+            z.writestr(path, data)
         pak = os.path.join(HERE, "pak")
         for root, _, files in os.walk(pak):
             for fn in files:

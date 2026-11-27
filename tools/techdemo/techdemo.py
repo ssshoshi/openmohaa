@@ -172,7 +172,10 @@ def field_heights():
                 h -= POND_DEPTH * (1 - d * d) ** 1.5
             row.append(round(h))
         hs.append(row)
-    return hs
+    # a unit or so of noise inside the field (biomes.py, ground.py: flat
+    # stretches came out with holes), not along the edges others meet
+    from ground import jitter
+    return jitter(hs, 5, keep=lambda i, j: i in (0, nx - 1) or j in (0, ny - 1))
 
 
 def field_height_at(hs, x, y):

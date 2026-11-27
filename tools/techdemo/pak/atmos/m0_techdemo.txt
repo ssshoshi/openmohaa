@@ -1,0 +1,10 @@
+// m0_techdemo: one atmosphere over every biome (see code/renderergl2/tr_atmos.c)
+// where the wind blows to (degrees: 0 is +x, 90 +y), how hard, how gusty
+wind 40 1 1
+// the ground's patches, a little stronger than the default and bigger, as
+// the biomes' grounds are big open stretches; the far look; the push
+ground 0.6 1100 0.6 1600 0.25
+// the desert's stony ground: low dry scrub and yellowed grass in clumps
+cover gravel 0.3 scrub 0.45 dry 0.55
+// the snow zones: dead grass poking through in clumps
+cover snow 0.4 dead 1
