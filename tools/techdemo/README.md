@@ -12,6 +12,37 @@ and compiled with MOH:AA's own tools.
 | Yard | middle | one of every human model in the stock paks (54; `techdemo_crowd N` for N of them): the cost of a populated scene |
 | Field and pond | south | grass for the ground cover, trees, and a pond with dead men floating in it: water, ragdoll buoyancy |
 
+West and east of those, behind hill ridges with a pass through each, are six
+biomes, one for each kind of place the game's levels are set in. Their
+buildings, textures and models are the ones those levels use most (counted
+from the retail BSPs). Every building can be walked into and has a lamp lit.
+`biomes.py` makes them.
+
+| Biome | Where | Like | Buildings |
+|---|---|---|---|
+| Norway | north-west | m2l1, m2l3 | two-storey concrete research block, bunker, corrugated shed, wooden hut; pines, sandbags, wire |
+| Ardennes | west | m6l1, m6l2 | two snowed half-timbered houses (one roof shelled open) on a village street, bunker; dense winter pine forest, rocks |
+| Bocage | south-west | m3l2, m3l3, m4 | stone farmhouse, plank barn, stone chapel with pews; hedgerows on earth banks, oaks, a dirt lane |
+| North Africa | north-east | m1l1 to m1l3 | flat-roofed plaster houses with parapets and mosaic bands (one two-storey), corrugated motor pool shed; palms |
+| Omaha | east | m3l1 | casemate and two pillboxes on a grassy bluff over sand and sea; hedgehogs, mined poles, ramps, wire |
+| Town | south-east | m5l1 to m5l3, m4l0 | two rows of two-storey houses on a cobbled street (one shelled), a larger plastered house, field stone walls |
+
+The passes from the middle are at the plaza's and field's west and east edges:
+`tele` to these to start in a biome (just inside each pass).
+
+| Biome | tele |
+|---|---|
+| Norway | `tele -4544 2880 48` |
+| Ardennes | `tele -4544 250 97` |
+| Bocage | `tele -4544 -2400 50` |
+| North Africa | `tele 4544 2300 43` |
+| Omaha | `tele 4544 250 188` |
+| Town | `tele 4544 -2400 46` |
+
+The sun, sky and water settings are the map's, so they are the same in every
+biome: the snow zones are snow on the ground, not a snowfall, and the sea is
+drawn with the pond's water settings.
+
 ## Building
 
     tools/techdemo/build.py --fast                 # about 25 s: rough vis and light
@@ -35,7 +66,8 @@ precache and water file, and nothing retail or from a mod.
 
 - `mapgen.py` writes .map files: brushes from corners (the winding is worked
   out), heightfields as triangular prisms, entities.
-- `techdemo.py` is the layout. Change the map there.
+- `techdemo.py` is the layout of the middle (plaza, rooms, field), `biomes.py`
+  the six biomes round it and the kit their buildings are made with.
 - `pak/` holds the files that go into the pak as they are.
 
 The ground is brushes, not patches or LOD terrain, because the ground cover

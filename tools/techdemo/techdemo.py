@@ -24,10 +24,12 @@ import math
 import random
 
 from mapgen import Map, Tex, box, heightfield, prism, smooth_noise, wall_with_door, hollow
+import biomes
 
 NAME = "m0_techdemo"
 
-# the world is a box of sky this big inside
+# the plaza and field are this far each way; the biomes (biomes.py) go on
+# west and east of them, to |x| = biomes.OUTER, inside a box of sky
 HALF = 3584
 SKY_TOP = 2048
 FLOOR_LOW = -512
@@ -161,6 +163,9 @@ def field_heights():
             # flat where it meets the plaza, rising to the hills
             edge = min(1.0, -y / 768.0)
             edge = edge * edge * (3 - 2 * edge)
+            # and flat at the west and east edges, where the biomes' passes are
+            side = min(1.0, (HALF - abs(x)) / 768.0)
+            edge *= side * side * (3 - 2 * side)
             h = noise[j][i] * edge
             d = math.hypot(x - POND[0], y - POND[1]) / POND[2]
             if d < 1:
@@ -423,9 +428,10 @@ def build():
         overbright="all",
     )
     # the sky all round
-    m.add(hollow((-HALF, -HALF, FLOOR_LOW), (HALF, HALF, SKY_TOP), T_SKY, floor=T_CAULK))
+    m.add(hollow((-biomes.OUTER, -HALF, FLOOR_LOW), (biomes.OUTER, HALF, SKY_TOP), T_SKY, floor=T_CAULK))
     build_plaza(m)
     hs = build_field(m)
+    m.biome_spots = biomes.build_biomes(m)
     build_hall(m)
     build_physics(m)
     build_gallery(m)
