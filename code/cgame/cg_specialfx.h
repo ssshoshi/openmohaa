@@ -164,6 +164,10 @@ typedef enum {
     //  opm-trees data).
     SFX_OPM_LEAVES_TREE,
     SFX_OPM_LEAVES_BUSH,
+    //  The medium and large explosions simulated and drawn as volumes
+    //  (opm_pyro_*.tik, tools/pyro), where the renderer draws them (r_pyro).
+    SFX_OPM_PYRO_MEDIUM,
+    SFX_OPM_PYRO_LARGE,
     SFX_TEST_EFFECT,
     SFX_COUNT
 } SpecialEffects;

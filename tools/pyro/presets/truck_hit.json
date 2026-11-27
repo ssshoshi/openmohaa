@@ -89,7 +89,8 @@
     "bounce": 0.35,
     "life": 5
    }
-  ]
+  ],
+  "explode": "large"
  },
  "alpha_gamma": 0.7,
  "fade_frames": 24,
@@ -113,5 +114,19 @@
    60
   ]
  },
- "vol_density": 1.5
+ "vol_density": 1.5,
+ "effects": [
+  {
+   "name": "opm_pyro_medium",
+   "scale": 0.85,
+   "blast": 2,
+   "light": 550
+  },
+  {
+   "name": "opm_pyro_large",
+   "scale": 1.1,
+   "blast": 3,
+   "light": 700
+  }
+ ]
 }
