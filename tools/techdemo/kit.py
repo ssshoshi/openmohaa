@@ -98,14 +98,19 @@ def _image_size(shader):
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lamps"))
     import lamps
     from PIL import Image
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    import paks
     path = lamps.shader_image("textures/" + shader) or ("textures/" + shader)
     size = (256, 256)
-    base = path.rsplit(".", 1)[0] if path.lower().endswith((".tga", ".jpg")) else path
-    for ext in (".tga", ".jpg"):
-        data = lamps.read(base + ext)
-        if data:
-            size = Image.open(io.BytesIO(data)).size
-            break
+    base = (path.rsplit(".", 1)[0] if path.lower().endswith((".tga", ".jpg")) else path).lower()
+    # the retail picture's size, not a texture pack's (four times it): the
+    # compilers turn scales into coordinates by the retail size (build.py)
+    for pak, files in paks.index().items():
+        if not pak.lower().startswith("pak"):
+            continue
+        for f in files:
+            if f.lower() in (base + ".tga", base + ".jpg"):
+                size = Image.open(io.BytesIO(paks.read(pak, f))).size
     _sizes[shader] = size
     return size
 

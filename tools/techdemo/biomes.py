@@ -633,7 +633,11 @@ class Town(Zone):
             broken = ((-1 if north else 1, 1), (-1 if north else 1, 2)) if k == 2 else ()
             door_side = "s" if north else "n"
             poster = posters[k % 5]
-            pw, ph = (64, 64) if poster in ("french/renault", "french/st_lo_paris") else (48, 76)
+            # the poster at its own shape, about 64 high (96 wide at most)
+            iw, ih = kit._image_size(poster)
+            ph = 64 if iw <= ih * 1.5 else 40
+            pw = min(96, ph * iw / ih)
+            ph = pw * ih / iw
             decals = [(poster, door_side, 0.2, 40, pw, ph)]
             if k == 2:
                 decals.append(("common/blastmark3", door_side, 0.78, 60, 128, 128))
