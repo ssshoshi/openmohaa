@@ -333,16 +333,18 @@ static void R_SeatStaticFlora(void)
 
     for (i = 0; i < tr.world->numStaticModels; i++) {
         cStaticModelUnpacked_t *pSM = &tr.world->staticModels[i];
-        const float             size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
-        float                   foot, low, over, h;
+        float                   size, foot, low, over, h;
         int                     n = 0;
         qboolean                rock = qfalse;
         vec3_t                  start, end;
         trace_t                 trace;
 
-        if (!R_StaticFloraRemade(pSM)) {
+        // a static model whose TIKI didn't load has none (R_InitStaticModels
+        // warns and goes on): reading its scale crashed the map's load
+        if (!pSM->tiki || !R_StaticFloraRemade(pSM)) {
             continue;
         }
+        size = pSM->floraHeight * pSM->tiki->load_scale * pSM->scale;
         foot = size * 0.04f; // (as far out as the roots spread)
 
         // a rock is a model too, which the trace goes through
