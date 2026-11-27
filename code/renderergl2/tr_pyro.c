@@ -374,6 +374,10 @@ void RB_PyroVolumes(void)
 			GLSL_BindProgram(sp);
 			GL_State(GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 			GL_Cull(CT_TWO_SIDED);
+			// the air in front of it (r_volumetric 2), taken at the depth of
+			// what is seen of it (pyro_fp.glsl): as a colour already times
+			// its alpha, which is what it is
+			R_FroxelSetFog(sp, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
 			GLSL_SetUniformVec3(sp, UNIFORM_VIEWORIGIN, vp->ori.origin);
 			GLSL_SetUniformVec3(sp, UNIFORM_VIEWFORWARD, vp->ori.axis[0]);
 			VectorScale(vp->ori.axis[1], tanX, v);

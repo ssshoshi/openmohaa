@@ -99,6 +99,9 @@ void main()
 
 	vec3  sum = vec3(0.0);
 	float T   = 1.0;
+	// how deep what is seen of it is, forward of the eye, weighted by how much
+	// of each step shows: the air in front of it is taken there
+	float seenDepth = 0.0, seen = 0.0;
 	float t   = tn + ds * Ign(frag);
 
 	for (int i = 0; i < 256; i++) {
@@ -133,11 +136,18 @@ void main()
 			float Ts   = exp(-sigma * ds);
 			float span = sigma > 1e-5 ? (1.0 - Ts) / sigma : ds;
 			sum += T * (albedo * sigma * light + emit) * span;
+			float w = T * (1.0 - Ts) + T * dot(emit, vec3(0.3)) * span;
+			seenDepth += w * t / dl;
+			seen      += w;
 			T   *= Ts;
 		}
 		t += ds;
 	}
 
+#if defined(USE_FROXEL_FOG)
+	if (seen > 0.0)
+		sum = FroxelFogAt(sum, 1.0 - T, frag * u_PyroDepth.z, seenDepth / seen);
+#endif
 	gl_FragColor = vec4(sum, 1.0 - T);
 }
 #endif
