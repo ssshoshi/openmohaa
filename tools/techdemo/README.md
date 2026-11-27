@@ -45,7 +45,7 @@ drawn with the pond's water settings.
 
 ## Building
 
-    tools/techdemo/build.py --fast                 # about 10 min: rough vis and light
+    tools/techdemo/build.py --fast                 # about 45 min: rough vis and light
     tools/techdemo/build.py                        # full vis and light
     tools/techdemo/build.py --install "/mnt/d/Medal of Honor/orch-test/home/main"
 
@@ -63,6 +63,28 @@ retail's, which made every texture four times too big. Compiled against the
 retail sizes, as the retail maps were, the HD images draw at the retail scale. The result is
 `build/techdemo/zzzzzzzzz-opm-techdemo.pk3`: the bsp, the map's script,
 precache and water file, and nothing retail or from a mod.
+
+The biomes are drawn at the size the retail levels draw each texture
+(`texscale.py`, `tex_scales.json`: measured from the retail BSPs), lined up
+with what they're on (tiles start at a building's corners and floors). Their
+ground is blended by decals laid on it (`ground.py`): soft-edged patches of
+a second ground, the ground over the foot of its cliffs, faded road strips.
+Their pictures are made by the build from the game's own textures, so
+nothing retail is in the repository; they are most of the pak's 40 MB.
+Buildings (`kit.py`) have working doors (`func_rotatingdoor`), glazed
+windows that break (`func_window`), and rooms furnished to each model's own
+bounds (`propbounds.py`, `prop_bounds.json`), so nothing clips a wall, a
+window, a door's swing or anything else.
+
+Fitting the biomes in took raising three of the compiler's limits:
+- brush sides (131072): the ground merges flat stretches into bigger cells
+  and the decals are patches, not brushes;
+- faces it merged and then dropped (holes in flat ground): `-nomerge`, and a
+  unit or so of noise on the ground's heights;
+- MOHlight's lighting (8 MB, 170 lightmaps): the build makes a copy of
+  MOHlight.exe with room for 256 (`mohlight_patch.py`: the array moved to a
+  new section, never the MOHTools original), and the ground and buildings'
+  outsides take coarser lightmap texels (`surfaceDensity`) than rooms.
 
 The compilers don't get the trees pak (`zzzzzzzzz-opm-trees.pk3`): its trees
 are many times denser than retail's and MOHlight lights static models vertex
