@@ -69,7 +69,7 @@ def _fit(span, pixels, scale):
 
 # the size of pictures a shader's first stage doesn't show (windowframe1's
 # first stage is its glass's reflection)
-IMAGE_SIZE = {"general_structure/windowframe1": (128, 256)}
+IMAGE_SIZE = {"general_structure/windowframe1": (128, 256), "light/jh_rustwin1lit": (128, 128)}
 
 
 def fitted(shader, u0, v0, w, h, rot=0):
@@ -406,7 +406,7 @@ class Style:
     def __init__(self, wall, inner=None, floor=None, ceil=None, trim=None, base=None, base_h=0,
                  roof=None, under=None, gable=None, storey_tile=False, sill=None, door="mohcommon/doorold_1a",
                  door_edge="general_structure/interior_door1side", pane="general_structure/windowframe1",
-                 window_decal=None, grille=None, icicles=False, inner_storey_tile=False):
+                 window_decal=None, grille=None, icicles=False, inner_storey_tile=False, band=None, band_h=16):
         self.wall = wall
         self.inner = inner or wall
         self.floor = floor or wall
@@ -426,6 +426,10 @@ class Style:
         self.window_decal = window_decal
         self.grille = grille
         self.icicles = icicles
+        # a band standing proud of the wall at each floor (retail's joist
+        # band between storeys, 16 high)
+        self.band = band
+        self.band_h = band_h
 
 
 def _pieces(lo, hi, zlo, zhi, holes):
@@ -490,6 +494,7 @@ class Building:
         self._openings(doors, windows, slits)
         self.stair = None
         self._walls()
+        self._bands()
         self._floors()
         if roof == "gable":
             self._gable(slope, overhang, broken, chimney)
@@ -587,6 +592,29 @@ class Building:
                         self.brushes.append(box6((a, c1, za), (b, c2, zb), rev, **faces))
                     else:
                         self.brushes.append(box6((c1, a, za), (c2, b, zb), rev, **faces))
+
+    def _bands(self):
+        st = self.st
+        if not st.band or self.storeys < 2:
+            return
+        p = 2
+        T_ = self.T
+        for k in range(1, self.storeys):
+            zc = self.floor_z + k * self.storey_h
+            z1, z2 = zc - st.band_h / 2, zc + st.band_h / 2
+            for side in "nsew":
+                (c1, c2), _, _, _, _, outer, inner = self.side_span(side)
+                sign = 1 if outer > inner else -1
+                f1, f2 = sorted((outer, outer + sign * p))
+                # the e/w bands run past the corners, over the n/s ones' ends
+                lo, hi = (self.x1 - T_, self.x2 + T_) if side in "ns" else (self.y1 - T_ - p, self.y2 + T_ + p)
+                holes = [(o[1] - 6, o[2] + 6, o[3] - 6, o[4] + 6) for o in self.door_list + self.window_list if o[0] == side]
+                for a, b, za, zb in _pieces(lo, hi, z1, z2, holes):
+                    t = T(st.band, u0=a, v0=z1)
+                    if side in "ns":
+                        self.brushes.append(box6((a, f1, za), (b, f2, zb), t))
+                    else:
+                        self.brushes.append(box6((f1, a, za), (f2, b, zb), t))
 
     def _floors(self):
         st = self.st
@@ -875,6 +903,95 @@ class Building:
             # the stair, and room to step on and off it
             r.block(hx1, hy1 - 48, hx2 + 40, hy2 + 56)
             r.openings["w"].append((hy1 - 48, hy2 + 56, z, z + r.h))
+
+
+def block(m, x1, y1, x2, y2, z0, style, storeys=1, storey_h=160, parapet=24, windows=None, doors=(), decals=(), sides="nsew",
+          rows=None):
+    """A building nobody goes into, the retail way (m2l1's long sheds): a
+    solid mass, its base course and bands, a flat roof with a parapet and
+    coping, its windows and doors painted on. windows: (shader, width,
+    height, sill, spacing) on each storey of `sides`; doors: (side, at,
+    width, height, shader); decals: (shader, side, at, z, width, height)."""
+    st = style
+    fz = z0 + 8
+    top = fz + storeys * storey_h
+    out = []
+
+    def faces(za, shader):
+        tx = T(shader, u0=x1, v0=fz, density=OUTSIDE_DENSITY)
+        ty = T(shader, u0=y1, v0=fz, density=OUTSIDE_DENSITY)
+        return dict(px=ty, nx=ty, py=tx, ny=tx)
+
+    cuts = [z0 - 64] + ([fz + st.base_h] if st.base else []) + [top]
+    for i, (za, zb) in enumerate(zip(cuts, cuts[1:])):
+        shader = st.base if (st.base and i == 0) else st.wall
+        f = faces(za, shader)
+        f["nz"] = CAULK
+        f["pz"] = T(st.roof, u0=x1, v0=y2, density=OUTSIDE_DENSITY) if zb == top else CAULK
+        out.append(box6((x1, y1, za), (x2, y2, zb), CAULK, **f))
+    if parapet:
+        t, zt = 12, top + parapet
+        cap = T(st.sill, u0=x1, v0=y2)
+        w = T(st.wall, u0=x1, v0=fz)
+        for a, b in (((x1, y1), (x2, y1 + t)), ((x1, y2 - t), (x2, y2)), ((x1, y1 + t), (x1 + t, y2 - t)), ((x2 - t, y1 + t), (x2, y2 - t))):
+            out.append(box6((a[0], a[1], top), (b[0], b[1], zt), w, pz=cap))
+        for a, b in (((x1 - 3, y1 - 3), (x2 + 3, y1 + 4)), ((x1 - 3, y2 - 4), (x2 + 3, y2 + 3)),
+                     ((x1 - 3, y1 + 4), (x1 + 4, y2 - 4)), ((x2 - 4, y1 + 4), (x2 + 3, y2 - 4))):
+            out.append(box6((a[0], a[1], zt), (b[0], b[1], zt + 4), T(st.sill, u0=a[0], v0=zt)))
+
+    def plane(side):
+        return {"n": y2, "s": y1, "e": x2, "w": x1}[side]
+
+    def span(side):
+        return (x1, x2) if side in "ns" else (y1, y2)
+
+    holes = []
+    for side, at, w, h, shader in doors:
+        lo, hi = span(side)
+        c = lo + at * (hi - lo) if at <= 1 else lo + at
+        out.append(wall_decal(shader, side, plane(side), c - w / 2, c + w / 2, fz, fz + h))
+        holes.append((side, c - w / 2 - 48, c + w / 2 + 48))
+    if st.band and storeys > 1:
+        for k in range(1, storeys):
+            zc = fz + k * storey_h
+            for side in sides:
+                lo, hi = span(side)
+                (nx, ny), _ = SIDES[side]
+                pl = plane(side)
+                f1, f2 = sorted((pl, pl + (nx + ny) * 2))
+                bt = T(st.band, u0=lo, v0=zc - st.band_h / 2)
+                if side in "ns":
+                    out.append(box6((lo - 2, f1, zc - st.band_h / 2), (hi + 2, f2, zc + st.band_h / 2), bt))
+                else:
+                    out.append(box6((f1, lo, zc - st.band_h / 2), (f2, hi, zc + st.band_h / 2), bt))
+    if windows:
+        shader, ww, wh, sill, gap = windows
+        for side in sides:
+            lo, hi = span(side)
+            n = int((hi - lo - 64) // gap)
+            (nx, ny), _ = SIDES[side]
+            pl = plane(side)
+            for k in (rows if rows is not None else range(storeys)):
+                zb = fz + k * storey_h + sill
+                for i in range(n):
+                    c = lo + (hi - lo) * (i + 0.5) / n
+                    a, b = c - ww / 2, c + ww / 2
+                    if any(hs == side and not (b <= ha or a >= hb) for hs, ha, hb in holes):
+                        continue
+                    out.append(wall_decal(shader, side, pl, a, b, zb, zb + wh))
+                    # a sill under it, standing out
+                    f1, f2 = sorted((pl, pl + (nx + ny) * 5))
+                    t = T(st.sill, u0=a, v0=zb)
+                    if side in "ns":
+                        out.append(box6((a - 6, f1, zb - 6), (b + 6, f2, zb - 1), t))
+                    else:
+                        out.append(box6((f1, a - 6, zb - 6), (f2, b + 6, zb - 1), t))
+    for shader, side, at, z, w, h in decals:
+        lo, hi = span(side)
+        c = lo + at * (hi - lo) if at <= 1 else lo + at
+        out.append(wall_decal(shader, side, plane(side), c - w / 2, c + w / 2, fz + z, fz + z + h))
+    m.add(out)
+    return top
 
 
 def lamp_drop(model):

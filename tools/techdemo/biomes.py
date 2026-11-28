@@ -47,7 +47,9 @@ RIDGE_H = 576
 RIDGE_W = 448
 EDGE_H = 416
 PASS_HALF = 176
-PASS_RAMP = 320
+# a ridge comes down to a pass over this much (320 left lone steep cones
+# at the ends of the ridges either side of a pass)
+PASS_RAMP = 640
 
 WATER_Z = -40
 
@@ -261,6 +263,13 @@ class Norway(Zone):
         self.bunker = self.flat_pad(2560, 2560, 2816, 2816)
         self.shed = self.flat_pad(2500, 1700, 2900, 1956)
         self.hut = self.flat_pad(1300, 2850, 1652, 3090)
+        # the compound (m2l1, m2l3): a yard closed by long blocks and a
+        # security fence, a lane in from the road through its gate
+        self.yard = (2400, 1640, 3720, 3100)
+        self.gate = (2190, 2450)
+        self.roads.append(([self.P(1880, 2155), self.P(2400, 2310), self.P(3300, 2330)], 64))
+        self.block_a = self.flat_pad(3060, 1720, 3640, 1960, margin=256)
+        self.block_b = self.flat_pad(2960, 2840, 3640, 3040, margin=256)
 
     def build(self, m, g):
         conc = Style("norway/resrchnorway_wall1", inner="general_structure/plaster_wall2a", floor="norway/nord_floortile",
@@ -300,20 +309,107 @@ class Norway(Zone):
         Building(self, x1, y1, x2, y2, self.pad_z(self.hut), hut, storey_h=152, roof="gable", slope=0.7,
                  doors=[("s", 0.5, 64, 112)], rooms=["hut"], lamp="static/lightbulb_caged.tik", light=8)
 
+        # the long blocks round the yard: nobody goes in, so their windows
+        # are painted and lit, in even rows (m2l1)
+        blk = Style("norway/resrchnorway_wall1", base="norway/resrchnorway_wall1low", base_h=128, roof="norway/csnowconc",
+                    sill="norway/csnowconc", band="general_structure/jh_conc512b")
+        lit = ("light/jh_rustwin1lit", 112, 88, 48, 208)
+        door = "central_europe_winter/door1simpl_winter"
+        x1, y1, x2, y2 = self.block_a
+        kit.block(m, x1, y1, x2, y2, self.pad_z(self.block_a), blk, storey_h=184, windows=lit, sides="ns" + W(self),
+                  doors=[("n", 0.25, 64, 120, door)], decals=[("norway/versdepot1", "n", 0.75, 112, 96, 24)])
+        x1, y1, x2, y2 = self.block_b
+        kit.block(m, x1, y1, x2, y2, self.pad_z(self.block_b), blk, storeys=2, storey_h=152, windows=lit, sides="ns" + W(self),
+                  doors=[("s", 0.6, 64, 120, door)])
+        static(m, "static/static_kriegsflag.tik", (x1 + x2) / 2, y1 - 17, self.pad_z(self.block_b) + 8 + 240, 270)
+        self.fence(g)
+        self.poles(g)
+
         # the yard: a lorry by the workshop, crates and cable drums, sandbags, wire
         sx1, sy1, sx2, sy2 = self.shed
-        self.put("static/vehicle_opeltruck.tik", (sx1 + sx2) / 2, sy2 + 200, g, yaw=0)
+        self.put("static/vehicle_opeltruck.tik", (sx1 + sx2) / 2, sy2 + 150, g, yaw=0)
         for i, mdl in enumerate(("static/static_cablespool_full.tik", "static/nazi_crate.tik", "static/nazi_crate.tik", "static/exp_crate1.tik")):
             self.put(mdl, (sx2 + 70) if self.sgn > 0 else (sx1 - 70), sy1 + 40 + i * 64, g, yaw=90 * (i % 2))
         bx1, by1, bx2, by2 = self.bunker
         self.line(g, "static/sandbag_link_main_winter.tik", [(bx1 - 130, by1 - 130), (bx2 + 130, by1 - 130)], 104)
-        self.line(g, "static/barbwire_long.tik", [self.P(3000, 1650), self.P(3000, 3050)], 432)
+        u1, y1, u2, y2 = self.yard
+        self.line(g, "static/barbwire_long.tik", [self.P(u2 + 90, y1 + 40), self.P(u2 + 90, y2 - 40)], 432)
         hx1, hy1, hx2, hy2 = self.hq
         for k in range(3):
             self.put("static/nazi_crate.tik", (hx1 - 70) if self.sgn < 0 else (hx2 + 70), hy1 + 60 + k * 64, g, yaw=0)
+        # the compound is open snow; the pines stand outside it and on the hills
         self.scatter(g, ["static/tree_winter_midpine.tik", "static/tree_winter_tallpine.tik", "static/tree_winter_smallpine.tik"],
-                     30, 900, 1600, 3100, 3136, scales=(0.7, 1.3), spacing=200)
-        self.scatter(g, ["static/rock_winter_medium.tik", "static/bush_winter_denseshrub.tik"], 10, 900, 1600, 3100, 3136, sink=10, spacing=200)
+                     9, 900, 2500, 2300, 3136, scales=(0.8, 1.3), spacing=300)
+        self.scatter(g, ["static/rock_winter_medium.tik", "static/bush_winter_denseshrub.tik"], 6, 900, 1600, 2300, 3136, sink=10, spacing=260)
+
+    def fence(self, g):
+        """The yard's security fence (m2l1: secfence1_wntr panels 324 long and
+        164 high between I-beam posts), open at the gate."""
+        u1, y1, u2, y2 = self.yard
+        ga, gb = self.gate
+        X = self.X
+        runs = [((u1, y1), (u2, y1)), ((u2, y1), (u2, y2)), ((u1, y2), (u2, y2)), ((u1, y1), (u1, ga)), ((u1, gb), (u1, y2))]
+        out = []
+        mesh = "central_europe_winter/secfence1_wntr"
+        post = "central_europe_winter/ibeam_vertwnter"
+        posts = set()
+        for (au, ay), (bu, by) in runs:
+            L = abs(bu - au) + abs(by - ay)
+            n = max(1, int(round(L / 324)))
+            along_x = by == ay
+            for k in range(n + 1):
+                f = k / n
+                u, y = au + (bu - au) * f, ay + (by - ay) * f
+                x = X(u)
+                gz = g(x, y)
+                if (round(x), round(y)) not in posts:
+                    posts.add((round(x), round(y)))
+                    out.append(box6((x - 5, y - 5, gz - 32), (x + 5, y + 5, gz + 184), T(post, u0=x if along_x else y, v0=gz)))
+                if k == n:
+                    continue
+                ua, ya = au + (bu - au) * k / n, ay + (by - ay) * k / n
+                ub, yb = au + (bu - au) * (k + 1) / n, ay + (by - ay) * (k + 1) / n
+                xa, xb = sorted((X(ua) , X(ub)))
+                ya, yb = sorted((ya, yb))
+                zs = [g(X(ua), ya), g(X(ub), yb), g((X(ua) + X(ub)) / 2, (ya + yb) / 2)]
+                zb, zt = min(zs) - 24, max(zs) + 164
+                if along_x:
+                    t = T(mesh, u0=xa, v0=zt - 192)
+                    out.append(box6((xa + 5, ya - 0.5, zb), (xb - 5, ya + 0.5, zt), t))
+                else:
+                    t = T(mesh, u0=ya, v0=zt - 192)
+                    out.append(box6((xa - 0.5, ya + 5, zb), (xa + 0.5, yb - 5, zt), t))
+        self.m.add(out)
+        for (au, ay), (bu, by) in runs:
+            self.keep.append((min(X(au), X(bu)) - 32, min(ay, by) - 32, max(X(au), X(bu)) + 32, max(ay, by) + 32))
+
+    def poles(self, g):
+        """Lamps along the lanes at a steady pitch, and the poles that carry
+        the wires along the road (m2l1's are 14 by 14 and nearly 500 high)."""
+        pole = "central_europe_winter/joist_w"
+        out = []
+        for pts, half in self.roads:
+            run = 0.0
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                L = math.hypot(bx - ax, by - ay)
+                nx, ny = -(by - ay) / L, (bx - ax) / L
+                t = (448 - run) % 448
+                while t < L:
+                    f = t / L
+                    x, y = ax + (bx - ax) * f + nx * (half + 72), ay + (by - ay) * f + ny * (half + 72)
+                    if not any(k[0] - 16 < x < k[2] + 16 and k[1] - 16 < y < k[3] + 16 for k in self.keep):
+                        gz = g(x, y)
+                        if half > 70:
+                            # a wire pole with its cross arm
+                            out.append(box6((x - 7, y - 7, gz - 40), (x + 7, y + 7, gz + 440), T(pole, u0=x, v0=gz)))
+                            out.append(box6((x - 7, y - 56, gz + 400), (x + 7, y + 56, gz + 412), T(pole, u0=y, v0=gz + 400)))
+                        else:
+                            static(self.m, "static/lightpost_globe_winter.tik", x, y, gz - 2, 0)
+                            self.m.ent("light", origin=(round(x, 1), round(y, 1), round(gz + 150, 1)), light=6 * LIGHT_SCALE, _color=(1, 0.9, 0.7))
+                        self.keep.append((x - 24, y - 24, x + 24, y + 24))
+                    t += 448
+                run = (run + L) % 448
+        self.m.add(out)
 
 
 class Ardennes(Zone):
@@ -394,6 +490,8 @@ class Bocage(Zone):
         self.farm = self.flat_pad(1300, -2740, 1748, -2468)
         self.barn = self.flat_pad(1960, -2820, 2344, -2500)
         self.church = self.flat_pad(2600, -2640, 3112, -2384)
+        # its tower and spire: the landmark seen from across the fields
+        self.tower = self.flat_pad(3128, -2576, 3256, -2448, margin=200)
 
     def build(self, m, g):
         x1, y1, x2, y2 = self.farm
@@ -425,6 +523,7 @@ class Bocage(Zone):
             px = x1 + 150 + k * 64 if self.sgn > 0 else x2 - 150 - k * 64
             for py in (y1 + 72, y2 - 72):
                 static(m, "static/churchpew.tik", px, py, z + 8, 0 if self.sgn > 0 else 180)
+        self.spire(m)
         alt = x2 - 60 if self.sgn > 0 else x1 + 60
         static(m, "static/round_table.tik", alt, (y1 + y2) / 2, z + 8, 0)
         static(m, "static/german_lantern.tik", alt, (y1 + y2) / 2 + 10, z + 8 + 35, 0)
@@ -449,6 +548,26 @@ class Bocage(Zone):
         self.put("static/signpost_caen.tik", *self.P(1560, -2230), g, yaw=45)
         self.scatter(g, ["static/tree_oak.tik", "static/bush_full.tik", "static/tree_juniper.tik", "static/bush_regularbush.tik"],
                      30, 900, -3136, 3950, -1600, scales=(0.8, 1.3), spacing=180)
+
+
+    def spire(self, m):
+        """A square stone tower against the chapel's far gable, a louvred
+        belfry near its top and a shingled spire, about 860 high in all."""
+        x1, y1, x2, y2 = self.tower
+        # on the chapel's floor level, so the two meet
+        z = self.pad_z(self.church)
+        st = Style("general_structure/church_exterior_flat", base="general_structure/church_exterior_low", base_h=136,
+                   roof="general_structure/church_exterior_top", sill="general_structure/jh_conc512b", band="general_structure/jh_conc512b")
+        top = kit.block(m, x1, y1, x2, y2, z, st, storeys=3, storey_h=176, parapet=0,
+                        windows=("general_structure/shutter", 44, 112, 40, 128), sides="nsew", rows=[2])
+        ov = 10
+        roof = T("general_structure/shingleornsml1", density=kit.OUTSIDE_DENSITY)
+        eave = box6((x1 - ov, y1 - ov, top), (x2 + ov, y2 + ov, top + 8), T("general_structure/jh_conc512b"))
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        verts = [(x1 - ov, y1 - ov, top + 8), (x2 + ov, y1 - ov, top + 8), (x2 + ov, y2 + ov, top + 8), (x1 - ov, y2 + ov, top + 8),
+                 (cx, cy, top + 8 + 330)]
+        sp = kit.hull(verts, [((0, 1, 2), CAULK), ((0, 1, 4), roof), ((1, 2, 4), roof), ((2, 3, 4), roof), ((3, 0, 4), roof)])
+        m.add([eave, sp])
 
 
 class Desert(Zone):
@@ -535,18 +654,30 @@ class Beach(Zone):
     SAND = 2500
     SHORE = 3350
 
+    # shell craters (u, y, radius, depth): a bowl with a thrown-up lip,
+    # on the bluff top and the sand (m3l1's are 200-300 across)
+    CRATERS = ((900, -420, 256, 56), (2000, 450, 256, 40), (2150, -520, 300, 40), (2760, 160, 256, 28), (1050, 300, 224, 44))
+
     def raw(self, x, y, noise):
         u = abs(x) - INNER
         bluff = 144 + noise * 40
         beach = -12 - (u - self.SAND) * 0.02 + noise * 8
         if u < self.BLUFF:
-            return bluff
-        if u < self.SAND:
+            h = bluff
+        elif u < self.SAND:
             t = s((u - self.BLUFF) / (self.SAND - self.BLUFF))
-            return bluff * (1 - t) + beach * t
-        if u < self.SHORE:
-            return beach
-        return max(beach - (u - self.SHORE) * 0.3, -260)
+            h = bluff * (1 - t) + beach * t
+        elif u < self.SHORE:
+            h = beach
+        else:
+            return max(beach - (u - self.SHORE) * 0.3, -260)
+        for cu, cy, r, d in self.CRATERS:
+            q = math.hypot(u - cu, y - cy) / r
+            if q < 1:
+                h -= d * (1 - q * q) ** 2 - d * 0.3 * q ** 4
+            elif q < 1.6:
+                h += d * 0.3 * (1 - (q - 1) / 0.6) ** 2
+        return h
 
     def tex(self, x, y, h, slope):
         u = abs(x) - INNER
@@ -660,9 +791,16 @@ class Town(Zone):
             z = self.pad_z(r)
             north = k < len(self.row_n)
             wall, timber = looks[k % 4]
+            sh = (152, 144, 160)[k % 3]
+            # the base course a storey's worth or most of one (retail: 128
+            # to 224; the ground storey of stone under timber or plaster),
+            # and a beam band at each floor
+            base, base_h = (("misc_outside/fieldstone_wall", 96), ("general_structure/stonebricks1drk", sh - 8),
+                            ("misc_outside/fieldstone_wall", 128), ("general_structure/stonebricks1drk", sh - 8))[k % 4]
             st = Style(wall, inner="central_europe/interiorwall_set3chrrl", floor="interior/manor_woodfloor", ceil="general_structure/plank_flat",
-                       trim="general_structure/beam_wood1", base="misc_outside/fieldstone_wall", base_h=40, roof=roofs[k % 2],
-                       under="general_structure/plank_flat", storey_tile=timber, door=["mohcommon/doorold_1a", "general_structure/interior_door2"][k % 2])
+                       trim="general_structure/beam_wood1", base=base, base_h=base_h, roof=roofs[k % 2],
+                       under="general_structure/plank_flat", storey_tile=timber, door=["mohcommon/doorold_1a", "general_structure/interior_door2"][k % 2],
+                       band="general_structure/beam_wood1")
             broken = ((-1 if north else 1, 1), (-1 if north else 1, 2)) if k == 2 else ()
             door_side = "s" if north else "n"
             poster = posters[k % 5]
@@ -674,10 +812,17 @@ class Town(Zone):
             decals = [(poster, door_side, 0.2, 40, pw, ph)]
             if k == 2:
                 decals.append(("common/blastmark3", door_side, 0.78, 60, 128, 128))
-            Building(self, x1, y1, x2, y2, z, st, storeys=(2, 3, 2, 2, 3)[k % 5], storey_h=(152, 144, 160)[k % 3], roof="gable",
+            Building(self, x1, y1, x2, y2, z, st, storeys=(2, 3, 2, 2, 3)[k % 5], storey_h=sh, roof="gable",
                      slope=(0.7, 0.6, 0.8)[k % 3], broken=broken, overhang=8,
                      doors=[(door_side, 0.5, 64, 112)], rooms=kinds[k % 4], partition=True, lamp="lights/hang5lamp.tik", light=10,
                      decals=decals)
+            if k == 2:
+                # the shelled house's rubble spills into the street
+                fy = y1 - 16 if north else y2 + 16
+                d = -1 if north else 1
+                self.put("static/rubble_bigpile.tik", x1 + (x2 - x1) * 0.72, fy + d * 70, g, yaw=self.rnd.randrange(360), sink=4, check=False)
+                for f, o in ((0.45, 60), (0.9, 110), (0.62, 170)):
+                    self.put("static/rubble_smallpile.tik", x1 + (x2 - x1) * f, fy + d * o, g, yaw=self.rnd.randrange(360), sink=2, check=False)
         x1, y1, x2, y2 = self.hall
         z = self.pad_z(self.hall)
         st = Style("general_structure/plaster_wall2", inner="central_europe/interiorwall_set2chrrl", floor="interior/tiledfloor_manordark2",
@@ -959,7 +1104,7 @@ class Band:
         def cut(lo, hi, passes):
             spans = [(lo, hi)]
             for p in passes:
-                a, b = p - PASS_HALF - PASS_RAMP, p + PASS_HALF + PASS_RAMP
+                a, b = p - PASS_HALF - PASS_RAMP // 2, p + PASS_HALF + PASS_RAMP // 2
                 nxt = []
                 for c, d in spans:
                     if b <= c or a >= d:

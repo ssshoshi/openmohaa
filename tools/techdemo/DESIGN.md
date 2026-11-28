@@ -154,17 +154,35 @@ So a base course is tall: 128–224, a storey's worth, not a 40-unit kerb. A
 4. The town's houses stood **apart in a field**.
    - **Fixed:** they are terraced wall to wall, 2 and 3 storeys, different
      storey heights and roof pitches. The street is now a corridor.
-5. Still to do, in order of what the shots show:
-   - long sheds and compound fences in Norway, to make yards;
-   - painted lit windows on the buildings you can't enter;
-   - tall base courses (128–224) and joist bands;
-   - lamp poles at a steady pitch along roads;
-   - a landmark per zone (the bocage chapel could get a spire);
-   - rubble and craters;
-   - snow drifts against walls;
-   - one sky per zone (not possible in one map; sky and sun are global);
-   - where passes cut a ridge near a corner they leave lone steep cones
-     (town). Retail would roll them into the hills or put rock there.
+5. Norway was a pine wood with buildings in it; m2l1 and m2l3 are an
+   open snow compound with trees only on the hills round it.
+   - **Fixed:** a yard closed by two long blocks and a security fence
+     (`secfence1_wntr` panels 324 long and 164 high between I-beam posts,
+     as m2l1 measures), open at a gate where a lane comes in. The blocks
+     are solid (`kit.block`): nobody goes in, so their windows are painted
+     (`light/jh_rustwin1lit`, lit) in even rows with sills, the doors
+     painted too, a base course 128 high and a band at the floor.
+   - Wire poles (m2l1's are `joist_w` brushes 14 by 14, nearly 500 high)
+     along the road at a 448 pitch, lamp posts along the lane.
+   - The pines inside the compound went; nine stand outside it.
+6. Town houses had a 40-unit kerb of a base.
+   - **Fixed:** the base is a storey's worth or most of one (fieldstone
+     96 or 128 high, or a stone ground storey under timber or plaster) and
+     a beam band at each floor (`Style.band`).
+   - The shelled house's rubble spills into the street.
+7. Where a pass cut a ridge, the ridge ended in a steep nose over 320
+   units: lone cones of rock either side of every pass (town). **Fixed:**
+   the ridges come down over 640.
+8. Nothing stood out to steer by. **Fixed:** the bocage chapel has a
+   stone tower with a belfry and a shingled spire, about 860 high.
+9. The beach was smooth. **Fixed:** shell craters 450-600 across with a
+   thrown-up lip on the bluff and the sand.
+10. Still to do, in order of what the shots show:
+    - snow drifts against walls;
+    - most ridges are steep enough to draw as rock; retail's surrounding
+      hills are mostly grass or snow, with rock where it breaks out;
+    - barbed wire along the fence tops;
+    - one sky per zone (not possible in one map; sky and sun are global).
 
 ## Rules for the generator
 
@@ -176,6 +194,9 @@ So a base course is tall: 128–224, a storey's worth, not a 40-unit kerb. A
   come with their light and corona.
 - Repeat structural details at a fixed pitch: posts, pillars, lamps,
   windows.
+- A building nobody enters is a solid block with painted windows
+  (`kit.block`), not rooms nobody sees: cheaper to light, and it is what
+  retail does.
 - Use each texture set's own base and band partners at the measured heights.
 - Check before compiling:
   - `survey/cracks.py`;

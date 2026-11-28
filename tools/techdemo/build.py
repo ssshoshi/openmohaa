@@ -215,6 +215,74 @@ def big_mohlight(d):
     return dst
 
 
+PATCH_RE = re.compile(r"// brush \d+\n\{\n patchDef2\n.*?\n \}\n\}\n", re.S)
+
+
+def light_starts(d, mapfile, fast):
+    """Whether MOHlight gets past its start on this map: compiled (bsp and
+    vis), then MOHlight stopped at 1%. False if it stops with 'Mesh lightmap
+    miscount' (it and Q3map size some patch's lightmap differently)."""
+    wg, wm = winpath(d) + "\\", winpath(mapfile)
+    p = subprocess.Popen([big_mohlight(d), "-nocurveshadows"] + fast + ["-gamedir", wg, wm],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    buf, ok = "", True
+    while True:
+        c = p.stdout.read(64)
+        if not c:
+            break
+        buf += c.decode("latin1")
+        if "miscount" in buf:
+            ok = False
+            break
+        done = re.findall(r"(\d+)% complete", buf)
+        if done and int(done[-1]) >= 1:
+            break
+    subprocess.run(["taskkill.exe", "/IM", os.path.basename(big_mohlight(d)), "/F"], capture_output=True)
+    p.kill()
+    return ok
+
+
+NAME_PROBE = "m0_tdprobe"
+
+
+def drop_bad_patches(d, text, fast, log):
+    """The map text less any patch MOHlight can't light ('Mesh lightmap
+    miscount', which stops the whole light pass): found by halving the
+    patches on a probe copy until one is left. A ground decal now and then
+    (2026-11-28: a splat on a steep slope); losing one is nothing."""
+    probe = os.path.join(d, "main", "maps", NAME_PROBE + ".map")
+    wg = winpath(d) + "\\"
+
+    def ok_with(keep, spans):
+        out, last = [], 0
+        for i, (a, b) in enumerate(spans):
+            if i not in keep:
+                out.append(text[last:a])
+                last = b
+        out.append(text[last:])
+        with open(probe, "w") as f:
+            f.write("".join(out))
+        wm = winpath(probe)
+        subprocess.run([os.path.join(TOOLS, "Q3map.exe"), "-nomerge", "-gamedir", wg, wm], capture_output=True)
+        subprocess.run([os.path.join(TOOLS, "Q3map.exe"), "-vis", "-fast", "-gamedir", wg, wm], capture_output=True)
+        return light_starts(d, probe, fast)
+
+    while True:
+        spans = [(m_.start(), m_.end()) for m_ in PATCH_RE.finditer(text)]
+        if ok_with(set(range(len(spans))), spans):
+            return text
+        cand = list(range(len(spans)))
+        while len(cand) > 1:
+            half = cand[:len(cand) // 2]
+            cand = cand[len(cand) // 2:] if ok_with(set(half), spans) else half
+        a, b = spans[cand[0]]
+        msg = "dropped a patch MOHlight can't light: " + text[a:b].split("\n")[4].strip() + " " + text[a:b].split("\n")[7][:60]
+        print("  " + msg)
+        with open(log, "a") as f:
+            f.write(msg + "\n")
+        text = text[:a] + text[b:]
+
+
 def run(exe, args, log):
     t = time.time()
     p = subprocess.run([exe if os.path.isabs(exe) else os.path.join(TOOLS, exe)] + args, capture_output=True, text=True, errors="replace")
@@ -264,6 +332,13 @@ def main():
     run("Q3map.exe", ["-v", "-nomerge", "-gamedir", wg, wm], log)
     run("Q3map.exe", ["-vis", "-v"] + fast + ["-gamedir", wg, wm], log)
     if not a.no_light:
+        if not light_starts(d, mapfile, fast):
+            text = drop_bad_patches(d, text, fast, log)
+            with open(mapfile, "w") as f:
+                f.write(text)
+            shutil.copy(mapfile, os.path.join(a.out, name + ".map"))
+            run("Q3map.exe", ["-v", "-nomerge", "-gamedir", wg, wm], log)
+            run("Q3map.exe", ["-vis", "-v"] + fast + ["-gamedir", wg, wm], log)
         # -nocurveshadows: the only patches are the ground's decals, whose
         # see-through squares would otherwise shadow the ground under them
         run(big_mohlight(d), ["-v", "-nocurveshadows"] + fast + ["-gamedir", wg, wm], log)
