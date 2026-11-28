@@ -87,6 +87,18 @@ class Overlays:
 OVERLAYS = Overlays()
 
 
+def _snaps(tri):
+    """Whether Q3map would snap the triangle's plane flat (its normal within
+    1e-5 of straight up, with some margin) without it being flat."""
+    (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri
+    ux, uy, uz = bx - ax, by - ay, bz - az
+    vx, vy, vz = cx - ax, cy - ay, cz - az
+    nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+    L = math.sqrt(nx * nx + ny * ny + nz * nz) or 1
+    tilt = 1 - abs(nz) / L
+    return 0 < tilt < 4e-5
+
+
 class Ground:
     """A heightfield as brush prisms, flat stretches merged into bigger cells.
 
@@ -131,22 +143,51 @@ class Ground:
         for (i, j) in sorted(corner):
             if not keep(i, j) and not self._on_big_edge(blocks, owner, i, j):
                 hs[j][i] = round(hs[j][i] + rnd.uniform(-noise, noise), 2)
-        for bi, bj, k in blocks:
-            if k == 1:
-                continue
-            for e in range(1, k):
-                for (i, j), (a, b) in (((bi + e, bj), ((bi, bj), (bi + k, bj))), ((bi + e, bj + k), ((bi, bj + k), (bi + k, bj + k))),
-                                       ((bi, bj + e), ((bi, bj), (bi, bj + k))), ((bi + k, bj + e), ((bi + k, bj), (bi + k, bj + k)))):
-                    if (i, j) in corner:
-                        hs[j][i] = round(hs[a[1]][a[0]] + (hs[b[1]][b[0]] - hs[a[1]][a[0]]) * e / k, 3)
+        def hang():
+            for bi, bj, k in blocks:
+                if k == 1:
+                    continue
+                for e in range(1, k):
+                    for (i, j), (a, b) in (((bi + e, bj), ((bi, bj), (bi + k, bj))), ((bi + e, bj + k), ((bi, bj + k), (bi + k, bj + k))),
+                                           ((bi, bj + e), ((bi, bj), (bi, bj + k))), ((bi + k, bj + e), ((bi + k, bj), (bi + k, bj + k)))):
+                        if (i, j) in corner:
+                            hs[j][i] = round(hs[a[1]][a[0]] + (hs[b[1]][b[0]] - hs[a[1]][a[0]]) * e / k, 3)
+
+        def P(ii, jj):
+            return (x0 + ii * step, y0 + jj * step, hs[jj][ii])
+
+        def pair_of(bi, bj, k):
+            a, b, c, d = P(bi, bj), P(bi + k, bj), P(bi + k, bj + k), P(bi, bj + k)
+            return ((a, b, c), (a, c, d)) if abs(a[2] - c[2]) <= abs(b[2] - d[2]) else ((a, b, d), (b, c, d))
+
+        # Q3map snaps a plane whose normal is within 1e-5 of straight up to
+        # straight up and keeps its distance from the origin: a triangle
+        # 5000 out tilted half a unit across 256 came out 15 units lower,
+        # a step whose caulk side showed the void (bright bars by the
+        # building pads, where the ground barely slopes). Such a triangle
+        # gets one of its free corners moved until it tilts enough.
+        free = [c for c in sorted(corner) if not keep(*c) and not self._on_big_edge(blocks, owner, *c)]
+        free_set = set(free)
+        hang()
+        for _ in range(30):
+            bad = 0
+            for bi, bj, k in blocks:
+                for tri in pair_of(bi, bj, k):
+                    if _snaps(tri):
+                        bad += 1
+                        for ii, jj in ((bi, bj), (bi + k, bj), (bi + k, bj + k), (bi, bj + k)):
+                            if (ii, jj) in free_set and P(ii, jj) in tri:
+                                hs[jj][ii] = round(hs[jj][ii] + rnd.choice((-2.0, 2.0)), 2)
+                                break
+            if not bad:
+                break
+            hang()
+        self.snapping = bad
         self.hs = hs
         self.tris = []      # (triangle, texture)
         self.cell = {}      # (i, j) -> the triangles over that cell
         for bi, bj, k in blocks:
-            def P(ii, jj):
-                return (x0 + ii * step, y0 + jj * step, hs[jj][ii])
-            a, b, c, d = P(bi, bj), P(bi + k, bj), P(bi + k, bj + k), P(bi, bj + k)
-            pair = ((a, b, c), (a, c, d)) if abs(a[2] - c[2]) <= abs(b[2] - d[2]) else ((a, b, d), (b, c, d))
+            pair = pair_of(bi, bj, k)
             for tri in pair:
                 self.tris.append((tri, tex[(bi, bj)]))
             for u in range(k):

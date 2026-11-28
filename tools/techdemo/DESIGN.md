@@ -123,6 +123,22 @@ So a base course is tall: 128–224, a storey's worth, not a 40-unit kerb. A
    - The road strips showed as glowing bands.
    - **Fixed:** the decals take a lightmap (`nextbundle` + `$lightmap`,
      the retail decal pattern), `surfacedensity 32`.
+   A second cause showed in the next sweep: bright bars across roads. A
+   patchDef2 passes only through its even control points (the odd ones are
+   handles), so a decal laid with every point on the ground sagged under
+   any crease. `polygonOffset` drew it anyway, lit from inside the solid.
+   **Fixed** (`ground.lay`): the handles are solved so the surface passes
+   through every point, then each 2x2 block is raised by its worst dip. No
+   decal now comes within 1.1 units of the ground (it was 394 of 559).
+   The bars that were left came from the compiler, not the decals. Q3map
+   snaps a plane whose normal is within 1e-5 of axial to axial and keeps
+   its distance from the origin. A ground triangle 5000 units out, tilted
+   half a unit across 256, came out 15 units lower: a step whose caulk
+   side showed the void (`survey/bsp.py` surfaces against the .map showed
+   it). It happened mostly at building pads, where the ground blends flat.
+   **Fixed** (`ground._snaps`): any triangle that would snap gets a free
+   corner moved 2 units until none would. The rule for every generator:
+   no face may be nearly, but not exactly, axial.
 2. Zone ridges were **dead-straight wedges** of one height, rock on the
    slope: tents.
    - **Fixed:** each crest wanders up to 120 off its line and rises and
@@ -146,7 +162,9 @@ So a base course is tall: 128–224, a storey's worth, not a 40-unit kerb. A
    - a landmark per zone (the bocage chapel could get a spire);
    - rubble and craters;
    - snow drifts against walls;
-   - one sky per zone (not possible in one map; sky and sun are global).
+   - one sky per zone (not possible in one map; sky and sun are global);
+   - where passes cut a ridge near a corner they leave lone steep cones
+     (town). Retail would roll them into the hills or put rock there.
 
 ## Rules for the generator
 
