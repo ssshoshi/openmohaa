@@ -31,6 +31,7 @@ import texscale
 from mapgen import Patch, prism
 
 SPLAT_PX = 512
+DECAL_DENSITY = 32
 ROAD_PX = 512
 
 
@@ -54,6 +55,11 @@ class Overlays:
         self.images[name] = {"kind": "road", "src": material, "width": width, "across": across, "along": along}
         return name
 
+    # Lit from a lightmap of their own like the retail decals (the texture,
+    # then the lightmap in the same stage: nextbundle). They were "rgbGen
+    # vertex", but MOHlight leaves a patch's vertex colours white, so every
+    # splat and road strip drew at full bright. The ground under them is lit
+    # at kit.GROUND_DENSITY; they take the same.
     def shader_text(self):
         out = ["// made by tools/techdemo with the map: the decals that blend its grounds\n"]
         for name, spec in sorted(self.images.items()):
@@ -65,14 +71,16 @@ class Overlays:
 	surfaceparm nonsolid
 	surfaceparm trans
 	surfaceparm nomarks
+	surfacedensity %d
 	polygonOffset
 	{
 		%s textures/%s.%s
 		blendFunc blend
-		rgbGen vertex
+	nextbundle
+		map $lightmap
 	}
 }
-""" % (name, name, ext, mapkw, name, ext))
+""" % (name, name, ext, DECAL_DENSITY, mapkw, name, ext))
         return "\n".join(out)
 
 

@@ -52,6 +52,16 @@ PASS_RAMP = 320
 WATER_Z = -40
 
 
+def wave(key, t, salt=0):
+    """Smooth 1-D noise in -1..1 along t: three long sine waves, their
+    phases from key."""
+    r = random.Random(repr((key, salt)))
+    out = 0.0
+    for wl, amp in ((1900, 0.55), (820, 0.3), (370, 0.15)):
+        out += amp * math.sin(t / wl * 2 * math.pi + r.uniform(0, 2 * math.pi))
+    return out
+
+
 def s(t):
     t = max(0.0, min(1.0, t))
     return t * t * (3 - 2 * t)
@@ -73,6 +83,9 @@ class Zone:
     road_tex = None
     rock_slope = 0.95
     kinds = None
+    # what grows along its ridges' crests (retail hills are topped by tree
+    # lines, which also hide where the world ends): models, spacing
+    crest = None
 
     def __init__(self, band, row, m):
         self.band, self.row, self.m = band, row, m
@@ -230,6 +243,7 @@ class Norway(Zone):
     barracks hut with a pitched roof, a corrugated workshop, a bunker; pines,
     sandbags, wire, a lorry."""
 
+    crest = (("static/tree_winter_tallpine.tik", "static/tree_winter_midpine.tik", "static/tree_winter_smallpine.tik", "static/rock_winter_medium.tik"), 150)
     name = "norway"
     seed = 21
     amp = 70
@@ -308,6 +322,7 @@ class Ardennes(Zone):
     a snowy street (the Communications Blackout's village), icicles on their
     eaves."""
 
+    crest = (("static/tree_winter_tallpine.tik", "static/tree_winter_midpine.tik", "static/tree_winter_tallpine.tik", "static/bush_winter_denseshrub.tik"), 130)
     name = "ardennes"
     seed = 33
     amp = 110
@@ -363,6 +378,7 @@ class Bocage(Zone):
     hedgerows on earth banks, a dirt lane, a stone farmhouse with a shingle
     roof, a plank barn with a wagon and hay, a small stone chapel."""
 
+    crest = (("static/tree_oak.tik", "static/tree_commontree.tik", "static/bush_full.tik", "static/tree_oak.tik", "static/bush_regularbush.tik"), 150)
     name = "bocage"
     seed = 45
     amp = 64
@@ -422,8 +438,14 @@ class Bocage(Zone):
         ]
         for pts in rows:
             wall_run(m, pts, g, 52, "misc_outside/fencerow_stone1", top="wilderness/m3l3grass_1rough", thick=72)
-            self.line(g, "static/bush_regularbush.tik", pts, 56, sink=-46, scale=1.3)
+            hedge(m, pts, g, lift=52)
             self.line(g, "static/bush_full.tik", pts, 230, sink=-40, scale=0.8)
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                n = int(math.hypot(bx - ax, by - ay) // 520)
+                for k in range(n):
+                    t = (k + 0.5 + self.rnd.uniform(-0.25, 0.25)) / n
+                    static(m, "static/tree_oak.tik", ax + (bx - ax) * t, ay + (by - ay) * t,
+                           g(ax + (bx - ax) * t, ay + (by - ay) * t) + 40, self.rnd.randrange(360), self.rnd.uniform(1.0, 1.4))
         self.put("static/signpost_caen.tik", *self.P(1560, -2230), g, yaw=45)
         self.scatter(g, ["static/tree_oak.tik", "static/bush_full.tik", "static/tree_juniper.tik", "static/bush_regularbush.tik"],
                      30, 900, -3136, 3950, -1600, scales=(0.8, 1.3), spacing=180)
@@ -435,6 +457,7 @@ class Desert(Zone):
     windows and shuttered ones on blank walls, a two-storey house, a
     corrugated motor pool with a lorry, a cafe table in the street; palms."""
 
+    crest = (("static/tree_regularpalm.tik", "static/bush_sparseshrub.tik", "static/tree_squatpalm.tik"), 420)
     name = "desert"
     seed = 57
     amp = 48
@@ -595,6 +618,7 @@ class Town(Zone):
     of them shelled open, a bigger plastered house, posters on the walls,
     street lamps, a burnt-out car, field stone walls round the gardens."""
 
+    crest = (("static/tree_commontree.tik", "static/tree_oak.tik", "static/bush_full.tik", "static/tree_juniper.tik"), 170)
     name = "town"
     seed = 81
     amp = 36
@@ -608,12 +632,21 @@ class Town(Zone):
         self.passes = [("mid", -2400), ("n", 5528)]
         self.roads = [([self.P(0, -2400), self.P(900, -2400), self.P(3200, -2400)], 120),
                       ([self.P(1944, -2400), self.P(1944, -1152)], 64)]
+        # terraced, the retail town way (m5l1, m4l0): the houses stand wall
+        # to wall along the street (two walls' thickness apart), so the street
+        # is a corridor of fronts; the north row leaves the lane at u 1944 open
         self.row_n, self.row_s = [], []
         u = 1000
-        for w in (320, 384, 288, 352):
+        for w in (320, 384, 0, 288, 352, 320):
+            if not w:
+                u = 2016
+                continue
             self.row_n.append(self.flat_pad(u, -2200, u + w, -1900))
-            self.row_s.append(self.flat_pad(u + 40, -2900, u + 40 + w, -2600))
-            u += w + 160
+            u += w + 32
+        u = 1040
+        for w in (320, 384, 288, 352):
+            self.row_s.append(self.flat_pad(u, -2900, u + w, -2600))
+            u += w + 32
         self.hall = self.flat_pad(3150, -3000, 3700, -2600)
 
     def build(self, m, g):
@@ -641,7 +674,8 @@ class Town(Zone):
             decals = [(poster, door_side, 0.2, 40, pw, ph)]
             if k == 2:
                 decals.append(("common/blastmark3", door_side, 0.78, 60, 128, 128))
-            Building(self, x1, y1, x2, y2, z, st, storeys=2, storey_h=152, roof="gable", slope=0.7, broken=broken,
+            Building(self, x1, y1, x2, y2, z, st, storeys=(2, 3, 2, 2, 3)[k % 5], storey_h=(152, 144, 160)[k % 3], roof="gable",
+                     slope=(0.7, 0.6, 0.8)[k % 3], broken=broken, overhang=8,
                      doors=[(door_side, 0.5, 64, 112)], rooms=kinds[k % 4], partition=True, lamp="lights/hang5lamp.tik", light=10,
                      decals=decals)
         x1, y1, x2, y2 = self.hall
@@ -667,6 +701,38 @@ class Town(Zone):
         wall_run(m, [self.P(980, -3060), self.P(3000, -3060)], g, 48, wall)
         self.scatter(g, ["static/tree_commontree.tik", "static/bush_full.tik", "static/tree_juniper.tik"], 16,
                      900, -3136, 3900, -1600, scales=(0.8, 1.2), spacing=200)
+
+
+HEDGE = "wilderness/m3l3hedgerowsml"
+
+
+def hedge(m, pts, ground, lift=0, height=380, sink=60, gap=44, seg=520):
+    """A bocage hedgerow the retail way (m3l2, m4l0): tall curved curtains
+    of the hedge picture, one picture per segment about 500 long, sunk into
+    the ground, two of them a little apart so it has a body, bowed out in
+    the middle and wandering a little along its line."""
+    from ground import Patch
+    rnd = random.Random(repr(pts))
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        L = math.hypot(bx - ax, by - ay)
+        n = max(1, int(round(L / seg)))
+        nx, ny = -(by - ay) / L, (bx - ax) / L
+        for k in range(n):
+            for side in (-1, 1):
+                rows = []
+                for i in range(3):
+                    f = (k + i / 2) / n
+                    wob = rnd.uniform(-14, 14) if i == 1 else 0
+                    cx, cy = ax + (bx - ax) * f, ay + (by - ay) * f
+                    g = ground(cx, cy) + lift
+                    h = height * rnd.uniform(0.9, 1.08) if i == 1 else height
+                    row = []
+                    for j, (z, bulge) in enumerate(((g - sink, 0), (g + h * 0.45, 30), (g + h, -6))):
+                        o = side * (gap / 2 + bulge) + wob
+                        row.append((round(cx + nx * o, 1), round(cy + ny * o, 1), round(z, 1),
+                                    i / 2 if side > 0 else 1 - i / 2, 1 - j / 2))
+                    rows.append(row)
+                m.add([Patch(HEDGE, rows)])
 
 
 def wall_run(m, pts, ground, height, tex, top=None, thick=24, step=128, sink=40):
@@ -720,6 +786,29 @@ class Band:
     def point(self, i, j):
         return self.x0 + i * STEP, -YEDGE + j * STEP
 
+    # A ridge's crest: retail hills never run dead straight at one height,
+    # so the crest wanders across its line and rises and falls along it.
+    # Keyed by the line itself, so the two zones it parts agree on it.
+    def _line_key(self, side, z):
+        if side == "s":
+            return ("y", z.ylo)
+        if side == "n":
+            return ("y", z.yhi)
+        return (side, z.row)
+
+    def crest_off(self, side, z, along):
+        """How far into the zone the crest lies from the zone's edge."""
+        if side == "mid":
+            return 0.0
+        m = wave(self._line_key(side, z), along, self.band)
+        if side == "out":
+            return 80 + 80 * m                 # 0..160 in from the world's edge
+        return 120 * m * (1 if side == "s" else -1)
+
+    def crest_h(self, side, z, along):
+        m = wave(self._line_key(side, z) + ("h",), along, self.band)
+        return (0.95 + 0.15 * m) if side == "mid" else (0.9 + 0.2 * m)
+
     def height(self, i, j):
         x, y = self.point(i, j)
         z = self.zone_at(y)
@@ -739,11 +828,16 @@ class Band:
             if kind == "mid":
                 fade = min(fade, s(dist / (2 * RIDGE_W)))
                 if dist < 2 * RIDGE_W:
-                    ridge = max(ridge, EDGE_H * s(1 - abs(dist - RIDGE_W) / RIDGE_W) * keep)
+                    hk = self.crest_h(side, z, along)
+                    ridge = max(ridge, EDGE_H * hk * s(1 - abs(dist - RIDGE_W) / RIDGE_W) * keep)
             else:
                 fade = min(fade, s(dist / RIDGE_W))
-                if dist < RIDGE_W:
-                    ridge = max(ridge, RIDGE_H * s(1 - dist / RIDGE_W) * keep * near_mid)
+                # the crest wanders off the zone's edge and rises and falls
+                # along it (the same for the zones either side of it)
+                dc = abs(dist - self.crest_off(side, z, along))
+                if dc < RIDGE_W:
+                    hk = self.crest_h(side, z, along)
+                    ridge = max(ridge, RIDGE_H * hk * s(1 - dc / RIDGE_W) * keep * near_mid)
         h = raw * fade + ridge
         for (px1, py1, px2, py2, pz, margin) in z.pads:
             dx = max(px1 - x, 0, x - px2)
@@ -818,6 +912,45 @@ class Band:
                     out += road_patches(at, pts, width, shader, width, 2.5)
         m.add(out)
 
+    def crest_trees(self, m):
+        """Each zone's crest planting along its ridges, kept off passes,
+        roads and what the zone keeps clear."""
+        for z in self.zones:
+            if not z.crest:
+                continue
+            models, spacing = z.crest
+            rnd = random.Random(900 + z.seed)
+            span = OUTER - INNER
+            lines = []
+            for side in ("s", "n", "out"):
+                if z.side_kind(side) != "ridge":
+                    continue
+                lines.append(side)
+            k = 0
+            for side in lines:
+                lo, hi = (z.ylo, z.yhi) if side == "out" else (2 * RIDGE_W, span)
+                t = lo + rnd.uniform(0, spacing)
+                while t < hi:
+                    t += spacing * rnd.uniform(0.6, 1.4)
+                    if side == "out":
+                        along = t
+                        y = t + rnd.uniform(-40, 40)
+                        x = z.X(span - self.crest_off(side, z, along) + rnd.uniform(-90, 60))
+                    else:
+                        x = z.X(t)
+                        along = x
+                        off = self.crest_off(side, z, along) + rnd.uniform(-110, 110)
+                        y = z.ylo + off if side == "s" else z.yhi - off
+                    if not (z.ylo + 24 < y < z.yhi - 24) or abs(x) > OUTER - 40:
+                        continue
+                    if any(ps == side and abs(along - pat) < PASS_HALF + PASS_RAMP for ps, pat in z.passes):
+                        continue
+                    if z.near_road(x, y, 96) or any(r[0] - 64 < x < r[2] + 64 and r[1] - 64 < y < r[3] + 64 for r in z.keep):
+                        continue
+                    model = models[k % len(models)]
+                    k += 1
+                    static(m, model, x, y, self.at(x, y) - 6, rnd.randrange(360), rnd.uniform(0.85, 1.35))
+
     def vis_walls(self, m):
         top = RIDGE_H - 96
         out = []
@@ -843,17 +976,30 @@ class Band:
             xa = INNER + 2 * RIDGE_W
         else:
             xb = -INNER - 2 * RIDGE_W
+        # the ridges rise and fall, so the walls go in pieces, each well
+        # under the ground over it
+        def pieces(c, d, at, cap):
+            n = max(1, int(math.ceil((d - c) / 256)))
+            for k in range(n):
+                a, b = c + (d - c) * k / n, c + (d - c) * (k + 1) / n
+                low = min(at(a + (b - a) * f / 8) for f in range(9))
+                t = min(cap, low - 64)
+                if t > GROUND_BOTTOM + 64:
+                    yield a, b, round(t)
+
         for z in self.zones:
             if z.row == 0:
                 continue
             passes = [p for side, p in z.passes if side == "s"]
             for c, d in cut(xa, xb, passes):
-                out.append(box6((c, z.ylo - 8, GROUND_BOTTOM), (d, z.ylo + 8, top), CAULK, detail=False))
+                for a, b, t in pieces(c, d, lambda x: min(self.at(x, z.ylo - 8), self.at(x, z.ylo + 8)), top):
+                    out.append(box6((a, z.ylo - 8, GROUND_BOTTOM), (b, z.ylo + 8, t), CAULK, detail=False))
         cx = self.band * (INNER + RIDGE_W)
         for z in self.zones:
             passes = [p for side, p in z.passes if side == "mid"]
             for c, d in cut(z.ylo, z.yhi, passes):
-                out.append(box6((cx - 8, c, GROUND_BOTTOM), (cx + 8, d, EDGE_H - 96), CAULK, detail=False))
+                for a, b, t in pieces(c, d, lambda y: min(self.at(cx - 8, y), self.at(cx + 8, y)), EDGE_H - 96):
+                    out.append(box6((cx - 8, a, GROUND_BOTTOM), (cx + 8, b, t), CAULK, detail=False))
         m.add(out)
 
 
@@ -879,6 +1025,8 @@ def build_biomes(m):
         b.overlays(m)
         for z in zones:
             z.build(m, b.at)
+        b.crest_trees(m)
+        for z in zones:
             if hasattr(z, "sea"):
                 z.sea(m)
             mid = [at for side, at in z.passes if side == "mid"][0]
