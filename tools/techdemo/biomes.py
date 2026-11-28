@@ -891,7 +891,7 @@ class Band:
                         if not hasattr(z, "splat_region") or z.splat_region(u, y, mat):
                             break
                     shader = OVERLAYS.splat(mat, 512, k % 3)
-                    out.append(splat_patch(at, z.X(u), y, rnd.uniform(lo, hi), rnd.uniform(0, 360), shader, 1.5))
+                    out.append(splat_patch(at, z.X(u), y, rnd.uniform(lo, hi), rnd.uniform(0, 360), shader))
             # the zone's own ground over the edge of its rock
             for (i, j) in list(self.ground.cell):
                 x, y = self.point(i, j)

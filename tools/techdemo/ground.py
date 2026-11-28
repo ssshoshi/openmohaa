@@ -211,7 +211,77 @@ class Ground:
 DECAL_GRID = 32
 
 
-def splat_patch(at, cx, cy, size, angle, shader, lift=1.5):
+def through(rows):
+    """Makes a patch pass through every control point's height, not only the
+    even ones. A patchDef2 is quadratic: the surface goes through the even
+    control points and the odd ones are handles, so laid all on the ground
+    it sags under the ground wherever the ground bulges (a crest, a fold),
+    and polygonOffset still draws it there, lit from inside the ground:
+    the bright bars. An odd point's handle that puts the surface's midpoint
+    on its height is 2 z - (z before + z after) / 2, done down the columns,
+    then along the rows."""
+    z = [[p[2] for p in r] for r in rows]
+    w, h = len(z), len(z[0])
+    for i in range(w):
+        col = z[i][:]
+        for j in range(1, h - 1, 2):
+            z[i][j] = 2 * col[j] - 0.5 * (col[j - 1] + col[j + 1])
+    for j in range(h):
+        row = [z[i][j] for i in range(w)]
+        for i in range(1, w - 1, 2):
+            z[i][j] = 2 * row[i] - 0.5 * (row[i - 1] + row[i + 1])
+    out = [[(p[0], p[1], z[i][j]) + tuple(p[3:]) for j, p in enumerate(r)] for i, r in enumerate(rows)]
+    return out
+
+
+def _bez(t):
+    return ((1 - t) ** 2, 2 * t * (1 - t), t * t)
+
+
+def lay(rows, at, lift):
+    """Control points (x, y, ground z + lift ...) to a patch that stays lift
+    over the ground everywhere. through() makes it pass through every point,
+    but the ground is flat triangles creased at their edges and a curve
+    through points 32 apart still dips under a crease: each 2x2 block of the
+    patch is raised by its worst dip (raising all 9 of its control points
+    by d raises the surface there by d), a few times over."""
+    rows = through(rows)
+    z = [[p[2] for p in r] for r in rows]
+    w, h = len(z), len(z[0])
+    samples = (0.0, 0.25, 0.5, 0.75, 1.0)
+    for _ in range(3):
+        raise_ = [[0.0] * h for _ in range(w)]
+        any_ = False
+        for si in range(0, w - 2, 2):
+            for sj in range(0, h - 2, 2):
+                worst = 0.0
+                for a in samples:
+                    bu = _bez(a)
+                    for c in samples:
+                        bv = _bez(c)
+                        x = y = zz = 0.0
+                        for i in range(3):
+                            for j in range(3):
+                                k = bu[i] * bv[j]
+                                p = rows[si + i][sj + j]
+                                x += k * p[0]
+                                y += k * p[1]
+                                zz += k * z[si + i][sj + j]
+                        worst = max(worst, at(x, y) + lift * 0.6 - zz)
+                if worst > 0.05:
+                    any_ = True
+                    for i in range(3):
+                        for j in range(3):
+                            raise_[si + i][sj + j] = max(raise_[si + i][sj + j], worst)
+        if not any_:
+            break
+        for i in range(w):
+            for j in range(h):
+                z[i][j] += raise_[i][j]
+    return [[(p[0], p[1], round(z[i][j], 2)) + tuple(p[3:]) for j, p in enumerate(r)] for i, r in enumerate(rows)]
+
+
+def splat_patch(at, cx, cy, size, angle, shader, lift=2.5):
     """A splat: a square patch over the ground at cx cy, its picture (a
     disc, faded at its edge) laid once, turned by angle."""
     n = max(2, int(math.ceil(size / DECAL_GRID / 2))) * 2      # intervals, even
@@ -228,10 +298,10 @@ def splat_patch(at, cx, cy, size, angle, shader, lift=1.5):
             t_ = 0.5 - (-dx * sa + dy * ca) / size
             row.append((x, y, at(x, y) + lift, s_, t_))
         rows.append(row)
-    return Patch(shader, rows)
+    return Patch(shader, lay(rows, at, lift))
 
 
-def road_patches(at, pts, width, shader, along, lift=2.0):
+def road_patches(at, pts, width, shader, along, lift=2.5):
     """A road: a strip of patch along each stretch of its line, the road's
     picture across the strip's width (its edges faded) and repeating along."""
     out = []
@@ -258,7 +328,7 @@ def road_patches(at, pts, width, shader, along, lift=2.0):
                     y = ay + uy * d + ny_ * f * width
                     row.append((x, y, at(x, y) + lift, f + 0.5, (dist + d) / along))
                 rows.append(row)
-            out.append(Patch(shader, rows))
+            out.append(Patch(shader, lay(rows, at, lift)))
             p = q
         dist += L
     return out

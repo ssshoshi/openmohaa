@@ -70,7 +70,12 @@ for m in only:
                 if max(ImageStat.Stat(Image.open(src).convert("L")).mean) > 2: break
             except Exception: pass
         if os.path.exists(src):
-            shutil.copy(src, OUT + name + ".jpg")
+            for _ in range(20):
+                try:
+                    shutil.copyfile(src, OUT + name + ".jpg")
+                    break
+                except OSError:      # still being written
+                    time.sleep(0.5)
             ims.append(Image.open(OUT + name + ".jpg"))
         print(m, i, v, ok, flush=True)
     if ims:
